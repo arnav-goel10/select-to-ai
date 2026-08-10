@@ -1,0 +1,100 @@
+{
+  "manifest_version": 3,
+  "name": "Select to AI",
+  "short_name": "Select to AI",
+  "description": "Send selected text to leading AI assistants or run bounded browser workflows with explicit permissions and safety limits.",
+  "version": "3.1.0",
+  "homepage_url": "https://github.com/arnav-goel10/select-to-ai",
+  "offline_enabled": false,
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "permissions": [
+    "contextMenus",
+    "storage",
+    "sidePanel",
+    "tabs",
+    "activeTab",
+    "declarativeNetRequest",
+    "scripting",
+    "notifications"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "ruleset_1",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://gemini.google.com/*",
+    "https://www.perplexity.ai/*",
+    "https://claude.ai/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "https://opencode.ai/*",
+    "https://openrouter.ai/*",
+    "https://api.anthropic.com/*",
+    "https://api.openai.com/*",
+    "https://api.deepseek.com/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.mistral.ai/*",
+    "https://api.groq.com/*",
+    "https://api.together.xyz/*",
+    "https://api.x.ai/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://gemini.google.com/*",
+        "https://www.perplexity.ai/*",
+        "https://claude.ai/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*"
+      ],
+      "js": [
+        "config.js",
+        "contentScript.js"
+      ],
+      "all_frames": true
+    }
+  ],
+  "web_accessible_resources": [],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "commands": {
+    "open-sidebar": {
+      "suggested_key": {
+        "default": "Alt+N"
+      },
+      "description": "Open the AI Sidebar"
+    },
+    "run-agent": {
+      "suggested_key": {
+        "default": "Alt+A"
+      },
+      "description": "Run AI Browser Agent"
+    }
+  }
+}

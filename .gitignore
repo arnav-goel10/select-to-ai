@@ -1,0 +1,32 @@
+# JetBrains IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+.idea_modules/
+
+# VS Code directories (optional, if you also use VS Code)
+.vscode/
+
+# File-based project format
+*.iws
+
+# JIRA plugin
+atlassian-ide-plugin.xml
+
+# Crashlytics plugin (for Android Studio and IntelliJ)
+com_crashlytics_export_strings.xml
+crashlytics.properties
+crashlytics-build.properties
+fabric.properties
+
+# Local History
+.history/
+
+# Chrome Extension Metadata
+_metadata/
+
+# Local isolated implementation worktrees
+.worktrees/
+dist/

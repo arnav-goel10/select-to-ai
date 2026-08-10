@@ -1,0 +1,1600 @@
+/**
+ * Select to AI - Options Settings Logic
+ * Handles tab navigation, theme toggling, provider settings swap, dynamic model fetching, and connection testing.
+ */
+
+document.addEventListener("DOMContentLoaded", () => {
+  // Verify CONFIG is loaded
+  if (typeof CONFIG === "undefined") {
+    console.error("Select to AI: CONFIG not loaded in options.");
+    return;
+  }
+
+  const DEFAULT_SYSTEM_PROMPT = CONFIG.DEFAULT_SYSTEM_PROMPT;
+
+  const { STORAGE } = CONFIG;
+
+  // Helper to proxy fetch requests to background script to bypass CORS
+  function fetchProxy(url, options = {}) {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(
+        {
+          action: "fetchProxy",
+          url: url,
+          options: options,
+        },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          if (!response || !response.success) {
+            reject(new Error(response?.error || "Unknown proxy fetch error"));
+            return;
+          }
+          resolve({
+            ok: response.ok,
+            status: response.status,
+            headers: {
+              get: (name) => response.headers[name.toLowerCase()] || null,
+            },
+            text: () => Promise.resolve(response.text),
+            json: () => {
+              try {
+                return Promise.resolve(JSON.parse(response.text));
+              } catch (e) {
+                return Promise.reject(e);
+              }
+            },
+          });
+        },
+      );
+    });
+  }
+
+  // Default Provider Configurations
+  const PROVIDER_DEFAULTS = {
+    opencode: {
+      name: "OpenCode Zen",
+      url: "https://opencode.ai/zen/v1",
+      model: "deepseek-v4-flash-free",
+      placeholder: "sk-...",
+    },
+    openrouter: {
+      name: "OpenRouter",
+      url: "https://openrouter.ai/api/v1",
+      model: "google/gemini-flash-latest",
+      placeholder: "sk-or-v1-...",
+    },
+    anthropic: {
+      name: "Anthropic Claude",
+      url: "https://api.anthropic.com/v1/messages",
+      model: "claude-3-5-haiku-20241022",
+      placeholder: "sk-ant-...",
+    },
+    openai: {
+      name: "OpenAI",
+      url: "https://api.openai.com/v1",
+      model: "gpt-4o-mini",
+      placeholder: "sk-proj-...",
+    },
+    deepseek: {
+      name: "DeepSeek AI",
+      url: "https://api.deepseek.com",
+      model: "deepseek-chat",
+      placeholder: "sk-...",
+    },
+    gemini: {
+      name: "Google Gemini",
+      url: "https://generativelanguage.googleapis.com/v1beta/openai",
+      model: "gemini-flash-latest",
+      placeholder: "AIzaSy...",
+    },
+    mistral: {
+      name: "Mistral AI",
+      url: "https://api.mistral.ai/v1",
+      model: "open-mistral-7b",
+      placeholder: "API Key",
+    },
+    groq: {
+      name: "Groq AI",
+      url: "https://api.groq.com/openai/v1",
+      model: "llama3-8b-8192",
+      placeholder: "gsk_...",
+    },
+    together: {
+      name: "Together AI",
+      url: "https://api.together.xyz/v1",
+      model: "meta-llama/Llama-3-8b-chat-hf",
+      placeholder: "API Key",
+    },
+    xai: {
+      name: "xAI Grok",
+      url: "https://api.x.ai/v1",
+      model: "grok-beta",
+      placeholder: "xai-...",
+    },
+    custom: {
+      name: "Custom Gateway",
+      url: "http://localhost:11434/v1",
+      model: "llama3",
+      placeholder: "API Key",
+    },
+  };
+
+  // Keep track of unsaved provider keys in local session memory
+  let cachedProviderKeys = {
+    opencode: "",
+    openrouter: "",
+    anthropic: "",
+    openai: "",
+    deepseek: "",
+    gemini: "",
+    mistral: "",
+    groq: "",
+    together: "",
+    xai: "",
+    custom: "",
+  };
+
+  let previousProvider = "openrouter";
+  let hasUnsavedChanges = false;
+
+  function readCustomModelsByProvider() {
+    try {
+      return JSON.parse(
+        customModelsTextarea?.dataset.customModelsByProvider || "{}",
+      );
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function parseCustomModelText(text) {
+    return [
+      ...new Set(
+        String(text || "")
+          .split(/[\n,]+/)
+          .map((model) => model.trim())
+          .filter(Boolean),
+      ),
+    ];
+  }
+
+  function getCustomModelsForProvider(provider) {
+    const allCustomModels = readCustomModelsByProvider();
+    return allCustomModels[provider] || [];
+  }
+
+  function mergeCustomModels(provider, models) {
+    return [
+      ...new Set(
+        [
+          ...(getCustomModelsForProvider(provider) || []),
+          ...(models || []),
+        ].filter(Boolean),
+      ),
+    ];
+  }
+
+  function normalizeModelId(model) {
+    return String(model || "")
+      .replace(/^models\//, "")
+      .toLowerCase();
+  }
+
+  function getModelVersionScore(id) {
+    const normalized = normalizeModelId(id);
+    let score = 0;
+    const numericVersions = normalized.match(/\d+(?:\.\d+)?/g) || [];
+    numericVersions.forEach((version, index) => {
+      const parsed = parseFloat(version);
+      if (!Number.isNaN(parsed) && parsed < 10000)
+        score += parsed * (index === 0 ? 100 : 10);
+    });
+    const dateMatch = normalized.match(/20\d{6}/);
+    if (dateMatch)
+      score += Math.max(0, parseInt(dateMatch[0], 10) - 20200000) / 1000;
+    if (normalized.includes("latest")) score += 1000;
+    if (normalized.includes("preview")) score += 25;
+    if (
+      normalized.includes("beta") ||
+      normalized.includes("experimental") ||
+      normalized.includes("-exp")
+    )
+      score -= 30;
+    if (normalized.includes("deprecated")) score -= 500;
+    return score;
+  }
+
+  function scoreModelForTier(model, tier) {
+    const id = normalizeModelId(model);
+    let score = getModelVersionScore(id);
+    if (tier === "lite") {
+      if (
+        /\b(flash|haiku|mini|nano|small|tiny|8b|7b|9b|instant|fast|lite)\b/.test(
+          id,
+        )
+      )
+        score += 450;
+      if (
+        /\b(pro|sonnet|opus|large|max|70b|405b|reason|thinking|r1|o1|o3)\b/.test(
+          id,
+        )
+      )
+        score -= 180;
+      if (id.includes("vision") || id.includes("audio") || id.includes("image"))
+        score -= 80;
+    } else {
+      if (
+        /\b(pro|sonnet|opus|large|max|70b|405b|reason|thinking|r1|o1|o3|coder|code)\b/.test(
+          id,
+        )
+      )
+        score += 450;
+      if (/\b(flash-lite|haiku|nano|tiny|7b|8b)\b/.test(id)) score -= 220;
+      if (id.includes("mini") || id.includes("flash")) score -= 60;
+    }
+    if (
+      id.includes("embedding") ||
+      id.includes("embed") ||
+      id.includes("moderation") ||
+      id.includes("safety") ||
+      id.includes("tts") ||
+      id.includes("whisper")
+    )
+      score -= 100000;
+    return score;
+  }
+
+  function findBestModel(
+    fetchedModels,
+    tier,
+    defaultModel,
+    excludedModel = null,
+  ) {
+    if (!fetchedModels || fetchedModels.length === 0) return defaultModel;
+    const excluded = normalizeModelId(excludedModel);
+    const candidates = [...new Set(fetchedModels)]
+      .filter(Boolean)
+      .filter((model) => !excluded || normalizeModelId(model) !== excluded);
+    if (candidates.length === 0) return defaultModel;
+    return (
+      candidates.sort((a, b) => {
+        const scoreDiff =
+          scoreModelForTier(b, tier) - scoreModelForTier(a, tier);
+        return scoreDiff !== 0
+          ? scoreDiff
+          : normalizeModelId(b).localeCompare(normalizeModelId(a), undefined, {
+              numeric: true,
+            });
+      })[0] || defaultModel
+    );
+  }
+
+  function sortModelsForDisplay(models) {
+    return [...new Set(models)].filter(Boolean).sort((a, b) => {
+      const versionDiff = getModelVersionScore(b) - getModelVersionScore(a);
+      return versionDiff !== 0
+        ? versionDiff
+        : normalizeModelId(a).localeCompare(normalizeModelId(b), undefined, {
+            numeric: true,
+          });
+    });
+  }
+
+  function populateDatalist(inputElement, datalistElement, list, defaultValue) {
+    if (datalistElement) {
+      while (datalistElement.firstChild)
+        datalistElement.removeChild(datalistElement.firstChild);
+      list.forEach((model) => {
+        const opt = document.createElement("option");
+        opt.value = model;
+        datalistElement.appendChild(opt);
+      });
+    }
+    if (inputElement) inputElement.value = defaultValue || "";
+  }
+
+  function applyModelPresets(provider, selectedModel = null) {
+    const defs = PROVIDER_DEFAULTS[provider];
+    const presets = {
+      openrouter: [
+        "google/gemini-flash-latest",
+        "google/gemini-pro-latest",
+        "google/gemini-2.5-flash",
+        "google/gemini-2.5-pro",
+        "anthropic/claude-3.5-sonnet",
+        "anthropic/claude-3.5-haiku",
+        "openai/gpt-4o-mini",
+        "openai/gpt-4o",
+        "openai/o3-mini",
+        "deepseek/deepseek-chat",
+        "deepseek/deepseek-reasoner",
+        "meta-llama/llama-3.3-70b-instruct",
+      ],
+      opencode: [
+        "deepseek-v4-flash-free",
+        "deepseek-v4-pro",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "google/gemini-flash-1.5-8b:free",
+      ],
+      anthropic: [
+        "claude-3-5-haiku-20241022",
+        "claude-3-5-sonnet-20241022",
+        "claude-3-opus-20240229",
+      ],
+      openai: ["gpt-4o-mini", "gpt-4o", "o3-mini", "o1-mini", "o1"],
+      deepseek: ["deepseek-chat", "deepseek-reasoner"],
+      gemini: [
+        "gemini-flash-latest",
+        "gemini-pro-latest",
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
+      ],
+      mistral: [
+        "open-mistral-7b",
+        "mistral-small-latest",
+        "mistral-large-latest",
+        "codestral-latest",
+      ],
+      groq: [
+        "llama3-8b-8192",
+        "llama3-70b-8192",
+        "llama-3.3-70b-versatile",
+        "mixtral-8x7b-32768",
+        "gemma2-9b-it",
+      ],
+      together: [
+        "meta-llama/Llama-3-8b-chat-hf",
+        "meta-llama/Llama-3.3-70b-instruct-turbo",
+        "mistralai/Mixtral-8x7B-Instruct-v0.1",
+        "deepseek-ai/DeepSeek-V3",
+      ],
+      xai: ["grok-2-1212", "grok-beta"],
+      custom: ["llama3", "mistral", "qwen2.5-coder", "phi3"],
+    };
+    const list = mergeCustomModels(
+      provider,
+      presets[provider] || presets.openrouter,
+    );
+    populateDatalist(
+      modelSelect,
+      document.getElementById("agentModelList"),
+      list,
+      selectedModel || defs?.model || "",
+    );
+  }
+
+  function getModelFetchRequest(provider, key, baseUrl) {
+    const headers = {};
+    let endpoint = baseUrl.replace(/\/$/, "") + "/models";
+    if (provider === "anthropic") {
+      endpoint = "https://api.anthropic.com/v1/models";
+      if (key) headers["x-api-key"] = key;
+      headers["anthropic-version"] = "2023-06-01";
+    } else if (provider === "gemini") {
+      endpoint = "https://generativelanguage.googleapis.com/v1beta/models";
+      if (key) headers["x-goog-api-key"] = key;
+    } else {
+      if (key) headers["Authorization"] = `Bearer ${key}`;
+      if (provider === "openrouter") {
+        headers["HTTP-Referer"] = "https://selecttoai.github.io";
+        headers["X-Title"] = "Select to AI Browser Agent Settings Page";
+      }
+    }
+    return { endpoint, headers };
+  }
+
+  function getChatEndpoint(provider, baseUrl) {
+    if (provider === "anthropic")
+      return "https://api.anthropic.com/v1/messages";
+    if (provider === "gemini")
+      return "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+    if (
+      !baseUrl.endsWith("/chat/completions") &&
+      !baseUrl.includes("/messages")
+    ) {
+      return baseUrl.replace(/\/$/, "") + "/chat/completions";
+    }
+    return baseUrl;
+  }
+
+  function getConnectionTestRequest(provider, key, baseUrl, model) {
+    const endpoint = getChatEndpoint(provider, baseUrl);
+    const headers = { "Content-Type": "application/json" };
+    let body;
+    if (provider === "anthropic") {
+      if (key) headers["x-api-key"] = key;
+      headers["anthropic-version"] = "2023-06-01";
+      headers["anthropic-dangerous-direct-browser-access"] = "true";
+      body = {
+        model,
+        max_tokens: 1,
+        messages: [{ role: "user", content: "Ping" }],
+      };
+    } else {
+      if (key) headers["Authorization"] = `Bearer ${key}`;
+      if (provider === "openrouter") {
+        headers["HTTP-Referer"] = "https://selecttoai.github.io";
+        headers["X-Title"] = "Select to AI Browser Agent Settings Page";
+      }
+      body = {
+        model,
+        messages: [{ role: "user", content: "Ping" }],
+        max_tokens: 1,
+      };
+    }
+    return { endpoint, headers, body };
+  }
+
+  function canFetchModelsWithoutKey(provider) {
+    return provider === "openrouter" || provider === "custom";
+  }
+
+  function normalizeFetchedModels(provider, data) {
+    if (provider === "gemini") {
+      if (
+        !data.models ||
+        !Array.isArray(data.models) ||
+        data.models.length === 0
+      ) {
+        throw new Error("No models returned from Google Gemini API.");
+      }
+      return data.models.map((model) => model.name.replace(/^models\//, ""));
+    }
+    const modelData = Array.isArray(data.data)
+      ? data.data
+      : Array.isArray(data.models)
+        ? data.models
+        : [];
+    if (modelData.length === 0)
+      throw new Error("No model list returned in response.");
+    return modelData
+      .map((model) =>
+        typeof model === "string" ? model : model.id || model.name,
+      )
+      .filter(Boolean);
+  }
+
+  function getSelectableFetchedModels(provider, data, modelIds) {
+    if (provider === "gemini") {
+      const generationModelNames = new Set(
+        (data.models || [])
+          .filter((model) => {
+            const methods = model.supportedGenerationMethods || [];
+            return methods.length === 0 || methods.includes("generateContent");
+          })
+          .map((model) => normalizeModelId(model.name)),
+      );
+      return modelIds.filter((modelId) =>
+        generationModelNames.has(normalizeModelId(modelId)),
+      );
+    }
+    const rawModels = Array.isArray(data.data)
+      ? data.data
+      : Array.isArray(data.models)
+        ? data.models
+        : [];
+    if (rawModels.length === 0) return modelIds;
+    const selectableIds = new Set(
+      rawModels
+        .filter((model) => {
+          if (typeof model === "string") return true;
+          const id = normalizeModelId(model.id || model.name);
+          const architecture = model.architecture || {};
+          const inputModalities = architecture.input_modalities || [];
+          const outputModalities = architecture.output_modalities || [];
+          const modality = String(architecture.modality || "").toLowerCase();
+          if (
+            id.includes("embedding") ||
+            id.includes("embed") ||
+            id.includes("moderation") ||
+            id.includes("safety") ||
+            id.includes("tts") ||
+            id.includes("whisper")
+          )
+            return false;
+          if (outputModalities.length > 0 && !outputModalities.includes("text"))
+            return false;
+          if (inputModalities.length > 0 && !inputModalities.includes("text"))
+            return false;
+          if (modality && !modality.includes("->text")) return false;
+          return true;
+        })
+        .map((model) =>
+          normalizeModelId(
+            typeof model === "string" ? model : model.id || model.name,
+          ),
+        )
+        .filter(Boolean),
+    );
+    return modelIds.filter((modelId) =>
+      selectableIds.has(normalizeModelId(modelId)),
+    );
+  }
+
+  // --- DOM Elements ---
+
+  // Sidebar Tabs
+  const navItems = document.querySelectorAll(".nav-item");
+  const panels = document.querySelectorAll(".panel");
+
+  // Theme Toggle
+  const themeToggleBtn = document.getElementById("theme-toggle");
+
+  // Save & Reset Buttons
+  const saveAllBtn = document.getElementById("save-all-btn");
+  const resetAllBtn = document.getElementById("reset-all-btn");
+  const resetPromptBtn = document.getElementById("reset-prompt-btn");
+
+  // General Form Inputs
+  const showChatGPTCheck = document.getElementById("showChatGPT");
+  const showGeminiCheck = document.getElementById("showGemini");
+  const showPerplexityCheck = document.getElementById("showPerplexity");
+  const showClaudeCheck = document.getElementById("showClaude");
+  const showAgentCheck = document.getElementById("showAgent");
+  const autoSendCheck = document.getElementById("autoSend");
+  const autoContextCheck = document.getElementById("autoContext");
+  const openingModeSelect = document.getElementById("openingMode");
+
+  // Model & API Inputs
+  const activeProviderSelect = document.getElementById("agentActiveProvider");
+  const customUrlGroup = document.getElementById("url-group");
+  const customUrlInput = document.getElementById("agentCustomUrl");
+
+  const fetchModelsBtn = document.getElementById("fetch-models-btn");
+  const testConnBtn = document.getElementById("test-conn-btn");
+  const connStatus = document.getElementById("conn-status");
+
+  // Model Dropdowns
+  const modelSelect = document.getElementById("agentModel");
+
+  // Step Cap Limit
+  const maxStepsSlider = document.getElementById("agentMaxSteps");
+  const maxStepsVal = document.getElementById("max-steps-val");
+
+  // Prompt Inputs
+  const systemPromptTextarea = document.getElementById("agentSystemPrompt");
+
+  // Toast Message
+  const toast = document.getElementById("toast");
+  const toastMessage = document.getElementById("toast-message");
+
+  // --- Tab Switching ---
+  navItems.forEach((item) => {
+    item.addEventListener("click", () => {
+      const targetId = item.getAttribute("data-target");
+
+      navItems.forEach((nav) => nav.classList.remove("active"));
+      item.classList.add("active");
+
+      panels.forEach((panel) => {
+        if (panel.id === targetId) {
+          panel.classList.add("active");
+        } else {
+          panel.classList.remove("active");
+        }
+      });
+    });
+  });
+
+  // --- Theme Switcher ---
+  if (themeToggleBtn) {
+    themeToggleBtn.addEventListener("click", () => {
+      const currentTheme = document.documentElement.getAttribute("data-theme");
+      const newTheme = currentTheme === "dark" ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", newTheme);
+      chrome.storage.sync.set({ theme: newTheme });
+    });
+  }
+
+  // --- Password Visibility Toggle ---
+  document.querySelectorAll(".provider-key-eye").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const targetId = btn.getAttribute("data-target");
+      const input = document.getElementById(targetId);
+      if (input.type === "password") {
+        input.type = "text";
+        btn.innerHTML = `
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                        <line x1="1" y1="1" x2="23" y2="23"/>
+                    </svg>
+                `;
+      } else {
+        input.type = "password";
+        btn.innerHTML = `
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                `;
+      }
+    });
+  });
+
+  // Helper to get selected model selection mode (auto vs manual)
+  // Helper to toggle model inputs disabled status
+
+  // Helper to get selected routing strategy (dual vs single)
+
+  // Helper to dynamically update UI based on routing strategy
+
+  // --- Slider UI updates ---
+  maxStepsSlider.addEventListener("input", () => {
+    maxStepsVal.textContent = maxStepsSlider.value;
+  });
+
+  // --- Provider Selection Swap ---
+  activeProviderSelect.addEventListener("change", () => {
+    const provider = activeProviderSelect.value;
+    const defs = PROVIDER_DEFAULTS[provider];
+    if (defs) {
+      modelSelect.value = defs.model || "";
+      document.getElementById("agentOpenRouterKey").placeholder =
+        defs.placeholder;
+    }
+    document.querySelectorAll(".provider-key-group").forEach((group) => {
+      group.style.display = group.id === "group-" + provider ? "flex" : "none";
+    });
+    if (provider === "custom") {
+      customUrlGroup.style.display = "block";
+    } else {
+      customUrlGroup.style.display = "none";
+    }
+  });
+
+  function getActiveProviderKey() {
+    const provider = activeProviderSelect.value;
+    switch (provider) {
+      case "opencode":
+        return document.getElementById("agentOpencodeKey").value.trim();
+      case "openrouter":
+        return document.getElementById("agentOpenRouterKey").value.trim();
+      case "anthropic":
+        return document.getElementById("agentAnthropicKey").value.trim();
+      case "openai":
+        return document.getElementById("agentOpenAIKey").value.trim();
+      case "deepseek":
+        return document.getElementById("agentDeepSeekKey").value.trim();
+      case "gemini":
+        return document.getElementById("agentGeminiKey").value.trim();
+      case "mistral":
+        return document.getElementById("agentMistralKey").value.trim();
+      case "groq":
+        return document.getElementById("agentGroqKey").value.trim();
+      case "together":
+        return document.getElementById("agentTogetherKey").value.trim();
+      case "xai":
+        return document.getElementById("agentXaiKey").value.trim();
+      case "custom":
+        return document.getElementById("agentCustomKey").value.trim();
+      default:
+        return "";
+    }
+  }
+
+  function getProviderKeyValidationError(provider, apiKey) {
+    const key = (apiKey || "").trim();
+    if (provider === "custom") return "";
+    if (!key)
+      return `Missing API key for ${PROVIDER_DEFAULTS[provider]?.name || provider}.`;
+    if (
+      key === "sk-or-v1-..." ||
+      key === "sk-proj-..." ||
+      key === "sk-ant-..." ||
+      key === "AIzaSy..." ||
+      key === "gsk_..." ||
+      key.toLowerCase() === "api key"
+    ) {
+      return `The ${PROVIDER_DEFAULTS[provider]?.name || provider} key looks like a placeholder, not a real key.`;
+    }
+    if (provider === "openrouter" && !key.startsWith("sk-or-"))
+      return 'OpenRouter keys usually start with "sk-or-".';
+    if (provider === "anthropic" && !key.startsWith("sk-ant-"))
+      return 'Anthropic keys usually start with "sk-ant-".';
+    if (provider === "openai" && !key.startsWith("sk-"))
+      return 'OpenAI keys usually start with "sk-".';
+    if (provider === "gemini" && !key.startsWith("AIza"))
+      return 'Gemini API keys usually start with "AIza".';
+    if (provider === "groq" && !key.startsWith("gsk_"))
+      return 'Groq keys usually start with "gsk_".';
+    if (provider === "xai" && !key.startsWith("xai-"))
+      return 'xAI keys usually start with "xai-".';
+    return "";
+  }
+
+  function setProviderKey(provider, key) {
+    const inputId = {
+      opencode: "agentOpencodeKey",
+      openrouter: "agentOpenRouterKey",
+      anthropic: "agentAnthropicKey",
+      openai: "agentOpenAIKey",
+      deepseek: "agentDeepSeekKey",
+      gemini: "agentGeminiKey",
+      mistral: "agentMistralKey",
+      groq: "agentGroqKey",
+      together: "agentTogetherKey",
+      xai: "agentXaiKey",
+      custom: "agentCustomKey",
+    }[provider];
+    if (inputId) {
+      const input = document.getElementById(inputId);
+      if (input) input.value = key;
+    }
+  }
+
+  // --- Load Settings on Launch ---
+  function loadSettings() {
+    const legacyKeys = STORAGE.API_KEYS;
+    chrome.storage.sync.get([...STORAGE.SETTINGS, ...legacyKeys], (syncItems) => {
+      chrome.storage.local.get(legacyKeys, (localItems) => {
+        const migratedKeys = {};
+        legacyKeys.forEach((key) => {
+          if (!localItems[key] && syncItems[key]) migratedKeys[key] = syncItems[key];
+        });
+        const items = { ...syncItems, ...localItems, ...migratedKeys };
+
+        if (Object.keys(migratedKeys).length > 0) {
+          chrome.storage.local.set(migratedKeys);
+        }
+        chrome.storage.sync.remove(legacyKeys);
+
+      showChatGPTCheck.checked = items.showChatGPT !== false;
+      showGeminiCheck.checked = items.showGemini !== false;
+      showPerplexityCheck.checked = items.showPerplexity === true;
+      showClaudeCheck.checked = items.showClaude !== false;
+      showAgentCheck.checked = items.showAgent === true;
+      autoSendCheck.checked = items.autoSend === true;
+      autoContextCheck.checked = items.autoContext !== false;
+      openingModeSelect.value = items.openingMode || "sidePanel";
+
+      const theme =
+        items.theme ||
+        (window.matchMedia("(prefers-color-scheme: dark)").matches
+          ? "dark"
+          : "light");
+      document.documentElement.setAttribute("data-theme", theme);
+
+      const activeProvider = items.agentActiveProvider || "opencode";
+      activeProviderSelect.value = activeProvider;
+      previousProvider = activeProvider;
+
+      document.getElementById("agentOpenRouterKey").value =
+        items.agentOpenRouterKey || "";
+      document.getElementById("agentAnthropicKey").value =
+        items.agentAnthropicKey || "";
+      document.getElementById("agentOpenAIKey").value =
+        items.agentOpenAIKey || "";
+      document.getElementById("agentDeepSeekKey").value =
+        items.agentDeepSeekKey || "";
+      document.getElementById("agentGeminiKey").value =
+        items.agentGeminiKey || "";
+      document.getElementById("agentMistralKey").value =
+        items.agentMistralKey || "";
+      document.getElementById("agentGroqKey").value = items.agentGroqKey || "";
+      document.getElementById("agentTogetherKey").value =
+        items.agentTogetherKey || "";
+      document.getElementById("agentXaiKey").value = items.agentXaiKey || "";
+      document.getElementById("agentOpencodeKey").value =
+        items.agentOpencodeKey || "";
+      document.getElementById("agentCustomKey").value =
+        items.agentCustomKey || "";
+
+      document.querySelectorAll(".provider-key-group").forEach((group) => {
+        group.style.display =
+          group.id === "group-" + activeProvider ? "flex" : "none";
+      });
+
+      if (activeProvider === "custom") {
+        customUrlGroup.style.display = "block";
+      }
+
+      customUrlInput.value = items.agentCustomUrl || "";
+
+      const defs = PROVIDER_DEFAULTS[activeProvider];
+      if (defs) {
+        modelSelect.value = items.agentModel || defs.model || "";
+      }
+
+      maxStepsSlider.value = items.agentMaxSteps || 5;
+      maxStepsVal.textContent = items.agentMaxSteps || 5;
+
+      const temp =
+        items.agentTemperature !== undefined ? items.agentTemperature : 0.1;
+      document.getElementById("agentTemperature").value = temp;
+      document.getElementById("temp-val").textContent = temp;
+
+      document.getElementById("agentElementLimit").value =
+        items.agentElementLimit || 150;
+      document.getElementById("el-limit-val").textContent =
+        items.agentElementLimit || 150;
+
+      document.getElementById("agentHistoryLimit").value =
+        items.agentHistoryLimit || 8;
+      document.getElementById("hist-limit-val").textContent =
+        items.agentHistoryLimit || 8;
+
+      const failThresh =
+        items.agentFailureThreshold !== undefined
+          ? items.agentFailureThreshold
+          : 3;
+      document.getElementById("agentFailureThreshold").value = failThresh;
+      document.getElementById("fail-thresh-val").textContent = failThresh;
+
+      document.getElementById("agentCostBudget").value =
+        items.agentCostBudget !== undefined ? items.agentCostBudget : 0.0;
+      document.getElementById("agentRiskConfirmation").checked =
+        items.agentRiskConfirmation !== false;
+      document.getElementById("agentDomainAllowlist").value =
+        items.agentDomainAllowlist || "";
+      systemPromptTextarea.value =
+        items.agentSystemPrompt || DEFAULT_SYSTEM_PROMPT;
+
+      document.getElementById("agentPromptCaching").checked =
+        items.agentPromptCaching !== false;
+      document.getElementById("agentTimeout").value =
+        items.agentTimeout || 60000;
+      document.getElementById("agentMaxTokensPerCall").value =
+        items.agentMaxTokensPerCall || 2000;
+
+      setTimeout(() => {
+        hasUnsavedChanges = false;
+      }, 100);
+      });
+    });
+  }
+
+  function saveSettings() {
+    const settingsToSave = {
+      showChatGPT: showChatGPTCheck.checked,
+      showGemini: showGeminiCheck.checked,
+      showPerplexity: showPerplexityCheck.checked,
+      showClaude: showClaudeCheck.checked,
+      showAgent: showAgentCheck.checked,
+      autoSend: autoSendCheck.checked,
+      autoContext: autoContextCheck.checked,
+      openingMode: openingModeSelect.value,
+
+      agentActiveProvider: activeProviderSelect.value,
+      agentCustomUrl: customUrlInput.value.trim(),
+      agentModel: modelSelect.value,
+      agentMaxSteps: parseInt(maxStepsSlider.value, 10),
+
+      agentTimeout: parseInt(document.getElementById("agentTimeout").value, 10),
+      agentMaxTokensPerCall: parseInt(
+        document.getElementById("agentMaxTokensPerCall").value,
+        10,
+      ),
+      agentTemperature: parseFloat(
+        document.getElementById("agentTemperature").value,
+      ),
+      agentElementLimit: parseInt(
+        document.getElementById("agentElementLimit").value,
+        10,
+      ),
+      agentHistoryLimit: parseInt(
+        document.getElementById("agentHistoryLimit").value,
+        10,
+      ),
+      agentFailureThreshold: parseInt(
+        document.getElementById("agentFailureThreshold").value,
+        10,
+      ),
+      agentCostBudget: parseFloat(
+        document.getElementById("agentCostBudget").value,
+      ),
+      agentPromptCaching: document.getElementById("agentPromptCaching").checked,
+      agentRiskConfirmation: document.getElementById("agentRiskConfirmation")
+        .checked,
+      agentDomainAllowlist: document
+        .getElementById("agentDomainAllowlist")
+        .value.trim(),
+
+      agentSystemPrompt: systemPromptTextarea.value,
+    };
+
+    const apiKeysToSave = {
+      agentOpenRouterKey: document
+        .getElementById("agentOpenRouterKey")
+        .value.trim(),
+      agentAnthropicKey: document
+        .getElementById("agentAnthropicKey")
+        .value.trim(),
+      agentOpenAIKey: document.getElementById("agentOpenAIKey").value.trim(),
+      agentDeepSeekKey: document
+        .getElementById("agentDeepSeekKey")
+        .value.trim(),
+      agentGeminiKey: document.getElementById("agentGeminiKey").value.trim(),
+      agentMistralKey: document.getElementById("agentMistralKey").value.trim(),
+      agentGroqKey: document.getElementById("agentGroqKey").value.trim(),
+      agentTogetherKey: document
+        .getElementById("agentTogetherKey")
+        .value.trim(),
+      agentXaiKey: document.getElementById("agentXaiKey").value.trim(),
+      agentOpencodeKey: document
+        .getElementById("agentOpencodeKey")
+        .value.trim(),
+      agentCustomKey: document.getElementById("agentCustomKey").value.trim(),
+    };
+
+    const persist = () => {
+      chrome.storage.sync.set(settingsToSave, () => {
+        chrome.storage.local.set(apiKeysToSave, () => {
+          // Remove credentials left by versions that incorrectly used sync storage.
+          chrome.storage.sync.remove(STORAGE.API_KEYS);
+          hasUnsavedChanges = false;
+          showToast("Settings saved securely on this device.");
+        });
+      });
+    };
+
+    if (activeProviderSelect.value !== "custom") {
+      persist();
+      return;
+    }
+
+    const origin = SELECT_TO_AI_SECURITY.customOrigin(settingsToSave.agentCustomUrl);
+    if (!origin) {
+      showToast("Custom gateways must use HTTPS or a loopback address.");
+      return;
+    }
+    chrome.permissions.request({ origins: [`${origin}/*`] }, (granted) => {
+      if (granted) persist();
+      else showToast("Custom gateway access was not granted.");
+    });
+  }
+  saveAllBtn.addEventListener("click", saveSettings);
+
+  // --- Fetch Models Dynamically ---
+  function fetchModelsForProvider(provider, key, quiet = false) {
+    let baseUrl = PROVIDER_DEFAULTS[provider].url;
+    if (provider === "custom") {
+      baseUrl = customUrlInput.value.trim();
+    }
+
+    if (!quiet) {
+      connStatus.className = "status-indicator loading";
+      connStatus.innerHTML = `<span class="spinner"></span> Querying API...`;
+      connStatus.style.display = "inline-flex";
+    }
+
+    const { endpoint, headers } = getModelFetchRequest(provider, key, baseUrl);
+
+    return fetchProxy(endpoint, {
+      method: "GET",
+      headers: headers,
+    })
+      .then((res) => {
+        if (!res.ok) {
+          return res.text().then((text) => {
+            throw new Error(parseErrorText(text, res.status));
+          });
+        }
+        return res.json();
+      })
+      .then((data) => {
+        const fetchedModels = mergeCustomModels(
+          provider,
+          sortModelsForDisplay(normalizeFetchedModels(provider, data)),
+        );
+        const selectableModels = sortModelsForDisplay(
+          getSelectableFetchedModels(provider, data, fetchedModels),
+        );
+        const autoCandidates =
+          selectableModels.length > 0 ? selectableModels : fetchedModels;
+
+        // Populate the two datalists with the fetched list
+        const defs = PROVIDER_DEFAULTS[provider];
+
+        // Intelligent ranking auto-selection
+        const bestLite = findBestModel(autoCandidates, "lite", defs.model);
+
+        populateDatalist(
+          modelSelect,
+          document.getElementById("agentModelList"),
+          fetchedModels,
+          bestLite,
+        );
+
+        if (!quiet) {
+          connStatus.className = "status-indicator success";
+          connStatus.innerHTML = `✔ Models Fetched (${fetchedModels.length})`;
+          const keyWarning = getProviderKeyValidationError(provider, key);
+          connStatus.title = `${selectableModels.length} models are eligible for Auto selection. Full provider list is available in the model dropdowns.${keyWarning ? ` ${keyWarning} Chat calls still require a valid key.` : ""}`;
+          showToast(
+            `Fetched ${fetchedModels.length} models. Full list loaded.`,
+          );
+        }
+      })
+      .catch((err) => {
+        applyModelPresets(provider);
+        if (!quiet) {
+          connStatus.className = "status-indicator error";
+          connStatus.innerHTML = `⚠ Presets Loaded`;
+          connStatus.title = `Click to show error trace`;
+
+          connStatus.onclick = () => {
+            alert(
+              `API Fetch Error details:\n\nEndpoint: ${endpoint}\nError message: ${err.message}\n\nFallback presets were loaded. Some providers require a valid key or billing-enabled account to list models.`,
+            );
+          };
+        } else {
+          console.warn("Background model fetch failed:", err);
+        }
+      });
+  }
+
+  fetchModelsBtn.addEventListener("click", () => {
+    fetchModelsForProvider(
+      activeProviderSelect.value,
+      getActiveProviderKey(),
+      false,
+    );
+  });
+
+  // --- Test API Key Connection ---
+  testConnBtn.addEventListener("click", () => {
+    const provider = activeProviderSelect.value;
+    const key = getActiveProviderKey();
+    let baseUrl = PROVIDER_DEFAULTS[provider].url;
+
+    if (provider === "custom") {
+      baseUrl = customUrlInput.value.trim();
+    }
+
+    const keyError = getProviderKeyValidationError(provider, key);
+    if (keyError) {
+      connStatus.className = "status-indicator error";
+      connStatus.innerHTML = `❌ Missing Key`;
+      connStatus.title = keyError;
+      connStatus.style.display = "inline-flex";
+      connStatus.onclick = () =>
+        alert(
+          `${keyError}\n\nModel lists may be public, but chat/completion calls require a valid provider API key.`,
+        );
+      return;
+    }
+
+    connStatus.className = "status-indicator loading";
+    connStatus.innerHTML = `<span class="spinner"></span> Testing connection...`;
+    connStatus.style.display = "inline-flex";
+
+    const { endpoint, headers, body } = getConnectionTestRequest(
+      provider,
+      key,
+      baseUrl,
+      modelSelect.value || PROVIDER_DEFAULTS[provider].model,
+    );
+
+    fetchProxy(endpoint, {
+      method: "POST",
+      headers: headers,
+      body: JSON.stringify(body),
+    })
+      .then((res) => {
+        if (!res.ok) {
+          return res.text().then((text) => {
+            throw new Error(parseErrorText(text, res.status));
+          });
+        }
+        return res.json();
+      })
+      .then(() => {
+        connStatus.className = "status-indicator success";
+        connStatus.innerHTML = `✔ Connected`;
+        connStatus.title = "Gateway verification successful!";
+      })
+      .catch((err) => {
+        connStatus.className = "status-indicator error";
+        connStatus.innerHTML = `❌ Connection Failed`;
+        connStatus.title = `Click to show error trace`;
+
+        connStatus.onclick = () => {
+          alert(
+            `Connection Error details:\n\nEndpoint: ${endpoint}\nError: ${err.message}\n\nCheck endpoint availability, CORS policies, or billing permissions.`,
+          );
+        };
+      });
+  });
+
+  // --- Reset Prompt ---
+  resetPromptBtn.addEventListener("click", () => {
+    systemPromptTextarea.value = DEFAULT_SYSTEM_PROMPT;
+    showToast("System directive prompt reset!");
+  });
+
+  // --- Reset All Settings ---
+  resetAllBtn.addEventListener("click", () => {
+    if (
+      confirm(
+        "Restore all select-to-ai configurations to original factory defaults?",
+      )
+    ) {
+      chrome.storage.sync.remove(STORAGE.SETTINGS, () => {
+        chrome.storage.local.remove(STORAGE.API_KEYS, () => {
+          showToast("All configurations cleared. Reloading...");
+          setTimeout(() => {
+            location.reload();
+          }, 1000);
+        });
+      });
+    }
+  });
+
+  // --- Helper functions ---
+  function showToast(message) {
+    toastMessage.textContent = message;
+    toast.classList.add("show");
+    setTimeout(() => {
+      toast.classList.remove("show");
+    }, 3000);
+  }
+
+  // Parse API response errors, supporting JSON objects, arrays, and standard status text
+  function parseErrorText(text, status) {
+    let errMsg = `HTTP ${status || "Error"}`;
+    if (!text) return errMsg;
+    try {
+      let trimmed = text.trim();
+      if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+        const arr = JSON.parse(trimmed);
+        if (arr && arr[0]) {
+          trimmed =
+            typeof arr[0] === "object"
+              ? JSON.stringify(arr[0])
+              : String(arr[0]);
+        }
+      }
+      const parsed = JSON.parse(trimmed);
+      errMsg =
+        parsed.error?.message || parsed.error || parsed.message || errMsg;
+    } catch (e) {}
+    return errMsg;
+  }
+
+  // --- Onboarding Wizard Logic ---
+  function initOnboardingWizard() {
+    chrome.storage.local.get("onboardingComplete", (res) => {
+      if (res.onboardingComplete === true) {
+        return;
+      }
+
+      // Show wizard overlay
+      const overlay = document.getElementById("onboarding-overlay");
+      if (!overlay) return;
+      overlay.style.display = "flex";
+
+      const steps = overlay.querySelectorAll(".onboarding-step");
+      const nextBtns = overlay.querySelectorAll(".next-step-btn");
+      const prevBtns = overlay.querySelectorAll(".prev-step-btn");
+      const skipBtns = overlay.querySelectorAll(".skip-onboarding-btn");
+      const finishBtn = overlay.querySelector(".finish-onboarding-btn");
+
+      const wizardProvider = document.getElementById("wizardProvider");
+      const wizardApiKey = document.getElementById("wizardApiKey");
+      const wizardKeyLabel = document.getElementById("wizardKeyLabel");
+      const wizardUrlGroup = document.getElementById("wizardUrlGroup");
+      const wizardCustomUrl = document.getElementById("wizardCustomUrl");
+
+      const wizardTestBtn = document.getElementById("wizard-test-btn");
+      const wizardTestStatus = document.getElementById("wizard-test-status");
+      const step3Next = document.getElementById("wizard-step-3-next");
+
+      let currentWizardStep = 1;
+
+      // Sync wizard inputs with current provider default values
+      function syncWizardProvider() {
+        const prov = wizardProvider.value;
+        const defs = PROVIDER_DEFAULTS[prov];
+
+        const keyLinks = {
+          openrouter: "https://openrouter.ai/keys",
+          anthropic: "https://console.anthropic.com/settings/keys",
+          openai: "https://platform.openai.com/api-keys",
+          deepseek: "https://platform.deepseek.com/api_keys",
+          gemini: "https://aistudio.google.com/app/apikey",
+          mistral: "https://console.mistral.ai/api-keys/",
+          groq: "https://console.groq.com/keys",
+          together: "https://api.together.xyz/settings/api-keys",
+          xai: "https://console.x.ai/",
+          opencode: "https://zen.opencode.co",
+        };
+        const link = keyLinks[prov];
+        const linkHtml = link
+          ? ` (<a href="${link}" target="_blank" class="get-key-link" style="margin-left: 0; display: inline;">Get API Key</a>)`
+          : "";
+
+        wizardKeyLabel.innerHTML = `${defs.name} API Key${linkHtml}`;
+        wizardApiKey.placeholder = defs.placeholder;
+        wizardApiKey.value = cachedProviderKeys[prov] || "";
+
+        if (prov === "custom") {
+          wizardUrlGroup.style.display = "block";
+        } else {
+          wizardUrlGroup.style.display = "none";
+        }
+      }
+
+      wizardProvider.addEventListener("change", syncWizardProvider);
+      syncWizardProvider();
+
+      // Next / Prev button event handlers
+      nextBtns.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          if (currentWizardStep === 2) {
+            const prov = wizardProvider.value;
+            cachedProviderKeys[prov] = wizardApiKey.value.trim();
+          }
+          if (currentWizardStep < steps.length) {
+            steps[currentWizardStep - 1].classList.remove("active");
+            currentWizardStep++;
+            steps[currentWizardStep - 1].classList.add("active");
+          }
+        });
+      });
+
+      prevBtns.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          if (currentWizardStep > 1) {
+            steps[currentWizardStep - 1].classList.remove("active");
+            currentWizardStep--;
+            steps[currentWizardStep - 1].classList.add("active");
+          }
+        });
+      });
+
+      // Step 3 Connectivity test
+      wizardTestBtn.addEventListener("click", () => {
+        const prov = wizardProvider.value;
+        const key = wizardApiKey.value.trim();
+        let baseUrl = PROVIDER_DEFAULTS[prov].url;
+        if (prov === "custom") {
+          baseUrl = wizardCustomUrl.value.trim();
+        }
+
+        wizardTestStatus.className = "status-indicator loading";
+        wizardTestStatus.innerHTML = `<span class="spinner"></span> Testing connection...`;
+        wizardTestStatus.style.display = "inline-flex";
+
+        const { endpoint, headers, body } = getConnectionTestRequest(
+          prov,
+          key,
+          baseUrl,
+          PROVIDER_DEFAULTS[prov].model,
+        );
+
+        fetchProxy(endpoint, {
+          method: "POST",
+          headers: headers,
+          body: JSON.stringify(body),
+        })
+          .then((res) => {
+            if (!res.ok) {
+              return res.text().then((text) => {
+                throw new Error(parseErrorText(text, res.status));
+              });
+            }
+            return res.json();
+          })
+          .then(() => {
+            wizardTestStatus.className = "status-indicator success";
+            wizardTestStatus.innerHTML = `✔ Connection Successful`;
+            step3Next.disabled = false;
+
+            // Save credentials to cached keys
+            cachedProviderKeys[prov] = key;
+
+            // Auto-fill main options page fields with verified credentials
+            activeProviderSelect.value = prov;
+            setProviderKey(prov, key);
+            if (prov === "custom") {
+              customUrlInput.value = baseUrl;
+              customUrlGroup.style.display = "flex";
+            } else {
+              customUrlGroup.style.display = "none";
+            }
+            applyModelPresets(prov);
+          })
+          .catch((err) => {
+            wizardTestStatus.className = "status-indicator error";
+            wizardTestStatus.innerHTML = `❌ Connection Failed`;
+            wizardTestStatus.title = "Click to show error details";
+            wizardTestStatus.onclick = () => {
+              alert(`Connection Error:\n\n${err.message}`);
+            };
+          });
+      });
+
+      // End onboarding wizard
+      function finishWizard(success = true) {
+        chrome.storage.local.set({ onboardingComplete: true }, () => {
+          overlay.style.display = "none";
+          if (success) {
+            // Auto-enable agent toggle! (O1)
+            showAgentCheck.checked = true;
+            saveSettings();
+          } else {
+            loadSettings();
+          }
+          showToast("Onboarding setup finished!");
+        });
+      }
+
+      skipBtns.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          finishWizard(false);
+        });
+      });
+
+      finishBtn.addEventListener("click", () => {
+        finishWizard(true);
+      });
+
+      // Onboarding Focus Trap (O3)
+      overlay.addEventListener("keydown", (e) => {
+        if (e.key === "Tab") {
+          const focusableElements = overlay.querySelectorAll(
+            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]',
+          );
+          if (focusableElements.length === 0) return;
+          const firstElement = focusableElements[0];
+          const lastElement = focusableElements[focusableElements.length - 1];
+
+          if (e.shiftKey) {
+            // Shift + Tab
+            if (document.activeElement === firstElement) {
+              lastElement.focus();
+              e.preventDefault();
+            }
+          } else {
+            // Tab
+            if (document.activeElement === lastElement) {
+              firstElement.focus();
+              e.preventDefault();
+            }
+          }
+        }
+      });
+    });
+  }
+
+  // --- Unsaved Changes Warning & Version Display ---
+
+  const registerDirtyListeners = () => {
+    const inputs = document.querySelectorAll("input, select, textarea");
+    inputs.forEach((input) => {
+      input.addEventListener("input", () => {
+        hasUnsavedChanges = true;
+      });
+      input.addEventListener("change", () => {
+        hasUnsavedChanges = true;
+      });
+    });
+  };
+  registerDirtyListeners();
+
+  window.addEventListener("beforeunload", (e) => {
+    if (hasUnsavedChanges) {
+      e.preventDefault();
+      e.returnValue =
+        "You have unsaved changes. Are you sure you want to leave?";
+      return e.returnValue;
+    }
+  });
+
+  const versionSpan = document.getElementById("extension-version");
+  if (versionSpan) {
+    versionSpan.textContent = `v${chrome.runtime.getManifest().version}`;
+  }
+
+  // --- Slider UI updates ---
+  document.getElementById("agentTemperature").addEventListener("input", (e) => {
+    document.getElementById("temp-val").textContent = parseFloat(
+      e.target.value,
+    ).toFixed(2);
+  });
+  document
+    .getElementById("agentElementLimit")
+    .addEventListener("input", (e) => {
+      document.getElementById("el-limit-val").textContent = e.target.value;
+    });
+  document
+    .getElementById("agentHistoryLimit")
+    .addEventListener("input", (e) => {
+      document.getElementById("hist-limit-val").textContent = e.target.value;
+    });
+  document
+    .getElementById("agentFailureThreshold")
+    .addEventListener("input", (e) => {
+      document.getElementById("fail-thresh-val").textContent = e.target.value;
+    });
+
+  // --- Backup & Restore bindings ---
+  const exportBtn = document.getElementById("export-settings-btn");
+  const importBtn = document.getElementById("import-settings-btn");
+  const importFile = document.getElementById("import-settings-file");
+  const rerunWizardBtn = document.getElementById("rerun-wizard-btn");
+
+  if (exportBtn) {
+    exportBtn.addEventListener("click", () => {
+      chrome.storage.sync.get(STORAGE.SETTINGS, (syncItems) => {
+        const configBackup = {
+          version: chrome.runtime.getManifest().version,
+          timestamp: Date.now(),
+          includesSecrets: false,
+          sync: syncItems,
+          local: {},
+        };
+        const blob = new Blob([JSON.stringify(configBackup, null, 2)], {
+          type: "application/json;charset=utf-8;",
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.setAttribute(
+          "download",
+          `select_to_ai_settings_${Date.now()}.json`,
+        );
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        showToast("Settings exported without API keys.");
+      });
+    });
+  }
+
+  if (importBtn) {
+    importBtn.addEventListener("click", () => importFile.click());
+  }
+
+  if (importFile) {
+    importFile.addEventListener("change", (fileEvent) => {
+      const file = fileEvent.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        try {
+          const backup = JSON.parse(e.target.result);
+          if (!backup.sync || typeof backup.sync !== "object") {
+            throw new Error("Invalid backup file structure.");
+          }
+
+          const safeSync = Object.fromEntries(
+            Object.entries(backup.sync).filter(([key]) =>
+              STORAGE.SETTINGS.includes(key),
+            ),
+          );
+          const safeLocal = Object.fromEntries(
+            Object.entries(backup.local || {}).filter(([key]) =>
+              STORAGE.API_KEYS.includes(key),
+            ),
+          );
+
+          chrome.storage.sync.set(safeSync, () => {
+            chrome.storage.local.set(safeLocal, () => {
+              hasUnsavedChanges = false;
+              showToast("Settings imported successfully! Reloading...");
+              setTimeout(() => {
+                location.reload();
+              }, 1000);
+            });
+          });
+        } catch (err) {
+          alert(`Import failed: ${err.message}`);
+        }
+      };
+      reader.readAsText(file);
+    });
+  }
+
+  if (rerunWizardBtn) {
+    rerunWizardBtn.addEventListener("click", () => {
+      if (
+        confirm(
+          "Reset onboarding flag and run wizard setup? (Unsaved settings changes will be discarded)",
+        )
+      ) {
+        chrome.storage.local.set({ onboardingComplete: false }, () => {
+          hasUnsavedChanges = false;
+          location.reload();
+        });
+      }
+    });
+  }
+
+  // --- System Prompt Templates Library ---
+  function updatePromptLibraryUI(library) {
+    const select = document.getElementById("promptLibrarySelect");
+    if (!select) return;
+    select.innerHTML = '<option value="">-- Select Template --</option>';
+    library.forEach((item, idx) => {
+      const opt = document.createElement("option");
+      opt.value = idx;
+      opt.textContent = item.name;
+      select.appendChild(opt);
+    });
+  }
+
+  chrome.storage.sync.get("promptLibrary", (res) => {
+    const library = res.promptLibrary || [];
+    updatePromptLibraryUI(library);
+  });
+
+  const loadTemplateBtn = document.getElementById("load-template-btn");
+  const deleteTemplateBtn = document.getElementById("delete-template-btn");
+  const saveTemplateBtn = document.getElementById("save-template-btn");
+  const newTemplateNameInput = document.getElementById("newTemplateName");
+
+  if (loadTemplateBtn) {
+    loadTemplateBtn.addEventListener("click", () => {
+      const select = document.getElementById("promptLibrarySelect");
+      const idx = select.value;
+      if (idx === "") {
+        alert("Please select a template to load.");
+        return;
+      }
+      chrome.storage.sync.get("promptLibrary", (res) => {
+        const library = res.promptLibrary || [];
+        const item = library[idx];
+        if (item) {
+          systemPromptTextarea.value = item.prompt;
+          hasUnsavedChanges = true;
+          showToast(`Loaded template: ${item.name}`);
+        }
+      });
+    });
+  }
+
+  if (saveTemplateBtn) {
+    saveTemplateBtn.addEventListener("click", () => {
+      const name = newTemplateNameInput.value.trim();
+      const prompt = systemPromptTextarea.value;
+
+      if (!name) {
+        alert("Please enter a name for the template.");
+        return;
+      }
+
+      chrome.storage.sync.get("promptLibrary", (res) => {
+        const library = res.promptLibrary || [];
+        library.push({ name, prompt });
+        chrome.storage.sync.set({ promptLibrary: library }, () => {
+          updatePromptLibraryUI(library);
+          newTemplateNameInput.value = "";
+          showToast(`Saved template "${name}" to library.`);
+        });
+      });
+    });
+  }
+
+  if (deleteTemplateBtn) {
+    deleteTemplateBtn.addEventListener("click", () => {
+      const select = document.getElementById("promptLibrarySelect");
+      const idx = select.value;
+      if (idx === "") {
+        alert("Please select a template to delete.");
+        return;
+      }
+      if (confirm("Are you sure you want to delete this template?")) {
+        chrome.storage.sync.get("promptLibrary", (res) => {
+          const library = res.promptLibrary || [];
+          library.splice(idx, 1);
+          chrome.storage.sync.set({ promptLibrary: library }, () => {
+            updatePromptLibraryUI(library);
+            showToast("Template deleted.");
+          });
+        });
+      }
+    });
+  }
+
+  // --- Init ---
+  loadSettings();
+  initOnboardingWizard();
+});
