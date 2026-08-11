@@ -4,7 +4,7 @@
 [![Chrome MV3](https://img.shields.io/badge/Chrome-Manifest%20V3-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A privacy-first Chrome extension for moving selected text into ChatGPT, Gemini, Claude, or Perplexity—and for running bounded browser-agent workflows with your own model provider.
+A privacy-first Chrome extension for moving selected text into ChatGPT, Gemini, Claude, or Perplexity, and for running bounded browser-agent workflows with your own model provider.
 
 ![Select to AI context-menu action for sending selected text to ChatGPT](assets/select-to-ai-overview.png)
 
@@ -87,12 +87,12 @@ The benchmark covers approved endpoints, look-alike domains, exfiltration target
 
 ## Repository guide
 
-- `extension/` — the complete build-free Manifest V3 package loaded by Chrome.
-- `tests/unit/` — dependency-free policy and storage regression tests.
-- `tests/benchmark/` — deterministic adversarial request-policy evaluation.
-- `scripts/` — repository validation tooling.
-- `docs/` — architecture and security design documentation.
-- [`docs/provenance.md`](docs/provenance.md) — project origin, attribution, and Arnav Goel's contribution.
+- `extension/`: the complete build-free Manifest V3 package loaded by Chrome.
+- `tests/unit/`: dependency-free policy and storage regression tests.
+- `tests/benchmark/`: deterministic adversarial request-policy evaluation.
+- `scripts/`: repository validation tooling.
+- `docs/`: architecture and security design documentation.
+- [`docs/provenance.md`](docs/provenance.md): project origin, attribution, and Arnav Goel's contribution.
 
 ## Contributing
 

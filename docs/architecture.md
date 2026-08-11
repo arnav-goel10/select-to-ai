@@ -21,7 +21,7 @@ Select to AI is a build-free Chrome Manifest V3 extension. Its trust boundaries 
 4. `extension/security.js` checks the exact destination origin, HTTP method, request-body type, and size.
 5. The service worker sends the request with ambient credentials omitted and streams the result back.
 
-This design prevents a compromised content script—or an injected message containing a look-alike URL—from using API credentials as an arbitrary exfiltration primitive.
+This design prevents a compromised content script (or an injected message containing a look-alike URL) from using API credentials as an arbitrary exfiltration primitive.
 
 ## Browser automation lifecycle
 
