@@ -18,14 +18,18 @@ document.addEventListener("DOMContentLoaded", () => {
   const SHARED = SELECT_TO_AI_DEFAULTS;
   const AGENT_DEFAULTS = SHARED.AGENT_DEFAULTS;
 
-  // Helper to proxy fetch requests to background script to bypass CORS
-  function fetchProxy(url, options = {}) {
+  // Helper to proxy fetch requests to background script to bypass CORS.
+  // `candidateCustomUrl` lets the options page test a TYPED (not yet saved)
+  // custom-gateway URL: the background validates that candidate through the
+  // same origin rules and accepts it for this single request only.
+  function fetchProxy(url, options = {}, candidateCustomUrl = null) {
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(
         {
           action: "fetchProxy",
           url: url,
           options: options,
+          ...(candidateCustomUrl ? { candidateCustomUrl } : {}),
         },
         (response) => {
           if (chrome.runtime.lastError) {
@@ -146,43 +150,6 @@ document.addEventListener("DOMContentLoaded", () => {
   let previousProvider = "openrouter";
   let hasUnsavedChanges = false;
 
-  function readCustomModelsByProvider() {
-    try {
-      return JSON.parse(
-        customModelsTextarea?.dataset.customModelsByProvider || "{}",
-      );
-    } catch (e) {
-      return {};
-    }
-  }
-
-  function parseCustomModelText(text) {
-    return [
-      ...new Set(
-        String(text || "")
-          .split(/[\n,]+/)
-          .map((model) => model.trim())
-          .filter(Boolean),
-      ),
-    ];
-  }
-
-  function getCustomModelsForProvider(provider) {
-    const allCustomModels = readCustomModelsByProvider();
-    return allCustomModels[provider] || [];
-  }
-
-  function mergeCustomModels(provider, models) {
-    return [
-      ...new Set(
-        [
-          ...(getCustomModelsForProvider(provider) || []),
-          ...(models || []),
-        ].filter(Boolean),
-      ),
-    ];
-  }
-
   function normalizeModelId(model) {
     return String(model || "")
       .replace(/^models\//, "")
@@ -289,7 +256,12 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  function populateDatalist(inputElement, datalistElement, list, defaultValue) {
+  /**
+   * Refills the datalist suggestions. The input value is only touched when
+   * `fallbackValue` is provided AND the input is currently empty — a fetch
+   * must never overwrite the user's chosen model.
+   */
+  function populateDatalist(inputElement, datalistElement, list, fallbackValue) {
     if (datalistElement) {
       while (datalistElement.firstChild)
         datalistElement.removeChild(datalistElement.firstChild);
@@ -299,21 +271,28 @@ document.addEventListener("DOMContentLoaded", () => {
         datalistElement.appendChild(opt);
       });
     }
-    if (inputElement) inputElement.value = defaultValue || "";
+    if (inputElement && fallbackValue && !inputElement.value.trim()) {
+      inputElement.value = fallbackValue;
+    }
   }
 
-  function applyModelPresets(provider, selectedModel = null) {
+  /**
+   * Loads the provider's preset model suggestions into the datalist.
+   * `replaceValue: true` (provider switch) swaps the input to the provider's
+   * default model; otherwise the typed value is preserved.
+   */
+  function applyModelPresets(provider, { replaceValue = false } = {}) {
     const defs = PROVIDER_DEFAULTS[provider];
     const presets = SHARED.MODEL_PRESETS;
-    const list = mergeCustomModels(
-      provider,
-      presets[provider] || presets.openrouter,
-    );
+    const list = [...(presets[provider] || presets.openrouter)];
+    if (replaceValue && modelSelect) {
+      modelSelect.value = defs?.model || "";
+    }
     populateDatalist(
       modelSelect,
       document.getElementById("agentModelList"),
       list,
-      selectedModel || defs?.model || "",
+      defs?.model || "",
     );
   }
 
@@ -531,11 +510,20 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // --- Theme Switcher ---
+  function updateThemeToggleLabel(theme) {
+    if (!themeToggleBtn) return;
+    themeToggleBtn.setAttribute(
+      "aria-label",
+      theme === "dark" ? "Switch to light theme" : "Switch to dark theme",
+    );
+  }
+
   if (themeToggleBtn) {
     themeToggleBtn.addEventListener("click", () => {
       const currentTheme = document.documentElement.getAttribute("data-theme");
       const newTheme = currentTheme === "dark" ? "light" : "dark";
       document.documentElement.setAttribute("data-theme", newTheme);
+      updateThemeToggleLabel(newTheme);
       chrome.storage.sync.set({ theme: newTheme });
     });
   }
@@ -571,14 +559,11 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // --- Provider Selection Swap ---
+  // Shows only the active provider's key field and swaps the model input to
+  // that provider's default plus its preset suggestions.
   activeProviderSelect.addEventListener("change", () => {
     const provider = activeProviderSelect.value;
-    const defs = PROVIDER_DEFAULTS[provider];
-    if (defs) {
-      modelSelect.value = defs.model || "";
-      document.getElementById("agentOpenRouterKey").placeholder =
-        defs.placeholder;
-    }
+    applyModelPresets(provider, { replaceValue: true });
     document.querySelectorAll(".provider-key-group").forEach((group) => {
       group.style.display = group.id === "group-" + provider ? "flex" : "none";
     });
@@ -700,6 +685,7 @@ document.addEventListener("DOMContentLoaded", () => {
           ? "dark"
           : "light");
       document.documentElement.setAttribute("data-theme", theme);
+      updateThemeToggleLabel(theme);
 
       const activeProvider =
         items.agentActiveProvider || AGENT_DEFAULTS.activeProvider;
@@ -742,6 +728,8 @@ document.addEventListener("DOMContentLoaded", () => {
       if (defs) {
         modelSelect.value = items.agentModel || defs.model || "";
       }
+      // Seed the datalist with the provider's presets (value preserved).
+      applyModelPresets(activeProvider);
 
       // Fallbacks mirror the shared runtime defaults so the UI shows what
       // the agent actually runs with when a setting was never saved.
@@ -898,25 +886,78 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   saveAllBtn.addEventListener("click", saveSettings);
 
+  // --- Custom-gateway helpers (typed URL must be testable BEFORE saving) ---
+
+  const STATUS_ICONS = {
+    success:
+      '<span class="icon" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>',
+    error:
+      '<span class="icon" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>',
+    warning:
+      '<span class="icon" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>',
+  };
+
+  /**
+   * Prepares a typed custom-gateway URL for a one-off test request:
+   * validates it through the shared security policy (HTTPS or loopback) and
+   * requests the optional host permission Chrome needs for the fetch.
+   * Calls done(candidateUrl) on success, done(null, errorMessage) otherwise.
+   * Real agent traffic still uses only the SAVED gateway URL.
+   */
+  function prepareCustomGatewayCandidate(typedUrl, done) {
+    const origin = SELECT_TO_AI_SECURITY.customOrigin(typedUrl);
+    if (!origin) {
+      done(
+        null,
+        "Custom gateways must use HTTPS or a loopback address (localhost / 127.0.0.1).",
+      );
+      return;
+    }
+    chrome.permissions.request({ origins: [`${origin}/*`] }, (granted) => {
+      if (chrome.runtime.lastError || !granted) {
+        done(null, `Access to ${origin} was not granted.`);
+        return;
+      }
+      done(typedUrl);
+    });
+  }
+
+  function setConnStatus(state, label, title = "") {
+    connStatus.className = `status-indicator ${state}`;
+    if (state === "loading") {
+      connStatus.innerHTML = `<span class="spinner"></span> ${escapeHtmlText(label)}`;
+    } else {
+      connStatus.innerHTML = `${STATUS_ICONS[state] || ""} ${escapeHtmlText(label)}`;
+    }
+    connStatus.title = title;
+    connStatus.style.display = "inline-flex";
+    connStatus.onclick = null;
+  }
+
+  function escapeHtmlText(text) {
+    return String(text ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
   // --- Fetch Models Dynamically ---
-  function fetchModelsForProvider(provider, key, quiet = false) {
+  function fetchModelsForProvider(provider, key, candidateCustomUrl = null) {
     let baseUrl = PROVIDER_DEFAULTS[provider].url;
     if (provider === "custom") {
-      baseUrl = customUrlInput.value.trim();
+      baseUrl = candidateCustomUrl || customUrlInput.value.trim();
     }
 
-    if (!quiet) {
-      connStatus.className = "status-indicator loading";
-      connStatus.innerHTML = `<span class="spinner"></span> Querying API...`;
-      connStatus.style.display = "inline-flex";
-    }
+    setConnStatus("loading", "Querying API...");
 
     const { endpoint, headers } = getModelFetchRequest(provider, key, baseUrl);
 
-    return fetchProxy(endpoint, {
-      method: "GET",
-      headers: headers,
-    })
+    return fetchProxy(
+      endpoint,
+      { method: "GET", headers: headers },
+      provider === "custom" ? baseUrl : null,
+    )
       .then((res) => {
         if (!res.ok) {
           return res.text().then((text) => {
@@ -926,20 +967,18 @@ document.addEventListener("DOMContentLoaded", () => {
         return res.json();
       })
       .then((data) => {
-        const fetchedModels = mergeCustomModels(
-          provider,
-          sortModelsForDisplay(normalizeFetchedModels(provider, data)),
+        const fetchedModels = sortModelsForDisplay(
+          normalizeFetchedModels(provider, data),
         );
         const selectableModels = sortModelsForDisplay(
           getSelectableFetchedModels(provider, data, fetchedModels),
         );
         const autoCandidates =
           selectableModels.length > 0 ? selectableModels : fetchedModels;
-
-        // Populate the two datalists with the fetched list
         const defs = PROVIDER_DEFAULTS[provider];
 
-        // Intelligent ranking auto-selection
+        // Ranked suggestion used only when the model input is EMPTY. A fetch
+        // never overwrites the user's chosen model.
         const bestLite = findBestModel(autoCandidates, "lite", defs.model);
 
         populateDatalist(
@@ -949,68 +988,55 @@ document.addEventListener("DOMContentLoaded", () => {
           bestLite,
         );
 
-        if (!quiet) {
-          connStatus.className = "status-indicator success";
-          connStatus.innerHTML = `✔ Models Fetched (${fetchedModels.length})`;
-          const keyWarning = getProviderKeyValidationError(provider, key);
-          connStatus.title = `${selectableModels.length} models are eligible for Auto selection. Full provider list is available in the model dropdowns.${keyWarning ? ` ${keyWarning} Chat calls still require a valid key.` : ""}`;
-          showToast(
-            `Fetched ${fetchedModels.length} models. Full list loaded.`,
-          );
-        }
+        const keyWarning = getProviderKeyValidationError(provider, key);
+        setConnStatus(
+          "success",
+          `Models Fetched (${fetchedModels.length})`,
+          `The full provider list is now available as typing suggestions in the model field.${keyWarning ? ` ${keyWarning} Chat calls still require a valid key.` : ""}`,
+        );
+        showToast(
+          `Fetched ${fetchedModels.length} models into the suggestion list.`,
+        );
       })
       .catch((err) => {
         applyModelPresets(provider);
-        if (!quiet) {
-          connStatus.className = "status-indicator error";
-          connStatus.innerHTML = `⚠ Presets Loaded`;
-          connStatus.title = `Click to show error trace`;
-
-          connStatus.onclick = () => {
-            alert(
-              `API Fetch Error details:\n\nEndpoint: ${endpoint}\nError message: ${err.message}\n\nFallback presets were loaded. Some providers require a valid key or billing-enabled account to list models.`,
-            );
-          };
-        } else {
-          console.warn("Background model fetch failed:", err);
-        }
+        setConnStatus(
+          "error",
+          "Presets Loaded",
+          "Click to show error details",
+        );
+        connStatus.onclick = () => {
+          showErrorDetails(
+            "Model fetch failed",
+            `Endpoint: ${endpoint}\nError: ${err.message}\n\nFallback preset suggestions were loaded instead. Some providers require a valid key or billing-enabled account to list models.`,
+          );
+        };
       });
   }
 
   fetchModelsBtn.addEventListener("click", () => {
-    fetchModelsForProvider(
-      activeProviderSelect.value,
-      getActiveProviderKey(),
-      false,
-    );
+    const provider = activeProviderSelect.value;
+    const key = getActiveProviderKey();
+    if (provider === "custom") {
+      prepareCustomGatewayCandidate(
+        customUrlInput.value.trim(),
+        (candidateUrl, errorMessage) => {
+          if (!candidateUrl) {
+            setConnStatus("error", "Invalid Gateway URL", errorMessage);
+            showToast(errorMessage, true);
+            return;
+          }
+          fetchModelsForProvider(provider, key, candidateUrl);
+        },
+      );
+      return;
+    }
+    fetchModelsForProvider(provider, key);
   });
 
   // --- Test API Key Connection ---
-  testConnBtn.addEventListener("click", () => {
-    const provider = activeProviderSelect.value;
-    const key = getActiveProviderKey();
-    let baseUrl = PROVIDER_DEFAULTS[provider].url;
-
-    if (provider === "custom") {
-      baseUrl = customUrlInput.value.trim();
-    }
-
-    const keyError = getProviderKeyValidationError(provider, key);
-    if (keyError) {
-      connStatus.className = "status-indicator error";
-      connStatus.innerHTML = `❌ Missing Key`;
-      connStatus.title = keyError;
-      connStatus.style.display = "inline-flex";
-      connStatus.onclick = () =>
-        alert(
-          `${keyError}\n\nModel lists may be public, but chat/completion calls require a valid provider API key.`,
-        );
-      return;
-    }
-
-    connStatus.className = "status-indicator loading";
-    connStatus.innerHTML = `<span class="spinner"></span> Testing connection...`;
-    connStatus.style.display = "inline-flex";
+  function runConnectionTest(provider, key, baseUrl) {
+    setConnStatus("loading", "Testing connection...");
 
     const { endpoint, headers, body } = getConnectionTestRequest(
       provider,
@@ -1019,11 +1045,11 @@ document.addEventListener("DOMContentLoaded", () => {
       modelSelect.value || PROVIDER_DEFAULTS[provider].model,
     );
 
-    fetchProxy(endpoint, {
-      method: "POST",
-      headers: headers,
-      body: JSON.stringify(body),
-    })
+    fetchProxy(
+      endpoint,
+      { method: "POST", headers: headers, body: JSON.stringify(body) },
+      provider === "custom" ? baseUrl : null,
+    )
       .then((res) => {
         if (!res.ok) {
           return res.text().then((text) => {
@@ -1033,21 +1059,52 @@ document.addEventListener("DOMContentLoaded", () => {
         return res.json();
       })
       .then(() => {
-        connStatus.className = "status-indicator success";
-        connStatus.innerHTML = `✔ Connected`;
-        connStatus.title = "Gateway verification successful!";
+        setConnStatus("success", "Connected", "Gateway verification successful!");
       })
       .catch((err) => {
-        connStatus.className = "status-indicator error";
-        connStatus.innerHTML = `❌ Connection Failed`;
-        connStatus.title = `Click to show error trace`;
-
+        setConnStatus("error", "Connection Failed", "Click to show error details");
         connStatus.onclick = () => {
-          alert(
-            `Connection Error details:\n\nEndpoint: ${endpoint}\nError: ${err.message}\n\nCheck endpoint availability, CORS policies, or billing permissions.`,
+          showErrorDetails(
+            "Connection test failed",
+            `Endpoint: ${endpoint}\nError: ${err.message}\n\nCheck endpoint availability, CORS policies, or billing permissions.`,
           );
         };
       });
+  }
+
+  testConnBtn.addEventListener("click", () => {
+    const provider = activeProviderSelect.value;
+    const key = getActiveProviderKey();
+
+    const keyError = getProviderKeyValidationError(provider, key);
+    if (keyError) {
+      setConnStatus("error", "Missing Key", keyError);
+      connStatus.onclick = () =>
+        showErrorDetails(
+          "API key problem",
+          `${keyError}\n\nModel lists may be public, but chat/completion calls require a valid provider API key.`,
+        );
+      return;
+    }
+
+    if (provider === "custom") {
+      // The TYPED gateway URL is tested (not the saved one): the background
+      // accepts the candidate origin exclusively for this single request.
+      prepareCustomGatewayCandidate(
+        customUrlInput.value.trim(),
+        (candidateUrl, errorMessage) => {
+          if (!candidateUrl) {
+            setConnStatus("error", "Invalid Gateway URL", errorMessage);
+            showToast(errorMessage, true);
+            return;
+          }
+          runConnectionTest(provider, key, candidateUrl);
+        },
+      );
+      return;
+    }
+
+    runConnectionTest(provider, key, PROVIDER_DEFAULTS[provider].url);
   });
 
   // --- Reset Prompt ---
@@ -1075,12 +1132,36 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // --- Helper functions ---
-  function showToast(message) {
+  let toastTimer = null;
+  function showToast(message, isError = false) {
     toastMessage.textContent = message;
+    toast.classList.toggle("toast-error", isError);
     toast.classList.add("show");
-    setTimeout(() => {
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
       toast.classList.remove("show");
-    }, 3000);
+    }, isError ? 4500 : 3000);
+  }
+
+  // Error-details expander: the non-blocking replacement for alert().
+  const errorDetailsCard = document.getElementById("error-details");
+  const errorDetailsTitle = document.getElementById("error-details-title");
+  const errorDetailsBody = document.getElementById("error-details-body");
+  const errorDetailsClose = document.getElementById("error-details-close");
+
+  function showErrorDetails(title, details) {
+    if (!errorDetailsCard) return;
+    errorDetailsTitle.textContent = title;
+    errorDetailsBody.textContent = details;
+    errorDetailsCard.classList.remove("u-hidden");
+  }
+
+  function hideErrorDetails() {
+    if (errorDetailsCard) errorDetailsCard.classList.add("u-hidden");
+  }
+
+  if (errorDetailsClose) {
+    errorDetailsClose.addEventListener("click", hideErrorDetails);
   }
 
   // Parse API response errors, supporting JSON objects, arrays, and standard status text
@@ -1197,17 +1278,11 @@ document.addEventListener("DOMContentLoaded", () => {
       });
 
       // Step 3 Connectivity test
-      wizardTestBtn.addEventListener("click", () => {
-        const prov = wizardProvider.value;
-        const key = wizardApiKey.value.trim();
-        let baseUrl = PROVIDER_DEFAULTS[prov].url;
-        if (prov === "custom") {
-          baseUrl = wizardCustomUrl.value.trim();
-        }
-
+      function runWizardTest(prov, key, baseUrl) {
         wizardTestStatus.className = "status-indicator loading";
         wizardTestStatus.innerHTML = `<span class="spinner"></span> Testing connection...`;
         wizardTestStatus.style.display = "inline-flex";
+        wizardTestStatus.onclick = null;
 
         const { endpoint, headers, body } = getConnectionTestRequest(
           prov,
@@ -1216,11 +1291,11 @@ document.addEventListener("DOMContentLoaded", () => {
           PROVIDER_DEFAULTS[prov].model,
         );
 
-        fetchProxy(endpoint, {
-          method: "POST",
-          headers: headers,
-          body: JSON.stringify(body),
-        })
+        fetchProxy(
+          endpoint,
+          { method: "POST", headers: headers, body: JSON.stringify(body) },
+          prov === "custom" ? baseUrl : null,
+        )
           .then((res) => {
             if (!res.ok) {
               return res.text().then((text) => {
@@ -1231,7 +1306,7 @@ document.addEventListener("DOMContentLoaded", () => {
           })
           .then(() => {
             wizardTestStatus.className = "status-indicator success";
-            wizardTestStatus.innerHTML = `✔ Connection Successful`;
+            wizardTestStatus.innerHTML = `${STATUS_ICONS.success} Connection Successful`;
             step3Next.disabled = false;
 
             // Save credentials to cached keys
@@ -1240,22 +1315,50 @@ document.addEventListener("DOMContentLoaded", () => {
             // Auto-fill main options page fields with verified credentials
             activeProviderSelect.value = prov;
             setProviderKey(prov, key);
+            document.querySelectorAll(".provider-key-group").forEach((group) => {
+              group.style.display =
+                group.id === "group-" + prov ? "flex" : "none";
+            });
             if (prov === "custom") {
               customUrlInput.value = baseUrl;
-              customUrlGroup.style.display = "flex";
+              customUrlGroup.style.display = "block";
             } else {
               customUrlGroup.style.display = "none";
             }
-            applyModelPresets(prov);
+            applyModelPresets(prov, { replaceValue: true });
           })
           .catch((err) => {
             wizardTestStatus.className = "status-indicator error";
-            wizardTestStatus.innerHTML = `❌ Connection Failed`;
+            wizardTestStatus.innerHTML = `${STATUS_ICONS.error} Connection Failed`;
             wizardTestStatus.title = "Click to show error details";
             wizardTestStatus.onclick = () => {
-              alert(`Connection Error:\n\n${err.message}`);
+              showErrorDetails("Wizard connection test failed", err.message);
             };
           });
+      }
+
+      wizardTestBtn.addEventListener("click", () => {
+        const prov = wizardProvider.value;
+        const key = wizardApiKey.value.trim();
+
+        if (prov === "custom") {
+          prepareCustomGatewayCandidate(
+            wizardCustomUrl.value.trim(),
+            (candidateUrl, errorMessage) => {
+              if (!candidateUrl) {
+                wizardTestStatus.className = "status-indicator error";
+                wizardTestStatus.innerHTML = `${STATUS_ICONS.error} Invalid Gateway URL`;
+                wizardTestStatus.title = errorMessage;
+                wizardTestStatus.style.display = "inline-flex";
+                return;
+              }
+              runWizardTest(prov, key, candidateUrl);
+            },
+          );
+          return;
+        }
+
+        runWizardTest(prov, key, PROVIDER_DEFAULTS[prov].url);
       });
 
       // End onboarding wizard
@@ -1435,7 +1538,8 @@ document.addEventListener("DOMContentLoaded", () => {
             });
           });
         } catch (err) {
-          alert(`Import failed: ${err.message}`);
+          showToast("Import failed — see details.", true);
+          showErrorDetails("Settings import failed", err.message);
         }
       };
       reader.readAsText(file);
@@ -1485,7 +1589,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const select = document.getElementById("promptLibrarySelect");
       const idx = select.value;
       if (idx === "") {
-        alert("Please select a template to load.");
+        showToast("Select a template to load first.", true);
         return;
       }
       chrome.storage.sync.get("promptLibrary", (res) => {
@@ -1506,7 +1610,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const prompt = systemPromptTextarea.value;
 
       if (!name) {
-        alert("Please enter a name for the template.");
+        showToast("Enter a name for the template first.", true);
         return;
       }
 
@@ -1527,7 +1631,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const select = document.getElementById("promptLibrarySelect");
       const idx = select.value;
       if (idx === "") {
-        alert("Please select a template to delete.");
+        showToast("Select a template to delete first.", true);
         return;
       }
       if (confirm("Are you sure you want to delete this template?")) {

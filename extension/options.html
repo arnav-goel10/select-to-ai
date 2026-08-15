@@ -4,68 +4,28 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Select to AI Settings</title>
+    <link rel="stylesheet" href="tokens.css" />
     <style>
-      :root {
-        --text-color: #333;
-        --bg-color: #ffffff;
-        --border-color: #e4e4e4;
-        --hover-bg: #f9f9f9;
-        --input-bg: #f9f9f9;
-        --input-border: #ddd;
-        --accent-color: #007aff;
-        --accent-hover: #0056b3;
-        --accent-glow: rgba(0, 122, 255, 0.15);
-        --card-bg: #ffffff;
-        --danger-color: #ff3b30;
-        --success-color: #34c759;
-        --warning-color: #ff9500;
-      }
-
-      [data-theme="dark"] {
-        --text-color: #eeeeee;
-        --bg-color: #1c1c1e;
-        --border-color: #3a3a3c;
-        --hover-bg: #2c2c2e;
-        --input-bg: #2c2c2e;
-        --input-border: #48484a;
-        --accent-color: #0a84ff;
-        --accent-hover: #479dff;
-        --accent-glow: rgba(10, 132, 255, 0.25);
-        --card-bg: #222222;
-        --danger-color: #ff453a;
-        --success-color: #30d158;
-        --warning-color: #ff9f0a;
-      }
-
       * {
         box-sizing: border-box;
         margin: 0;
         padding: 0;
-        font-family:
-          "Outfit",
-          -apple-system,
-          BlinkMacSystemFont,
-          "Segoe UI",
-          Roboto,
-          sans-serif;
+        font-family: var(--font-sans);
       }
 
       body {
-        background-color: var(--bg-color);
-        color: var(--text-color);
+        background-color: var(--bg);
+        color: var(--text);
         height: 100vh;
         width: 100vw;
         display: flex;
         overflow: hidden;
-        transition:
-          background-color 0.3s ease,
-          color 0.3s ease;
       }
 
       .settings-card {
         width: 100vw;
         height: 100vh;
-        background-color: var(--card-bg);
+        background-color: var(--bg);
         display: flex;
         flex-direction: column;
         overflow: hidden;
@@ -76,8 +36,8 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 20px 24px;
-        border-bottom: 1px solid var(--border-color);
+        padding: var(--space-5) var(--space-6);
+        border-bottom: 1px solid var(--border);
       }
 
       header h1 {
@@ -85,11 +45,11 @@
         font-weight: 600;
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: var(--space-2);
       }
 
       header h1 span {
-        color: var(--accent-color);
+        color: var(--accent);
       }
 
       /* Sun/Moon Toggle Styles */
@@ -98,7 +58,7 @@
         border: none;
         cursor: pointer;
         padding: 0;
-        color: var(--text-color);
+        color: var(--text);
         line-height: 0;
       }
 
@@ -107,22 +67,22 @@
       }
 
       .sun-and-moon > :is(.moon, .sun) {
-        fill: var(--text-color);
+        fill: var(--text);
       }
 
       .theme-toggle:is(:hover, :focus-visible)
         > .sun-and-moon
         > :is(.moon, .sun) {
-        fill: var(--accent-color);
+        fill: var(--accent);
       }
 
       .sun-and-moon > .sun-beams {
-        stroke: var(--text-color);
+        stroke: var(--text);
         stroke-width: 2px;
       }
 
       .theme-toggle:is(:hover, :focus-visible) .sun-and-moon > .sun-beams {
-        stroke: var(--accent-color);
+        stroke: var(--accent);
       }
 
       [data-theme="dark"] .sun-and-moon > .sun {
@@ -164,22 +124,6 @@
         }
       }
 
-      [data-theme="dark"] .sun-and-moon > .sun {
-        transform: scale(1.75);
-        transition-timing-function: cubic-bezier(0.25, 0, 0.3, 1);
-        transition-duration: 0.25s;
-      }
-
-      [data-theme="dark"] .sun-and-moon > .sun-beams {
-        transform: rotateZ(-25deg);
-        transition-duration: 0.15s;
-      }
-
-      [data-theme="dark"] .sun-and-moon > .moon > circle {
-        transition-delay: 0.25s;
-        transition-duration: 0.5s;
-      }
-
       /* Layout Body */
       .settings-body {
         display: flex;
@@ -190,23 +134,23 @@
       /* Sidebar Navigation */
       .sidebar {
         width: 240px;
-        border-right: 1px solid var(--border-color);
-        padding: 16px;
+        border-right: 1px solid var(--border);
+        padding: var(--space-4);
         display: flex;
         flex-direction: column;
         gap: 6px;
-        background-color: var(--hover-bg);
+        background-color: var(--surface);
       }
 
       .nav-item {
         display: flex;
         align-items: center;
         gap: 10px;
-        padding: 12px;
-        border-radius: 8px;
+        padding: var(--space-3);
+        border-radius: var(--radius-md);
         font-size: 14px;
         font-weight: 500;
-        color: var(--text-color);
+        color: var(--text);
         cursor: pointer;
         transition:
           background 0.2s,
@@ -218,12 +162,12 @@
       }
 
       .nav-item:hover {
-        background-color: var(--border-color);
+        background-color: var(--surface-2);
       }
 
       .nav-item.active {
-        background-color: var(--accent-color);
-        color: #ffffff;
+        background-color: var(--accent);
+        color: var(--accent-contrast);
       }
 
       .content-area {
@@ -235,7 +179,7 @@
       .panel {
         display: none;
         flex-direction: column;
-        gap: 24px;
+        gap: var(--space-6);
         animation: fadeIn 0.25s ease-out;
       }
 
@@ -255,7 +199,7 @@
       }
 
       .panel-header {
-        margin-bottom: 8px;
+        margin-bottom: var(--space-2);
       }
 
       .panel-title {
@@ -266,28 +210,49 @@
 
       .panel-description {
         font-size: 13.5px;
-        color: var(--text-color);
-        opacity: 0.8;
+        color: var(--text-muted);
         line-height: 1.4;
+      }
+
+      /* Welcome banner */
+      .welcome-banner {
+        background: var(--accent-glow);
+        border-left: 4px solid var(--accent);
+        padding: var(--space-4);
+        border-radius: var(--radius-md);
+        display: flex;
+        align-items: flex-start;
+        gap: var(--space-3);
+      }
+
+      .welcome-banner .icon {
+        color: var(--accent);
+        margin-top: 1px;
+      }
+
+      .welcome-banner-title {
+        font-weight: 600;
+        font-size: 14px;
+        margin-bottom: var(--space-1);
       }
 
       /* Form elements */
       .section-card {
-        border: 1px solid var(--border-color);
-        border-radius: 10px;
-        padding: 20px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: var(--space-5);
         display: flex;
         flex-direction: column;
-        gap: 16px;
-        background-color: var(--card-bg);
+        gap: var(--space-4);
+        background-color: var(--bg);
       }
 
       .section-card-title {
         font-size: 15px;
         font-weight: 600;
-        border-bottom: 1px solid var(--border-color);
-        padding-bottom: 8px;
-        margin-bottom: 4px;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: var(--space-2);
+        margin-bottom: var(--space-1);
         display: flex;
         align-items: center;
         gap: 6px;
@@ -297,7 +262,7 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 20px;
+        gap: var(--space-5);
       }
 
       .option-info {
@@ -307,6 +272,12 @@
         gap: 6px;
       }
 
+      .option-info.stacked {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+      }
+
       .option-label {
         font-size: 14px;
         font-weight: 500;
@@ -314,11 +285,11 @@
 
       .option-desc {
         font-size: 12px;
-        opacity: 0.7;
+        color: var(--text-muted);
         line-height: 1.3;
       }
 
-      /* Toggles (matches popup exactly) */
+      /* Toggles (shared with popup) */
       .toggle-switch {
         position: relative;
         display: inline-block;
@@ -340,7 +311,7 @@
         left: 0;
         right: 0;
         bottom: 0;
-        background-color: #e4e4e4;
+        background-color: var(--surface-2);
         transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         border-radius: 34px;
       }
@@ -352,39 +323,33 @@
         width: 20px;
         left: 2px;
         bottom: 2px;
-        background-color: white;
+        background-color: var(--bg);
         transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         border-radius: 50%;
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
       }
 
       input:checked + .slider {
-        background-color: var(--accent-color);
+        background-color: var(--accent);
       }
 
       input:checked + .slider:before {
+        background-color: #ffffff;
         transform: translateX(20px);
-      }
-
-      [data-theme="dark"] .slider {
-        background-color: #444;
-      }
-
-      [data-theme="dark"] .slider:before {
-        background-color: #eee;
       }
 
       /* Dropdown & Inputs styling */
       select,
       input[type="text"],
       input[type="password"],
+      input[type="number"],
       textarea {
         width: 100%;
         padding: 10px 12px;
-        border-radius: 6px;
-        border: 1px solid var(--input-border);
-        background-color: var(--input-bg);
-        color: var(--text-color);
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--border);
+        background-color: var(--surface);
+        color: var(--text);
         font-size: 13.5px;
         outline: none;
         transition:
@@ -395,15 +360,31 @@
       select:focus,
       input[type="text"]:focus,
       input[type="password"]:focus,
+      input[type="number"]:focus,
       textarea:focus {
-        border-color: var(--accent-color);
+        border-color: var(--accent);
         box-shadow: 0 0 0 2px var(--accent-glow);
+      }
+
+      textarea.mono {
+        font-family: var(--font-mono);
+        font-size: 13px;
+      }
+
+      textarea.ta-short {
+        min-height: 80px;
+      }
+
+      textarea.ta-tall {
+        min-height: 280px;
+        font-size: 12.5px;
+        line-height: 1.5;
       }
 
       .form-grid {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 16px;
+        gap: var(--space-4);
       }
 
       .form-group {
@@ -436,8 +417,7 @@
         right: 12px;
         background: none;
         border: none;
-        color: var(--text-color);
-        opacity: 0.6;
+        color: var(--text-muted);
         cursor: pointer;
         display: flex;
         align-items: center;
@@ -445,13 +425,13 @@
       }
 
       .eye-toggle-btn:hover {
-        opacity: 1;
+        color: var(--text);
       }
 
-      /* Button style matching popup style but adjusted for settings */
+      /* Buttons */
       .btn {
         padding: 10px 16px;
-        border-radius: 6px;
+        border-radius: var(--radius-sm);
         font-size: 13px;
         font-weight: 600;
         cursor: pointer;
@@ -464,36 +444,44 @@
       }
 
       .btn-primary {
-        background-color: var(--accent-color);
-        color: white;
+        background-color: var(--accent);
+        color: var(--accent-contrast);
       }
 
       .btn-primary:hover {
         background-color: var(--accent-hover);
       }
 
+      .btn-primary:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
       .btn-secondary {
-        background-color: var(--input-bg);
-        border: 1px solid var(--input-border);
-        color: var(--text-color);
+        background-color: var(--surface);
+        border: 1px solid var(--border);
+        color: var(--text);
       }
 
       .btn-secondary:hover {
-        background-color: var(--hover-bg);
+        background-color: var(--surface-2);
       }
 
-      /* Model Configuration Grid */
-      .models-grid {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 16px;
+      .btn-danger {
+        background-color: var(--danger);
+        color: #ffffff;
       }
 
+      .btn-danger:hover {
+        opacity: 0.9;
+      }
+
+      /* Model card */
       .model-tier-card {
-        border: 1px solid var(--border-color);
-        border-radius: 8px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
         padding: 14px;
-        background-color: var(--hover-bg);
+        background-color: var(--surface);
         display: flex;
         flex-direction: column;
         gap: 10px;
@@ -507,33 +495,18 @@
         display: flex;
         align-items: center;
         gap: 6px;
-      }
-
-      .model-tier-title.agentModel {
-        color: var(--accent-color);
-      }
-      .model-tier-title.mid {
-        color: var(--warning-color);
-      }
-      .model-tier-title.pro {
-        color: var(--success-color);
-      }
-
-      .model-tier-desc {
-        font-size: 11.5px;
-        opacity: 0.75;
-        line-height: 1.3;
+        color: var(--accent);
       }
 
       .slider-group {
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: var(--space-3);
       }
 
       .slider-group input[type="range"] {
         flex: 1;
-        accent-color: var(--accent-color);
+        accent-color: var(--accent);
         cursor: pointer;
       }
 
@@ -548,8 +521,9 @@
       .status-area {
         display: flex;
         align-items: center;
-        gap: 12px;
-        margin-top: 4px;
+        gap: var(--space-3);
+        margin-top: var(--space-1);
+        flex-wrap: wrap;
       }
 
       .status-indicator {
@@ -559,34 +533,38 @@
         font-size: 12.5px;
         font-weight: 600;
         padding: 6px 12px;
-        border-radius: 6px;
+        border-radius: var(--radius-sm);
         border: 1px solid transparent;
       }
 
       .status-indicator.loading {
         display: inline-flex;
-        color: var(--warning-color);
-        background-color: rgba(255, 149, 0, 0.1);
-        border-color: rgba(255, 149, 0, 0.15);
+        color: var(--warning);
+        background-color: var(--warning-bg);
+        border-color: var(--warning-bg);
       }
 
       .status-indicator.success {
         display: inline-flex;
-        color: var(--success-color);
-        background-color: rgba(52, 199, 89, 0.1);
-        border-color: rgba(52, 199, 89, 0.15);
+        color: var(--success);
+        background-color: var(--success-bg);
+        border-color: var(--success-bg);
       }
 
       .status-indicator.error {
         display: inline-flex;
-        color: var(--danger-color);
-        background-color: rgba(255, 59, 48, 0.1);
-        border-color: rgba(255, 59, 48, 0.15);
+        color: var(--danger);
+        background-color: var(--danger-bg);
+        border-color: var(--danger-bg);
         cursor: pointer;
         max-width: 320px;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+      }
+
+      .status-indicator .icon svg {
+        display: block;
       }
 
       .spinner {
@@ -607,10 +585,17 @@
       .footer-actions {
         display: flex;
         justify-content: flex-end;
-        gap: 12px;
-        padding: 16px 24px;
-        border-top: 1px solid var(--border-color);
-        background-color: var(--hover-bg);
+        align-items: center;
+        gap: var(--space-3);
+        padding: var(--space-4) var(--space-6);
+        border-top: 1px solid var(--border);
+        background-color: var(--surface);
+      }
+
+      .version-label {
+        margin-right: auto;
+        font-size: 12px;
+        color: var(--text-muted);
       }
 
       /* Toast Popup */
@@ -618,16 +603,16 @@
         position: fixed;
         bottom: 24px;
         right: 24px;
-        background-color: var(--card-bg);
-        border: 1px solid var(--border-color);
+        background-color: var(--bg);
+        border: 1px solid var(--border);
         padding: 12px 20px;
-        border-radius: 8px;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+        border-radius: var(--radius-md);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
         font-size: 13.5px;
         font-weight: 500;
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: var(--space-2);
         transform: translateY(80px);
         opacity: 0;
         transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
@@ -640,8 +625,66 @@
       }
 
       .toast-icon {
-        color: var(--success-color);
+        color: var(--success);
         flex-shrink: 0;
+      }
+
+      .toast.toast-error .toast-icon {
+        color: var(--danger);
+      }
+
+      /* Error details expander (replaces alert() error surfaces) */
+      .error-details {
+        position: fixed;
+        bottom: 24px;
+        left: 24px;
+        max-width: 480px;
+        background-color: var(--bg);
+        border: 1px solid var(--danger);
+        border-radius: var(--radius-md);
+        box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+        z-index: 9998;
+        overflow: hidden;
+      }
+
+      .error-details-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-3);
+        padding: 10px 14px;
+        background: var(--danger-bg);
+        color: var(--danger);
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .error-details-close {
+        background: none;
+        border: none;
+        color: var(--danger);
+        cursor: pointer;
+        font-size: 16px;
+        line-height: 1;
+        padding: 2px 6px;
+        border-radius: var(--radius-sm);
+      }
+
+      .error-details-close:hover {
+        background: var(--hover-overlay);
+      }
+
+      .error-details pre {
+        margin: 0;
+        padding: 12px 14px;
+        font-family: var(--font-mono);
+        font-size: 11.5px;
+        line-height: 1.45;
+        color: var(--text);
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 220px;
+        overflow-y: auto;
       }
 
       /* Info icon tooltip */
@@ -650,22 +693,23 @@
         align-items: center;
         position: relative;
         margin-left: 4px;
-        color: var(--text-color);
-        opacity: 0.5;
+        color: var(--text-muted);
         cursor: help;
       }
 
-      .tooltip-container:hover {
-        opacity: 0.9;
+      .tooltip-container:hover,
+      .tooltip-container:focus-visible {
+        color: var(--text);
       }
 
       .tooltip-text {
         visibility: hidden;
         width: 220px;
-        background-color: #333;
-        color: #fff;
+        background-color: var(--surface-2);
+        color: var(--text);
+        border: 1px solid var(--border);
         text-align: center;
-        border-radius: 6px;
+        border-radius: var(--radius-sm);
         padding: 8px;
         position: absolute;
         z-index: 100;
@@ -684,29 +728,10 @@
         pointer-events: none;
       }
 
-      [data-theme="dark"] .tooltip-text {
-        background-color: #444;
-      }
-
       .tooltip-container:hover .tooltip-text {
         visibility: visible;
         opacity: 1;
         transform: translateY(0);
-      }
-
-      .tooltip-text::after {
-        content: "";
-        position: absolute;
-        top: 100%;
-        left: 50%;
-        margin-left: -5px;
-        border-width: 5px;
-        border-style: solid;
-        border-color: #333 transparent transparent transparent;
-      }
-
-      [data-theme="dark"] .tooltip-text::after {
-        border-color: #444 transparent transparent transparent;
       }
 
       /* Onboarding Wizard Overlay Styles */
@@ -727,11 +752,11 @@
       }
 
       .onboarding-card {
-        background-color: var(--card-bg);
-        border: 1px solid var(--border-color);
-        border-radius: 16px;
+        background-color: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-xl);
         width: 90%;
-        max-width: 460px;
+        max-width: 480px;
         padding: 36px;
         box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
         text-align: center;
@@ -743,7 +768,7 @@
       .onboarding-step {
         display: none;
         flex-direction: column;
-        gap: 16px;
+        gap: var(--space-4);
       }
 
       .onboarding-step.active {
@@ -751,58 +776,85 @@
       }
 
       .onboarding-icon {
-        font-size: 48px;
-        margin-bottom: 8px;
-        animation: pulseIcon 2s infinite alternate;
+        display: flex;
+        justify-content: center;
+        color: var(--accent);
+        margin-bottom: var(--space-2);
       }
 
       .onboarding-title {
         font-size: 22px;
         font-weight: 700;
-        color: var(--text-color);
+        color: var(--text);
       }
 
       .onboarding-desc {
         font-size: 13.5px;
-        color: var(--text-color);
-        opacity: 0.8;
+        color: var(--text-muted);
         line-height: 1.5;
-        margin-bottom: 12px;
+        margin-bottom: var(--space-3);
+      }
+
+      .onboarding-desc strong {
+        color: var(--text);
       }
 
       .onboarding-form {
-        background-color: var(--hover-bg);
-        border: 1px solid var(--border-color);
-        border-radius: 10px;
-        padding: 16px;
-        margin-bottom: 8px;
+        background-color: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: var(--space-4);
+        margin-bottom: var(--space-2);
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-3);
+        text-align: left;
       }
 
       .onboarding-bullets {
         display: flex;
         justify-content: center;
-        gap: 8px;
-        margin: 12px 0;
+        gap: var(--space-2);
+        margin: var(--space-3) 0;
       }
 
       .onboarding-bullets .dot {
         width: 8px;
         height: 8px;
         border-radius: 50%;
-        background-color: var(--border-color);
+        background-color: var(--border);
         transition: all 0.2s ease;
       }
 
       .onboarding-bullets .dot.active {
-        background-color: var(--accent-color);
+        background-color: var(--accent);
         transform: scale(1.25);
       }
 
       .onboarding-actions {
         display: flex;
         justify-content: space-between;
-        gap: 12px;
-        margin-top: 12px;
+        gap: var(--space-3);
+        margin-top: var(--space-3);
+      }
+
+      .onboarding-actions .spacer {
+        flex: 1;
+      }
+
+      .onboarding-feature-list {
+        text-align: left;
+        font-size: 13px;
+        color: var(--text-muted);
+        line-height: 1.55;
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+      }
+
+      .onboarding-feature-list .icon {
+        color: var(--accent);
+        margin-right: 6px;
       }
 
       @keyframes fadeInOverlay {
@@ -825,35 +877,15 @@
         }
       }
 
-      @keyframes pulseIcon {
-        0% {
-          transform: scale(1);
-        }
-        100% {
-          transform: scale(1.1);
-        }
-      }
-
       .get-key-link {
         font-size: 11px;
-        color: var(--accent-color);
+        color: var(--accent);
         text-decoration: none;
         margin-left: 6px;
         font-weight: normal;
       }
       .get-key-link:hover {
         text-decoration: underline;
-      }
-
-      @media (prefers-reduced-motion: reduce) {
-        * {
-          animation-delay: 0s !important;
-          animation-duration: 0s !important;
-          animation-iteration-count: 1 !important;
-          transition-delay: 0s !important;
-          transition-duration: 0s !important;
-          scroll-behavior: auto !important;
-        }
       }
     </style>
   </head>
@@ -867,8 +899,8 @@
         <button
           class="theme-toggle"
           id="theme-toggle"
-          title="Toggles light & dark"
-          aria-label="auto"
+          title="Toggle light and dark theme"
+          aria-label="Toggle color theme"
           aria-live="polite"
         >
           <svg
@@ -918,6 +950,7 @@
               stroke-width="2"
               stroke-linecap="round"
               stroke-linejoin="round"
+              aria-hidden="true"
             >
               <rect x="3" y="3" width="7" height="9" />
               <rect x="14" y="3" width="7" height="5" />
@@ -936,12 +969,13 @@
               stroke-width="2"
               stroke-linecap="round"
               stroke-linejoin="round"
+              aria-hidden="true"
             >
               <polygon points="12 2 2 7 12 12 22 7 12 2" />
               <polyline points="2 17 12 22 22 17" />
               <polyline points="2 12 12 17 22 12" />
             </svg>
-            Models & API
+            Models &amp; API
           </button>
           <button class="nav-item" data-target="prompts-panel">
             <svg
@@ -953,6 +987,7 @@
               stroke-width="2"
               stroke-linecap="round"
               stroke-linejoin="round"
+              aria-hidden="true"
             >
               <path
                 d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
@@ -966,38 +1001,21 @@
         <main class="content-area">
           <!-- GENERAL SETUP -->
           <section id="general-panel" class="panel active">
-            <div
-              class="welcome-banner"
-              style="
-                background: var(--accent-glow);
-                border-left: 4px solid var(--accent);
-                padding: 16px;
-                border-radius: 8px;
-                margin-bottom: 24px;
-                display: flex;
-                align-items: flex-start;
-                gap: 12px;
-              "
-            >
-              <div style="font-size: 20px">ℹ</div>
+            <div class="welcome-banner">
+              <span class="icon" aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                  <path
+                    d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"
+                  />
+                </svg>
+              </span>
               <div>
-                <div
-                  style="font-weight: 600; font-size: 14px; margin-bottom: 4px"
-                >
-                  Welcome to Settings!
-                </div>
-                <div
-                  style="
-                    font-size: 12.5px;
-                    line-height: 1.4;
-                    color: var(--text-color);
-                    opacity: 0.85;
-                  "
-                >
-                  Select to AI allows you to search with multiple AI engines. To
-                  get started, configure your API keys in the
-                  <strong>Models & API Setup</strong> tab on the left. You can
-                  also re-run the setup wizard anytime.
+                <div class="welcome-banner-title">Welcome to Settings!</div>
+                <div class="muted-note">
+                  Select to AI sends selections to multiple AI assistants and
+                  can run a bounded browser agent. To get started, configure
+                  your API key in the <strong>Models &amp; API</strong> tab on
+                  the left. You can also re-run the setup wizard anytime.
                 </div>
               </div>
             </div>
@@ -1010,18 +1028,13 @@
             </div>
 
             <div class="section-card">
-              <div class="section-card-title">Visible Services in Popup</div>
+              <div class="section-card-title">Enabled Services</div>
 
               <div class="option-row">
                 <div class="option-info">
                   <span class="option-label">ChatGPT Shortcut</span>
-                  <span class="tooltip-container">
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
+                  <span class="tooltip-container" tabindex="0" aria-label="ChatGPT shortcut help">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                       <path
                         d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"
                       />
@@ -1032,7 +1045,7 @@
                   </span>
                 </div>
                 <label class="toggle-switch">
-                  <input type="checkbox" id="showChatGPT" />
+                  <input type="checkbox" id="showChatGPT" aria-label="Enable ChatGPT shortcut" />
                   <span class="slider"></span>
                 </label>
               </div>
@@ -1040,13 +1053,8 @@
               <div class="option-row">
                 <div class="option-info">
                   <span class="option-label">Gemini Shortcut</span>
-                  <span class="tooltip-container">
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
+                  <span class="tooltip-container" tabindex="0" aria-label="Gemini shortcut help">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                       <path
                         d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"
                       />
@@ -1057,7 +1065,7 @@
                   </span>
                 </div>
                 <label class="toggle-switch">
-                  <input type="checkbox" id="showGemini" />
+                  <input type="checkbox" id="showGemini" aria-label="Enable Gemini shortcut" />
                   <span class="slider"></span>
                 </label>
               </div>
@@ -1065,13 +1073,8 @@
               <div class="option-row">
                 <div class="option-info">
                   <span class="option-label">Perplexity Shortcut</span>
-                  <span class="tooltip-container">
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
+                  <span class="tooltip-container" tabindex="0" aria-label="Perplexity shortcut help">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                       <path
                         d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"
                       />
@@ -1082,7 +1085,7 @@
                   </span>
                 </div>
                 <label class="toggle-switch">
-                  <input type="checkbox" id="showPerplexity" />
+                  <input type="checkbox" id="showPerplexity" aria-label="Enable Perplexity shortcut" />
                   <span class="slider"></span>
                 </label>
               </div>
@@ -1090,13 +1093,8 @@
               <div class="option-row">
                 <div class="option-info">
                   <span class="option-label">Claude Shortcut</span>
-                  <span class="tooltip-container">
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
+                  <span class="tooltip-container" tabindex="0" aria-label="Claude shortcut help">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                       <path
                         d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"
                       />
@@ -1107,33 +1105,29 @@
                   </span>
                 </div>
                 <label class="toggle-switch">
-                  <input type="checkbox" id="showClaude" />
+                  <input type="checkbox" id="showClaude" aria-label="Enable Claude shortcut" />
                   <span class="slider"></span>
                 </label>
               </div>
 
               <div class="option-row">
                 <div class="option-info">
-                  <span class="option-label">AI Browser Agent</span>
-                  <span class="tooltip-container">
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
+                  <span class="option-label">Enable AI Browser Agent</span>
+                  <span class="tooltip-container" tabindex="0" aria-label="Browser agent help">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                       <path
                         d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"
                       />
                     </svg>
                     <span class="tooltip-text"
-                      >Enable the autonomous multi-agent page navigation and
-                      execution loop.</span
+                      >Master switch for the autonomous browser agent. Controls
+                      every entry point: the popup button, Alt+A, the address
+                      bar, the sidebar dropdown, and the context menu.</span
                     >
                   </span>
                 </div>
                 <label class="toggle-switch">
-                  <input type="checkbox" id="showAgent" />
+                  <input type="checkbox" id="showAgent" aria-label="Enable AI browser agent" />
                   <span class="slider"></span>
                 </label>
               </div>
@@ -1145,27 +1139,23 @@
               <div class="option-row">
                 <div class="option-info">
                   <span class="option-label"
-                    >Auto-Submit pasted selections</span
+                    >Auto-submit pasted selections</span
                   >
-                  <span class="tooltip-container">
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
+                  <span class="tooltip-container" tabindex="0" aria-label="Auto-submit help">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                       <path
                         d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"
                       />
                     </svg>
                     <span class="tooltip-text"
                       >Automatically submit the pasted prompt to shortcut
-                      assistants.</span
+                      assistants. Address-bar questions ("ai ..." in the URL
+                      bar) auto-send unless this is turned off.</span
                     >
                   </span>
                 </div>
                 <label class="toggle-switch">
-                  <input type="checkbox" id="autoSend" />
+                  <input type="checkbox" id="autoSend" aria-label="Auto-submit pasted selections" />
                   <span class="slider"></span>
                 </label>
               </div>
@@ -1173,25 +1163,20 @@
               <div class="option-row">
                 <div class="option-info">
                   <span class="option-label">Auto-Context link appending</span>
-                  <span class="tooltip-container">
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
+                  <span class="tooltip-container" tabindex="0" aria-label="Auto-context help">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                       <path
                         d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"
                       />
                     </svg>
                     <span class="tooltip-text"
-                      >Appends active window URL & title to prompt selections
+                      >Appends active window URL &amp; title to prompt selections
                       automatically.</span
                     >
                   </span>
                 </div>
                 <label class="toggle-switch">
-                  <input type="checkbox" id="autoContext" />
+                  <input type="checkbox" id="autoContext" aria-label="Auto-context link appending" />
                   <span class="slider"></span>
                 </label>
               </div>
@@ -1199,13 +1184,8 @@
               <div class="option-row">
                 <div class="option-info">
                   <span class="option-label">Assistant Opening Location</span>
-                  <span class="tooltip-container">
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
+                  <span class="tooltip-container" tabindex="0" aria-label="Opening location help">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                       <path
                         d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"
                       />
@@ -1216,7 +1196,7 @@
                     >
                   </span>
                 </div>
-                <select id="openingMode" style="width: 200px">
+                <select id="openingMode" class="u-w-200" aria-label="Assistant opening location">
                   <option value="sidePanel">Sidebar panel</option>
                   <option value="tab">New Chrome tab</option>
                 </select>
@@ -1225,25 +1205,17 @@
 
             <!-- Backup & Restore Card -->
             <div class="section-card">
-              <div class="section-card-title">Backup, Restore & Wizard</div>
-              <p
-                style="
-                  font-size: 12.5px;
-                  color: var(--text-color);
-                  opacity: 0.7;
-                  margin-bottom: 16px;
-                "
-              >
-                Export your configurations, active settings, and API keys to a
-                file, or import a previously saved backup. You can also re-run
-                the onboarding configuration wizard.
+              <div class="section-card-title">Backup, Restore &amp; Wizard</div>
+              <p class="muted-note">
+                Export your configuration to a file (API keys are never
+                included), import a previously saved backup, or re-run the
+                onboarding wizard.
               </p>
-              <div style="display: flex; gap: 12px; flex-wrap: wrap">
+              <div class="u-flex u-gap-3 u-wrap">
                 <button
                   type="button"
                   class="btn btn-secondary"
                   id="export-settings-btn"
-                  style="display: inline-flex; align-items: center; gap: 6px"
                 >
                   <svg
                     width="14"
@@ -1252,6 +1224,7 @@
                     fill="none"
                     stroke="currentColor"
                     stroke-width="2"
+                    aria-hidden="true"
                   >
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                     <polyline points="17 8 12 3 7 8" />
@@ -1263,7 +1236,6 @@
                   type="button"
                   class="btn btn-secondary"
                   id="import-settings-btn"
-                  style="display: inline-flex; align-items: center; gap: 6px"
                 >
                   <svg
                     width="14"
@@ -1272,6 +1244,7 @@
                     fill="none"
                     stroke="currentColor"
                     stroke-width="2"
+                    aria-hidden="true"
                   >
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                     <polyline points="7 10 12 15 17 10" />
@@ -1283,13 +1256,12 @@
                   type="file"
                   id="import-settings-file"
                   accept=".json"
-                  style="display: none"
+                  class="u-hidden"
                 />
                 <button
                   type="button"
                   class="btn btn-secondary"
                   id="rerun-wizard-btn"
-                  style="display: inline-flex; align-items: center; gap: 6px"
                 >
                   <svg
                     width="14"
@@ -1298,6 +1270,7 @@
                     fill="none"
                     stroke="currentColor"
                     stroke-width="2"
+                    aria-hidden="true"
                   >
                     <path d="M20 9.5A10 10 0 1 0 20 14.5" />
                     <polyline points="23 7 20 10 17 7" />
@@ -1311,10 +1284,10 @@
           <!-- MODELS & API PANEL -->
           <section id="models-panel" class="panel">
             <div class="panel-header">
-              <h2 class="panel-title">Models & API Setup</h2>
+              <h2 class="panel-title">Models &amp; API Setup</h2>
               <p class="panel-description">
-                Configure your LLM provider and credentials. We support
-                automatic model list fetching and 3-tier smart routing.
+                Configure your LLM provider and credentials. Model lists can be
+                fetched automatically from the provider.
               </p>
             </div>
 
@@ -1342,11 +1315,7 @@
                   </select>
                 </div>
 
-                <div
-                  class="form-group full-width"
-                  id="url-group"
-                  style="display: none"
-                >
+                <div class="form-group full-width" id="url-group" style="display: none">
                   <label for="agentCustomUrl">Base Endpoint URL</label>
                   <input
                     type="text"
@@ -1371,26 +1340,21 @@
                 >
                   Test Connection
                 </button>
-                <span class="status-indicator" id="conn-status"></span>
+                <span class="status-indicator" id="conn-status" role="status"></span>
               </div>
             </div>
 
             <!-- API Keys Credentials Card -->
             <div class="section-card">
-              <div class="section-card-title">Provider API Keys</div>
-              <p
-                style="
-                  font-size: 12.5px;
-                  color: var(--text-muted);
-                  margin-bottom: 16px;
-                "
-              >
-                Configure your API credentials here. They will be saved securely
-                in your browser's local storage.
+              <div class="section-card-title">Provider API Key</div>
+              <p class="muted-note">
+                Only the active gateway's key field is shown. Keys are saved in
+                this browser's local storage and never leave this device except
+                to call the provider you selected.
               </p>
 
               <div class="form-grid">
-                <div class="form-group">
+                <div class="form-group full-width provider-key-group" id="group-openrouter">
                   <label for="agentOpenRouterKey"
                     >OpenRouter API Key
                     <a
@@ -1414,25 +1378,14 @@
                       type="button"
                       aria-label="Toggle OpenRouter key visibility"
                     >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <path
-                          d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
-                        />
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
                         <circle cx="12" cy="12" r="3" />
                       </svg>
                     </button>
                   </div>
                 </div>
-                <div class="form-group">
+                <div class="form-group full-width provider-key-group" id="group-gemini">
                   <label for="agentGeminiKey"
                     >Google Gemini API Key
                     <a
@@ -1456,25 +1409,14 @@
                       type="button"
                       aria-label="Toggle Google Gemini key visibility"
                     >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <path
-                          d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
-                        />
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
                         <circle cx="12" cy="12" r="3" />
                       </svg>
                     </button>
                   </div>
                 </div>
-                <div class="form-group">
+                <div class="form-group full-width provider-key-group" id="group-openai">
                   <label for="agentOpenAIKey"
                     >OpenAI API Key
                     <a
@@ -1498,25 +1440,14 @@
                       type="button"
                       aria-label="Toggle OpenAI key visibility"
                     >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <path
-                          d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
-                        />
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
                         <circle cx="12" cy="12" r="3" />
                       </svg>
                     </button>
                   </div>
                 </div>
-                <div class="form-group">
+                <div class="form-group full-width provider-key-group" id="group-anthropic">
                   <label for="agentAnthropicKey"
                     >Anthropic Claude API Key
                     <a
@@ -1540,25 +1471,14 @@
                       type="button"
                       aria-label="Toggle Anthropic Claude key visibility"
                     >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <path
-                          d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
-                        />
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
                         <circle cx="12" cy="12" r="3" />
                       </svg>
                     </button>
                   </div>
                 </div>
-                <div class="form-group">
+                <div class="form-group full-width provider-key-group" id="group-deepseek">
                   <label for="agentDeepSeekKey"
                     >DeepSeek AI API Key
                     <a
@@ -1582,25 +1502,14 @@
                       type="button"
                       aria-label="Toggle DeepSeek AI key visibility"
                     >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <path
-                          d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
-                        />
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
                         <circle cx="12" cy="12" r="3" />
                       </svg>
                     </button>
                   </div>
                 </div>
-                <div class="form-group">
+                <div class="form-group full-width provider-key-group" id="group-mistral">
                   <label for="agentMistralKey"
                     >Mistral AI API Key
                     <a
@@ -1624,25 +1533,14 @@
                       type="button"
                       aria-label="Toggle Mistral AI key visibility"
                     >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <path
-                          d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
-                        />
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
                         <circle cx="12" cy="12" r="3" />
                       </svg>
                     </button>
                   </div>
                 </div>
-                <div class="form-group">
+                <div class="form-group full-width provider-key-group" id="group-groq">
                   <label for="agentGroqKey"
                     >Groq AI API Key
                     <a
@@ -1666,25 +1564,14 @@
                       type="button"
                       aria-label="Toggle Groq AI key visibility"
                     >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <path
-                          d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
-                        />
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
                         <circle cx="12" cy="12" r="3" />
                       </svg>
                     </button>
                   </div>
                 </div>
-                <div class="form-group">
+                <div class="form-group full-width provider-key-group" id="group-together">
                   <label for="agentTogetherKey"
                     >Together AI API Key
                     <a
@@ -1708,25 +1595,14 @@
                       type="button"
                       aria-label="Toggle Together AI key visibility"
                     >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <path
-                          d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
-                        />
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
                         <circle cx="12" cy="12" r="3" />
                       </svg>
                     </button>
                   </div>
                 </div>
-                <div class="form-group">
+                <div class="form-group full-width provider-key-group" id="group-xai">
                   <label for="agentXaiKey"
                     >xAI Grok API Key
                     <a
@@ -1750,25 +1626,14 @@
                       type="button"
                       aria-label="Toggle xAI Grok key visibility"
                     >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <path
-                          d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
-                        />
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
                         <circle cx="12" cy="12" r="3" />
                       </svg>
                     </button>
                   </div>
                 </div>
-                <div class="form-group">
+                <div class="form-group full-width provider-key-group" id="group-opencode">
                   <label for="agentOpencodeKey"
                     >OpenCode Zen API Key
                     <a
@@ -1792,25 +1657,14 @@
                       type="button"
                       aria-label="Toggle OpenCode Zen key visibility"
                     >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <path
-                          d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
-                        />
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
                         <circle cx="12" cy="12" r="3" />
                       </svg>
                     </button>
                   </div>
                 </div>
-                <div class="form-group">
+                <div class="form-group full-width provider-key-group" id="group-custom">
                   <label for="agentCustomKey">Custom Gateway API Key</label>
                   <div class="password-input-wrapper">
                     <input
@@ -1825,19 +1679,8 @@
                       type="button"
                       aria-label="Toggle Custom Gateway key visibility"
                     >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <path
-                          d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
-                        />
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
                         <circle cx="12" cy="12" r="3" />
                       </svg>
                     </button>
@@ -1846,93 +1689,79 @@
               </div>
             </div>
 
-            <!-- 3-Tier Configuration Card -->
+            <!-- Model Card -->
             <div class="section-card">
               <div class="section-card-title">
-                Multi-Agent Model Routing Tiers
-                <span class="tooltip-container">
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                  >
+                Agent Model
+                <span class="tooltip-container" tabindex="0" aria-label="Agent model help">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                     <path
                       d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"
                     />
                   </svg>
                   <span class="tooltip-text"
-                    >Models are auto-routed by the execution harness based on
-                    action complexity, and will scale up if failures
-                    occur.</span
+                    >Fetched models appear as typing suggestions. Your typed
+                    value is never overwritten by a fetch.</span
                   >
                 </span>
               </div>
 
-              <div class="models-grid">
-                <!-- Single Model -->
-                <div
-                  class="model-tier-card"
-                  id="modelCard"
-                  style="grid-column: 1 / -1"
-                >
-                  <span class="model-tier-title">
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <polygon
-                        points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"
+              <div class="model-tier-card" id="modelCard">
+                <span class="model-tier-title">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <polygon
+                      points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"
+                    />
+                  </svg>
+                  <span id="modelTitleText">Agent Model</span>
+                  <span class="tooltip-container" tabindex="0" aria-label="Model usage help">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path
+                        d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"
                       />
                     </svg>
-                    <span id="modelTitleText">Agent Model</span>
-                    <span class="tooltip-container">
-                      <svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 24 24"
-                        fill="currentColor"
-                      >
-                        <path
-                          d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"
-                        />
-                      </svg>
-                      <span class="tooltip-text" id="modelTooltipText"
-                        >The model that will be used for all agent actions, web
-                        grounding, and form-filling.</span
-                      >
-                    </span>
+                    <span class="tooltip-text" id="modelTooltipText"
+                      >The model that will be used for all agent actions, web
+                      grounding, and form-filling.</span
+                    >
                   </span>
-                  <input
-                    type="text"
-                    id="agentModel"
-                    placeholder="e.g. google/gemini-flash-latest"
-                  />
-                </div>
+                </span>
+                <input
+                  type="text"
+                  id="agentModel"
+                  list="agentModelList"
+                  placeholder="e.g. google/gemini-flash-latest"
+                  aria-label="Agent model id"
+                />
+                <datalist id="agentModelList"></datalist>
               </div>
             </div>
 
             <!-- Usage Caps Card -->
             <div class="section-card">
               <div class="section-card-title">
-                Agent Execution Limits & Parameters
+                Agent Execution Limits &amp; Parameters
               </div>
 
               <div class="option-row">
-                <div class="option-info">
+                <div class="option-info stacked">
                   <span class="option-label">Maximum Steps Cap</span>
                   <span class="option-desc"
                     >Limits the number of actions the agent can perform to avoid
                     infinite loops.</span
                   >
                 </div>
-                <div class="slider-group" style="width: 250px">
+                <div class="slider-group u-w-250">
                   <input
                     type="range"
                     id="agentMaxSteps"
@@ -1946,28 +1775,19 @@
               </div>
 
               <div class="option-row">
-                <div class="option-info">
+                <div class="option-info stacked">
                   <span class="option-label">API Request Timeout (ms)</span>
                   <span class="option-desc"
                     >Timeout for API completions in milliseconds.</span
                   >
                 </div>
-                <div style="width: 250px">
+                <div class="u-w-250">
                   <input
                     type="number"
                     id="agentTimeout"
                     min="5000"
                     max="180000"
                     step="5000"
-                    class="form-input"
-                    style="
-                      width: 100%;
-                      border: 1px solid var(--border-color);
-                      border-radius: 6px;
-                      padding: 6px 10px;
-                      background: var(--input-bg);
-                      color: var(--text-color);
-                    "
                     value="60000"
                     aria-label="API Request Timeout in milliseconds"
                   />
@@ -1975,27 +1795,18 @@
               </div>
 
               <div class="option-row">
-                <div class="option-info">
+                <div class="option-info stacked">
                   <span class="option-label">Max Tokens per Call</span>
                   <span class="option-desc"
                     >Limit output tokens per individual LLM call.</span
                   >
                 </div>
-                <div style="width: 250px">
+                <div class="u-w-250">
                   <input
                     type="number"
                     id="agentMaxTokensPerCall"
                     min="100"
                     max="8000"
-                    class="form-input"
-                    style="
-                      width: 100%;
-                      border: 1px solid var(--border-color);
-                      border-radius: 6px;
-                      padding: 6px 10px;
-                      background: var(--input-bg);
-                      color: var(--text-color);
-                    "
                     value="2000"
                     aria-label="Max Tokens per Call"
                   />
@@ -2003,14 +1814,14 @@
               </div>
 
               <div class="option-row">
-                <div class="option-info">
+                <div class="option-info stacked">
                   <span class="option-label">Model Temperature</span>
                   <span class="option-desc"
                     >Control randomness (lower is more
                     focused/deterministic).</span
                   >
                 </div>
-                <div class="slider-group" style="width: 250px">
+                <div class="slider-group u-w-250">
                   <input
                     type="range"
                     id="agentTemperature"
@@ -2025,14 +1836,14 @@
               </div>
 
               <div class="option-row">
-                <div class="option-info">
+                <div class="option-info stacked">
                   <span class="option-label">Max Elements in Context</span>
                   <span class="option-desc"
                     >Max interactive elements scanned and sent in LLM
                     prompt.</span
                   >
                 </div>
-                <div class="slider-group" style="width: 250px">
+                <div class="slider-group u-w-250">
                   <input
                     type="range"
                     id="agentElementLimit"
@@ -2046,13 +1857,13 @@
               </div>
 
               <div class="option-row">
-                <div class="option-info">
+                <div class="option-info stacked">
                   <span class="option-label">Action History Limit</span>
                   <span class="option-desc"
                     >Keep recent steps history in prompt context.</span
                   >
                 </div>
-                <div class="slider-group" style="width: 250px">
+                <div class="slider-group u-w-250">
                   <input
                     type="range"
                     id="agentHistoryLimit"
@@ -2066,7 +1877,7 @@
               </div>
 
               <div class="option-row">
-                <div class="option-info">
+                <div class="option-info stacked">
                   <span class="option-label"
                     >Consecutive Failure Threshold</span
                   >
@@ -2074,7 +1885,7 @@
                     >Max consecutive step failures before re-planning.</span
                   >
                 </div>
-                <div class="slider-group" style="width: 250px">
+                <div class="slider-group u-w-250">
                   <input
                     type="range"
                     id="agentFailureThreshold"
@@ -2090,32 +1901,23 @@
 
             <!-- Safety & Budget Card -->
             <div class="section-card">
-              <div class="section-card-title">Safety & Budget Controls</div>
+              <div class="section-card-title">Safety &amp; Budget Controls</div>
 
               <div class="option-row">
-                <div class="option-info">
+                <div class="option-info stacked">
                   <span class="option-label">Task Cost Budget ($ USD)</span>
                   <span class="option-desc"
                     >Stop the agent once cumulative task cost exceeds this
                     amount. (0 for unlimited).</span
                   >
                 </div>
-                <div style="width: 250px">
+                <div class="u-w-250">
                   <input
                     type="number"
                     id="agentCostBudget"
                     min="0"
                     max="100"
                     step="0.01"
-                    class="form-input"
-                    style="
-                      width: 100%;
-                      border: 1px solid var(--border-color);
-                      border-radius: 6px;
-                      padding: 6px 10px;
-                      background: var(--input-bg);
-                      color: var(--text-color);
-                    "
                     value="0.00"
                     aria-label="Task Cost Budget in USD"
                   />
@@ -2123,7 +1925,7 @@
               </div>
 
               <div class="option-row">
-                <div class="option-info">
+                <div class="option-info stacked">
                   <span class="option-label">Confirm High-Risk Actions</span>
                   <span class="option-desc"
                     >Require user authorization before executing delete,
@@ -2135,14 +1937,14 @@
                     type="checkbox"
                     id="agentRiskConfirmation"
                     checked
-                    aria-label="Confirm High-Risk Actions Toggle"
+                    aria-label="Confirm High-Risk Actions"
                   />
                   <span class="slider"></span>
                 </label>
               </div>
 
-              <div class="option-row" style="margin-top: 8px">
-                <div class="option-info">
+              <div class="option-row">
+                <div class="option-info stacked">
                   <span class="option-label">Prompt Caching</span>
                   <span class="option-desc"
                     >Reduce costs by caching the stable system prompt across
@@ -2160,33 +1962,17 @@
                 </label>
               </div>
 
-              <div
-                class="form-group full-width"
-                style="margin-top: 16px; text-align: left"
-              >
+              <div class="form-group full-width u-mt-3 u-text-left">
                 <label for="agentDomainAllowlist"
                   >Domain Allowlist (Comma or newline separated)</label
                 >
-                <span
-                  class="option-desc"
-                  style="display: block; margin-bottom: 8px; opacity: 0.8"
+                <span class="option-desc"
                   >Restricts the agent's navigation to specific domains only.
                   Leave blank to allow all.</span
                 >
                 <textarea
                   id="agentDomainAllowlist"
-                  class="form-input"
-                  style="
-                    min-height: 80px;
-                    width: 100%;
-                    font-family: monospace;
-                    font-size: 13px;
-                    border: 1px solid var(--border-color);
-                    border-radius: 6px;
-                    padding: 10px;
-                    background: var(--input-bg);
-                    color: var(--text-color);
-                  "
+                  class="mono ta-short"
                   placeholder="e.g. google.com, github.com, wikipedia.org"
                   aria-label="Domain Allowlist"
                 ></textarea>
@@ -2209,17 +1995,12 @@
                 <label for="agentSystemPrompt">System Directive Prompt</label>
                 <textarea
                   id="agentSystemPrompt"
-                  style="
-                    min-height: 280px;
-                    font-family: monospace;
-                    font-size: 12.5px;
-                    line-height: 1.5;
-                  "
+                  class="mono ta-tall"
                   placeholder="Enter agent directives..."
                   aria-label="System Directive Prompt"
                 ></textarea>
               </div>
-              <div style="display: flex; gap: 12px; margin-top: 4px">
+              <div class="u-flex u-gap-3 u-mt-2">
                 <button
                   type="button"
                   class="btn btn-secondary"
@@ -2231,43 +2012,26 @@
             </div>
 
             <!-- Prompt Library Card -->
-            <div class="section-card" style="margin-top: 20px">
+            <div class="section-card">
               <div class="section-card-title">
                 System Prompt Templates Library
               </div>
-              <p
-                style="
-                  font-size: 12.5px;
-                  color: var(--text-muted);
-                  margin-bottom: 16px;
-                "
-              >
+              <p class="muted-note">
                 Save your custom system prompts as reusable templates, or select
                 a saved template to load it into the editor above.
               </p>
 
-              <div
-                class="form-grid"
-                style="align-items: flex-end; display: flex; gap: 16px"
-              >
-                <div class="form-group" style="flex: 1; text-align: left">
+              <div class="u-flex u-gap-4 u-items-end">
+                <div class="form-group u-flex-1 u-text-left">
                   <label for="promptLibrarySelect">Saved Templates</label>
                   <select
                     id="promptLibrarySelect"
-                    style="
-                      width: 100%;
-                      border: 1px solid var(--border-color);
-                      border-radius: 6px;
-                      padding: 6px 10px;
-                      background: var(--input-bg);
-                      color: var(--text-color);
-                    "
                     aria-label="Saved Templates List"
                   >
                     <option value="">-- Select Template --</option>
                   </select>
                 </div>
-                <div style="display: flex; gap: 8px">
+                <div class="u-flex u-gap-2">
                   <button
                     type="button"
                     class="btn btn-secondary"
@@ -2279,40 +2043,19 @@
                     type="button"
                     class="btn btn-danger"
                     id="delete-template-btn"
-                    style="
-                      background: var(--danger-color);
-                      color: white;
-                      border-color: var(--danger-color);
-                    "
                   >
                     Delete Selected
                   </button>
                 </div>
               </div>
 
-              <div
-                class="form-grid"
-                style="
-                  align-items: flex-end;
-                  display: flex;
-                  gap: 16px;
-                  margin-top: 16px;
-                "
-              >
-                <div class="form-group" style="flex: 1; text-align: left">
+              <div class="u-flex u-gap-4 u-items-end u-mt-4">
+                <div class="form-group u-flex-1 u-text-left">
                   <label for="newTemplateName">Save Current Prompt As:</label>
                   <input
                     type="text"
                     id="newTemplateName"
                     placeholder="e.g. Shopping Assistant, Code Debugger..."
-                    style="
-                      width: 100%;
-                      border: 1px solid var(--border-color);
-                      border-radius: 6px;
-                      padding: 6px 10px;
-                      background: var(--input-bg);
-                      color: var(--text-color);
-                    "
                     aria-label="Save Current Prompt As Template Name"
                   />
                 </div>
@@ -2333,6 +2076,7 @@
 
       <!-- Footer Actions -->
       <footer class="footer-actions">
+        <span class="version-label">Select to AI <span id="extension-version"></span></span>
         <button type="button" class="btn btn-secondary" id="reset-all-btn">
           Reset Defaults
         </button>
@@ -2342,8 +2086,188 @@
       </footer>
     </div>
 
+    <!-- Onboarding Wizard Overlay -->
+    <div id="onboarding-overlay" class="onboarding-overlay" style="display: none" role="dialog" aria-modal="true" aria-label="Onboarding wizard">
+      <div class="onboarding-card">
+        <!-- Step 1: Welcome -->
+        <div class="onboarding-step active" data-step="1">
+          <div class="onboarding-icon">
+            <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10" />
+              <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
+            </svg>
+          </div>
+          <h2 class="onboarding-title">Welcome to Select to AI</h2>
+          <p class="onboarding-desc">
+            Send selected text to ChatGPT, Gemini, Claude, or Perplexity from
+            the right-click menu — that part works out of the box.
+          </p>
+          <div class="onboarding-feature-list">
+            <div>
+              <span class="icon" aria-hidden="true">&#10003;</span>
+              There is also an <strong>AI Browser Agent</strong> that can
+              search, read pages, and fill forms for you.
+            </div>
+            <div>
+              <span class="icon" aria-hidden="true">&#10003;</span>
+              The agent is <strong>off by default</strong> and needs an API key
+              from a model provider of your choice.
+            </div>
+            <div>
+              <span class="icon" aria-hidden="true">&#10003;</span>
+              This short setup connects a provider and turns the agent on. You
+              can skip it and use the text shortcuts only.
+            </div>
+          </div>
+          <div class="onboarding-bullets" aria-hidden="true">
+            <span class="dot active"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          </div>
+          <div class="onboarding-actions">
+            <button type="button" class="btn btn-secondary skip-onboarding-btn">
+              Skip Setup
+            </button>
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-primary next-step-btn">
+              Get Started
+            </button>
+          </div>
+        </div>
+
+        <!-- Step 2: Provider + API key -->
+        <div class="onboarding-step" data-step="2">
+          <h2 class="onboarding-title">Connect a Model Provider</h2>
+          <p class="onboarding-desc">
+            Pick the gateway the agent should call and paste its API key. Keys
+            are stored only in this browser's local storage.
+          </p>
+          <div class="onboarding-form">
+            <div class="form-group">
+              <label for="wizardProvider">Provider</label>
+              <select id="wizardProvider">
+                <option value="openrouter">OpenRouter (Recommended)</option>
+                <option value="opencode">OpenCode Zen</option>
+                <option value="anthropic">Anthropic Claude API</option>
+                <option value="openai">OpenAI API</option>
+                <option value="deepseek">DeepSeek AI API</option>
+                <option value="gemini">Google Gemini Developer API</option>
+                <option value="mistral">Mistral AI</option>
+                <option value="groq">Groq AI</option>
+                <option value="together">Together AI</option>
+                <option value="xai">xAI Grok</option>
+                <option value="custom">Custom Endpoint (Ollama / Local)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="wizardApiKey" id="wizardKeyLabel">API Key</label>
+              <input
+                type="password"
+                id="wizardApiKey"
+                placeholder="Paste your API key"
+                aria-label="Provider API key"
+              />
+            </div>
+            <div class="form-group" id="wizardUrlGroup" style="display: none">
+              <label for="wizardCustomUrl">Base Endpoint URL</label>
+              <input
+                type="text"
+                id="wizardCustomUrl"
+                placeholder="http://127.0.0.1:11434/v1"
+              />
+            </div>
+          </div>
+          <div class="onboarding-bullets" aria-hidden="true">
+            <span class="dot"></span><span class="dot active"></span><span class="dot"></span><span class="dot"></span>
+          </div>
+          <div class="onboarding-actions">
+            <button type="button" class="btn btn-secondary prev-step-btn">
+              Back
+            </button>
+            <button type="button" class="btn btn-secondary skip-onboarding-btn">
+              Skip Setup
+            </button>
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-primary next-step-btn">
+              Continue
+            </button>
+          </div>
+        </div>
+
+        <!-- Step 3: Test connection -->
+        <div class="onboarding-step" data-step="3">
+          <h2 class="onboarding-title">Verify the Connection</h2>
+          <p class="onboarding-desc">
+            Run a one-token test call so you know the key works before
+            finishing. The test uses the provider's cheapest default model.
+          </p>
+          <div class="onboarding-form u-items-center">
+            <button type="button" class="btn btn-primary" id="wizard-test-btn">
+              Test Connection
+            </button>
+            <span
+              class="status-indicator"
+              id="wizard-test-status"
+              role="status"
+            ></span>
+          </div>
+          <div class="onboarding-bullets" aria-hidden="true">
+            <span class="dot"></span><span class="dot"></span><span class="dot active"></span><span class="dot"></span>
+          </div>
+          <div class="onboarding-actions">
+            <button type="button" class="btn btn-secondary prev-step-btn">
+              Back
+            </button>
+            <button type="button" class="btn btn-secondary skip-onboarding-btn">
+              Skip Setup
+            </button>
+            <span class="spacer"></span>
+            <button
+              type="button"
+              class="btn btn-primary next-step-btn"
+              id="wizard-step-3-next"
+              disabled
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+
+        <!-- Step 4: Finish -->
+        <div class="onboarding-step" data-step="4">
+          <div class="onboarding-icon">
+            <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+              <polyline points="22 4 12 14.01 9 11.01" />
+            </svg>
+          </div>
+          <h2 class="onboarding-title">You're Set</h2>
+          <p class="onboarding-desc">
+            Finishing enables the <strong>AI Browser Agent</strong> and saves
+            your verified provider settings. Open it any time with
+            <strong>Alt+A</strong>, the toolbar popup, or by typing
+            <strong>ai</strong> + space in the address bar. Risky actions
+            (payments, deletions, passwords) always stop for your confirmation.
+          </p>
+          <div class="onboarding-bullets" aria-hidden="true">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot active"></span>
+          </div>
+          <div class="onboarding-actions">
+            <button type="button" class="btn btn-secondary prev-step-btn">
+              Back
+            </button>
+            <span class="spacer"></span>
+            <button
+              type="button"
+              class="btn btn-primary finish-onboarding-btn"
+            >
+              Enable Agent &amp; Finish
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Toast Notification -->
-    <div id="toast" class="toast">
+    <div id="toast" class="toast" role="status">
       <svg
         class="toast-icon"
         width="16"
@@ -2354,10 +2278,27 @@
         stroke-width="2.5"
         stroke-linecap="round"
         stroke-linejoin="round"
+        aria-hidden="true"
       >
         <polyline points="20 6 9 17 4 12" />
       </svg>
       <span id="toast-message">Settings saved</span>
+    </div>
+
+    <!-- Error details expander (replaces alert() error surfaces) -->
+    <div id="error-details" class="error-details u-hidden">
+      <div class="error-details-header">
+        <span id="error-details-title">Error details</span>
+        <button
+          type="button"
+          class="error-details-close"
+          id="error-details-close"
+          aria-label="Close error details"
+        >
+          &times;
+        </button>
+      </div>
+      <pre id="error-details-body"></pre>
     </div>
 
     <script src="config.js"></script>

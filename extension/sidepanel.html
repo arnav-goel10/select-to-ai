@@ -4,28 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <title>Select to AI Sidebar</title>
+    <link rel="stylesheet" href="tokens.css">
     <style>
-        :root {
-            --bg-color: #f8f9fa;
-            --header-bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            --border-color: #e0e0e0;
-            --text-color: #333;
-            --text-light: #fff;
-            --dropdown-bg: rgba(255, 255, 255, 0.2);
-            --dropdown-hover: rgba(255, 255, 255, 0.3);
-        }
-
-        @media (prefers-color-scheme: dark) {
-            :root {
-                --bg-color: #1a1a1a;
-                --header-bg: linear-gradient(135deg, #434343 0%, #1a1a1a 100%);
-                --border-color: #333;
-                --text-color: #e8eaed;
-                --dropdown-bg: rgba(255, 255, 255, 0.1);
-                --dropdown-hover: rgba(255, 255, 255, 0.2);
-            }
-        }
-
         * {
             box-sizing: border-box;
         }
@@ -39,20 +19,20 @@
             overflow: hidden;
             display: flex;
             flex-direction: column;
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: var(--font-sans);
         }
 
         header {
             height: 48px;
-            background: var(--header-bg);
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
             display: flex;
             align-items: center;
             justify-content: center;
             padding: 0 16px;
             flex-shrink: 0;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
         }
 
         .header-content {
@@ -61,44 +41,32 @@
             gap: 10px;
         }
 
-        .logo-icon {
-            width: 24px;
-            height: 24px;
-            filter: brightness(0) invert(1);
-        }
-
         select {
             appearance: none;
             -webkit-appearance: none;
             padding: 8px 32px 8px 12px;
             height: 32px;
-            border-radius: 16px;
-            border: none;
-            background-color: var(--dropdown-bg);
-            color: var(--text-light);
+            border-radius: var(--radius-full);
+            border: 1px solid var(--border);
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: var(--font-sans);
             font-size: 13px;
             font-weight: 600;
             cursor: pointer;
-            outline: none;
-            transition: background-color 0.2s ease;
-            backdrop-filter: blur(10px);
-            background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+            background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888895' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
             background-repeat: no-repeat;
             background-position: right 10px center;
             background-size: 14px;
         }
 
         select:hover {
-            background-color: var(--dropdown-hover);
-        }
-
-        select:focus {
-            box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.3);
+            background-color: var(--surface-2);
         }
 
         select option {
-            background-color: #333;
-            color: #fff;
+            background-color: var(--bg);
+            color: var(--text);
             padding: 8px;
         }
 
@@ -106,7 +74,7 @@
             flex: 1;
             width: 100%;
             border: none;
-            background-color: var(--bg-color);
+            background-color: var(--bg);
         }
 
         /* Loading indicator */
@@ -115,29 +83,28 @@
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            color: var(--text-color);
+            color: var(--text);
             font-size: 14px;
             opacity: 0.7;
         }
 
-        /* Redo Context Button */
+        /* Send-context button */
         .redo-btn {
             width: 32px;
             height: 32px;
             border-radius: 50%;
-            border: none;
-            background-color: var(--dropdown-bg);
-            color: var(--text-light);
+            border: 1px solid var(--border);
+            background-color: var(--bg);
+            color: var(--text);
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
-            transition: all 0.2s ease;
-            backdrop-filter: blur(10px);
+            transition: background 0.2s, transform 0.2s;
         }
 
         .redo-btn:hover {
-            background-color: var(--dropdown-hover);
+            background-color: var(--surface-2);
             transform: rotate(180deg);
         }
 
@@ -149,92 +116,26 @@
             width: 18px;
             height: 18px;
         }
-
-        /* Tooltip Styles */
-        .tooltip-container {
-            display: inline-flex;
-            align-items: center;
-            position: relative;
-        }
-
-        .info-icon {
-            width: 18px;
-            height: 18px;
-            color: rgba(255, 255, 255, 0.8);
-            cursor: help;
-            transition: color 0.2s;
-        }
-
-        .info-icon:hover {
-            color: #fff;
-        }
-
-        .tooltip-text {
-            visibility: hidden;
-            width: 160px;
-            background-color: #333;
-            color: #fff;
-            text-align: center;
-            border-radius: 6px;
-            padding: 8px;
-            position: absolute;
-            z-index: 100;
-            top: 130%;
-            right: 0;
-            /* Align right to stay on screen */
-            opacity: 0;
-            transition: opacity 0.3s, transform 0.3s;
-            transform: translateY(-5px);
-            font-size: 12px;
-            font-weight: normal;
-            line-height: 1.4;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.15);
-            pointer-events: none;
-        }
-
-        .tooltip-container:hover .tooltip-text {
-            visibility: visible;
-            opacity: 1;
-            transform: translateY(0);
-        }
-
-        .tooltip-text::after {
-            content: "";
-            position: absolute;
-            bottom: 100%;
-            right: 6px;
-            /* Align arrow */
-            margin-left: -5px;
-            border-width: 5px;
-            border-style: solid;
-            border-color: transparent transparent #333 transparent;
-        }
     </style>
 </head>
 
 <body>
     <header>
         <div class="header-content">
-            <select id="serviceSelector">
+            <select id="serviceSelector" aria-label="Choose which AI service the sidebar shows">
                 <!-- Options populated by JS -->
             </select>
-            <button id="redoContextBtn" class="redo-btn" title="Send current page URL as context">
+            <button id="redoContextBtn" class="redo-btn" title="Send current page URL as context"
+                aria-label="Send current page URL as context">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                    stroke-linejoin="round">
+                    stroke-linejoin="round" aria-hidden="true">
                     <path d="M23 4v6h-6" />
                     <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
                 </svg>
             </button>
-            <div class="tooltip-container">
-                <svg class="info-icon" viewBox="0 0 24 24" fill="currentColor">
-                    <path
-                        d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" />
-                </svg>
-                <span class="tooltip-text">Send current page URL as context</span>
-            </div>
         </div>
     </header>
-    <iframe id="contentFrame" src="about:blank"></iframe>
+    <iframe id="contentFrame" src="about:blank" title="Selected AI service"></iframe>
     <script src="config.js"></script>
     <script src="sidepanel.js"></script>
 </body>

@@ -3,7 +3,7 @@
     "name": "Select to AI",
     "short_name": "Select to AI",
     "description": "Send selected text to leading AI assistants or run bounded browser workflows with explicit permissions and safety limits.",
-    "version": "3.2.0",
+    "version": "3.3.0",
     "homepage_url": "https://github.com/arnav-goel10/select-to-ai",
     "offline_enabled": false,
     "action": {

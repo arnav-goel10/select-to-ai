@@ -655,6 +655,79 @@
   }
 
   // =========================================================================
+  // Minimal safe markdown rendering (final answers in the agent panel)
+  // =========================================================================
+
+  /** HTML-escapes a string (all five significant characters). */
+  function escapeHtml(text) {
+    return String(text ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  /** Inline markdown on ALREADY-ESCAPED text: links, bold, italics. */
+  function renderInlineMarkdown(escapedLine) {
+    let out = escapedLine;
+    // [text](https://url) — http(s) only, so javascript:/data: can never
+    // become an href. The URL is already HTML-escaped.
+    out = out.replace(
+      /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>',
+    );
+    // **bold**
+    out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    // *italic* (single asterisks left after bold)
+    out = out.replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
+    // _italic_ only when standing alone (never inside snake_case words)
+    out = out.replace(
+      /(^|\s)_([^_\n]+)_(?=$|\s|[.,;:!?)])/g,
+      "$1<em>$2</em>",
+    );
+    return out;
+  }
+
+  /**
+   * Renders a minimal, safe markdown subset to HTML: bold, italics, bullet
+   * lists, and http(s) links (rel="noopener noreferrer"). EVERYTHING is
+   * HTML-escaped first; only the tags this renderer itself emits exist in
+   * the output, so model text can never inject markup.
+   * @param {string} text
+   * @returns {string} HTML string
+   */
+  function renderSafeMarkdown(text) {
+    const escaped = escapeHtml(text);
+    if (!escaped.trim()) return "";
+    const lines = escaped.split(/\r?\n/);
+    const parts = [];
+    let listItems = null;
+
+    const flushList = () => {
+      if (listItems && listItems.length > 0) {
+        parts.push(`<ul>${listItems.join("")}</ul>`);
+      }
+      listItems = null;
+    };
+
+    for (const line of lines) {
+      const bullet = line.match(/^\s*[-*]\s+(.+)$/);
+      if (bullet) {
+        if (!listItems) listItems = [];
+        listItems.push(`<li>${renderInlineMarkdown(bullet[1])}</li>`);
+        continue;
+      }
+      flushList();
+      if (line.trim()) {
+        parts.push(`<p>${renderInlineMarkdown(line)}</p>`);
+      }
+    }
+    flushList();
+    return parts.join("");
+  }
+
+  // =========================================================================
   // Planner / validator response parsing
   // =========================================================================
 
@@ -715,6 +788,8 @@
     formatOutcomeDelta,
     parsePlanResponse,
     parseValidatorResponse,
+    escapeHtml,
+    renderSafeMarkdown,
   });
 
   root.SELECT_TO_AI_TOOLS = api;

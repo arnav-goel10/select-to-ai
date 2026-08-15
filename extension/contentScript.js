@@ -7,74 +7,171 @@
         return;
     }
 
-    const { URLS, HOSTS, SELECTORS, DELAYS } = CONFIG;
+    const { HOSTS, ADAPTERS, DELAYS } = CONFIG;
     const hostname = window.location.hostname;
-    let config = null;
+    let adapter = null;
     let lastProcessedTimestamp = 0;
 
-    // --- Configuration Selection ---
-    // Only the supported AI chat hosts get a config; on any other page this
-    // script does nothing.
+    // --- Adapter Selection ---
+    // Only the supported AI chat hosts get an adapter; on any other page
+    // this script does nothing. Selector chains live in config.js.
     if (hostname.includes(HOSTS.CHATGPT)) {
-        config = {
-            selector: SELECTORS.CHATGPT.INPUT,
-            inputType: "contenteditable",
-            sendButtonSelector: SELECTORS.CHATGPT.SEND_BTN
-        };
+        adapter = ADAPTERS.CHATGPT;
     } else if (hostname.includes(HOSTS.GEMINI)) {
-        config = {
-            selector: SELECTORS.GEMINI.INPUT,
-            inputType: "contenteditable",
-            sendButtonSelector: SELECTORS.GEMINI.SEND_BTN
-        };
+        adapter = ADAPTERS.GEMINI;
     } else if (hostname.includes(HOSTS.PERPLEXITY)) {
-        config = {
-            selector: SELECTORS.PERPLEXITY.INPUT,
-            inputType: "contenteditable",
-            sendButtonSelector: SELECTORS.PERPLEXITY.SEND_BTN
-        };
+        adapter = ADAPTERS.PERPLEXITY;
     } else if (hostname.includes(HOSTS.CLAUDE)) {
-        config = {
-            selector: SELECTORS.CLAUDE.INPUT,
-            inputType: "contenteditable",
-            sendButtonSelector: SELECTORS.CLAUDE.SEND_BTN
-        };
+        adapter = ADAPTERS.CLAUDE;
     }
 
-    if (config) {
+    if (adapter) {
         init();
     }
 
     /**
-     * Waits for an element to appear in the DOM.
-     * @param {string} selector - The CSS selector to wait for.
+     * Returns the first element matching an ORDERED selector chain.
+     * Order expresses preference: stable ids / data-testids first,
+     * aria-labels next, structural fallbacks last.
+     * @param {string[]} chain
+     * @returns {Element|null}
+     */
+    function queryChain(chain) {
+        for (const selector of chain || []) {
+            let el = null;
+            try {
+                el = document.querySelector(selector);
+            } catch (e) {
+                continue; // skip selectors this browser cannot parse
+            }
+            if (el) return el;
+        }
+        return null;
+    }
+
+    /**
+     * Waits until any selector in the chain matches (in preference order).
+     * @param {string[]} chain
      * @param {number} timeout - Max time to wait (ms).
      * @returns {Promise<Element>}
      */
-    function waitForElement(selector, timeout = DELAYS.MAX_WAIT) {
+    function waitForChain(chain, timeout = DELAYS.MAX_WAIT) {
         return new Promise((resolve, reject) => {
-            const element = document.querySelector(selector);
-            if (element) {
-                return resolve(element);
-            }
+            const existing = queryChain(chain);
+            if (existing) return resolve(existing);
 
-            const observer = new MutationObserver((mutations, obs) => {
-                const element = document.querySelector(selector);
-                if (element) {
-                    resolve(element);
-                    obs.disconnect();
+            const observer = new MutationObserver(() => {
+                const el = queryChain(chain);
+                if (el) {
+                    observer.disconnect();
+                    clearTimeout(timer);
+                    resolve(el);
                 }
             });
 
-            observer.observe(document.body, {
-                childList: true,
-                subtree: true
-            });
+            observer.observe(document.body, { childList: true, subtree: true });
 
-            setTimeout(() => {
+            const timer = setTimeout(() => {
                 observer.disconnect();
-                reject(new Error(`Timeout waiting for element: ${selector}`));
+                reject(new Error(`Timeout waiting for selectors: ${(chain || []).join(' | ')}`));
             }, timeout);
+        });
+    }
+
+    // --- User feedback helpers ---
+
+    /** Shows a small transient toast on the page. */
+    function showPageToast(message) {
+        try {
+            const existing = document.getElementById('select-to-ai-toast');
+            if (existing) existing.remove();
+            const toast = document.createElement('div');
+            toast.id = 'select-to-ai-toast';
+            toast.textContent = message;
+            toast.style.cssText = [
+                'position:fixed', 'bottom:24px', 'left:50%',
+                'transform:translateX(-50%)', 'background:#26262c',
+                'color:#ffffff', 'padding:10px 18px', 'border-radius:8px',
+                'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',
+                'font-size:13px', 'font-weight:500', 'z-index:2147483647',
+                'box-shadow:0 4px 16px rgba(0,0,0,0.25)', 'max-width:80vw',
+                'pointer-events:none'
+            ].join(';');
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 4000);
+        } catch (e) {
+            console.warn('Select to AI: toast failed:', e);
+        }
+    }
+
+    /** Copies text to the clipboard (async API with execCommand fallback). */
+    function copyToClipboard(text) {
+        const fallback = () => {
+            try {
+                const scratch = document.createElement('textarea');
+                scratch.value = text;
+                scratch.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
+                document.body.appendChild(scratch);
+                scratch.focus();
+                scratch.select();
+                document.execCommand('copy');
+                scratch.remove();
+                return true;
+            } catch (e) {
+                return false;
+            }
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            return navigator.clipboard.writeText(text).then(() => true).catch(fallback);
+        }
+        return Promise.resolve(fallback());
+    }
+
+    // --- Composer state helpers (used for send verification) ---
+
+    function readComposerText(element) {
+        if (!element) return '';
+        const tag = element.tagName ? element.tagName.toLowerCase() : '';
+        if (tag === 'textarea' || tag === 'input') return element.value || '';
+        return element.textContent || '';
+    }
+
+    function countSentProbes() {
+        if (!adapter.sentProbe) return null;
+        try {
+            return document.querySelectorAll(adapter.sentProbe).length;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /**
+     * Verifies a send attempt actually worked before reporting success:
+     * either the composer emptied, or a new user-message bubble appeared
+     * (adapter.sentProbe count increased). Polls for up to `windowMs`.
+     * @returns {Promise<boolean>}
+     */
+    function verifySendWorked(element, probeCountBefore, windowMs = 3000) {
+        const startedAt = Date.now();
+        return new Promise((resolve) => {
+            const check = () => {
+                const composerEmpty = readComposerText(element).trim().length === 0;
+                const probeCountNow = countSentProbes();
+                const bubbleAppeared =
+                    probeCountBefore !== null &&
+                    probeCountNow !== null &&
+                    probeCountNow > probeCountBefore;
+                if (composerEmpty || bubbleAppeared) {
+                    resolve(true);
+                    return;
+                }
+                if (Date.now() - startedAt >= windowMs) {
+                    resolve(false);
+                    return;
+                }
+                setTimeout(check, 200);
+            };
+            setTimeout(check, 300);
         });
     }
 
@@ -92,22 +189,18 @@
             insertMode = 'append';
         }
 
-        console.log(`Select to AI: Processing text for ${hostname} (Mode: ${insertMode})`, text);
+        console.log(`Select to AI: Processing text for ${hostname} (Mode: ${insertMode})`);
 
-        waitForElement(config.selector).then((element) => {
-            console.log("Select to AI: Input element found.");
-
+        waitForChain(adapter.input).then((element) => {
             window.focus();
             element.focus();
 
-            // Detect input type if unknown
-            let currentInputType = config.inputType;
-            if (currentInputType === "unknown") {
-                const tagName = element.tagName.toLowerCase();
-                currentInputType = (tagName === 'textarea' || tagName === 'input') ? 'text' : 'contenteditable';
-            }
+            const tagName = element.tagName.toLowerCase();
+            const isEditable =
+                element.getAttribute('contenteditable') === 'true' ||
+                (tagName !== 'textarea' && tagName !== 'input');
 
-            if (currentInputType === "contenteditable" || element.getAttribute('contenteditable') === 'true') {
+            if (isEditable) {
                 element.focus();
 
                 // Cursor Positioning
@@ -159,7 +252,7 @@
             } else {
                 // Standard Input/Textarea Logic
                 const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
-                if (nativeInputValueSetter && element.tagName.toLowerCase() === 'textarea') {
+                if (nativeInputValueSetter && tagName === 'textarea') {
                     nativeInputValueSetter.call(element, text);
                 } else {
                     element.value = text;
@@ -176,7 +269,7 @@
             });
 
             // Auto-Send Logic
-            if (autoSend && config.sendButtonSelector) {
+            if (autoSend && adapter.send && adapter.send.length > 0) {
                 // Determine service-specific delay from CONFIG
                 let delay = DELAYS.POLLING_INTERVAL; // Default low
                 if (hostname.includes(HOSTS.CHATGPT)) delay = DELAYS.CHATGPT;
@@ -187,27 +280,49 @@
                 console.log(`Select to AI: Auto-sending in ${delay}ms...`);
 
                 setTimeout(() => {
-                    clickSend();
+                    attemptSend(element);
                 }, delay);
             }
 
-            function clickSend() {
-                const btn = document.querySelector(config.sendButtonSelector);
-                if (btn) {
-                    const isDisabled = btn.disabled || btn.getAttribute('aria-disabled') === 'true';
-                    if (!isDisabled) {
-                        btn.click();
-                    } else {
-                        btn.click(); // Try anyway
-                    }
-                } else {
-                    console.warn("Select to AI: Send button not found.");
-                }
+        }).catch((error) => {
+            // No composer selector matched within the wait window. Do NOT
+            // guess at elements — put the text on the clipboard and say so.
+            console.warn("Select to AI: composer not found:", error.message);
+            copyToClipboard(text).then(() => {
+                showPageToast("Pasted text is on your clipboard");
+            });
+        });
+
+        /**
+         * Clicks the send control (ordered chain, no generic fallbacks) and
+         * verifies the send actually happened before treating it as done.
+         */
+        function attemptSend(element, isRetry = false) {
+            const btn = queryChain(adapter.send);
+            if (!btn) {
+                // The text IS in the composer; only the send control was not
+                // found. Never click a guessed button — tell the user.
+                console.warn("Select to AI: Send button not found.");
+                showPageToast("Couldn't find the send button — press Enter to send.");
+                return;
             }
 
-        }).catch((error) => {
-            console.error("Select to AI: Error finding input element:", error);
-        });
+            const probeCountBefore = countSentProbes();
+            btn.click();
+
+            verifySendWorked(element, probeCountBefore).then((sent) => {
+                if (sent) {
+                    console.log("Select to AI: send verified (composer emptied or message bubble appeared).");
+                    return;
+                }
+                if (!isRetry) {
+                    console.warn("Select to AI: send not confirmed, retrying once...");
+                    attemptSend(element, true);
+                    return;
+                }
+                showPageToast("Send didn't complete — your text is in the message box, press Enter to send.");
+            });
+        }
     }
 
     /**
@@ -222,7 +337,7 @@
 
                 // Freshness & Deduplication Check
                 if (timeDiff < CONFIG.DELAYS.SIDE_PANEL_FRESHNESS && (!state.timestamp || state.timestamp > lastProcessedTimestamp)) {
-                    if (config && state.selectedText) {
+                    if (adapter && state.selectedText) {
                         if (state.timestamp) lastProcessedTimestamp = state.timestamp;
                         processText(state.selectedText, state.autoSend, state.insertMode || 'replace', state.timestamp);
                     }
@@ -234,7 +349,7 @@
         chrome.storage.onChanged.addListener((changes, namespace) => {
             if (namespace === 'local' && changes[CONFIG.STORAGE.SIDE_PANEL_STATE]) {
                 const newState = changes[CONFIG.STORAGE.SIDE_PANEL_STATE].newValue;
-                if (newState && newState.selectedText && config) {
+                if (newState && newState.selectedText && adapter) {
                     if (newState.timestamp && newState.timestamp > lastProcessedTimestamp) {
 
                         // URL Verification Logic
@@ -264,7 +379,7 @@
 
         // 3. Runtime Message Listener
         chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-            if (!config) return;
+            if (!adapter) return;
             if (message.selectedText) {
                 // Deduplication
                 if (message.timestamp && message.timestamp <= lastProcessedTimestamp) {

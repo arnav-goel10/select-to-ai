@@ -94,8 +94,14 @@
     const costBadge = document.getElementById("costDashboardBadge");
     if (costBadge) {
       costBadge.style.display = "inline-flex";
-      costBadge.textContent = `${costIsEstimated ? "est. " : ""}$${totalCostUSD.toFixed(4)}`;
-      costBadge.title = `Tokens: Input: ${totalPromptTokens} | Output: ${totalCompletionTokens}${costIsEstimated ? " (includes estimated usage)" : ""}`;
+      // Two-decimal display with an explicit "est." qualifier whenever any
+      // usage was estimated; the tooltip carries the exact figure.
+      costBadge.textContent = `${costIsEstimated ? "est. " : ""}$${totalCostUSD.toFixed(2)}`;
+      costBadge.title =
+        `Exact: $${totalCostUSD.toFixed(6)} — tokens in: ${totalPromptTokens}, out: ${totalCompletionTokens}.` +
+        (costIsEstimated
+          ? " Includes estimated usage (the provider did not report token counts for every call)."
+          : " Based on provider-reported token usage.");
     }
   }
 
@@ -159,19 +165,25 @@ You are running inside a Chrome extension side panel. The user is chatting with 
   const chatContainer = document.getElementById("chatContainer");
   const welcomeScreen = document.getElementById("welcomeScreen");
 
-  const modelSelectorBtn = document.getElementById("modelSelectorBtn");
-  const modelSelectorContainer = document.getElementById(
-    "modelSelectorContainer",
-  );
-  const modelSelectorDropdown = document.getElementById(
-    "modelSelectorDropdown",
-  );
   const credentialsWarning = document.getElementById("credentialsWarning");
   const sidebar = document.getElementById("sidebar");
   const sidebarToggleBtn = document.getElementById("sidebarToggleBtn");
   const sidebarBackdrop = document.getElementById("sidebarBackdrop");
   const newTaskBtn = document.getElementById("newTaskBtn");
   const attachBtn = document.getElementById("attachBtn");
+  const recentSessionsList = document.getElementById("recentSessionsList");
+  const scratchpadPanel = document.getElementById("scratchpadPanel");
+  const scratchpadItems = document.getElementById("scratchpadItems");
+  const memoryPanel = document.getElementById("memoryPanel");
+  const memoryItems = document.getElementById("memoryItems");
+  const steerRow = document.getElementById("steerRow");
+  const steerInput = document.getElementById("steerInput");
+  const steerSendBtn = document.getElementById("steerSendBtn");
+  const steerPending = document.getElementById("steerPending");
+
+  // One queued steer message, delivered as the feedback argument of the
+  // NEXT agentStep call, then cleared. Queuing again replaces it.
+  let pendingSteerMessage = "";
 
   // Dynamic message bubble references
   let activeChecklistPanel = null;
@@ -235,31 +247,6 @@ You are running inside a Chrome extension side panel. The user is chatting with 
     }
   });
 
-  // Model Selector Dropdown toggle and selection binding
-  if (modelSelectorBtn && modelSelectorContainer) {
-    modelSelectorBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      modelSelectorContainer.classList.toggle("open");
-    });
-  }
-
-  document.addEventListener("click", () => {
-    if (modelSelectorContainer) {
-      modelSelectorContainer.classList.remove("open");
-    }
-  });
-
-  const dropAuto = document.getElementById("dropdownModeAuto");
-  const dropHardcoded = document.getElementById("dropdownModeHardcoded");
-
-  if (dropAuto) {
-    dropAuto.addEventListener("click", () => {});
-  }
-
-  if (dropHardcoded) {
-    dropHardcoded.addEventListener("click", () => {});
-  }
-
   // Sidebar Toggle
   if (sidebarToggleBtn && sidebar) {
     sidebarToggleBtn.addEventListener("click", () => {
@@ -277,22 +264,207 @@ You are running inside a Chrome extension side panel. The user is chatting with 
     });
   }
 
-  // Backdrop click or clicking outside dismisses sidebar
-  document.addEventListener("click", (e) => {
-    if (sidebar && !sidebar.classList.contains("collapsed")) {
-      // If click is outside the sidebar AND outside the toggle button
-      if (
-        !sidebar.contains(e.target) &&
-        (!sidebarToggleBtn || !sidebarToggleBtn.contains(e.target))
-      ) {
-        sidebar.classList.add("collapsed");
-        chrome.storage.sync.set({ sidebarCollapsed: true });
-        if (sidebarBackdrop) {
-          sidebarBackdrop.classList.remove("active");
-        }
-      }
+  // The sidebar stays open until the user closes it. Only the mobile
+  // backdrop (which exists solely while the sidebar overlays content)
+  // dismisses it — ordinary clicks elsewhere never force-collapse it.
+  if (sidebarBackdrop) {
+    sidebarBackdrop.addEventListener("click", () => {
+      if (sidebar) sidebar.classList.add("collapsed");
+      chrome.storage.sync.set({ sidebarCollapsed: true });
+      sidebarBackdrop.classList.remove("active");
+    });
+  }
+
+  // --- Steer-while-running ---
+  // Queues ONE guidance message; agentStep() consumes it as feedback before
+  // the next model call. Never interrupts or stops the run.
+  function queueSteerMessage() {
+    const text = (steerInput.value || "").trim();
+    if (!text) return;
+    pendingSteerMessage = text;
+    steerInput.value = "";
+    if (steerPending) {
+      steerPending.textContent = `Queued for the next step: "${text.length > 80 ? text.slice(0, 77) + "..." : text}"`;
     }
-  });
+    addLogEntry(
+      "system",
+      "User Guidance Queued",
+      `Will be delivered to the agent before its next step: ${text}`,
+    );
+  }
+
+  if (steerSendBtn) steerSendBtn.addEventListener("click", queueSteerMessage);
+  if (steerInput) {
+    steerInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        queueSteerMessage();
+      }
+    });
+  }
+
+  function setSteerRowVisible(visible) {
+    if (!steerRow) return;
+    steerRow.classList.toggle("active", visible);
+    if (!visible && steerPending) steerPending.textContent = "";
+    if (!visible) pendingSteerMessage = "";
+  }
+
+  // --- Sidebar content: recent sessions + scratchpad/memory viewers ---
+
+  function formatSessionTime(timestamp) {
+    if (!timestamp) return "";
+    try {
+      const d = new Date(timestamp);
+      return d.toLocaleDateString([], { month: "short", day: "numeric" });
+    } catch (e) {
+      return "";
+    }
+  }
+
+  /** Renders validator-confirmed past runs from the cross-session store. */
+  function renderRecentSessions() {
+    if (!recentSessionsList) return;
+    chrome.storage.local.get("agentCrossSessionMemory", (res) => {
+      const memory = res.agentCrossSessionMemory || [];
+      recentSessionsList.innerHTML = "";
+      if (memory.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "sidebar-empty-note";
+        empty.textContent =
+          "Completed (validated) tasks appear here. Click one to reuse it.";
+        recentSessionsList.appendChild(empty);
+        return;
+      }
+      memory.slice(0, 12).forEach((item) => {
+        const row = document.createElement("div");
+        row.className = "sidebar-chat-item";
+        row.setAttribute("role", "button");
+        row.setAttribute("tabindex", "0");
+        row.title = item.task || "";
+
+        const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        icon.setAttribute("width", "14");
+        icon.setAttribute("height", "14");
+        icon.setAttribute("viewBox", "0 0 24 24");
+        icon.setAttribute("fill", "none");
+        icon.setAttribute("stroke", "currentColor");
+        icon.setAttribute("stroke-width", "2");
+        icon.innerHTML =
+          '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>';
+
+        const title = document.createElement("span");
+        title.className = "session-title";
+        title.textContent = item.task || "(untitled task)";
+
+        const time = document.createElement("span");
+        time.className = "session-time";
+        time.textContent = formatSessionTime(item.timestamp);
+
+        row.appendChild(icon);
+        row.appendChild(title);
+        row.appendChild(time);
+
+        const reuse = () => {
+          taskInput.value = item.task || "";
+          adjustTextareaHeight();
+          taskInput.focus();
+        };
+        row.addEventListener("click", reuse);
+        row.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            reuse();
+          }
+        });
+        recentSessionsList.appendChild(row);
+      });
+    });
+  }
+
+  function renderScratchpadPanel() {
+    if (!scratchpadItems) return;
+    scratchpadItems.innerHTML = "";
+    if (sessionNotes.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "data-empty";
+      empty.textContent = "No notes yet — the agent saves findings here during a run.";
+      scratchpadItems.appendChild(empty);
+      return;
+    }
+    sessionNotes.forEach((note) => {
+      const item = document.createElement("div");
+      item.className = "data-item";
+      item.textContent = note;
+      scratchpadItems.appendChild(item);
+    });
+  }
+
+  function renderMemoryPanel() {
+    if (!memoryItems) return;
+    chrome.storage.local.get("agentCrossSessionMemory", (res) => {
+      const memory = res.agentCrossSessionMemory || [];
+      memoryItems.innerHTML = "";
+      if (memory.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "data-empty";
+        empty.textContent =
+          "Empty. Only validator-confirmed task outlines are stored (never page contents).";
+        memoryItems.appendChild(empty);
+        return;
+      }
+      memory.forEach((entry) => {
+        const item = document.createElement("div");
+        item.className = "data-item";
+        const plan = (entry.subtasks || []).join("; ");
+        item.textContent = plan ? `${entry.task} — ${plan}` : entry.task;
+        memoryItems.appendChild(item);
+      });
+    });
+  }
+
+  function bindPanelToggle(button, panel, render) {
+    if (!button || !panel) return;
+    button.addEventListener("click", () => {
+      const open = panel.classList.toggle("open");
+      button.setAttribute("aria-expanded", String(open));
+      if (open) render();
+    });
+  }
+
+  bindPanelToggle(
+    document.getElementById("toggleScratchpadBtn"),
+    scratchpadPanel,
+    renderScratchpadPanel,
+  );
+  bindPanelToggle(
+    document.getElementById("toggleMemoryBtn"),
+    memoryPanel,
+    renderMemoryPanel,
+  );
+
+  const clearScratchpadBtn = document.getElementById("clearScratchpadBtn");
+  if (clearScratchpadBtn) {
+    clearScratchpadBtn.addEventListener("click", () => {
+      sessionNotes = [];
+      renderScratchpadPanel();
+    });
+  }
+
+  const clearMemoryBtn = document.getElementById("clearMemoryBtn");
+  if (clearMemoryBtn) {
+    clearMemoryBtn.addEventListener("click", () => {
+      if (!confirm("Delete all stored task memory? Future plans will no longer reuse these outlines.")) {
+        return;
+      }
+      chrome.storage.local.remove("agentCrossSessionMemory", () => {
+        renderMemoryPanel();
+        renderRecentSessions();
+      });
+    });
+  }
+
+  renderRecentSessions();
 
   // New Task Button (Reset session)
   if (newTaskBtn) {
@@ -564,14 +736,25 @@ You are running inside a Chrome extension side panel. The user is chatting with 
           : "light");
       document.documentElement.setAttribute("data-theme", theme);
 
-      // Update header selector
+      // Header shows the ACTUAL provider and executor model in use
+      // (silently resolved — same fallback logic as the runtime, no log spam).
+      const provider = config.agentActiveProvider;
       const providerCapitalized =
-        config.agentActiveProvider.charAt(0).toUpperCase() +
-        config.agentActiveProvider.slice(1);
+        provider.charAt(0).toUpperCase() + provider.slice(1);
+      const resolvedModel = isModelCompatibleWithProvider(
+        provider,
+        config.agentModel,
+      )
+        ? config.agentModel
+        : getProviderFallbackModels(provider).pro;
 
       const selectedModelName = document.getElementById("selectedModelName");
       if (selectedModelName) {
-        selectedModelName.textContent = `Browser Agent (${providerCapitalized})`;
+        selectedModelName.textContent = `${providerCapitalized} · ${resolvedModel}`;
+      }
+      const headerModel = document.getElementById("headerModel");
+      if (headerModel) {
+        headerModel.title = `Provider: ${providerCapitalized}\nModel: ${resolvedModel}\nChange both in Settings → Models & API.`;
       }
 
       // Restore sidebar collapsed state
@@ -651,13 +834,22 @@ You are running inside a Chrome extension side panel. The user is chatting with 
     scrollToBottom();
   }
 
+  /**
+   * Renders assistant text with the minimal safe markdown subset (bold,
+   * italics, bullet lists, noopener links). Everything is escaped first in
+   * SELECT_TO_AI_TOOLS.renderSafeMarkdown, so model text cannot inject HTML.
+   */
+  function renderAnswerHtml(text) {
+    return SELECT_TO_AI_TOOLS.renderSafeMarkdown(String(text ?? ""));
+  }
+
   function appendSimpleAssistantBubble(text, recordHistory = true) {
     const assistantBubble = document.createElement("div");
     assistantBubble.className = "message-bubble assistant";
     assistantBubble.innerHTML = `
             <div class="bubble-avatar">A</div>
             <div class="bubble-content">
-                <div class="final-answer-box" style="display: block;">${escapeHtml(text)}</div>
+                <div class="final-answer-box" style="display: block;">${renderAnswerHtml(text)}</div>
             </div>
         `;
     chatContainer.appendChild(assistantBubble);
@@ -672,7 +864,7 @@ You are running inside a Chrome extension side panel. The user is chatting with 
 
   function setSimpleAssistantBubbleText(assistantBubble, text) {
     const answerBox = assistantBubble?.querySelector(".final-answer-box");
-    if (answerBox) answerBox.textContent = text;
+    if (answerBox) answerBox.innerHTML = renderAnswerHtml(text);
     conversationHistory.push({ role: "assistant", text });
     if (conversationHistory.length > 12)
       conversationHistory = conversationHistory.slice(-12);
@@ -695,8 +887,10 @@ You are running inside a Chrome extension side panel. The user is chatting with 
     chatViewport.scrollTop = chatViewport.scrollHeight;
   }
 
-  // Helper to print animated log cards
-  function addLogEntry(role, title, description) {
+  // Helper to print animated log cards. `collapsible: true` renders the
+  // description inside a collapsed-by-default expander (used for per-step
+  // model thoughts so the console stays scannable).
+  function addLogEntry(role, title, description, { collapsible = false } = {}) {
     if (!activeLogsWrapper) return;
     const timeString = new Date().toLocaleTimeString([], {
       hour: "2-digit",
@@ -705,13 +899,13 @@ You are running inside a Chrome extension side panel. The user is chatting with 
     });
 
     const logItem = document.createElement("div");
-    logItem.className = `log-item ${role}-role`;
+    logItem.className = `log-item ${role}-role${collapsible ? " log-thought" : ""}`;
 
     const logHeader = document.createElement("div");
     logHeader.className = "log-header";
 
     const logTitle = document.createElement("span");
-    logTitle.innerHTML = `<strong>[${role.toUpperCase()}]</strong> ${title}`;
+    logTitle.innerHTML = `<strong>[${role.toUpperCase()}]</strong> ${escapeHtml(title)}`;
 
     const logTime = document.createElement("span");
     logTime.className = "log-time";
@@ -719,13 +913,24 @@ You are running inside a Chrome extension side panel. The user is chatting with 
 
     logHeader.appendChild(logTitle);
     logHeader.appendChild(logTime);
-
-    const logDesc = document.createElement("div");
-    logDesc.className = "log-content";
-    logDesc.textContent = description;
-
     logItem.appendChild(logHeader);
-    logItem.appendChild(logDesc);
+
+    if (collapsible) {
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = "Show reasoning";
+      const logDesc = document.createElement("div");
+      logDesc.className = "log-content";
+      logDesc.textContent = description;
+      details.appendChild(summary);
+      details.appendChild(logDesc);
+      logItem.appendChild(details);
+    } else {
+      const logDesc = document.createElement("div");
+      logDesc.className = "log-content";
+      logDesc.textContent = description;
+      logItem.appendChild(logDesc);
+    }
 
     activeLogsWrapper.appendChild(logItem);
     activeLogsWrapper.scrollTop = activeLogsWrapper.scrollHeight;
@@ -1024,7 +1229,8 @@ You are running inside a Chrome extension side panel. The user is chatting with 
   function startAgentWithLoadedSettings() {
     const task = taskInput.value.trim();
     if (!task) {
-      alert("Please input a task instruction first.");
+      taskInput.focus();
+      taskInput.placeholder = "Type a task or question first…";
       return;
     }
 
@@ -1472,7 +1678,13 @@ ${elementSnippet}`;
                     <div class="checklist-items activeChecklistItems"></div>
                 </div>
                 <div class="logs-panel">
-                    <div class="logs-title">Execution Console</div>
+                    <div class="logs-title-row">
+                        <div class="logs-title">Execution Console</div>
+                        <div class="logs-actions">
+                            <button type="button" class="export-logs-btn exportMdLogsBtn" title="Download this run's plan and action log as Markdown">Export log (.md)</button>
+                            <button type="button" class="export-logs-btn exportJsonSessionBtn" title="Download the full session recording (actions + outcomes) as JSON">Session (.json)</button>
+                        </div>
+                    </div>
                     <div class="logs-wrapper activeLogsWrapper"></div>
                 </div>
                 <div class="stream-panel activeStreamPanel" style="display: none;">
@@ -1498,6 +1710,16 @@ ${elementSnippet}`;
     activeStreamText = assistantBubble.querySelector(".activeStreamText");
     activeWave = assistantBubble.querySelector(".activeWave");
     activeAvatar = assistantBubble.querySelector(".bubble-avatar");
+
+    // Wire the export actions for THIS run's bubble.
+    const mdExportBtn = assistantBubble.querySelector(".exportMdLogsBtn");
+    if (mdExportBtn) mdExportBtn.addEventListener("click", exportMarkdownLogs);
+    const jsonExportBtn = assistantBubble.querySelector(".exportJsonSessionBtn");
+    if (jsonExportBtn)
+      jsonExportBtn.addEventListener("click", exportSessionRecording);
+
+    // Steer-while-running input becomes available for this run.
+    setSteerRowVisible(true);
 
     // Align page height
     scrollToBottom();
@@ -2359,6 +2581,9 @@ ${pageText || "[No page text available]"}`;
     taskInput.disabled = false;
     taskInput.focus();
 
+    // The steer input only exists while a run is active.
+    setSteerRowVisible(false);
+
     // Cross-session memory save (F13): only validator-confirmed successes
     // are written — unvalidated finishes never seed future plans.
     if (statusState === "success" && lastValidatorPassed) {
@@ -2373,7 +2598,9 @@ ${pageText || "[No page text available]"}`;
         if (memory.length > 20) {
           memory = memory.slice(0, 20);
         }
-        chrome.storage.local.set({ agentCrossSessionMemory: memory });
+        chrome.storage.local.set({ agentCrossSessionMemory: memory }, () => {
+          renderRecentSessions();
+        });
       });
     }
 
@@ -2403,7 +2630,9 @@ ${pageText || "[No page text available]"}`;
       }
 
       if (statusState === "success") {
-        activeBubbleAnswer.innerHTML = `${escapeHtml(reason)}`;
+        // Final answers render the minimal safe markdown subset instead of
+        // raw asterisks (renderAnswerHtml escapes everything first).
+        activeBubbleAnswer.innerHTML = renderAnswerHtml(reason);
         if (activeThoughtStatus) activeThoughtStatus.textContent = "completed";
         // Mark the whole plan complete in the checklist panel.
         if (subtasks.length > 0) {
@@ -2418,7 +2647,7 @@ ${pageText || "[No page text available]"}`;
         setStatus("error", "Task Aborted");
         if (activeRadar) activeRadar.className = "radar error";
       } else {
-        activeBubbleAnswer.innerHTML = `${escapeHtml(reason)}`;
+        activeBubbleAnswer.innerHTML = renderAnswerHtml(reason);
         if (activeThoughtStatus) activeThoughtStatus.textContent = "stopped";
         setStatus("idle", "Stopped");
         if (activeRadar) activeRadar.className = "radar idle";
@@ -2477,6 +2706,20 @@ ${pageText || "[No page text available]"}`;
     if (!isRunning) return;
     const stepRunId = runId;
     const isCurrentRun = () => isRunning && stepRunId === runId;
+
+    // Deliver a queued steer message as feedback for THIS step, then clear
+    // it (one message, delivered once).
+    if (pendingSteerMessage) {
+      const guidance = `User guidance received mid-run (follow it): ${pendingSteerMessage}`;
+      feedback = feedback ? `${feedback}\n${guidance}` : guidance;
+      addLogEntry(
+        "system",
+        "User Guidance Delivered",
+        pendingSteerMessage,
+      );
+      pendingSteerMessage = "";
+      if (steerPending) steerPending.textContent = "";
+    }
 
     currentStep++;
     if (currentStep > agentMaxStepsLimit) {
@@ -2665,7 +2908,10 @@ ${(function () {
                     "executor",
                     thought.length > 140 ? `${thought.slice(0, 137)}...` : thought,
                   );
-                  addLogEntry("executor", "Thought", thought);
+                  // Collapsed-by-default expander keeps the console scannable.
+                  addLogEntry("executor", "Thought", thought, {
+                    collapsible: true,
+                  });
                 }
 
                 // The model asserts the current subtask's postcondition was
@@ -2679,6 +2925,8 @@ ${(function () {
                   if (sessionNotes.length > 20)
                     sessionNotes = sessionNotes.slice(-20);
                   addLogEntry("executor", "Note Saved", actionObj.note);
+                  if (scratchpadPanel && scratchpadPanel.classList.contains("open"))
+                    renderScratchpadPanel();
                   actionHistory.push({
                     step: currentStep,
                     subtask: activeSubtaskLabel(),

@@ -1,6 +1,9 @@
 /**
  * Select to AI - Popup Logic
- * Handles user settings, theme toggling, and opening the sidebar/options manually.
+ *
+ * The popup is a launcher: open the sidebar, open the browser agent, open
+ * settings, and pick the opening mode. Per-service toggles and behavioral
+ * defaults live in Options only (their single home).
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -13,118 +16,88 @@ document.addEventListener('DOMContentLoaded', () => {
     const { STORAGE, URLS, HOSTS } = CONFIG;
 
     // DOM Elements
-    const autoSendToggle = document.getElementById('autoSend');
-    const autoContextToggle = document.getElementById('autoContext');
     const openingModeSelect = document.getElementById('openingMode');
     const openSidebarBtn = document.getElementById('openSidebarBtn');
-    
-    // AI Browser Agent Settings elements
-    const agentSettingsPanel = document.getElementById('agent-settings');
+    const openAgentBtn = document.getElementById('openAgentBtn');
+    const openAgentLabel = document.getElementById('openAgentLabel');
+    const agentDisabledHint = document.getElementById('agentDisabledHint');
     const openOptionsBtn = document.getElementById('openOptionsBtn');
+    const themeToggleBtn = document.getElementById('theme-toggle');
 
-    // Service Toggles map
-    const serviceToggles = {
-        chatgpt: document.getElementById('chatgpt'),
-        gemini: document.getElementById('gemini'),
-        perplexity: document.getElementById('perplexity'),
-        claude: document.getElementById('claude'),
-        agent: document.getElementById('agent')
-    };
-    const serviceKeys = ['chatgpt', 'gemini', 'perplexity', 'claude', 'agent'];
+    let agentEnabled = false;
 
     // --- Initialization ---
 
-    // Load saved settings
     chrome.storage.sync.get(STORAGE.SETTINGS, (items) => {
-        autoSendToggle.checked = items.autoSend === true;
-        autoContextToggle.checked = items.autoContext !== false; // Default true
-
-        // Theme initialization
+        // Theme: stored preference with system fallback (shared mechanism).
         const theme = items.theme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
         document.documentElement.setAttribute('data-theme', theme);
+        updateThemeToggleLabel(theme);
 
-        // Robust Opening Mode Logic
+        // Opening mode with validation fallback.
         let mode = items.openingMode;
-        if (!mode) {
+        if (!['tab', 'sidePanel'].includes(mode)) {
             mode = 'sidePanel';
             chrome.storage.sync.set({ openingMode: mode });
         }
-
-        const validOptions = ['tab', 'sidePanel'];
-        if (!validOptions.includes(mode)) {
-            mode = 'sidePanel'; // Fallback
-            chrome.storage.sync.set({ openingMode: mode });
-        }
-
         openingModeSelect.value = mode;
 
-        // Load Service Toggles
-        serviceToggles.chatgpt.checked = items.showChatGPT !== false;
-        serviceToggles.gemini.checked = items.showGemini !== false;
-        serviceToggles.perplexity.checked = items.showPerplexity === true;
-        serviceToggles.claude.checked = items.showClaude !== false;
-        serviceToggles.agent.checked = items.showAgent === true;
-
-        // Show/hide Agent settings panel based on checked state
-        toggleSettingsPanel(serviceToggles.agent.checked);
+        // Agent gate: the "Enable AI Browser Agent" setting in Options is the
+        // one master switch for every agent entry point (popup, Alt+A,
+        // address bar, side panel dropdown, context menu).
+        agentEnabled = items.showAgent === true;
+        if (!agentEnabled) {
+            openAgentLabel.textContent = 'Browser Agent (off) — Settings';
+            agentDisabledHint.classList.remove('u-hidden');
+        }
     });
 
     // --- Event Listeners ---
-
-    // Settings Toggles
-    autoSendToggle.addEventListener('change', () => {
-        chrome.storage.sync.set({ autoSend: autoSendToggle.checked });
-    });
-
-    autoContextToggle.addEventListener('change', () => {
-        chrome.storage.sync.set({ autoContext: autoContextToggle.checked });
-    });
 
     openingModeSelect.addEventListener('change', () => {
         chrome.storage.sync.set({ openingMode: openingModeSelect.value });
     });
 
-    // Redirect to Advanced Options Dashboard
     openOptionsBtn.addEventListener('click', () => {
         chrome.runtime.openOptionsPage();
     });
 
-    // Helper to toggle panel visibility
-    function toggleSettingsPanel(show) {
-        if (show) {
-            agentSettingsPanel.style.display = "flex";
-        } else {
-            agentSettingsPanel.style.display = "none";
+    openAgentBtn.addEventListener('click', () => {
+        if (!agentEnabled) {
+            // Same gate as every other entry point: point the user at the
+            // Options switch instead of silently opening a disabled surface.
+            chrome.runtime.openOptionsPage();
+            return;
         }
-    }
 
-    // Service Visibility Toggles
-    serviceKeys.forEach(key => {
-        serviceToggles[key].addEventListener('change', () => {
-            const isChecked = serviceToggles[key].checked;
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            const activeTab = tabs && tabs[0];
+            const agentUrl = chrome.runtime.getURL('agent.html') +
+                (activeTab && activeTab.id ? `?tabId=${activeTab.id}` : '');
 
-            if (!isChecked) {
-                // Prevent disabling all services
-                const anyChecked = serviceKeys.some(k => serviceToggles[k].checked);
-                if (!anyChecked) {
-                    serviceToggles[key].checked = true;
-                    return; // Abort change
+            chrome.storage.sync.get(['openingMode'], (settings) => {
+                if (settings.openingMode === 'tab') {
+                    chrome.tabs.create({ url: agentUrl });
+                    return;
                 }
-            }
-
-            if (key === 'agent') {
-                toggleSettingsPanel(isChecked);
-            }
-
-            // Save new state
-            const settingKey = getSettingKey(key);
-            chrome.storage.sync.set({ [settingKey]: isChecked });
+                chrome.storage.local.set({
+                    sidePanelState: {
+                        url: agentUrl,
+                        selectedText: '',
+                        autoSend: false,
+                        timestamp: Date.now()
+                    }
+                }, () => {
+                    chrome.windows.getCurrent((win) => {
+                        chrome.sidePanel.open({ windowId: win.id });
+                    });
+                });
+            });
         });
     });
 
-    // openSidebarBtn Logic
+    // openSidebarBtn: open the last-used (or first enabled) assistant.
     openSidebarBtn.addEventListener('click', () => {
-        // Determine which service to open (Prefer last used, then Default)
         chrome.storage.local.get([STORAGE.SIDE_PANEL_STATE], (localState) => {
             chrome.storage.sync.get(STORAGE.SETTINGS, (settings) => {
                 let targetBaseUrl = URLS.CHATGPT; // Default fallback (ChatGPT)
@@ -190,7 +163,6 @@ document.addEventListener('DOMContentLoaded', () => {
                             timestamp: Date.now()
                         }
                     }, () => {
-                        // Open the side panel in the current window
                         chrome.windows.getCurrent((win) => {
                             chrome.sidePanel.open({ windowId: win.id });
                         });
@@ -200,24 +172,23 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // Handle Theme Toggle
-    const themeToggleBtn = document.getElementById('theme-toggle');
+    // Theme toggle: shared stored-preference mechanism.
     if (themeToggleBtn) {
         themeToggleBtn.addEventListener('click', () => {
             const currentTheme = document.documentElement.getAttribute('data-theme');
             const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
             document.documentElement.setAttribute('data-theme', newTheme);
+            updateThemeToggleLabel(newTheme);
             chrome.storage.sync.set({ theme: newTheme });
         });
     }
 
-    function getSettingKey(key) {
-        if (key === 'chatgpt') return 'showChatGPT';
-        if (key === 'gemini') return 'showGemini';
-        if (key === 'perplexity') return 'showPerplexity';
-        if (key === 'claude') return 'showClaude';
-        if (key === 'agent') return 'showAgent';
-        return `show${key.charAt(0).toUpperCase() + key.slice(1)}`;
+    function updateThemeToggleLabel(theme) {
+        if (!themeToggleBtn) return;
+        themeToggleBtn.setAttribute(
+            'aria-label',
+            theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
+        );
     }
 
     function getFallbackUrl(settings) {

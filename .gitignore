@@ -30,3 +30,6 @@ _metadata/
 # Local isolated implementation worktrees
 .worktrees/
 dist/
+
+# Node dependencies (puppeteer for the e2e harness)
+node_modules/

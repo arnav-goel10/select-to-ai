@@ -1,6 +1,6 @@
 # Privacy Policy for Select to AI
 
-Last updated: August 6, 2026
+Last updated: August 15, 2026
 
 Select to AI does not operate an application server and does not sell personal data. The extension processes information in your browser and sends content only to the AI service or custom gateway you choose.
 
@@ -9,7 +9,8 @@ Select to AI does not operate an application server and does not sell personal d
 - **API keys** are stored in `chrome.storage.local` in your browser profile. They are not placed in Chrome Sync and are excluded from settings exports. Version 3.1 migrates keys that older builds may have stored in sync and removes the synced copies.
 - **Preferences** such as enabled services, theme, model, and safety limits are stored in `chrome.storage.sync` and may sync through your browser account.
 - **Selected text, page context, DOM summaries, prompts, and optional screenshots** are sent directly to the selected AI provider when required for a request. Select to AI does not receive a copy on its own server.
-- **Agent history** stores up to 20 validator-confirmed task outlines (the task goal and its subtask list — never page contents) in `chrome.storage.local`. It is read back locally into the planning step of new agent tasks, which means those stored goals and subtask lists are included in the planning prompt sent to your selected AI provider. It is never sent anywhere else, and unvalidated or failed runs are never stored.
+- **Agent history** stores up to 20 validator-confirmed task outlines (the task goal and its subtask list — never page contents) in `chrome.storage.local`. It is read back locally into the planning step of new agent tasks, which means those stored goals and subtask lists are included in the planning prompt sent to your selected AI provider. It is never sent anywhere else, and unvalidated or failed runs are never stored. The agent page's sidebar shows exactly what is stored ("Recent Sessions" and the "Stored Memory" viewer) and provides a one-click **Clear stored memory** control that deletes all of it.
+- **Scratchpad notes** are short facts the agent saves during a single run (for example a price it read on one page while comparing it with another). They live in the agent page's memory for that session only, are visible in the sidebar's "Scratchpad Notes" viewer, can be cleared there at any time, and are discarded when the run's session ends. Like all page-derived context, notes are included in the prompts sent to your selected AI provider during the run.
 
 Local extension storage is protected by the browser profile and extension permission model, but it is not an encrypted secrets vault. Users with access to your unlocked browser profile or a compromised device may be able to access it.
 

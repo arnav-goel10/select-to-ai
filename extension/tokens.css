@@ -1,0 +1,199 @@
+/**
+ * Select to AI - shared design tokens.
+ *
+ * ONE design system for all four surfaces (popup, options, side panel,
+ * agent). Every page links this stylesheet FIRST, then adds page-specific
+ * rules on top of the tokens.
+ *
+ * Theme mechanism (identical on every page):
+ * - The stored `theme` preference (chrome.storage.sync) is applied by each
+ *   page's script as `data-theme="light" | "dark"` on <html>.
+ * - When no preference is stored, the page script falls back to
+ *   `prefers-color-scheme` and still stamps the attribute, so `:root` below
+ *   is the light palette and `[data-theme="dark"]` is the dark palette.
+ *
+ * Legacy aliases at the bottom keep the historical per-page variable names
+ * (--text-color, --bg-card, ...) resolving to the same canonical tokens so
+ * every surface shares one palette.
+ */
+
+:root {
+  /* Typography: system font stack only. The old "Outfit" declarations were
+     never backed by a bundled font and silently did nothing. */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* The one accent */
+  --accent: #6d5ce7;
+  --accent-hover: #5a49d6;
+  --accent-contrast: #ffffff;
+  --accent-glow: rgba(109, 92, 231, 0.16);
+
+  /* Neutral surfaces */
+  --bg: #ffffff;
+  --surface: #f6f6f9;
+  --surface-2: #ededf2;
+  --surface-sunken: #f1f1f5;
+  --border: #e3e3ea;
+  --border-strong: #cfcfda;
+  --hover-overlay: rgba(20, 20, 40, 0.05);
+
+  /* Text */
+  --text: #26262c;
+  --text-muted: #6b6b78;
+
+  /* Status */
+  --danger: #d92d20;
+  --danger-bg: rgba(217, 45, 32, 0.08);
+  --success: #12805c;
+  --success-bg: rgba(18, 128, 92, 0.08);
+  --warning: #b54708;
+  --warning-bg: rgba(181, 71, 8, 0.08);
+
+  /* Radii */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 999px;
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+}
+
+[data-theme="dark"] {
+  --accent: #a78bfa;
+  --accent-hover: #b9a4fc;
+  --accent-contrast: #1d1730;
+  --accent-glow: rgba(167, 139, 250, 0.22);
+
+  --bg: #17171a;
+  --surface: #212126;
+  --surface-2: #2b2b31;
+  --surface-sunken: #101013;
+  --border: #333338;
+  --border-strong: #4a4a52;
+  --hover-overlay: rgba(255, 255, 255, 0.06);
+
+  --text: #ececf0;
+  --text-muted: #9b9ba6;
+
+  --danger: #f87171;
+  --danger-bg: rgba(248, 113, 113, 0.1);
+  --success: #34d399;
+  --success-bg: rgba(52, 211, 153, 0.1);
+  --warning: #fbbf24;
+  --warning-bg: rgba(251, 191, 36, 0.1);
+}
+
+/* ---------------------------------------------------------------------------
+ * Legacy aliases: historical variable names used across the four pages all
+ * resolve to the canonical tokens above. New code should use the canonical
+ * names; these keep older selectors on the same palette.
+ * ------------------------------------------------------------------------- */
+:root,
+[data-theme="dark"] {
+  --accent-color: var(--accent);
+  --text-color: var(--text);
+  --text-main: var(--text);
+  --text-light: var(--accent-contrast);
+  --bg-color: var(--bg);
+  --bg-base: var(--bg);
+  --bg-card: var(--surface);
+  --card-bg: var(--bg);
+  --border-color: var(--border);
+  --border-card: var(--border);
+  --hover-bg: var(--surface);
+  --input-bg: var(--surface);
+  --input-border: var(--border);
+  --danger-color: var(--danger);
+  --success-color: var(--success);
+  --warning-color: var(--warning);
+}
+
+/* ---------------------------------------------------------------------------
+ * Global base + accessibility, applied to every surface.
+ * ------------------------------------------------------------------------- */
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Toggle switches hide their native checkbox; surface keyboard focus on the
+   visible slider instead. */
+.toggle-switch input:focus-visible + .slider {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* Keyboard-reachable tooltips: any .tooltip-container is focusable
+   (tabindex="0" in markup) and reveals its tooltip on focus as well as
+   hover. Pages define .tooltip-text visuals; this reveals them. */
+.tooltip-container:focus-visible .tooltip-text,
+.tooltip-container:focus-within .tooltip-text {
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Small utility classes replacing one-off inline style attributes.
+ * ------------------------------------------------------------------------- */
+
+.u-hidden { display: none !important; }
+.u-flex { display: flex; }
+.u-flex-col { display: flex; flex-direction: column; }
+.u-items-center { align-items: center; }
+.u-items-end { align-items: flex-end; }
+.u-justify-between { justify-content: space-between; }
+.u-wrap { flex-wrap: wrap; }
+.u-flex-1 { flex: 1; }
+.u-gap-1 { gap: var(--space-1); }
+.u-gap-2 { gap: var(--space-2); }
+.u-gap-3 { gap: var(--space-3); }
+.u-gap-4 { gap: var(--space-4); }
+.u-mt-2 { margin-top: var(--space-2); }
+.u-mt-3 { margin-top: var(--space-3); }
+.u-mt-4 { margin-top: var(--space-4); }
+.u-mb-3 { margin-bottom: var(--space-3); }
+.u-mb-4 { margin-bottom: var(--space-4); }
+.u-w-250 { width: 250px; }
+.u-w-200 { width: 200px; }
+.u-full-width { width: 100%; }
+.u-text-left { text-align: left; }
+
+.muted-note {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* Inline SVG icon sizing helper (one icon approach: inline SVG only). */
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  vertical-align: middle;
+}

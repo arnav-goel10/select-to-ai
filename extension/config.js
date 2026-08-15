@@ -29,23 +29,92 @@ const CONFIG = {
         AGENT: "agent.html"
     },
 
-    // DOM Selectors for Content Script
-    SELECTORS: {
+    // URL-parameter prefill for NEW conversations. These providers accept
+    // the prompt in the URL (and submit it on load), so the content script's
+    // DOM insertion is skipped entirely for new-conversation sends.
+    PREFILL_URLS: {
+        CHATGPT: "https://chatgpt.com/?q={query}",
+        PERPLEXITY: "https://www.perplexity.ai/search?q={query}"
+    },
+
+    // Per-provider insertion adapters for the content script.
+    //
+    // Each adapter carries ORDERED selector chains: locale-independent
+    // attributes first (ids, data-testid), then aria-labels, then structural
+    // fallbacks. The first selector that matches wins. There is deliberately
+    // NO generic last-resort selector (the old any-button-with-an-svg
+    // catch-all) — clicking a wrong button is worse than not clicking, so
+    // when nothing matches the content script copies the text to the
+    // clipboard and tells the user.
+    //
+    // `sentProbe` (optional) counts user-message bubbles so a send can be
+    // verified ("a new user message appeared") in addition to the composer
+    // emptying.
+    ADAPTERS: {
         CHATGPT: {
-            INPUT: "#prompt-textarea, textarea[placeholder*='ChatGPT'], [contenteditable='true'][role='textbox'], textarea",
-            SEND_BTN: "button[data-testid='send-button'], button[aria-label='Send message'], button:has(svg)"
+            // Chain: stable composer id -> ProseMirror role/testid combo ->
+            // legacy textarea placeholder.
+            input: [
+                "#prompt-textarea",
+                "div[contenteditable='true'][id='prompt-textarea']",
+                "[contenteditable='true'][role='textbox']",
+                "textarea[placeholder*='ChatGPT']"
+            ],
+            // Chain: data-testid (locale-independent) -> composer submit
+            // button id -> aria-labels (en).
+            send: [
+                "button[data-testid='send-button']",
+                "#composer-submit-button",
+                "button[aria-label='Send prompt']",
+                "button[aria-label='Send message']"
+            ],
+            sentProbe: "[data-message-author-role='user']"
         },
         GEMINI: {
-            INPUT: ".ql-editor.textarea, div[contenteditable='true'], div[role='textbox'], textarea, rich-textarea",
-            SEND_BTN: "button[aria-label='Send message'], button:has(svg)"
+            // Chain: Quill editor class Gemini has shipped for years ->
+            // rich-textarea wrapper's editable -> generic role.
+            input: [
+                ".ql-editor.textarea",
+                "rich-textarea div[contenteditable='true']",
+                "div[role='textbox'][contenteditable='true']"
+            ],
+            // Chain: send-button class used by the mat toolbar -> aria-label.
+            send: [
+                "button.send-button",
+                "button[aria-label='Send message']"
+            ],
+            sentProbe: "user-query"
         },
         PERPLEXITY: {
-            INPUT: "#ask-input, textarea[placeholder*='ask'], textarea[placeholder*='search'], textarea",
-            SEND_BTN: "button[aria-label='Submit'].bg-super, button[aria-label='Submit']:not([disabled]), button:has(svg)"
+            // Chain: stable #ask-input id -> ask/search placeholders ->
+            // generic contenteditable composer.
+            input: [
+                "#ask-input",
+                "textarea[placeholder*='ask' i]",
+                "textarea[placeholder*='search' i]",
+                "div[contenteditable='true'][role='textbox']"
+            ],
+            // Chain: submit testid -> aria-label (submit variants).
+            send: [
+                "button[data-testid='submit-button']",
+                "button[aria-label='Submit']",
+                "button[aria-label='Send']"
+            ],
+            sentProbe: null
         },
         CLAUDE: {
-            INPUT: "div[contenteditable='true'], textarea, [role='textbox']",
-            SEND_BTN: "button[aria-label='Send Message'], button:has(svg)"
+            // Chain: ProseMirror composer div -> generic editable textbox.
+            input: [
+                "div[contenteditable='true'].ProseMirror",
+                "div[contenteditable='true'][role='textbox']",
+                "div[contenteditable='true']"
+            ],
+            // Chain: aria-label variants Claude has used across releases.
+            send: [
+                "button[aria-label='Send message']",
+                "button[aria-label='Send Message']"
+            ],
+            sentProbe: "[data-testid='user-message']"
         }
     },
 

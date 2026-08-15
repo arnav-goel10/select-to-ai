@@ -10,7 +10,7 @@
 
 | Threat | Control |
 | --- | --- |
-| API-key exfiltration through an arbitrary proxy URL | Exact provider/custom-origin allowlist in `extension/security.js`. |
+| API-key exfiltration through an arbitrary proxy URL | Exact provider/custom-origin allowlist in `extension/security.js`. Trusted extension pages may additionally name a typed-but-unsaved custom-gateway URL for a single connection test; that candidate passes the identical origin policy (HTTPS or loopback, no embedded credentials, exact-origin match) and is never used for agent traffic, which accepts only the saved gateway. |
 | Look-alike domain such as `api.openai.com.evil.test` | URL parsing and strict origin equality. |
 | Credentials synced across devices | Keys isolated in local storage; legacy sync values migrated and removed. |
 | Secrets copied into backup files | Exports contain preferences only. |

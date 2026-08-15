@@ -15,6 +15,20 @@ const iframe = document.getElementById('contentFrame');
 const selector = document.getElementById('serviceSelector');
 const redoBtn = document.getElementById('redoContextBtn');
 
+// --- Theme (shared mechanism: stored preference with system fallback) ---
+function applyTheme(storedTheme) {
+    const theme = storedTheme ||
+        (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    document.documentElement.setAttribute('data-theme', theme);
+}
+
+chrome.storage.sync.get(['theme'], (items) => applyTheme(items.theme));
+chrome.storage.onChanged.addListener((changes, namespace) => {
+    if (namespace === 'sync' && changes.theme) {
+        applyTheme(changes.theme.newValue);
+    }
+});
+
 // --- Event Listeners ---
 
 // Handle manual switching via dropdown

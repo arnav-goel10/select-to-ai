@@ -1,0 +1,26 @@
+name: E2E agent harness
+
+# Manual-only: the puppeteer harness downloads Chromium and runs four full
+# agent scenarios against a scripted local gateway. It is deliberately kept
+# out of the required `npm run check` CI job to keep PR feedback fast.
+# Run locally with: npm run bench:e2e
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: xvfb-run --auto-servernum npm run bench:e2e
+        env:
+          E2E_HEADFUL: "1"

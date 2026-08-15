@@ -13,6 +13,9 @@ if (typeof CONFIG === 'undefined') {
 // Cached settings to minimize storage reads
 let cachedSettings = {
     autoSend: false,
+    // Address-bar questions auto-send by default UNLESS the user explicitly
+    // turned Auto-send off (documented in the option's tooltip in Options).
+    omniboxAutoSend: true,
     autoContext: false,
     openingMode: 'sidePanel',
     showChatGPT: true,
@@ -36,9 +39,17 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
     }
 });
 
-// Initialize context menus on install/startup
-chrome.runtime.onInstalled.addListener(() => {
+// Initialize context menus on install/startup. On a FRESH install also open
+// the options page so new users meet the onboarding wizard: it explains that
+// the browser agent exists, that it is off by default, and that it needs an
+// API key before it can run.
+chrome.runtime.onInstalled.addListener((details) => {
     updateContextMenus();
+    if (details && details.reason === 'install') {
+        chrome.runtime.openOptionsPage(() => {
+            void chrome.runtime.lastError;
+        });
+    }
 });
 
 /**
@@ -48,6 +59,8 @@ chrome.runtime.onInstalled.addListener(() => {
 function updateCache() {
     chrome.storage.sync.get(CONFIG.STORAGE.SETTINGS, (items) => {
         cachedSettings.autoSend = items.autoSend === true;
+        // Omnibox flow: default ON when unset, honoring an explicit OFF.
+        cachedSettings.omniboxAutoSend = items.autoSend !== false;
         cachedSettings.autoContext = items.autoContext !== false; // Default true
 
         // Settings defaults
@@ -166,6 +179,26 @@ function resolveSessionUrlSync(baseUrl) {
     return baseUrl;
 }
 
+/**
+ * URL-parameter prefill for NEW conversations. ChatGPT and Perplexity accept
+ * the prompt as a query parameter and submit it on load, which skips the
+ * DOM-selector dance entirely. Only used when:
+ *  - the resolved URL is the service's base URL (a new conversation — a
+ *    continue-session URL still needs the DOM adapter), and
+ *  - the send is expected to submit (prefill URLs submit on load).
+ * Returns the prefill URL, or null when the DOM path should be used.
+ */
+function buildPrefillUrl(finalUrl, serviceBaseUrl, text, willAutoSend) {
+    if (!willAutoSend || !text) return null;
+    if (finalUrl !== serviceBaseUrl) return null; // continue-session insert
+    const prefillTemplates = CONFIG.PREFILL_URLS || {};
+    let template = null;
+    if (serviceBaseUrl === CONFIG.URLS.CHATGPT) template = prefillTemplates.CHATGPT;
+    else if (serviceBaseUrl === CONFIG.URLS.PERPLEXITY) template = prefillTemplates.PERPLEXITY;
+    if (!template) return null;
+    return template.replace('{query}', encodeURIComponent(text));
+}
+
 // --- Interaction Handlers ---
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
@@ -194,6 +227,16 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
         finalText = `Context: ${tab.url}\n\n${selectedText}`;
     }
 
+    // New-conversation prefill: ChatGPT / Perplexity accept the prompt as a
+    // URL parameter (which also submits), skipping DOM insertion entirely.
+    const prefillUrl = info.menuItemId === "openAgent"
+        ? null
+        : buildPrefillUrl(finalUrl, serviceBaseUrl, finalText, cachedSettings.autoSend);
+    if (prefillUrl) {
+        finalUrl = prefillUrl;
+        finalText = ""; // content script has nothing left to do
+    }
+
     // Handle Opening Mode
     if (cachedSettings.openingMode === 'sidePanel') {
         // SIDE PANEL MODE
@@ -207,7 +250,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
             sidePanelState: {
                 url: finalUrl,
                 selectedText: finalText,
-                autoSend: cachedSettings.autoSend,
+                autoSend: prefillUrl ? false : cachedSettings.autoSend,
                 timestamp: Date.now()
             }
         });
@@ -215,6 +258,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     } else {
         // TAB MODE
         chrome.tabs.create({ url: finalUrl }, (newTab) => {
+            if (prefillUrl) return; // the URL itself carries the prompt
             // Wait for tab to load before sending message
             const listener = (tabId, changeInfo) => {
                 if (tabId === newTab.id && changeInfo.status === 'complete') {
@@ -272,6 +316,13 @@ chrome.commands.onCommand.addListener((command, tab) => {
             });
         });
     } else if (command === 'run-agent') {
+        // One coherent gate: "Enable AI Browser Agent" in Options controls
+        // EVERY agent entry point. When it is off, Alt+A routes the user to
+        // Options (where the switch lives) instead of opening the agent.
+        if (!cachedSettings.showAgent) {
+            notifyAgentDisabled();
+            return;
+        }
         const openPanel = (winId) => {
             chrome.sidePanel.open({ windowId: winId }, () => {
                 if (chrome.runtime.lastError) console.error("Side Panel Open Error:", chrome.runtime.lastError);
@@ -279,7 +330,7 @@ chrome.commands.onCommand.addListener((command, tab) => {
         };
         if (tab && tab.windowId) openPanel(tab.windowId);
         else chrome.windows.getCurrent((win) => openPanel(win.id));
-        
+
         const agentUrl = chrome.runtime.getURL('agent.html');
         chrome.storage.local.set({
             sidePanelState: {
@@ -291,6 +342,19 @@ chrome.commands.onCommand.addListener((command, tab) => {
         });
     }
 });
+
+/** Shared "agent is disabled" handling for gated entry points. */
+function notifyAgentDisabled() {
+    chrome.notifications.create({
+        type: 'basic',
+        iconUrl: 'icon128.png',
+        title: 'Select to AI',
+        message: 'The AI Browser Agent is turned off. Enable it in Settings (General Setup) to use this entry point.'
+    });
+    chrome.runtime.openOptionsPage(() => {
+        void chrome.runtime.lastError;
+    });
+}
 
 // Tab Closure Detection
 chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
@@ -307,9 +371,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             return true;
         }
 
+        // Test-only candidate gateway: extension pages (already verified as
+        // trusted senders above) may name a typed-but-unsaved custom-gateway
+        // URL for a single connection test / model fetch. The candidate goes
+        // through the SAME origin policy as a saved gateway (HTTPS or
+        // loopback, no embedded credentials, exact-origin match) — this
+        // scopes only which custom origin this one request may target, and
+        // the streaming agent path below still accepts the saved URL only.
+        const customUrlForRequest =
+            typeof message.candidateCustomUrl === 'string' && message.candidateCustomUrl
+                ? message.candidateCustomUrl
+                : cachedSettings.agentCustomUrl;
+
         const destination = SELECT_TO_AI_SECURITY.validateProviderUrl(
             message.url,
-            cachedSettings.agentCustomUrl
+            customUrlForRequest
         );
         const request = SELECT_TO_AI_SECURITY.validateProxyOptions(message.options);
         if (!destination.ok || !request.ok) {
@@ -592,6 +668,11 @@ if (chrome.omnibox) {
         }
 
         if (route.intent === 'agent') {
+            // Same master gate as Alt+A / popup / side panel.
+            if (!cachedSettings.showAgent) {
+                notifyAgentDisabled();
+                return;
+            }
             const agentUrl = `${CONFIG.URLS.AGENT}?task=${encodeURIComponent(route.query)}&autostart=1`;
             chrome.tabs.create({ url: agentUrl });
             return;
@@ -603,7 +684,10 @@ if (chrome.omnibox) {
 
 /**
  * Opens the preferred AI service with prepared text, honoring the user's
- * opening mode. Mirrors the context-menu flow; omnibox queries always send.
+ * opening mode. Mirrors the context-menu flow. Auto-send honors the user's
+ * Auto-send preference — for the address-bar flow it defaults ON when the
+ * preference was never set (documented in the option's tooltip), because an
+ * omnibox question is an explicit "send this" gesture.
  */
 function openServiceWithText(text) {
     let serviceBaseUrl = CONFIG.URLS.CHATGPT;
@@ -612,7 +696,17 @@ function openServiceWithText(text) {
     else if (cachedSettings.showPerplexity) serviceBaseUrl = CONFIG.URLS.PERPLEXITY;
     else if (cachedSettings.showClaude) serviceBaseUrl = CONFIG.URLS.CLAUDE;
 
-    const finalUrl = resolveSessionUrlSync(serviceBaseUrl);
+    let finalUrl = resolveSessionUrlSync(serviceBaseUrl);
+    const willAutoSend = cachedSettings.omniboxAutoSend;
+
+    // New-conversation prefill (ChatGPT / Perplexity): the URL parameter
+    // carries and submits the prompt, so no DOM insertion is needed.
+    const prefillUrl = buildPrefillUrl(finalUrl, serviceBaseUrl, text, willAutoSend);
+    let finalText = text;
+    if (prefillUrl) {
+        finalUrl = prefillUrl;
+        finalText = "";
+    }
 
     if (cachedSettings.openingMode === 'sidePanel') {
         chrome.windows.getLastFocused((win) => {
@@ -622,8 +716,8 @@ function openServiceWithText(text) {
             chrome.storage.local.set({
                 sidePanelState: {
                     url: finalUrl,
-                    selectedText: text,
-                    autoSend: true,
+                    selectedText: finalText,
+                    autoSend: prefillUrl ? false : willAutoSend,
                     timestamp: Date.now(),
                 },
             });
@@ -632,12 +726,13 @@ function openServiceWithText(text) {
     }
 
     chrome.tabs.create({ url: finalUrl }, (newTab) => {
+        if (prefillUrl) return; // the URL itself carries the prompt
         const listener = (tabId, changeInfo) => {
             if (tabId === newTab.id && changeInfo.status === 'complete') {
                 chrome.tabs.onUpdated.removeListener(listener);
                 chrome.tabs.sendMessage(newTab.id, {
-                    selectedText: text,
-                    autoSend: true,
+                    selectedText: finalText,
+                    autoSend: willAutoSend,
                     timestamp: Date.now(),
                 });
             }
