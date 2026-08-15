@@ -3063,4 +3063,25 @@ ${(function () {
     link.click();
     document.body.removeChild(link);
   }
+
+  // Omnibox handoff: agent.html?task=...&autostart=1 pre-fills the task and,
+  // when asked, starts planning immediately. Risky actions still stop at the
+  // in-conversation authorization gate, so autostart never skips a decision.
+  (function consumeOmniboxTask() {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const handedTask = (params.get("task") || "").trim();
+      if (!handedTask) return;
+      taskInput.value = handedTask.slice(0, 2000);
+      taskInput.style.height = "auto";
+      taskInput.style.height = taskInput.scrollHeight + "px";
+      if (params.get("autostart") === "1" && !isRunning) {
+        startAgent();
+      } else {
+        taskInput.focus();
+      }
+    } catch (e) {
+      console.warn("Omnibox task ingest failed:", e);
+    }
+  })();
 })();

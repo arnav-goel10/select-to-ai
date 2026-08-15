@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.2.0 - 2026-08-15
+
+### Added
+
+- Address-bar entry point: type `ai` plus a space, and an intent router decides between opening a site, asking the assistant, or handing the task to the browser agent. Live suggestions show the routing before Enter, and `ask` / `do` / `open` prefixes override it.
+- `extension/intentRouter.js`, a dependency-free classifier shared with the test suite, with URL normalization that rejects non-http(s) schemes and credentialed URLs.
+- Omnibox agent handoff: `agent.html?task=...&autostart=1` pre-fills and starts planning; the risk-confirmation gate still applies to consequential actions.
+
 ## 3.1.0 - 2026-08-06
 
 ### Security

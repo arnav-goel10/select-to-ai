@@ -43,6 +43,16 @@ Select text on a webpage, right-click, choose **Select to AI**, then select an e
 
 Open **Browser Agent** (`Alt+A` by default), describe a task, and review its live plan and action log. The first time it needs to interact with a site, select **Allow this site**; access is scoped to that origin. Keep **Risk confirmation** enabled for submissions, purchases, deletion, passwords, and payment fields.
 
+### Type in the address bar
+
+Type `ai` then a space in Chrome's address bar and just say what you want. An intent router classifies the input live and the suggestion row shows exactly what Enter will do:
+
+- `ai github.com` or `ai youtube` opens the site directly.
+- `ai how do rate limiters work` sends the question to your preferred assistant.
+- `ai find a usb-c cable under 10 dollars on amazon` opens the browser agent with the task already planning.
+
+The router is deterministic (`extension/intentRouter.js`, unit-tested) and one prefix always overrides it: `ask ...` forces a question, `do ...` forces an agent task, `open ...` forces navigation. Agent tasks started this way still stop at the risk-confirmation gate before any consequential action.
+
 ### Use a custom gateway
 
 Set an OpenAI-compatible base URL in Options. Remote gateways must use HTTPS; HTTP is accepted only on `localhost` or `127.0.0.1`. Requests are origin-bound to the configured gateway.

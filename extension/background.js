@@ -4,7 +4,7 @@
  */
 
 // Import shared configuration
-importScripts('config.js', 'security.js');
+importScripts('config.js', 'security.js', 'intentRouter.js');
 
 if (typeof CONFIG === 'undefined') {
     console.error("Select to AI: CONFIG failed to load in background.");
@@ -480,3 +480,141 @@ chrome.runtime.onConnect.addListener((port) => {
         });
     }
 });
+
+
+// --- Omnibox: type "ai" then space in the address bar ---
+// The intent router decides whether the text is a site to open, a question
+// for the AI, or a task for the browser agent. Suggestions show the routing
+// live so the user always sees what Enter will do, and one prefix (ask/do/open)
+// overrides the guess.
+
+const OMNIBOX_LIMIT = 400;
+
+function omniboxEscape(text) {
+    return String(text)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&apos;');
+}
+
+function omniboxDescribe(route, text) {
+    const shown = omniboxEscape(text.length > 60 ? text.slice(0, 57) + '...' : text);
+    if (route.intent === 'navigate') {
+        let host = route.query;
+        try { host = new URL(route.url).hostname; } catch (_e) { /* keep query */ }
+        return `Open <match>${omniboxEscape(host)}</match> <dim>· go straight there</dim>`;
+    }
+    if (route.intent === 'agent') {
+        return `Agent task: <match>${shown}</match> <dim>· plans first, risky actions need your OK</dim>`;
+    }
+    return `Ask AI: <match>${shown}</match>`;
+}
+
+if (chrome.omnibox) {
+    chrome.omnibox.onInputChanged.addListener((text, suggest) => {
+        const trimmed = String(text || '').slice(0, OMNIBOX_LIMIT).trim();
+        if (!trimmed) {
+            chrome.omnibox.setDefaultSuggestion({
+                description: 'Type a site to open it, a question to ask, or a task for the agent',
+            });
+            suggest([]);
+            return;
+        }
+        const route = SELECT_TO_AI_INTENT.classifyOmniboxInput(trimmed);
+        chrome.omnibox.setDefaultSuggestion({ description: omniboxDescribe(route, trimmed) });
+
+        const alternates = [];
+        if (route.intent !== 'ask') {
+            alternates.push({
+                content: `ask ${trimmed}`,
+                description: `Ask AI instead: <match>${omniboxEscape(trimmed)}</match>`,
+            });
+        }
+        if (route.intent !== 'agent') {
+            alternates.push({
+                content: `do ${trimmed}`,
+                description: `Run as agent task instead: <match>${omniboxEscape(trimmed)}</match>`,
+            });
+        }
+        if (route.intent !== 'navigate') {
+            const nav = SELECT_TO_AI_INTENT.normalizeNavigationUrl(trimmed.split(/\s+/)[0]);
+            if (nav) {
+                alternates.push({
+                    content: `open ${trimmed.split(/\s+/)[0]}`,
+                    description: `Open the site instead: <match>${omniboxEscape(trimmed.split(/\s+/)[0])}</match>`,
+                });
+            }
+        }
+        suggest(alternates);
+    });
+
+    chrome.omnibox.onInputEntered.addListener((text, disposition) => {
+        const trimmed = String(text || '').slice(0, OMNIBOX_LIMIT).trim();
+        if (!trimmed) return;
+        const route = SELECT_TO_AI_INTENT.classifyOmniboxInput(trimmed);
+
+        if (route.intent === 'navigate' && route.url) {
+            if (disposition === 'currentTab') {
+                chrome.tabs.update({ url: route.url });
+            } else {
+                chrome.tabs.create({ url: route.url, active: disposition !== 'newBackgroundTab' });
+            }
+            return;
+        }
+
+        if (route.intent === 'agent') {
+            const agentUrl = `${CONFIG.URLS.AGENT}?task=${encodeURIComponent(route.query)}&autostart=1`;
+            chrome.tabs.create({ url: agentUrl });
+            return;
+        }
+
+        openServiceWithText(route.query);
+    });
+}
+
+/**
+ * Opens the preferred AI service with prepared text, honoring the user's
+ * opening mode. Mirrors the context-menu flow; omnibox queries always send.
+ */
+function openServiceWithText(text) {
+    let serviceBaseUrl = CONFIG.URLS.CHATGPT;
+    if (cachedSettings.showChatGPT) serviceBaseUrl = CONFIG.URLS.CHATGPT;
+    else if (cachedSettings.showGemini) serviceBaseUrl = CONFIG.URLS.GEMINI;
+    else if (cachedSettings.showPerplexity) serviceBaseUrl = CONFIG.URLS.PERPLEXITY;
+    else if (cachedSettings.showClaude) serviceBaseUrl = CONFIG.URLS.CLAUDE;
+
+    const finalUrl = resolveSessionUrlSync(serviceBaseUrl);
+
+    if (cachedSettings.openingMode === 'sidePanel') {
+        chrome.windows.getLastFocused((win) => {
+            chrome.sidePanel.open({ windowId: win.id }, () => {
+                if (chrome.runtime.lastError) console.error('Side Panel Open Error:', chrome.runtime.lastError);
+            });
+            chrome.storage.local.set({
+                sidePanelState: {
+                    url: finalUrl,
+                    selectedText: text,
+                    autoSend: true,
+                    timestamp: Date.now(),
+                },
+            });
+        });
+        return;
+    }
+
+    chrome.tabs.create({ url: finalUrl }, (newTab) => {
+        const listener = (tabId, changeInfo) => {
+            if (tabId === newTab.id && changeInfo.status === 'complete') {
+                chrome.tabs.onUpdated.removeListener(listener);
+                chrome.tabs.sendMessage(newTab.id, {
+                    selectedText: text,
+                    autoSend: true,
+                    timestamp: Date.now(),
+                });
+            }
+        };
+        chrome.tabs.onUpdated.addListener(listener);
+    });
+}
