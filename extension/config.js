@@ -64,18 +64,17 @@ const CONFIG = {
     STORAGE: {
         SIDE_PANEL_STATE: 'sidePanelState',
         SETTINGS: [
-            'autoSend', 
-            'autoContext', 
-            'openingMode', 
-            'showChatGPT', 
-            'showGemini', 
-            'showPerplexity', 
-            'showClaude', 
-            'showAgent', 
+            'autoSend',
+            'autoContext',
+            'openingMode',
+            'showChatGPT',
+            'showGemini',
+            'showPerplexity',
+            'showClaude',
+            'showAgent',
             'agentActiveProvider',
             'agentCustomUrl',
             'agentModel',
-            'agentRoutingStrategy',
             'agentMaxSteps',
             'agentSystemPrompt',
             'agentPromptCaching',
@@ -90,9 +89,7 @@ const CONFIG = {
             'agentElementLimit',
             'agentHistoryLimit',
             'agentFailureThreshold',
-            'promptLibrary',
-            'perServiceAutoSend',
-            'contextTemplate'
+            'promptLibrary'
         ],
         API_KEYS: [
             'agentOpenRouterKey',

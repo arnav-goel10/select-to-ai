@@ -7,16 +7,23 @@
   "use strict";
 
   const DEFAULT_SYSTEM_PROMPT = CONFIG.DEFAULT_SYSTEM_PROMPT;
+  const DEFAULTS = SELECT_TO_AI_DEFAULTS.AGENT_DEFAULTS;
 
   // State Variables
   let isRunning = false;
+  let isStopping = false;
+  // Monotonically increasing run-generation token. Every deferred continuation
+  // (setTimeout, async callback, confirmation handler) captures the current
+  // value and bails if it no longer matches, so a stopped run's pending work
+  // can never resume — or leak into the next run.
+  let runId = 0;
   let currentTask = "";
   let subtasks = [];
   let currentSubtaskIndex = 0;
   let currentStep = 0;
   let consecutiveFailures = 0;
   let parseFailureCount = 0;
-  let agentMaxStepsLimit = 25; // Loop safeguard loaded from storage
+  let agentMaxStepsLimit = DEFAULTS.maxSteps; // Loop safeguard loaded from storage
   let targetTabId = null;
   let targetTabUrl = "";
   let currentAgentTabId = null;
@@ -24,52 +31,29 @@
   let actionHistory = [];
   let sessionRecording = [];
   let conversationHistory = [];
+  // Set once a provider rejects response_format/stream_options with a 400;
+  // subsequent calls omit those OpenAI-compatible extras.
+  let compatParamsUnsupported = false;
 
   // Token & Cost Tracking
   let totalPromptTokens = 0;
   let totalCompletionTokens = 0;
   let totalCostUSD = 0.0;
+  let costIsEstimated = false;
 
-  const MODEL_PRICES = {
-    "gemini-2.5-flash": [0.000075, 0.0003],
-    "gemini-flash": [0.000075, 0.0003],
-    "gemini-3.5-flash": [0.000075, 0.0003],
-    "gemini-2.5-pro": [0.00125, 0.005],
-    "gemini-pro": [0.00125, 0.005],
-    "claude-3-5-sonnet": [0.003, 0.015],
-    "claude-3.5-sonnet": [0.003, 0.015],
-    sonnet: [0.003, 0.015],
-    "claude-3-5-haiku": [0.0008, 0.004],
-    "claude-3.5-haiku": [0.0008, 0.004],
-    haiku: [0.0008, 0.004],
-    "gpt-4o-mini": [0.00015, 0.0006],
-    "gpt-4o": [0.0025, 0.01],
-    "o3-mini": [0.0011, 0.0044],
-    "o1-mini": [0.003, 0.012],
-    o1: [0.015, 0.06],
-    "deepseek-chat": [0.00014, 0.00028],
-    "deepseek-reasoner": [0.00055, 0.00219],
-    "llama-3.3": [0.0002, 0.0004],
-    llama: [0.00015, 0.0003],
-    default: [0.0005, 0.002],
-  };
-
-  function accumulateUsage(usage, modelName) {
+  function accumulateUsage(usage, modelName, isEstimated = false) {
     if (!usage) return;
-    const promptTokens = usage.prompt_tokens || 0;
-    const completionTokens = usage.completion_tokens || 0;
+    // OpenAI-compatible payloads use prompt_tokens/completion_tokens;
+    // Anthropic payloads use input_tokens/output_tokens.
+    const promptTokens = usage.prompt_tokens ?? usage.input_tokens ?? 0;
+    const completionTokens =
+      usage.completion_tokens ?? usage.output_tokens ?? 0;
 
     totalPromptTokens += promptTokens;
     totalCompletionTokens += completionTokens;
+    if (isEstimated) costIsEstimated = true;
 
-    let rates = MODEL_PRICES.default;
-    const nameLower = modelName.toLowerCase();
-    for (const [key, value] of Object.entries(MODEL_PRICES)) {
-      if (key !== "default" && nameLower.includes(key)) {
-        rates = value;
-        break;
-      }
-    }
+    const rates = SELECT_TO_AI_DEFAULTS.findModelRates(modelName);
 
     const cost =
       (promptTokens / 1000) * rates[0] + (completionTokens / 1000) * rates[1];
@@ -79,7 +63,9 @@
 
     // Enforce Cost Budget Ceiling (F7)
     if (config.agentCostBudget > 0 && totalCostUSD >= config.agentCostBudget) {
+      const budgetRunId = runId;
       setTimeout(() => {
+        if (budgetRunId !== runId) return; // run already ended/replaced
         stopAgent(
           `Cost budget exceeded: Spent $${totalCostUSD.toFixed(4)} of $${config.agentCostBudget.toFixed(4)} budget limit.`,
           "error",
@@ -92,14 +78,14 @@
     const costBadge = document.getElementById("costDashboardBadge");
     if (costBadge) {
       costBadge.style.display = "inline-flex";
-      costBadge.textContent = `$${totalCostUSD.toFixed(4)}`;
-      costBadge.title = `Tokens: Input: ${totalPromptTokens} | Output: ${totalCompletionTokens}`;
+      costBadge.textContent = `${costIsEstimated ? "est. " : ""}$${totalCostUSD.toFixed(4)}`;
+      costBadge.title = `Tokens: Input: ${totalPromptTokens} | Output: ${totalCompletionTokens}${costIsEstimated ? " (includes estimated usage)" : ""}`;
     }
   }
 
   // Configuration cache
   let config = {
-    agentActiveProvider: "opencode",
+    agentActiveProvider: DEFAULTS.activeProvider,
     agentOpenRouterKey: "",
     agentAnthropicKey: "",
     agentOpenAIKey: "",
@@ -111,22 +97,21 @@
     agentTogetherKey: "",
     agentXaiKey: "",
     agentOpencodeKey: "",
-    agentCustomUrl: "http://localhost:11434/v1",
+    agentCustomUrl: DEFAULTS.customUrl,
 
-    agentModel: "deepseek-v4-flash-free",
-    agentRoutingStrategy: "single",
+    agentModel: DEFAULTS.model,
 
     agentSystemPrompt: "",
-    agentTimeout: 60000,
-    agentMaxTokensPerCall: 2000,
-    agentTemperature: 0.1,
-    agentCostBudget: 0,
+    agentTimeout: DEFAULTS.timeoutMs,
+    agentMaxTokensPerCall: DEFAULTS.maxTokensPerCall,
+    agentTemperature: DEFAULTS.temperature,
+    agentCostBudget: DEFAULTS.costBudget,
     agentDomainAllowlist: "",
-    agentRiskConfirmation: true,
-    agentElementLimit: 60,
-    agentHistoryLimit: 12,
-    agentFailureThreshold: 3,
-    agentPromptCaching: true,
+    agentRiskConfirmation: DEFAULTS.riskConfirmation,
+    agentElementLimit: DEFAULTS.elementLimit,
+    agentHistoryLimit: DEFAULTS.historyLimit,
+    agentFailureThreshold: DEFAULTS.failureThreshold,
+    agentPromptCaching: DEFAULTS.promptCaching,
   };
 
   const promptCacheSessionId = `select-to-ai-agent-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -357,32 +342,8 @@ You are running inside a Chrome extension side panel. The user is chatting with 
   }
 
   function getProviderFallbackModels(provider) {
-    const defaults = {
-      openrouter: {
-        lite: "google/gemini-flash-latest",
-        pro: "anthropic/claude-3.5-sonnet",
-      },
-      anthropic: {
-        lite: "claude-3-5-haiku-20241022",
-        pro: "claude-3-5-sonnet-20241022",
-      },
-      openai: { lite: "gpt-4o-mini", pro: "gpt-4o" },
-      deepseek: { lite: "deepseek-chat", pro: "deepseek-reasoner" },
-      gemini: { lite: "gemini-flash-latest", pro: "gemini-pro-latest" },
-      mistral: { lite: "open-mistral-7b", pro: "mistral-large-latest" },
-      groq: { lite: "llama3-8b-8192", pro: "llama-3.3-70b-versatile" },
-      together: {
-        lite: "meta-llama/Llama-3-8b-chat-hf",
-        pro: "meta-llama/Llama-3.3-70b-instruct-turbo",
-      },
-      xai: { lite: "grok-beta", pro: "grok-beta" },
-      opencode: {
-        lite: "deepseek-v4-flash-free",
-        pro: "deepseek-v4-flash-free",
-      },
-      custom: { lite: "llama3", pro: "llama3" },
-    };
-    return defaults[provider] || defaults.openrouter;
+    const catalog = SELECT_TO_AI_DEFAULTS.PROVIDER_FALLBACK_MODELS;
+    return catalog[provider] || catalog.openrouter;
   }
 
   function isModelCompatibleWithProvider(provider, model) {
@@ -407,8 +368,10 @@ You are running inside a Chrome extension side panel. The user is chatting with 
         model.includes("devstral")
       );
     if (provider === "groq")
-      return /^(llama|llama3|llama-3|mixtral|gemma|qwen|deepseek|moonshot)/.test(
-        model,
+      return (
+        /^(llama|llama3|llama-3|mixtral|gemma|qwen|deepseek|moonshot|gpt-oss)/.test(
+          model,
+        ) || model.includes("/")
       );
     if (provider === "together") return model.includes("/");
     if (provider === "xai") return model.startsWith("grok-");
@@ -493,7 +456,8 @@ You are running inside a Chrome extension side panel. The user is chatting with 
           }
           chrome.storage.sync.remove(legacyKeys);
 
-      config.agentActiveProvider = items.agentActiveProvider || "opencode";
+      config.agentActiveProvider =
+        items.agentActiveProvider || DEFAULTS.activeProvider;
       config.agentOpenRouterKey = items.agentOpenRouterKey || "";
       config.agentAnthropicKey = items.agentAnthropicKey || "";
       config.agentOpenAIKey = items.agentOpenAIKey || "";
@@ -505,43 +469,45 @@ You are running inside a Chrome extension side panel. The user is chatting with 
       config.agentXaiKey = items.agentXaiKey || "";
       config.agentOpencodeKey = items.agentOpencodeKey || "";
       config.agentCustomKey = items.agentCustomKey || "";
-      config.agentCustomUrl =
-        items.agentCustomUrl || "http://localhost:11434/v1";
+      config.agentCustomUrl = items.agentCustomUrl || DEFAULTS.customUrl;
 
-      config.agentModel = items.agentModel || "deepseek-v4-flash-free";
-      config.agentRoutingStrategy = items.agentRoutingStrategy || "dual";
+      config.agentModel = items.agentModel || DEFAULTS.model;
 
-      agentMaxStepsLimit = items.agentMaxSteps || 25;
+      agentMaxStepsLimit = items.agentMaxSteps || DEFAULTS.maxSteps;
 
       config.agentSystemPrompt =
         items.agentSystemPrompt || DEFAULT_SYSTEM_PROMPT;
 
       config.agentTimeout =
-        items.agentTimeout !== undefined ? items.agentTimeout : 60000;
+        items.agentTimeout !== undefined
+          ? items.agentTimeout
+          : DEFAULTS.timeoutMs;
       config.agentMaxTokensPerCall =
         items.agentMaxTokensPerCall !== undefined
           ? items.agentMaxTokensPerCall
-          : 2000;
+          : DEFAULTS.maxTokensPerCall;
       config.agentTemperature =
-        items.agentTemperature !== undefined ? items.agentTemperature : 0.1;
+        items.agentTemperature !== undefined
+          ? items.agentTemperature
+          : DEFAULTS.temperature;
       config.agentCostBudget =
         items.agentCostBudget !== undefined
           ? parseFloat(items.agentCostBudget)
-          : 0;
+          : DEFAULTS.costBudget;
       config.agentDomainAllowlist = items.agentDomainAllowlist || "";
       config.agentRiskConfirmation = items.agentRiskConfirmation !== false;
       config.agentElementLimit =
         items.agentElementLimit !== undefined
           ? parseInt(items.agentElementLimit, 10)
-          : 60;
+          : DEFAULTS.elementLimit;
       config.agentHistoryLimit =
         items.agentHistoryLimit !== undefined
           ? parseInt(items.agentHistoryLimit, 10)
-          : 12;
+          : DEFAULTS.historyLimit;
       config.agentFailureThreshold =
         items.agentFailureThreshold !== undefined
           ? parseInt(items.agentFailureThreshold, 10)
-          : 3;
+          : DEFAULTS.failureThreshold;
       config.agentPromptCaching = items.agentPromptCaching !== false;
 
       // Apply Theme
@@ -601,6 +567,18 @@ You are running inside a Chrome extension side panel. The user is chatting with 
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === "sync" || namespace === "local") {
       loadSettings();
+    }
+  });
+
+  // Background broadcasts 'tabClosed' whenever any tab closes. If it is the
+  // tab this run is driving, stop instead of silently retargeting.
+  chrome.runtime.onMessage.addListener((message) => {
+    if (!message || message.action !== "tabClosed") return;
+    if (isRunning && message.tabId === targetTabId) {
+      stopAgent(
+        "The tab the agent was working on was closed. Task stopped.",
+        "error",
+      );
     }
   });
 
@@ -740,7 +718,16 @@ You are running inside a Chrome extension side panel. The user is chatting with 
     if (targetTabId !== null) {
       chrome.tabs.get(targetTabId, (tab) => {
         if (chrome.runtime.lastError || !tab) {
-          // Reset and re-resolve
+          if (isRunning) {
+            // Mid-run the target tab is load-bearing: never silently
+            // retarget to some other tab — stop with a clear message.
+            stopAgent(
+              "The tab the agent was working on is no longer available. Task stopped.",
+              "error",
+            );
+            return;
+          }
+          // Reset and re-resolve (idle flows only)
           targetTabId = null;
           currentAgentTabId = null;
           resolveTargetTab();
@@ -1130,6 +1117,21 @@ ${contextBlock}`;
       setSimpleAssistantBubbleText(routingBubble, message);
     };
 
+    // Quick actions bypass the planner loop, but never the risk gate.
+    if (isHighRiskAction(action, { elements: [], url: action.url || "" })) {
+      requestRiskConfirmation(
+        action,
+        `Quick browser action: ${action.action}${action.url ? ` → ${action.url}` : ""}`,
+        () => executeQuickAction(),
+        () =>
+          finishBubble("Action cancelled by the safety confirmation prompt."),
+      );
+      return;
+    }
+
+    executeQuickAction();
+
+    function executeQuickAction() {
     if (action.action === "navigate") {
       getBrowserContext((browserContext, errorMessage) => {
         if (!browserContext?.currentTab?.id) {
@@ -1177,6 +1179,7 @@ ${contextBlock}`;
     }
 
     finishBubble(`Unsupported quick browser action: ${action.action}`);
+    }
   }
 
   function answerFromBrowserContext(task, routingBubble) {
@@ -1339,16 +1342,19 @@ ${elementSnippet}`;
   }
 
   function continueBrowserAutomation(task, userAlreadyRendered = false) {
+    runId++;
     isRunning = true;
     currentTask = task;
     currentStep = 0;
     currentSubtaskIndex = 0;
     subtasks = [];
     consecutiveFailures = 0;
+    parseFailureCount = 0;
     actionHistory = [];
     totalPromptTokens = 0;
     totalCompletionTokens = 0;
     totalCostUSD = 0.0;
+    costIsEstimated = false;
     updateCostDashboard();
 
     // Reset input button UI
@@ -1498,6 +1504,43 @@ ${elementSnippet}`;
       }
     }
 
+    // Pressing Enter can submit a form — apply the same gates as a click on
+    // the target element, plus a page-context check.
+    if (actionType === "keypress") {
+      const key = String(actionObj.text || actionObj.key || "").toLowerCase();
+      if (key === "enter") {
+        if (el) {
+          const textLower = (el.text || "").toLowerCase();
+          const labelLower = (el.label || "").toLowerCase();
+          const nameLower = (el.name || "").toLowerCase();
+          const typeLower = (el.type || "").toLowerCase();
+          const hasKeyword = riskKeywords.some(
+            (kw) =>
+              textLower.includes(kw) ||
+              labelLower.includes(kw) ||
+              nameLower.includes(kw),
+          );
+          if (hasKeyword) return true;
+          if (
+            typeLower.includes("password") ||
+            nameLower.includes("card") ||
+            nameLower.includes("cvv") ||
+            labelLower.includes("card") ||
+            labelLower.includes("cvv")
+          ) {
+            return true;
+          }
+        }
+        const pageUrlLower = (scanResult.url || "").toLowerCase();
+        if (
+          pageUrlLower.includes("checkout") ||
+          pageUrlLower.includes("payment")
+        ) {
+          return true;
+        }
+      }
+    }
+
     if (
       (actionType === "navigate" || actionType === "open_tab") &&
       actionObj.url
@@ -1519,39 +1562,52 @@ ${elementSnippet}`;
   function requestRiskConfirmation(actionObj, explanation, onConfirm, onAbort) {
     addLogEntry("system", "Risk Confirmation Required", explanation);
 
+    const confirmationRunId = runId;
     const bubble = document.createElement("div");
     bubble.className = "message-bubble assistant confirmation-bubble";
     bubble.style.border = "1px solid var(--danger)";
     bubble.style.background = "rgba(239, 68, 68, 0.05)";
+    // Action and explanation include LLM-generated text — always escape it.
     bubble.innerHTML = `
             <div class="bubble-avatar" style="background: var(--danger); color: white;">⚠</div>
             <div class="bubble-content">
                 <p style="font-weight: 600; color: var(--danger); margin-bottom: 8px;">Security Confirmation Required</p>
                 <p>The agent is requesting to perform a potentially high-risk action:</p>
                 <blockquote style="background: rgba(255,255,255,0.05); border-left: 3px solid var(--danger); padding: 8px; margin: 8px 0; border-radius: 4px; font-family: monospace; font-size: 12px;">
-                    <strong>Action:</strong> ${actionObj.action.toUpperCase()}<br/>
-                    <strong>Details:</strong> ${explanation}
+                    <strong>Action:</strong> ${escapeHtml(String(actionObj.action || "").toUpperCase())}<br/>
+                    <strong>Details:</strong> ${escapeHtml(explanation)}
                 </blockquote>
                 <p>Do you authorize this action?</p>
                 <div style="display: flex; gap: 10px; margin-top: 12px;">
-                    <button id="confirmRiskBtn" class="primary-btn" style="background: var(--danger); border-color: var(--danger); color: white; padding: 6px 12px; border-radius: 6px; cursor: pointer;">Authorize Action</button>
-                    <button id="abortRiskBtn" class="secondary-btn" style="padding: 6px 12px; border-radius: 6px; cursor: pointer; border: 1px solid var(--border-card); background: transparent; color: var(--text-main);">Abort Task</button>
+                    <button class="confirm-risk-btn primary-btn" style="background: var(--danger); border-color: var(--danger); color: white; padding: 6px 12px; border-radius: 6px; cursor: pointer;">Authorize Action</button>
+                    <button class="abort-risk-btn secondary-btn" style="padding: 6px 12px; border-radius: 6px; cursor: pointer; border: 1px solid var(--border-card); background: transparent; color: var(--text-main);">Abort Task</button>
                 </div>
             </div>
         `;
     chatContainer.appendChild(bubble);
     scrollToBottom();
 
-    const confirmBtn = bubble.querySelector("#confirmRiskBtn");
-    const abortBtn = bubble.querySelector("#abortRiskBtn");
+    const confirmBtn = bubble.querySelector(".confirm-risk-btn");
+    const abortBtn = bubble.querySelector(".abort-risk-btn");
 
     confirmBtn.addEventListener("click", () => {
       bubble.remove();
+      // A stale Authorize (run stopped or a new run started) must never
+      // execute the deferred action.
+      if (confirmationRunId !== runId) {
+        addLogEntry(
+          "system",
+          "Stale Confirmation Ignored",
+          "The task this confirmation belonged to is no longer active.",
+        );
+        return;
+      }
       onConfirm();
     });
 
     abortBtn.addEventListener("click", () => {
       bubble.remove();
+      if (confirmationRunId !== runId) return;
       onAbort();
     });
   }
@@ -1912,7 +1968,18 @@ ${elementSnippet}`;
 
   // Stop Loop
   function stopAgent(reason, statusState = "idle") {
-    const originalTabId = targetTabId;
+    // Never re-enter: a stop in progress must not trigger another stop
+    // (e.g. via a callback that notices the run ended).
+    if (isStopping) return;
+    isStopping = true;
+
+    // Remember which tabs may carry overlays before clearing targeting state.
+    const cleanupTabIds = new Set();
+    if (targetTabId !== null) cleanupTabIds.add(targetTabId);
+    if (currentAgentTabId !== null) cleanupTabIds.add(currentAgentTabId);
+
+    // Invalidate every pending continuation of this run.
+    runId++;
     isRunning = false;
     targetTabId = null;
     if (activeAbortController) {
@@ -2003,23 +2070,16 @@ ${elementSnippet}`;
 
     scrollToBottom();
 
-    // Clear overlays on active tab
-    getActiveTab((activeTabId) => {
-      if (activeTabId) {
-        chrome.tabs.sendMessage(activeTabId, { action: "clear" }, () => {
-          if (chrome.runtime.lastError) {
-          }
-        });
-      }
-
-      // Also clear original tab if it's different and still exists
-      if (originalTabId && originalTabId !== activeTabId) {
-        chrome.tabs.sendMessage(originalTabId, { action: "clear" }, () => {
-          if (chrome.runtime.lastError) {
-          }
-        });
-      }
+    // Best-effort overlay cleanup on the tabs this run touched. Never
+    // re-resolve tabs here (getActiveTab could recurse back into stopAgent
+    // when no webpage tab exists) — just try the known ids and ignore errors.
+    cleanupTabIds.forEach((tabId) => {
+      chrome.tabs.sendMessage(tabId, { action: "clear" }, () => {
+        void chrome.runtime.lastError;
+      });
     });
+
+    isStopping = false;
   }
 
   // ==========================================
@@ -2039,8 +2099,21 @@ ${elementSnippet}`;
   // UNIFIED BROWSER AGENT EXECUTION LOOP
   // ==========================================
 
+  // Schedules the next agent step, bound to the current run generation.
+  // If the run is stopped (or a new run starts) before the timer fires,
+  // the continuation is dropped instead of resuming inside the wrong run.
+  function scheduleStep(delayMs, feedback = "", needsScreenshot = false) {
+    const stepRunId = runId;
+    setTimeout(() => {
+      if (!isRunning || stepRunId !== runId) return;
+      agentStep(feedback, needsScreenshot);
+    }, delayMs);
+  }
+
   function agentStep(feedback = "", needsScreenshot = false) {
     if (!isRunning) return;
+    const stepRunId = runId;
+    const isCurrentRun = () => isRunning && stepRunId === runId;
 
     currentStep++;
     if (currentStep > agentMaxStepsLimit) {
@@ -2059,15 +2132,16 @@ ${elementSnippet}`;
     );
 
     getActiveTab((tabId, tab) => {
+      if (!isCurrentRun()) return;
       if (!isUrlAllowed(tab.url)) {
         stopAgent(`URL blocked by allowlist: ${tab.url}`, "error");
         return;
       }
 
       injectContentScript(tabId, (scanResult) => {
-        if (!isRunning) return;
+        if (!isCurrentRun()) return;
         getTabsContext((browserTabs) => {
-          if (!isRunning) return;
+          if (!isCurrentRun()) return;
 
           const elementLimit = config.agentElementLimit || 60;
           const visibleElements = (scanResult.elements || []).slice(
@@ -2220,19 +2294,17 @@ ${(function () {
               systemPrompt,
               `Goal: "${currentTask}". Choose the next action.`,
               (actionObj) => {
+                if (!isCurrentRun()) return;
                 if (!actionObj || !actionObj.action) {
                   addLogEntry(
                     "error",
                     "Executor Error",
                     "Failed to parse action object. Retrying.",
                   );
-                  setTimeout(
-                    () =>
-                      agentStep(
-                        "Failed to parse action object. Please try again with valid JSON.",
-                        needsScreenshot,
-                      ),
+                  scheduleStep(
                     1500,
+                    "Failed to parse action object. Please try again with valid JSON.",
+                    needsScreenshot,
                   );
                   return;
                 }
@@ -2244,13 +2316,10 @@ ${(function () {
                     "Duplicate Loop Detected",
                     `Action ${actionObj.action} on ID ${actionObj.id} already failed. Retrying with feedback...`,
                   );
-                  setTimeout(
-                    () =>
-                      agentStep(
-                        `Your action choice (${actionObj.action} on element [${actionObj.id}]) was identified as a duplicate of a previously failed action. Please select a different element or action.`,
-                        needsScreenshot,
-                      ),
+                  scheduleStep(
                     1500,
+                    `Your action choice (${actionObj.action} on element [${actionObj.id}]) was identified as a duplicate of a previously failed action. Please select a different element or action.`,
+                    needsScreenshot,
                   );
                   return;
                 }
@@ -2268,13 +2337,10 @@ ${(function () {
                     success: true,
                     message: "Screenshot requested successfully.",
                   });
-                  setTimeout(
-                    () =>
-                      agentStep(
-                        "Here is the requested screenshot of the current viewport. Analyze it to find your target.",
-                        true,
-                      ),
+                  scheduleStep(
                     500,
+                    "Here is the requested screenshot of the current viewport. Analyze it to find your target.",
+                    true,
                   );
                   return;
                 }
@@ -2321,6 +2387,9 @@ ${(function () {
 
                 if (isBrowserAction(actionObj)) {
                   const runBrowserAction = () => {
+                    // Guard the deferred entry point: Stop (or a new run)
+                    // between decision and execution must cancel this.
+                    if (!isCurrentRun()) return;
                     addLogEntry(
                       "executor",
                       "Browser Action Decided",
@@ -2331,18 +2400,16 @@ ${(function () {
                       "Complete task",
                       screenshotDataUrl,
                       (success, message) => {
+                        if (!isCurrentRun()) return;
                         if (!success) {
                           addLogEntry(
                             "error",
                             "Browser Action Failed",
                             message,
                           );
-                          setTimeout(
-                            () =>
-                              agentStep(
-                                "Your last browser action failed: " + message,
-                              ),
+                          scheduleStep(
                             1500,
+                            "Your last browser action failed: " + message,
                           );
                           return;
                         }
@@ -2352,9 +2419,9 @@ ${(function () {
                           message,
                         );
                         if (actionObj.action === "list_tabs") {
-                          setTimeout(() => agentStep(message), 500);
-                        } else if (isRunning) {
-                          setTimeout(() => agentStep(), 1000);
+                          scheduleStep(500, message);
+                        } else {
+                          scheduleStep(1000);
                         }
                       },
                     );
@@ -2381,6 +2448,10 @@ ${(function () {
 
                 // DOM Action Execution
                 const runDomAction = () => {
+                  // Guard the deferred entry point (risk confirmation may
+                  // resolve long after Stop) before sending the interact
+                  // message to the page.
+                  if (!isCurrentRun()) return;
                   const recordEntry = {
                     timestamp: Date.now(),
                     step: currentStep,
@@ -2407,6 +2478,10 @@ ${(function () {
                       data: actionObj,
                     },
                     (response) => {
+                      if (!isCurrentRun()) {
+                        void chrome.runtime.lastError;
+                        return;
+                      }
                       if (
                         chrome.runtime.lastError ||
                         !response ||
@@ -2429,10 +2504,7 @@ ${(function () {
                           success: false,
                           message: err,
                         });
-                        setTimeout(
-                          () => agentStep("Your last action failed: " + err),
-                          1500,
-                        );
+                        scheduleStep(1500, "Your last action failed: " + err);
                       } else {
                         addLogEntry(
                           "executor",
@@ -2453,9 +2525,7 @@ ${(function () {
 
                         // Wait for tab navigation
                         waitForTabNavigation(tabId, 300, 8000, () => {
-                          if (isRunning) {
-                            setTimeout(() => agentStep(), 1000);
-                          }
+                          scheduleStep(1000);
                         });
                       }
                     },
@@ -2632,6 +2702,9 @@ ${(function () {
     screenshotDataUrl = null,
     attempt = 0,
   ) {
+    // Bind this call (and any retry it schedules) to the current run
+    // generation so retries never resume after Stop / into a new run.
+    const callRunId = runId;
     const provider = config.agentActiveProvider;
     const { apiKey, baseUrl } = getProviderDetails(provider);
 
@@ -2718,9 +2791,14 @@ ${(function () {
         temperature:
           config.agentTemperature !== undefined ? config.agentTemperature : 0.1,
         max_tokens: config.agentMaxTokensPerCall || 2000,
-        response_format: { type: "json_object" },
         stream: true,
       };
+      if (!compatParamsUnsupported) {
+        body.response_format = { type: "json_object" };
+        // Ask OpenAI-compatible providers to attach real token usage to the
+        // final stream chunk instead of forcing a character-count estimate.
+        body.stream_options = { include_usage: true };
+      }
       applyPromptCachingOptions(body, headers, provider, model);
     }
 
@@ -2732,18 +2810,23 @@ ${(function () {
 
     const port = chrome.runtime.connect({ name: "streamFetch" });
 
-    let isTimedOut = false;
     const timeoutId = setTimeout(() => {
-      isTimedOut = true;
-      if (activeAbortController) {
-        activeAbortController.abort();
-      }
-    }, config.agentTimeout || 60000);
+      // Route the timeout through the real error path so the run actually
+      // ends or retries (handleError disconnects the port, which aborts the
+      // background fetch) and the panel sees the timeout error.
+      handleError(
+        new Error(
+          `Model request timed out after ${(config.agentTimeout || DEFAULTS.timeoutMs) / 1000} seconds.`,
+        ),
+        408,
+      );
+    }, config.agentTimeout || DEFAULTS.timeoutMs);
 
     activeAbortController = {
       abort: () => {
         clearTimeout(timeoutId);
         try {
+          // The background worker aborts the in-flight fetch onDisconnect.
           port.disconnect();
         } catch (e) {}
       },
@@ -2757,8 +2840,13 @@ ${(function () {
 
     let replyText = "";
     let buffer = "";
+    let finished = false;
 
     function handleError(err, status = 0, respHeaders = {}) {
+      // Idempotent: the timeout and a late port event must not both settle
+      // this call.
+      if (finished) return;
+      finished = true;
       clearTimeout(timeoutId);
       try {
         port.disconnect();
@@ -2766,12 +2854,6 @@ ${(function () {
 
       if (activeStreamPanel) {
         activeStreamPanel.style.display = "none";
-      }
-      if (isTimedOut) {
-        err = new Error(
-          `Request timed out after ${config.agentTimeout / 1000} seconds.`,
-        );
-        status = 408;
       }
 
       console.error(`Error in LLM model call (HTTP ${status}):`, err);
@@ -2804,10 +2886,34 @@ ${(function () {
           );
           const fallbackMessage = `${userMessage}\n\n[SYSTEM WARNING: You previously requested a screenshot, but your current model does not support Computer Vision. The screenshot payload was rejected by the provider. Please proceed using purely the text-based DOM context. Do NOT use the "request_screenshot" action again.]`;
           setTimeout(() => {
+            if (callRunId !== runId) return;
             callLLM(systemPrompt, fallbackMessage, callback, null, 0);
           }, 500);
           return;
         }
+      }
+
+      // Some OpenAI-compatible providers reject response_format /
+      // stream_options with a 400. Drop the extras once and retry.
+      if (
+        status === 400 &&
+        provider !== "anthropic" &&
+        !compatParamsUnsupported &&
+        /response_format|json_object|json_mode|stream_options|unsupported|unrecognized|unknown (?:field|parameter|argument)/i.test(
+          err.message || "",
+        )
+      ) {
+        compatParamsUnsupported = true;
+        addLogEntry(
+          "system",
+          "Compatibility Retry",
+          "Provider rejected response_format/stream_options. Retrying once without them.",
+        );
+        setTimeout(() => {
+          if (callRunId !== runId) return;
+          callLLM(systemPrompt, userMessage, callback, screenshotDataUrl, attempt);
+        }, 250);
+        return;
       }
 
       const maxRetries = 3;
@@ -2860,6 +2966,9 @@ ${(function () {
         }
 
         setTimeout(() => {
+          // A retry scheduled before Stop (or before a new run started)
+          // must never fire into the wrong run.
+          if (callRunId !== runId) return;
           callLLM(
             systemPrompt,
             userMessage,
@@ -2935,9 +3044,15 @@ ${(function () {
                 }
               }
 
-              if (parsed.usage) {
+              // OpenAI-compatible: usage on the final chunk (needs
+              // stream_options.include_usage). Anthropic: input tokens on
+              // message_start (nested under message), output tokens on
+              // message_delta (top-level usage).
+              const usagePayload =
+                parsed.usage || (parsed.message && parsed.message.usage);
+              if (usagePayload) {
                 usageProvided = true;
-                accumulateUsage(parsed.usage, model);
+                accumulateUsage(usagePayload, model);
               }
             } catch (e) {
               // Substring mismatch/partial chunk JSON
@@ -2945,6 +3060,7 @@ ${(function () {
           }
         }
       } else if (msg.type === "done") {
+        if (finished) return;
         clearTimeout(timeoutId);
         try {
           port.disconnect();
@@ -2967,6 +3083,7 @@ ${(function () {
               completion_tokens: completionTokensEst,
             },
             model,
+            true, // estimated — cost badge shows an "est." qualifier
           );
         }
 

@@ -66,9 +66,7 @@
                 "https://chatgpt.com/*",
                 "https://gemini.google.com/*",
                 "https://www.perplexity.ai/*",
-                "https://claude.ai/*",
-                "http://localhost/*",
-                "http://127.0.0.1/*"
+                "https://claude.ai/*"
             ],
             "js": [
                 "config.js",

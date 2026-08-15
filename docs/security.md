@@ -24,7 +24,7 @@
 
 - Browser-local storage is not an encrypted vault; a compromised machine or browser profile can expose keys.
 - Page content can contain prompt-injection instructions. Human confirmation and bounded actions reduce, but do not eliminate, this class of risk.
-- The side-panel feature modifies framing-related response headers only for the explicitly listed assistant domains. Upstream site changes can break embeds and should be reviewed before releases.
+- The side-panel feature (`extension/rules.json`) removes several security response headers — `X-Frame-Options`, the full `Content-Security-Policy`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Embedder-Policy`, and `Permissions-Policy`/`Feature-Policy` — on `sub_frame` and `xmlhttprequest` responses for the explicitly listed assistant domains. This is broader than frame-busting removal alone: while those sites are embedded in the side panel they run without their own CSP and related protections. The rule list and its scope should be reviewed before releases, and upstream site changes can still break embeds.
 - AI providers receive the content required for a user-requested operation and apply their own retention policies.
 
 ## Verification

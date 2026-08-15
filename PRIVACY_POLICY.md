@@ -9,7 +9,7 @@ Select to AI does not operate an application server and does not sell personal d
 - **API keys** are stored in `chrome.storage.local` in your browser profile. They are not placed in Chrome Sync and are excluded from settings exports. Version 3.1 migrates keys that older builds may have stored in sync and removes the synced copies.
 - **Preferences** such as enabled services, theme, model, and safety limits are stored in `chrome.storage.sync` and may sync through your browser account.
 - **Selected text, page context, DOM summaries, prompts, and optional screenshots** are sent directly to the selected AI provider when required for a request. Select to AI does not receive a copy on its own server.
-- **Agent history** stores up to 20 recently completed task summaries in `chrome.storage.local` to provide cross-session context.
+- **Agent history** stores up to 20 recently completed task summaries in `chrome.storage.local`. This history stays on your device and is not currently read back into new tasks or sent anywhere; a future version may use it to provide cross-session context.
 
 Local extension storage is protected by the browser profile and extension permission model, but it is not an encrypted secrets vault. Users with access to your unlocked browser profile or a compromised device may be able to access it.
 

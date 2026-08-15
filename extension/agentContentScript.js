@@ -27,6 +27,13 @@
     /** @type {HTMLDivElement|null} Small label beside the visual cursor */
     let agentCursorLabel = null;
 
+    /**
+     * Set when the agent panel sends 'clear' (Stop / session reset) so an
+     * in-flight simulateTyping loop stops instead of finishing the text.
+     * Reset at the start of every new action.
+     */
+    let cancelRequested = false;
+
     // =========================================================================
     // Constants
     // =========================================================================
@@ -896,6 +903,8 @@
 
     /**
      * Simulates natural typing character-by-character.
+     * Replaces any existing value by default (prefilled fields would
+     * otherwise end up with concatenated text).
      * For `contenteditable` elements uses `execCommand('insertText')`.
      * Dispatches composition events for IME compatibility.
      *
@@ -911,10 +920,34 @@
 
         const eventBase = { bubbles: true, cancelable: true, view: window };
 
+        // Replace semantics: clear any prefilled content first, keeping
+        // React/controlled inputs in sync via the native setter + input event.
+        if (isContentEditable) {
+            if ((el.textContent || '').length > 0) {
+                const selection = window.getSelection();
+                const range = document.createRange();
+                range.selectNodeContents(el);
+                selection.removeAllRanges();
+                selection.addRange(range);
+                document.execCommand('delete');
+            }
+        } else if ((el.value || '').length > 0) {
+            if (nativeSetter) {
+                nativeSetter.call(el, '');
+            } else {
+                el.value = '';
+            }
+            el.dispatchEvent(new InputEvent('input', {
+                ...eventBase,
+                inputType: 'deleteContentBackward',
+            }));
+        }
+
         // Fire compositionstart
         el.dispatchEvent(new CompositionEvent('compositionstart', { ...eventBase, data: '' }));
 
         for (let i = 0; i < text.length; i++) {
+            if (cancelRequested) break;
             const char = text[i];
             const meta = resolveKeyMeta(char);
 
@@ -996,6 +1029,7 @@
      */
     async function performAction(data) {
         try {
+            cancelRequested = false;
             const { action, id, text, scrollDirection, modifiers = {} } = data;
 
             // =================================================================
@@ -1137,7 +1171,10 @@
             if (action === 'type') {
                 await moveAgentCursorToElement(el, "Type");
                 await simulateTyping(el, text || '');
-                return { success: true, message: `Typed "${text}" into element [${id}] successfully.` };
+                if (cancelRequested) {
+                    return { success: false, error: 'Typing cancelled before completion.' };
+                }
+                return { success: true, message: `Typed "${text}" into element [${id}] (replacing any existing value).` };
             }
 
             // ----- clear -----
@@ -1185,10 +1222,37 @@
             if (action === 'checkbox_toggle') {
                 await moveAgentCursorToElement(el, "Toggle");
                 await pulseAgentCursor("Toggle");
-                el.checked = !el.checked;
-                el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-                return { success: true, message: `Toggled checkbox [${id}] to ${el.checked}.` };
+
+                const tag = el.tagName.toLowerCase();
+                const inputType = (el.type || '').toLowerCase();
+                const isNativeCheckable =
+                    tag === 'input' && (inputType === 'checkbox' || inputType === 'radio');
+
+                // A single click both toggles the state and fires the
+                // click/input/change events. (Setting .checked AND clicking
+                // toggles twice — a net no-op.)
+                const stateBefore = isNativeCheckable ? !!el.checked : null;
+                el.click();
+
+                if (isNativeCheckable && inputType === 'checkbox' && el.checked === stateBefore) {
+                    // The page prevented the click's default action — fall
+                    // back to setting the property and announcing the change.
+                    el.checked = !stateBefore;
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+
+                if (isNativeCheckable) {
+                    return {
+                        success: true,
+                        message: `Toggled element [${id}]; it is now ${el.checked ? 'checked' : 'unchecked'}.`,
+                    };
+                }
+                const ariaChecked = el.getAttribute('aria-checked');
+                return {
+                    success: true,
+                    message: `Clicked toggle element [${id}]${ariaChecked !== null ? `; aria-checked is now "${ariaChecked}"` : ''}.`,
+                };
             }
 
             // ----- keypress -----
@@ -1221,28 +1285,49 @@
                     metaKey: !!modifiers.metaKey,
                 };
 
-                targetEl.dispatchEvent(new KeyboardEvent('keydown', keyOpts));
+                // dispatchEvent returns false when a listener called
+                // preventDefault — i.e. the page handled the key itself.
+                const keydownUnhandled = targetEl.dispatchEvent(
+                    new KeyboardEvent('keydown', keyOpts),
+                );
 
-                // Only dispatch keypress for printable keys (per spec)
-                if (meta.printable) {
-                    targetEl.dispatchEvent(new KeyboardEvent('keypress', {
+                // Dispatch keypress for printable keys and Enter (browsers
+                // fire keypress for Enter with charCode 13).
+                let keypressUnhandled = true;
+                if (meta.printable || key === 'Enter') {
+                    keypressUnhandled = targetEl.dispatchEvent(new KeyboardEvent('keypress', {
                         ...keyOpts,
-                        charCode: key.charCodeAt(0),
+                        charCode: key === 'Enter' ? 13 : key.charCodeAt(0),
                     }));
                 }
 
-                // Special handling for Enter
-                if (key === 'Enter') {
-                    if (targetEl.tagName.toLowerCase() === 'input' && targetEl.form) {
+                // Enter fallback: only submit/click when the page did NOT
+                // handle the key events itself — otherwise the action fires
+                // twice (e.g. a form submitted by the page AND requestSubmit).
+                let enterFallbackUsed = false;
+                if (key === 'Enter' && keydownUnhandled && keypressUnhandled) {
+                    const targetTag = targetEl.tagName.toLowerCase();
+                    if (targetTag === 'input' && targetEl.form) {
                         targetEl.form.requestSubmit ? targetEl.form.requestSubmit() : targetEl.form.submit();
-                    } else {
+                        enterFallbackUsed = true;
+                    } else if (
+                        targetTag !== 'textarea' &&
+                        !targetEl.isContentEditable &&
+                        typeof targetEl.click === 'function'
+                    ) {
+                        // Never click() text-entry surfaces — Enter there
+                        // means "newline", not "activate".
                         targetEl.click();
+                        enterFallbackUsed = true;
                     }
                 }
 
                 targetEl.dispatchEvent(new KeyboardEvent('keyup', keyOpts));
 
-                return { success: true, message: `Pressed key "${key}" on element [${id || 'active'}] successfully.` };
+                return {
+                    success: true,
+                    message: `Pressed key "${key}" on element [${id || 'active'}]${enterFallbackUsed ? ' (page did not handle it; used native submit/click fallback)' : ''}.`,
+                };
             }
 
             return { success: false, error: `Unknown action: ${action}` };
@@ -1322,6 +1407,8 @@
             })();
             return true; // keep channel open for async sendResponse
         } else if (request.action === 'clear') {
+            // Stop/reset: also cancel any in-flight simulated typing.
+            cancelRequested = true;
             clearOverlay();
             sendResponse({ success: true });
         } else if (request.action === 'waitForElement') {

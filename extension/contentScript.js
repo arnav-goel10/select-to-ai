@@ -10,55 +10,40 @@
     const { URLS, HOSTS, SELECTORS, DELAYS } = CONFIG;
     const hostname = window.location.hostname;
     let config = null;
-    let isCustomUrl = false;
     let lastProcessedTimestamp = 0;
 
     // --- Configuration Selection ---
-    chrome.storage.sync.get(['openWebUiUrl', 'openWebUiInputSelector', 'openWebUiSendBtnSelector'], (settings) => {
-        const customUrl = settings.openWebUiUrl || "http://localhost:3000/";
-        try {
-            const customHost = new URL(customUrl).hostname;
-            if (hostname === customHost || hostname.includes(customHost)) {
-                isCustomUrl = true;
-            }
-        } catch (e) {}
+    // Only the supported AI chat hosts get a config; on any other page this
+    // script does nothing.
+    if (hostname.includes(HOSTS.CHATGPT)) {
+        config = {
+            selector: SELECTORS.CHATGPT.INPUT,
+            inputType: "contenteditable",
+            sendButtonSelector: SELECTORS.CHATGPT.SEND_BTN
+        };
+    } else if (hostname.includes(HOSTS.GEMINI)) {
+        config = {
+            selector: SELECTORS.GEMINI.INPUT,
+            inputType: "contenteditable",
+            sendButtonSelector: SELECTORS.GEMINI.SEND_BTN
+        };
+    } else if (hostname.includes(HOSTS.PERPLEXITY)) {
+        config = {
+            selector: SELECTORS.PERPLEXITY.INPUT,
+            inputType: "contenteditable",
+            sendButtonSelector: SELECTORS.PERPLEXITY.SEND_BTN
+        };
+    } else if (hostname.includes(HOSTS.CLAUDE)) {
+        config = {
+            selector: SELECTORS.CLAUDE.INPUT,
+            inputType: "contenteditable",
+            sendButtonSelector: SELECTORS.CLAUDE.SEND_BTN
+        };
+    }
 
-        if (hostname.includes(HOSTS.CHATGPT)) {
-            config = {
-                selector: SELECTORS.CHATGPT.INPUT,
-                inputType: "contenteditable",
-                sendButtonSelector: SELECTORS.CHATGPT.SEND_BTN
-            };
-        } else if (hostname.includes(HOSTS.GEMINI)) {
-            config = {
-                selector: SELECTORS.GEMINI.INPUT,
-                inputType: "contenteditable",
-                sendButtonSelector: SELECTORS.GEMINI.SEND_BTN
-            };
-        } else if (hostname.includes(HOSTS.PERPLEXITY)) {
-            config = {
-                selector: SELECTORS.PERPLEXITY.INPUT,
-                inputType: "contenteditable",
-                sendButtonSelector: SELECTORS.PERPLEXITY.SEND_BTN
-            };
-        } else if (hostname.includes(HOSTS.CLAUDE)) {
-            config = {
-                selector: SELECTORS.CLAUDE.INPUT,
-                inputType: "contenteditable",
-                sendButtonSelector: SELECTORS.CLAUDE.SEND_BTN
-            };
-        } else if (isCustomUrl) {
-            config = {
-                selector: settings.openWebUiInputSelector || SELECTORS.OPEN_WEBUI.INPUT,
-                inputType: "contenteditable",
-                sendButtonSelector: settings.openWebUiSendBtnSelector || SELECTORS.OPEN_WEBUI.SEND_BTN
-            };
-        }
-
-        if (config) {
-            init();
-        }
-    });
+    if (config) {
+        init();
+    }
 
     /**
      * Waits for an element to appear in the DOM.
@@ -198,7 +183,6 @@
                 else if (hostname.includes(HOSTS.GEMINI)) delay = DELAYS.GEMINI;
                 else if (hostname.includes(HOSTS.PERPLEXITY)) delay = DELAYS.PERPLEXITY;
                 else if (hostname.includes(HOSTS.CLAUDE)) delay = DELAYS.CLAUDE;
-                else if (isCustomUrl) delay = DELAYS.OPEN_WEBUI;
 
                 console.log(`Select to AI: Auto-sending in ${delay}ms...`);
 
@@ -297,8 +281,8 @@
         // --- Session Tracking ---
         // Tracks current URL to allow "Resume Session" functionality
         const validHosts = [HOSTS.CHATGPT, HOSTS.GEMINI, HOSTS.PERPLEXITY, HOSTS.CLAUDE];
-        const isSupportedHost = validHosts.some(h => hostname.includes(h)) || isCustomUrl;
-        
+        const isSupportedHost = validHosts.some(h => hostname.includes(h));
+
         if (isSupportedHost) {
             let lastUrl = window.location.href;
             const saveSessionUrl = () => {
@@ -310,11 +294,6 @@
                     else if (hostname.includes("gemini")) serviceKey = HOSTS.GEMINI;
                     else if (hostname.includes("perplexity")) serviceKey = HOSTS.PERPLEXITY_WWW;
                     else if (hostname.includes("claude")) serviceKey = HOSTS.CLAUDE;
-                    else if (isCustomUrl) {
-                        try {
-                            serviceKey = new URL(currentUrl).hostname;
-                        } catch (e) {}
-                    }
 
                     if (serviceKey !== "unknown") {
                         const storageKey = `sessionUrl_${serviceKey}`;

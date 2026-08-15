@@ -4,7 +4,7 @@
  */
 
 // Import shared configuration
-importScripts('config.js', 'security.js', 'intentRouter.js');
+importScripts('config.js', 'defaults.js', 'security.js', 'intentRouter.js');
 
 if (typeof CONFIG === 'undefined') {
     console.error("Select to AI: CONFIG failed to load in background.");
@@ -20,7 +20,7 @@ let cachedSettings = {
     showPerplexity: false, // Default false
     showClaude: true, // Default true
     showAgent: false, // Default false
-    agentCustomUrl: 'http://localhost:11434/v1',
+    agentCustomUrl: SELECT_TO_AI_DEFAULTS.AGENT_DEFAULTS.customUrl,
     singleMode: false
 };
 
@@ -56,7 +56,8 @@ function updateCache() {
         cachedSettings.showPerplexity = items.showPerplexity === true;
         cachedSettings.showClaude = items.showClaude !== false;
         cachedSettings.showAgent = items.showAgent === true;
-        cachedSettings.agentCustomUrl = items.agentCustomUrl || 'http://localhost:11434/v1';
+        cachedSettings.agentCustomUrl =
+            items.agentCustomUrl || SELECT_TO_AI_DEFAULTS.AGENT_DEFAULTS.customUrl;
 
         // Opening Mode Migration Logic
         let mode = items.openingMode;

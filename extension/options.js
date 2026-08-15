@@ -13,6 +13,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const DEFAULT_SYSTEM_PROMPT = CONFIG.DEFAULT_SYSTEM_PROMPT;
 
   const { STORAGE } = CONFIG;
+  // Shared runtime defaults — the options UI must reflect what the agent
+  // actually runs (extension/defaults.js is the single source of truth).
+  const SHARED = SELECT_TO_AI_DEFAULTS;
+  const AGENT_DEFAULTS = SHARED.AGENT_DEFAULTS;
 
   // Helper to proxy fetch requests to background script to bypass CORS
   function fetchProxy(url, options = {}) {
@@ -52,72 +56,74 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Default Provider Configurations
+  // Default Provider Configurations.
+  // Default models come from the shared catalog so the options UI always
+  // matches the agent runtime's fallbacks.
   const PROVIDER_DEFAULTS = {
     opencode: {
       name: "OpenCode Zen",
       url: "https://opencode.ai/zen/v1",
-      model: "deepseek-v4-flash-free",
+      model: SHARED.PROVIDER_FALLBACK_MODELS.opencode.lite,
       placeholder: "sk-...",
     },
     openrouter: {
       name: "OpenRouter",
       url: "https://openrouter.ai/api/v1",
-      model: "google/gemini-flash-latest",
+      model: SHARED.PROVIDER_FALLBACK_MODELS.openrouter.lite,
       placeholder: "sk-or-v1-...",
     },
     anthropic: {
       name: "Anthropic Claude",
       url: "https://api.anthropic.com/v1/messages",
-      model: "claude-3-5-haiku-20241022",
+      model: SHARED.PROVIDER_FALLBACK_MODELS.anthropic.lite,
       placeholder: "sk-ant-...",
     },
     openai: {
       name: "OpenAI",
       url: "https://api.openai.com/v1",
-      model: "gpt-4o-mini",
+      model: SHARED.PROVIDER_FALLBACK_MODELS.openai.lite,
       placeholder: "sk-proj-...",
     },
     deepseek: {
       name: "DeepSeek AI",
       url: "https://api.deepseek.com",
-      model: "deepseek-chat",
+      model: SHARED.PROVIDER_FALLBACK_MODELS.deepseek.lite,
       placeholder: "sk-...",
     },
     gemini: {
       name: "Google Gemini",
       url: "https://generativelanguage.googleapis.com/v1beta/openai",
-      model: "gemini-flash-latest",
+      model: SHARED.PROVIDER_FALLBACK_MODELS.gemini.lite,
       placeholder: "AIzaSy...",
     },
     mistral: {
       name: "Mistral AI",
       url: "https://api.mistral.ai/v1",
-      model: "open-mistral-7b",
+      model: SHARED.PROVIDER_FALLBACK_MODELS.mistral.lite,
       placeholder: "API Key",
     },
     groq: {
       name: "Groq AI",
       url: "https://api.groq.com/openai/v1",
-      model: "llama3-8b-8192",
+      model: SHARED.PROVIDER_FALLBACK_MODELS.groq.lite,
       placeholder: "gsk_...",
     },
     together: {
       name: "Together AI",
       url: "https://api.together.xyz/v1",
-      model: "meta-llama/Llama-3-8b-chat-hf",
+      model: SHARED.PROVIDER_FALLBACK_MODELS.together.lite,
       placeholder: "API Key",
     },
     xai: {
       name: "xAI Grok",
       url: "https://api.x.ai/v1",
-      model: "grok-beta",
+      model: SHARED.PROVIDER_FALLBACK_MODELS.xai.lite,
       placeholder: "xai-...",
     },
     custom: {
       name: "Custom Gateway",
-      url: "http://localhost:11434/v1",
-      model: "llama3",
+      url: AGENT_DEFAULTS.customUrl,
+      model: SHARED.PROVIDER_FALLBACK_MODELS.custom.lite,
       placeholder: "API Key",
     },
   };
@@ -298,64 +304,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function applyModelPresets(provider, selectedModel = null) {
     const defs = PROVIDER_DEFAULTS[provider];
-    const presets = {
-      openrouter: [
-        "google/gemini-flash-latest",
-        "google/gemini-pro-latest",
-        "google/gemini-2.5-flash",
-        "google/gemini-2.5-pro",
-        "anthropic/claude-3.5-sonnet",
-        "anthropic/claude-3.5-haiku",
-        "openai/gpt-4o-mini",
-        "openai/gpt-4o",
-        "openai/o3-mini",
-        "deepseek/deepseek-chat",
-        "deepseek/deepseek-reasoner",
-        "meta-llama/llama-3.3-70b-instruct",
-      ],
-      opencode: [
-        "deepseek-v4-flash-free",
-        "deepseek-v4-pro",
-        "meta-llama/llama-3.3-70b-instruct:free",
-        "google/gemini-flash-1.5-8b:free",
-      ],
-      anthropic: [
-        "claude-3-5-haiku-20241022",
-        "claude-3-5-sonnet-20241022",
-        "claude-3-opus-20240229",
-      ],
-      openai: ["gpt-4o-mini", "gpt-4o", "o3-mini", "o1-mini", "o1"],
-      deepseek: ["deepseek-chat", "deepseek-reasoner"],
-      gemini: [
-        "gemini-flash-latest",
-        "gemini-pro-latest",
-        "gemini-2.5-flash",
-        "gemini-2.5-pro",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-      ],
-      mistral: [
-        "open-mistral-7b",
-        "mistral-small-latest",
-        "mistral-large-latest",
-        "codestral-latest",
-      ],
-      groq: [
-        "llama3-8b-8192",
-        "llama3-70b-8192",
-        "llama-3.3-70b-versatile",
-        "mixtral-8x7b-32768",
-        "gemma2-9b-it",
-      ],
-      together: [
-        "meta-llama/Llama-3-8b-chat-hf",
-        "meta-llama/Llama-3.3-70b-instruct-turbo",
-        "mistralai/Mixtral-8x7B-Instruct-v0.1",
-        "deepseek-ai/DeepSeek-V3",
-      ],
-      xai: ["grok-2-1212", "grok-beta"],
-      custom: ["llama3", "mistral", "qwen2.5-coder", "phi3"],
-    };
+    const presets = SHARED.MODEL_PRESETS;
     const list = mergeCustomModels(
       provider,
       presets[provider] || presets.openrouter,
@@ -616,13 +565,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  // Helper to get selected model selection mode (auto vs manual)
-  // Helper to toggle model inputs disabled status
-
-  // Helper to get selected routing strategy (dual vs single)
-
-  // Helper to dynamically update UI based on routing strategy
-
   // --- Slider UI updates ---
   maxStepsSlider.addEventListener("input", () => {
     maxStepsVal.textContent = maxStepsSlider.value;
@@ -759,7 +701,8 @@ document.addEventListener("DOMContentLoaded", () => {
           : "light");
       document.documentElement.setAttribute("data-theme", theme);
 
-      const activeProvider = items.agentActiveProvider || "opencode";
+      const activeProvider =
+        items.agentActiveProvider || AGENT_DEFAULTS.activeProvider;
       activeProviderSelect.value = activeProvider;
       previousProvider = activeProvider;
 
@@ -800,33 +743,39 @@ document.addEventListener("DOMContentLoaded", () => {
         modelSelect.value = items.agentModel || defs.model || "";
       }
 
-      maxStepsSlider.value = items.agentMaxSteps || 5;
-      maxStepsVal.textContent = items.agentMaxSteps || 5;
+      // Fallbacks mirror the shared runtime defaults so the UI shows what
+      // the agent actually runs with when a setting was never saved.
+      maxStepsSlider.value = items.agentMaxSteps || AGENT_DEFAULTS.maxSteps;
+      maxStepsVal.textContent = items.agentMaxSteps || AGENT_DEFAULTS.maxSteps;
 
       const temp =
-        items.agentTemperature !== undefined ? items.agentTemperature : 0.1;
+        items.agentTemperature !== undefined
+          ? items.agentTemperature
+          : AGENT_DEFAULTS.temperature;
       document.getElementById("agentTemperature").value = temp;
       document.getElementById("temp-val").textContent = temp;
 
       document.getElementById("agentElementLimit").value =
-        items.agentElementLimit || 150;
+        items.agentElementLimit || AGENT_DEFAULTS.elementLimit;
       document.getElementById("el-limit-val").textContent =
-        items.agentElementLimit || 150;
+        items.agentElementLimit || AGENT_DEFAULTS.elementLimit;
 
       document.getElementById("agentHistoryLimit").value =
-        items.agentHistoryLimit || 8;
+        items.agentHistoryLimit || AGENT_DEFAULTS.historyLimit;
       document.getElementById("hist-limit-val").textContent =
-        items.agentHistoryLimit || 8;
+        items.agentHistoryLimit || AGENT_DEFAULTS.historyLimit;
 
       const failThresh =
         items.agentFailureThreshold !== undefined
           ? items.agentFailureThreshold
-          : 3;
+          : AGENT_DEFAULTS.failureThreshold;
       document.getElementById("agentFailureThreshold").value = failThresh;
       document.getElementById("fail-thresh-val").textContent = failThresh;
 
       document.getElementById("agentCostBudget").value =
-        items.agentCostBudget !== undefined ? items.agentCostBudget : 0.0;
+        items.agentCostBudget !== undefined
+          ? items.agentCostBudget
+          : AGENT_DEFAULTS.costBudget;
       document.getElementById("agentRiskConfirmation").checked =
         items.agentRiskConfirmation !== false;
       document.getElementById("agentDomainAllowlist").value =
@@ -837,9 +786,9 @@ document.addEventListener("DOMContentLoaded", () => {
       document.getElementById("agentPromptCaching").checked =
         items.agentPromptCaching !== false;
       document.getElementById("agentTimeout").value =
-        items.agentTimeout || 60000;
+        items.agentTimeout || AGENT_DEFAULTS.timeoutMs;
       document.getElementById("agentMaxTokensPerCall").value =
-        items.agentMaxTokensPerCall || 2000;
+        items.agentMaxTokensPerCall || AGENT_DEFAULTS.maxTokensPerCall;
 
       setTimeout(() => {
         hasUnsavedChanges = false;
