@@ -90,3 +90,35 @@ test("classification is total: never throws, always returns an intent", () => {
     assert.ok(["navigate", "ask", "agent"].includes(res.intent));
   }
 });
+
+test("site + country code navigates to the right storefront", () => {
+  assert.equal(classifyOmniboxInput("amazon sg").url, "https://www.amazon.sg/");
+  assert.equal(classifyOmniboxInput("amazon us").url, "https://www.amazon.com/");
+  assert.equal(classifyOmniboxInput("amazon uk").url, "https://www.amazon.co.uk/");
+  assert.equal(classifyOmniboxInput("ikea jp").url, "https://www.ikea.co.jp/");
+  assert.equal(intentOf("open amazon sg"), "navigate");
+});
+
+test("country-code lookalike words are not treated as ccTLDs", () => {
+  assert.notEqual(intentOf("google it"), "navigate");
+  assert.notEqual(intentOf("google me"), "navigate");
+});
+
+test("expanded site list resolves single words", () => {
+  assert.equal(intentOf("shopee"), "navigate");
+  assert.equal(intentOf("carousell"), "navigate");
+  assert.equal(classifyOmniboxInput("hn").url, "https://news.ycombinator.com");
+  assert.equal(intentOf("huggingface"), "navigate");
+});
+
+test("parseSmartRoute accepts only valid intents and safe URLs", () => {
+  const { parseSmartRoute } = router;
+  assert.deepEqual(parseSmartRoute('{"intent":"navigate","url":"amazon.sg"}'),
+    { intent: "navigate", url: "https://amazon.sg/" });
+  assert.deepEqual(parseSmartRoute('Sure! {"intent":"ask"}'), { intent: "ask", url: null });
+  assert.equal(parseSmartRoute('{"intent":"navigate","url":"javascript:alert(1)"}'), null);
+  assert.equal(parseSmartRoute('{"intent":"hack"}'), null);
+  assert.equal(parseSmartRoute('{"intent":"navigate"}'), null);
+  assert.equal(parseSmartRoute("no json here"), null);
+  assert.equal(parseSmartRoute(null), null);
+});

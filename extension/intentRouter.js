@@ -33,10 +33,66 @@
     maps: "https://maps.google.com",
     drive: "https://drive.google.com",
     docs: "https://docs.google.com",
+    sheets: "https://sheets.google.com",
+    calendar: "https://calendar.google.com",
     notion: "https://www.notion.so",
     figma: "https://www.figma.com",
     twitch: "https://www.twitch.tv",
+    ebay: "https://www.ebay.com",
+    shopee: "https://shopee.sg",
+    lazada: "https://www.lazada.sg",
+    carousell: "https://www.carousell.sg",
+    grab: "https://www.grab.com",
+    foodpanda: "https://www.foodpanda.sg",
+    booking: "https://www.booking.com",
+    agoda: "https://www.agoda.com",
+    airbnb: "https://www.airbnb.com",
+    tripadvisor: "https://www.tripadvisor.com",
+    whatsapp: "https://web.whatsapp.com",
+    telegram: "https://web.telegram.org",
+    discord: "https://discord.com",
+    slack: "https://slack.com",
+    zoom: "https://zoom.us",
+    teams: "https://teams.microsoft.com",
+    outlook: "https://outlook.live.com",
+    office: "https://www.office.com",
+    onedrive: "https://onedrive.live.com",
+    dropbox: "https://www.dropbox.com",
+    icloud: "https://www.icloud.com",
+    apple: "https://www.apple.com",
+    hackernews: "https://news.ycombinator.com",
+    hn: "https://news.ycombinator.com",
+    medium: "https://medium.com",
+    substack: "https://substack.com",
+    quora: "https://www.quora.com",
+    pinterest: "https://www.pinterest.com",
+    tiktok: "https://www.tiktok.com",
+    coursera: "https://www.coursera.org",
+    udemy: "https://www.udemy.com",
+    kaggle: "https://www.kaggle.com",
+    leetcode: "https://leetcode.com",
+    huggingface: "https://huggingface.co",
+    arxiv: "https://arxiv.org",
+    scholar: "https://scholar.google.com",
+    canva: "https://www.canva.com",
+    vercel: "https://vercel.com",
+    cloudflare: "https://dash.cloudflare.com",
+    aws: "https://console.aws.amazon.com",
+    chess: "https://www.chess.com",
+    duolingo: "https://www.duolingo.com",
+    luma: "https://lu.ma",
+    nus: "https://www.nus.edu.sg",
   };
+
+  // Sites commonly typed with a two-letter country suffix ("amazon sg").
+  const CC_SITES = new Set([
+    "amazon", "ebay", "google", "yahoo", "ikea", "airbnb", "agoda",
+    "apple", "uniqlo", "aliexpress", "mcdonalds", "foodpanda", "zalora",
+    "shopee", "carousell",
+  ]);
+  // Two-letter tokens that read as English words, not country codes.
+  const CC_EXCLUDED = new Set(["it", "me"]);
+  const CC_TLD_MAP = { us: "com", uk: "co.uk", jp: "co.jp" };
 
   const NAV_PREFIXES = /^(?:go to|goto|go|open|visit)\s+/i;
   const ASK_PREFIXES = /^(?:ask|a:|\?)\s+/i;
@@ -117,6 +173,18 @@
       }
     }
 
+    // 2b. "<site> <cc>": a known commerce/site name plus a country code.
+    const ccParts = navRemainder.toLowerCase().split(" ");
+    if (ccParts.length === 2 && CC_SITES.has(ccParts[0]) && /^[a-z]{2}$/.test(ccParts[1]) && !CC_EXCLUDED.has(ccParts[1])) {
+      const tld = CC_TLD_MAP[ccParts[1]] || ccParts[1];
+      return result("navigate", {
+        url: `https://www.${ccParts[0]}.${tld}/`,
+        query: navRemainder,
+        confidence: "medium",
+        reason: "site with country code",
+      });
+    }
+
     // 3. Anything about the current page or open tabs is browser work.
     if (PAGE_CONTEXT.test(text)) {
       return result("agent", {
@@ -159,10 +227,32 @@
     return result("ask", { query: text, confidence: "low", reason: "no navigation or action signal" });
   }
 
+  /**
+   * Validates a model-produced routing reply. Accepts only the three known
+   * intents; navigation URLs must survive the same normalization used for
+   * typed input (http(s) only, no credentials). Returns null on anything else.
+   */
+  function parseSmartRoute(rawText) {
+    if (typeof rawText !== "string") return null;
+    const match = rawText.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    let parsed;
+    try { parsed = JSON.parse(match[0]); } catch (_error) { return null; }
+    const intent = String(parsed.intent || "").toLowerCase();
+    if (!["navigate", "ask", "agent"].includes(intent)) return null;
+    if (intent === "navigate") {
+      const url = normalizeNavigationUrl(parsed.url);
+      if (!url) return null;
+      return { intent, url };
+    }
+    return { intent, url: null };
+  }
+
   const api = Object.freeze({
     KNOWN_SITES,
     classifyOmniboxInput,
     normalizeNavigationUrl,
+    parseSmartRoute,
   });
 
   root.SELECT_TO_AI_INTENT = api;

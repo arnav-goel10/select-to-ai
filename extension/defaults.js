@@ -32,6 +32,21 @@
   // Per-provider fallback models used when the configured model is not valid
   // for the active provider. "lite" is the cheap default, "pro" the flagship.
   // Catalog verified against provider documentation in August 2026.
+  // Provider endpoints and the storage key each provider's API key lives under.
+  // "custom" is intentionally absent: its base URL comes from user settings.
+  const PROVIDER_ENDPOINTS = Object.freeze({
+    openrouter: { keyName: "agentOpenRouterKey", baseUrl: "https://openrouter.ai/api/v1" },
+    anthropic: { keyName: "agentAnthropicKey", baseUrl: "https://api.anthropic.com/v1/messages" },
+    openai: { keyName: "agentOpenAIKey", baseUrl: "https://api.openai.com/v1" },
+    deepseek: { keyName: "agentDeepSeekKey", baseUrl: "https://api.deepseek.com" },
+    gemini: { keyName: "agentGeminiKey", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai" },
+    mistral: { keyName: "agentMistralKey", baseUrl: "https://api.mistral.ai/v1" },
+    groq: { keyName: "agentGroqKey", baseUrl: "https://api.groq.com/openai/v1" },
+    together: { keyName: "agentTogetherKey", baseUrl: "https://api.together.xyz/v1" },
+    xai: { keyName: "agentXaiKey", baseUrl: "https://api.x.ai/v1" },
+    opencode: { keyName: "agentOpencodeKey", baseUrl: "https://opencode.ai/zen/v1" },
+  });
+
   const PROVIDER_FALLBACK_MODELS = Object.freeze({
     openrouter: {
       lite: "google/gemini-3.5-flash",
@@ -208,6 +223,7 @@
 
   const api = Object.freeze({
     AGENT_DEFAULTS,
+    PROVIDER_ENDPOINTS,
     PROVIDER_FALLBACK_MODELS,
     MODEL_PRESETS,
     MODEL_PRICES,

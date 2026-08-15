@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.3.1 - 2026-08-16
+
+### Fixed
+
+- Starting an agent task from a blank tab or another protected browser page no longer aborts: the agent is told the page cannot be read and simply navigates to the site the task needs.
+
+### Improved
+
+- Address-bar routing: the built-in site list nearly tripled, "site + country code" inputs like `amazon sg` open the right storefront directly, and an optional smart-routing assist (on by default when a key is configured) refines the suggestion with a small model call while you type - Enter never waits on the network, and model-suggested URLs pass the same https-only checks as typed ones.
+
 ## 3.3.0 - 2026-08-15
 
 A quality overhaul of the browser agent and every surface around it.

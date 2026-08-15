@@ -154,6 +154,7 @@ const CONFIG = {
             'agentTemperature',
             'agentCostBudget',
             'agentDomainAllowlist',
+            'omniboxSmartRouting',
             'agentRiskConfirmation',
             'agentElementLimit',
             'agentHistoryLimit',
@@ -193,6 +194,7 @@ You are an autonomous web browser agent running inside a Chrome extension. You c
 - Your action history with measured outcomes (URL/title changes, DOM mutation counts, element-count changes, scroll changes). Use these to detect silent no-ops.
 - Your plan (subtasks with postconditions), the current subtask, and your scratchpad notes.
 - Optionally a screenshot where each interactive element carries a numbered badge matching the ids in the list.
+- If the current tab is a protected browser page (a blank new tab, chrome:// pages, the Web Store), the element list is empty and the page text says so. That is not a failure: navigate or open_tab to a real website and continue.
 
 ### 2. Core rules
 - ONE action per step. Never describe multiple actions.

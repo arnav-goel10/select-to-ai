@@ -615,6 +615,123 @@ function omniboxDescribe(route, text) {
     return `Ask AI: <match>${shown}</match>`;
 }
 
+
+// --- Smart omnibox routing: a tiny cached model call refines the heuristic ---
+// The heuristic answer is always shown instantly; while the user is still
+// typing, one small lite-tier request classifies the input and (if it lands
+// before Enter) upgrades the suggestion. Enter never waits on the network.
+const SMART_ROUTE_CACHE_MAX = 50;
+const smartRouteCache = new Map();
+let smartRouteTimer = null;
+let smartRouteAbort = null;
+let smartRouteLastInput = '';
+
+const SMART_ROUTE_PROMPT =
+    'Classify one browser address-bar input. Reply with ONLY a JSON object: ' +
+    '{"intent":"navigate|ask|agent","url":"https://..."}. ' +
+    'navigate = the input names a website or destination; set "url" to the most likely real https URL. ' +
+    'ask = a question or request for information; omit "url". ' +
+    'agent = a multi-step task to perform in the browser; omit "url". No other text.';
+
+function cacheSmartRoute(input, routed) {
+    smartRouteCache.set(input, routed);
+    if (smartRouteCache.size > SMART_ROUTE_CACHE_MAX) {
+        smartRouteCache.delete(smartRouteCache.keys().next().value);
+    }
+}
+
+async function fetchSmartRoute(input) {
+    const sync = await chrome.storage.sync.get(['omniboxSmartRouting', 'agentActiveProvider', 'agentModel']);
+    if (sync.omniboxSmartRouting === false) return null;
+    const provider = sync.agentActiveProvider || SELECT_TO_AI_DEFAULTS.AGENT_DEFAULTS.activeProvider;
+    const isCustom = provider === 'custom';
+    const entry = SELECT_TO_AI_DEFAULTS.PROVIDER_ENDPOINTS[provider];
+    if (!entry && !isCustom) return null;
+    const keyName = isCustom ? 'agentCustomKey' : entry.keyName;
+    const local = await chrome.storage.local.get([keyName]);
+    const apiKey = local[keyName] || '';
+    if (!apiKey && !isCustom) return null;
+    const baseUrl = isCustom ? cachedSettings.agentCustomUrl : entry.baseUrl;
+    if (!baseUrl) return null;
+    const fallbacks = SELECT_TO_AI_DEFAULTS.PROVIDER_FALLBACK_MODELS[provider] || {};
+    const model = fallbacks.lite || sync.agentModel;
+    if (!model) return null;
+
+    if (smartRouteAbort) smartRouteAbort.abort();
+    smartRouteAbort = new AbortController();
+    const timeout = setTimeout(() => smartRouteAbort.abort(), 3500);
+    try {
+        let raw = '';
+        if (provider === 'anthropic') {
+            const res = await fetch(baseUrl, {
+                method: 'POST',
+                signal: smartRouteAbort.signal,
+                headers: {
+                    'content-type': 'application/json',
+                    'x-api-key': apiKey,
+                    'anthropic-version': '2023-06-01',
+                },
+                body: JSON.stringify({
+                    model,
+                    max_tokens: 60,
+                    system: SMART_ROUTE_PROMPT,
+                    messages: [{ role: 'user', content: input }],
+                }),
+            });
+            if (!res.ok) return null;
+            const data = await res.json();
+            raw = (data.content || []).map((blockItem) => blockItem.text || '').join('');
+        } else {
+            let endpoint = String(baseUrl).replace(/\/$/, '');
+            if (!endpoint.endsWith('/chat/completions')) endpoint += '/chat/completions';
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                signal: smartRouteAbort.signal,
+                headers: {
+                    'content-type': 'application/json',
+                    ...(apiKey ? { authorization: 'Bearer ' + apiKey } : {}),
+                },
+                body: JSON.stringify({
+                    model,
+                    temperature: 0,
+                    max_tokens: 60,
+                    messages: [
+                        { role: 'system', content: SMART_ROUTE_PROMPT },
+                        { role: 'user', content: input },
+                    ],
+                }),
+            });
+            if (!res.ok) return null;
+            const data = await res.json();
+            raw = data.choices?.[0]?.message?.content || '';
+        }
+        return SELECT_TO_AI_INTENT.parseSmartRoute(raw);
+    } catch (_error) {
+        return null;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+function smartRouteAsRoute(smart, text) {
+    return { intent: smart.intent, url: smart.url, query: text, confidence: 'high', reason: 'smart route' };
+}
+
+function scheduleSmartRoute(trimmed) {
+    clearTimeout(smartRouteTimer);
+    smartRouteTimer = setTimeout(() => {
+        fetchSmartRoute(trimmed).then((smart) => {
+            if (!smart) return;
+            cacheSmartRoute(trimmed, smart);
+            if (smartRouteLastInput === trimmed && chrome.omnibox) {
+                chrome.omnibox.setDefaultSuggestion({
+                    description: omniboxDescribe(smartRouteAsRoute(smart, trimmed), trimmed) + ' <dim>· smart</dim>',
+                });
+            }
+        });
+    }, 350);
+}
+
 if (chrome.omnibox) {
     chrome.omnibox.onInputChanged.addListener((text, suggest) => {
         const trimmed = String(text || '').slice(0, OMNIBOX_LIMIT).trim();
@@ -626,7 +743,18 @@ if (chrome.omnibox) {
             return;
         }
         const route = SELECT_TO_AI_INTENT.classifyOmniboxInput(trimmed);
-        chrome.omnibox.setDefaultSuggestion({ description: omniboxDescribe(route, trimmed) });
+        smartRouteLastInput = trimmed;
+        const cachedSmart = smartRouteCache.get(trimmed);
+        if (cachedSmart) {
+            chrome.omnibox.setDefaultSuggestion({
+                description: omniboxDescribe(smartRouteAsRoute(cachedSmart, trimmed), trimmed) + ' <dim>· smart</dim>',
+            });
+        } else {
+            chrome.omnibox.setDefaultSuggestion({ description: omniboxDescribe(route, trimmed) });
+            if (route.confidence !== 'high' && trimmed.length >= 3) {
+                scheduleSmartRoute(trimmed);
+            }
+        }
 
         const alternates = [];
         if (route.intent !== 'ask') {
@@ -656,7 +784,11 @@ if (chrome.omnibox) {
     chrome.omnibox.onInputEntered.addListener((text, disposition) => {
         const trimmed = String(text || '').slice(0, OMNIBOX_LIMIT).trim();
         if (!trimmed) return;
-        const route = SELECT_TO_AI_INTENT.classifyOmniboxInput(trimmed);
+        let route = SELECT_TO_AI_INTENT.classifyOmniboxInput(trimmed);
+        const smart = smartRouteCache.get(trimmed);
+        if (smart && route.confidence !== 'high') {
+            route = smartRouteAsRoute(smart, trimmed);
+        }
 
         if (route.intent === 'navigate' && route.url) {
             if (disposition === 'currentTab') {

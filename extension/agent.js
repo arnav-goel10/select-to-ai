@@ -488,46 +488,17 @@ You are running inside a Chrome extension side panel. The user is chatting with 
     });
   }
 
-  // Helper to get key/url for active provider
+  // Helper to get key/url for the active provider (catalog shared with the
+  // service worker via defaults.js).
   function getProviderDetails(provider) {
-    let apiKey = "";
-    let baseUrl = "";
-
-    if (provider === "openrouter") {
-      apiKey = config.agentOpenRouterKey;
-      baseUrl = "https://openrouter.ai/api/v1";
-    } else if (provider === "anthropic") {
-      apiKey = config.agentAnthropicKey;
-      baseUrl = "https://api.anthropic.com/v1/messages";
-    } else if (provider === "openai") {
-      apiKey = config.agentOpenAIKey;
-      baseUrl = "https://api.openai.com/v1";
-    } else if (provider === "deepseek") {
-      apiKey = config.agentDeepSeekKey;
-      baseUrl = "https://api.deepseek.com";
-    } else if (provider === "gemini") {
-      apiKey = config.agentGeminiKey;
-      baseUrl = "https://generativelanguage.googleapis.com/v1beta/openai";
-    } else if (provider === "mistral") {
-      apiKey = config.agentMistralKey;
-      baseUrl = "https://api.mistral.ai/v1";
-    } else if (provider === "groq") {
-      apiKey = config.agentGroqKey;
-      baseUrl = "https://api.groq.com/openai/v1";
-    } else if (provider === "together") {
-      apiKey = config.agentTogetherKey;
-      baseUrl = "https://api.together.xyz/v1";
-    } else if (provider === "xai") {
-      apiKey = config.agentXaiKey;
-      baseUrl = "https://api.x.ai/v1";
-    } else if (provider === "opencode") {
-      apiKey = config.agentOpencodeKey;
-      baseUrl = "https://opencode.ai/zen/v1";
-    } else if (provider === "custom") {
-      apiKey = config.agentCustomKey;
-      baseUrl = config.agentCustomUrl;
+    if (provider === "custom") {
+      return { apiKey: config.agentCustomKey, baseUrl: config.agentCustomUrl };
     }
-    return { apiKey, baseUrl };
+    const entry = (SELECT_TO_AI_DEFAULTS.PROVIDER_ENDPOINTS || {})[provider];
+    if (!entry) {
+      return { apiKey: "", baseUrl: "" };
+    }
+    return { apiKey: config[entry.keyName] || "", baseUrl: entry.baseUrl };
   }
 
   function getProviderFallbackModels(provider) {
@@ -1046,7 +1017,36 @@ You are running inside a Chrome extension side panel. The user is chatting with 
 
   // Inject DOM scanner (agentTools.js first: shared pure helpers for stable
   // ids and outcome deltas used by the content script).
+  // Protected browser pages (chrome://, the Web Store, blank tabs) cannot be
+  // read or clicked, but they are a perfectly fine STARTING POINT: instead of
+  // aborting, hand the model an empty scan that says so, and let it navigate.
   function injectContentScript(tabId, callback) {
+    chrome.tabs.get(tabId, (tab) => {
+      const tabUrl = tab?.url || "";
+      let scannable = false;
+      try {
+        scannable = ["http:", "https:"].includes(new URL(tabUrl).protocol);
+      } catch (_error) {
+        scannable = false;
+      }
+      if (!scannable) {
+        callback({
+          url: tabUrl,
+          title: tab?.title || "Protected browser page",
+          elements: [],
+          innerText:
+            "[This tab is a protected browser page" +
+            (tabUrl ? ` (${tabUrl})` : "") +
+            ". Extensions cannot read or interact with it. Use the navigate action to go to the website this task needs, or open_tab to start one.]",
+          protectedPage: true,
+        });
+        return;
+      }
+      injectIntoWebTab(tabId, callback);
+    });
+  }
+
+  function injectIntoWebTab(tabId, callback) {
     const scanRequest = {
       action: "scan",
       limit: config.agentElementLimit || DEFAULTS.elementLimit,

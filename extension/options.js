@@ -465,6 +465,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const showClaudeCheck = document.getElementById("showClaude");
   const showAgentCheck = document.getElementById("showAgent");
   const autoSendCheck = document.getElementById("autoSend");
+  const smartRoutingCheck = document.getElementById("omniboxSmartRouting");
   const autoContextCheck = document.getElementById("autoContext");
   const openingModeSelect = document.getElementById("openingMode");
 
@@ -676,6 +677,7 @@ document.addEventListener("DOMContentLoaded", () => {
       showClaudeCheck.checked = items.showClaude !== false;
       showAgentCheck.checked = items.showAgent === true;
       autoSendCheck.checked = items.autoSend === true;
+      if (smartRoutingCheck) smartRoutingCheck.checked = items.omniboxSmartRouting !== false;
       autoContextCheck.checked = items.autoContext !== false;
       openingModeSelect.value = items.openingMode || "sidePanel";
 
@@ -793,6 +795,7 @@ document.addEventListener("DOMContentLoaded", () => {
       showClaude: showClaudeCheck.checked,
       showAgent: showAgentCheck.checked,
       autoSend: autoSendCheck.checked,
+      omniboxSmartRouting: smartRoutingCheck ? smartRoutingCheck.checked : true,
       autoContext: autoContextCheck.checked,
       openingMode: openingModeSelect.value,
 
