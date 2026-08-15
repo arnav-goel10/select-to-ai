@@ -335,12 +335,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message.action === 'captureScreenshot') {
-        const capture = (windowId = null) => {
+        // captureVisibleTab can only capture a window's ACTIVE tab. When the
+        // target tab is already active, capture directly — no focus change at
+        // all. Otherwise activate it within its own window (never focusing
+        // the window itself), capture, then restore the previously active
+        // tab so the user's focus is not yanked away.
+        const capture = (windowId, done) => {
             chrome.tabs.captureVisibleTab(windowId, { format: 'jpeg', quality: 60 }, (dataUrl) => {
                 if (chrome.runtime.lastError) {
-                    sendResponse({ success: false, error: chrome.runtime.lastError.message });
+                    done({ success: false, error: chrome.runtime.lastError.message });
                 } else {
-                    sendResponse({ success: true, dataUrl: dataUrl });
+                    done({ success: true, dataUrl: dataUrl });
                 }
             });
         };
@@ -351,16 +356,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     sendResponse({ success: false, error: chrome.runtime.lastError?.message || 'Target tab not found.' });
                     return;
                 }
-                chrome.tabs.update(message.tabId, { active: true }, () => {
-                    if (chrome.runtime.lastError) {
-                        sendResponse({ success: false, error: chrome.runtime.lastError.message });
-                        return;
-                    }
-                    capture(tab.windowId);
+
+                if (tab.active) {
+                    capture(tab.windowId, sendResponse);
+                    return;
+                }
+
+                chrome.tabs.query({ active: true, windowId: tab.windowId }, (activeTabs) => {
+                    const previousActive = activeTabs && activeTabs[0];
+                    chrome.tabs.update(message.tabId, { active: true }, () => {
+                        if (chrome.runtime.lastError) {
+                            sendResponse({ success: false, error: chrome.runtime.lastError.message });
+                            return;
+                        }
+                        // Give the tab a moment to paint before capturing.
+                        setTimeout(() => {
+                            capture(tab.windowId, (result) => {
+                                if (previousActive && previousActive.id && previousActive.id !== message.tabId) {
+                                    chrome.tabs.update(previousActive.id, { active: true }, () => {
+                                        void chrome.runtime.lastError;
+                                        sendResponse(result);
+                                    });
+                                } else {
+                                    sendResponse(result);
+                                }
+                            });
+                        }, 150);
+                    });
                 });
             });
         } else {
-            capture(null);
+            capture(null, sendResponse);
         }
         return true;
     }
@@ -383,7 +409,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         chrome.scripting.executeScript({
             target: { tabId: message.tabId, allFrames: true },
-            files: ['agentContentScript.js']
+            files: ['agentTools.js', 'agentContentScript.js']
         }, () => {
             sendResponse({ success: !chrome.runtime.lastError });
         });

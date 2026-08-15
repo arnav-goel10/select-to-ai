@@ -129,6 +129,38 @@ test("every fallback model resolves to a sane price entry", () => {
   }
 });
 
+test("vision capability flag matches known model families", () => {
+  // Vision-capable families → screenshots auto-attach.
+  for (const model of [
+    "claude-sonnet-4-6",
+    "anthropic/claude-haiku-4.5",
+    "gpt-5.5",
+    "openai/gpt-5.4-mini",
+    "gemini-flash-latest",
+    "grok-4-6",
+    "mistral-large-latest",
+  ]) {
+    assert.equal(defaults.isVisionModel(model), true, `${model} should be vision`);
+  }
+  // Text-only models → the agent must stay on the text path.
+  for (const model of [
+    "deepseek-chat",
+    "deepseek-reasoner",
+    "deepseek-v4-flash-free",
+    "openai/gpt-oss-120b",
+    "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+    "mistral-small-latest",
+    "",
+    null,
+  ]) {
+    assert.equal(
+      defaults.isVisionModel(model),
+      false,
+      `${model} should NOT be vision`,
+    );
+  }
+});
+
 test("agent, options, and background all read the shared defaults module", () => {
   for (const file of ["agent.js", "options.js", "background.js"]) {
     const text = fs.readFileSync(path.join(extensionRoot, file), "utf8");

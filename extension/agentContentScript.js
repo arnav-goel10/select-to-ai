@@ -15,6 +15,13 @@
     /** @type {Object<number, Element>} Map of assigned IDs to DOM elements */
     let elementMap = {};
 
+    /**
+     * Monotonic id counter for stable element ids. Element ids are reused
+     * across re-scans while the page lives (the content script's lifetime),
+     * and reset automatically on navigation because the script reloads.
+     */
+    let nextElementId = 1;
+
     /** @type {HTMLDivElement|null} Container for overlay badges */
     let overlayContainer = null;
 
@@ -645,29 +652,61 @@
     // =========================================================================
 
     /**
-     * Scans the page for visible interactive elements, assigns IDs, renders badges,
-     * and returns a structured list for the LLM.
+     * Fallback stable-id allocator used when the shared agentTools module is
+     * not available in this page. Mirrors
+     * SELECT_TO_AI_TOOLS.assignStableElementIds.
+     */
+    function fallbackAssignStableIds(previousIds, startId) {
+        let counter = Number.isInteger(startId) && startId > 0 ? startId : 1;
+        const used = new Set();
+        const ids = previousIds.map((prev) => {
+            if (Number.isInteger(prev) && prev >= 1 && prev < counter && !used.has(prev)) {
+                used.add(prev);
+                return prev;
+            }
+            while (used.has(counter)) counter++;
+            const id = counter;
+            used.add(id);
+            counter++;
+            return id;
+        });
+        return { ids, nextId: counter };
+    }
+
+    /**
+     * Scans the page for visible interactive elements, assigns STABLE ids
+     * (reused across scans within this page), renders badges, and returns a
+     * structured list for the LLM in DOM/reading order.
+     * @param {number} [limit=80] - Max elements to include (top by score).
      * @returns {Array<Object>} List of element descriptors.
      */
-    function scanInteractiveElements() {
+    function scanInteractiveElements(limit = 80) {
         ensureContainers();
-        elementMap = {};
+
+        // Prune detached elements from the persistent map; keep the rest so
+        // ids stay stable across scans on the same page.
+        Object.keys(elementMap).forEach((key) => {
+            if (!elementMap[key] || !elementMap[key].isConnected) delete elementMap[key];
+        });
+
         const resultList = [];
-
         const candidates = collectElementsRecursively(document);
+        const elementLimit = Math.max(10, Math.min(parseInt(limit, 10) || 80, 150));
 
-        // Phase 1: Semantic Scoring
+        // Phase 1: Semantic Scoring (order index preserves document order —
+        // collectElementsRecursively walks the DOM, splicing shadow content
+        // in right after its host).
         let scoredCandidates = [];
-        candidates.forEach((el) => {
+        candidates.forEach((el, order) => {
             if (!isElementVisible(el)) return;
             if (!isElementInteractive(el)) return;
-            
+
             const tag = el.tagName.toLowerCase();
             const text = (el.textContent || el.value || "").trim();
             const type = (el.type || "").toLowerCase();
             const role = el.getAttribute('role') || "";
             let score = 0;
-            
+
             if (tag === 'input' && (type === 'text' || type === 'search' || type === 'email' || type === 'password')) {
                 score += 100;
             } else if (tag === 'textarea' || el.isContentEditable) {
@@ -678,26 +717,40 @@
                 if (text.length > 10) score += 20;
                 else if (text.length === 0) score -= 50;
             }
-            
+
             // Minor penalty for being far down the page
             const rect = el.getBoundingClientRect();
             if (rect.top > window.innerHeight) score -= 10;
             if (rect.top > window.innerHeight * 2) score -= 20;
 
-            scoredCandidates.push({ el, score });
+            scoredCandidates.push({ el, score, order });
         });
 
-        // Phase 2: Sorting and Trimming
+        // Phase 2: Select the top-N by score, then SERIALIZE in document
+        // (reading) order so the model sees the page the way a person does.
         scoredCandidates.sort((a, b) => b.score - a.score);
-        const topCandidates = scoredCandidates.slice(0, 80);
+        const topCandidates = scoredCandidates.slice(0, elementLimit);
+        topCandidates.sort((a, b) => a.order - b.order);
 
-        // Phase 3: ID Assignment & Badging
+        // Phase 3: Stable ID assignment — reuse the id already stamped on a
+        // still-present element; allocate new ids monotonically.
+        const previousIds = topCandidates.map((candidate) => {
+            const stamped = parseInt(candidate.el.getAttribute("data-select-to-ai-id"), 10);
+            return Number.isInteger(stamped) ? stamped : null;
+        });
+        const allocator =
+            typeof SELECT_TO_AI_TOOLS !== "undefined" && SELECT_TO_AI_TOOLS.assignStableElementIds
+                ? SELECT_TO_AI_TOOLS.assignStableElementIds
+                : fallbackAssignStableIds;
+        const allocation = allocator(previousIds, nextElementId);
+        nextElementId = allocation.nextId;
+
+        // Phase 4: Badging & serialization
         const fragment = document.createDocumentFragment();
-        let idCounter = 1;
-        
-        topCandidates.forEach((candidate) => {
+
+        topCandidates.forEach((candidate, index) => {
             const el = candidate.el;
-            const id = idCounter++;
+            const id = allocation.ids[index];
             elementMap[id] = el;
             el.setAttribute("data-select-to-ai-id", String(id));
 
@@ -723,6 +776,11 @@
             let type = tag;
             if (tag === 'input') type = (el.type || 'text') + '-input';
 
+            const viewportH = window.innerHeight || document.documentElement.clientHeight;
+            let position = "in-viewport";
+            if (rect.bottom < 0) position = "above-fold";
+            else if (rect.top > viewportH) position = "below-fold";
+
             const entry = {
                 id,
                 tagName: tag,
@@ -735,6 +793,13 @@
                 role: el.getAttribute('role') || "",
                 value: el.value || "",
                 isContentEditable: el.isContentEditable || false,
+                rect: {
+                    x: Math.round(rect.left),
+                    y: Math.round(rect.top),
+                    w: Math.round(rect.width),
+                    h: Math.round(rect.height),
+                },
+                position,
             };
 
             if (tag === 'a' && el.href) entry.href = el.href;
@@ -1065,8 +1130,9 @@
                     window.scrollBy(scrollOpts);
                 }
 
-                // Brief wait for dynamic content that may load after scroll
-                await delay(300);
+                // Smooth scrolling is asynchronous and is not a DOM mutation,
+                // so give it a moment to progress before measuring.
+                await delay(400);
 
                 return { success: true, message: `Scrolled ${scrollDirection}${data.scrollTarget ? ` on element [${data.scrollTarget}]` : ''}` };
             }
@@ -1120,8 +1186,9 @@
                 await moveAgentCursorToElement(el, "Click");
                 await pulseAgentCursor("Click");
                 dispatchClickEvents(el, modifiers);
-                await delay(300); // wait for potential DOM updates
-                return { success: true, message: `Clicked element [${id}] successfully.` };
+                // Settling is handled by the interact wrapper's mutation
+                // counter (event-driven, replaces the old fixed 300ms wait).
+                return { success: true, message: `Clicked element [${id}].` };
             }
 
             // ----- double_click -----
@@ -1135,8 +1202,7 @@
                 dispatchClickEvents(el, modifiers);
                 // dblclick event
                 el.dispatchEvent(new MouseEvent('dblclick', { ...opts, buttons: 0, detail: 2 }));
-                await delay(300);
-                return { success: true, message: `Double-clicked element [${id}] successfully.` };
+                return { success: true, message: `Double-clicked element [${id}].` };
             }
 
             // ----- right_click -----
@@ -1155,16 +1221,14 @@
                     button: 2,
                     buttons: 0,
                 }));
-                await delay(300);
-                return { success: true, message: `Right-clicked element [${id}] successfully.` };
+                return { success: true, message: `Right-clicked element [${id}].` };
             }
 
             // ----- hover -----
             if (action === 'hover') {
                 await moveAgentCursorToElement(el, "Hover");
                 dispatchHoverEvents(el, modifiers);
-                await delay(300);
-                return { success: true, message: `Hovered over element [${id}] successfully.` };
+                return { success: true, message: `Hovered over element [${id}].` };
             }
 
             // ----- type -----
@@ -1369,27 +1433,110 @@
     }
 
     // =========================================================================
+    // Outcome measurement (cheap validator signal)
+    // =========================================================================
+
+    /** Captures the page facts an action can change. */
+    function captureOutcomeSnapshot() {
+        let elementCount = 0;
+        try {
+            elementCount = document.querySelectorAll(
+                'a,button,input,select,textarea,[role="button"],[role="link"],[tabindex]'
+            ).length;
+        } catch (_) { /* keep 0 */ }
+        return {
+            url: window.location.href,
+            title: document.title,
+            scrollX: Math.round(window.scrollX || 0),
+            scrollY: Math.round(window.scrollY || 0),
+            elementCount,
+        };
+    }
+
+    /**
+     * Counts DOM mutations from now until stopped. The quiet-period wait
+     * itself is waitForDomStable's job — this only measures how much
+     * actually changed while it settles.
+     */
+    function createMutationCounter() {
+        let count = 0;
+        let observer = null;
+        try {
+            observer = new MutationObserver((records) => {
+                count += records.length;
+            });
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                characterData: true,
+            });
+        } catch (_) { /* observation unavailable; count stays 0 */ }
+
+        return {
+            stop() {
+                try { if (observer) observer.disconnect(); } catch (_) { /* ignore */ }
+                return count;
+            },
+        };
+    }
+
+    /** Fallback outcome-delta computation mirroring SELECT_TO_AI_TOOLS. */
+    function fallbackComputeOutcomeDelta(before, after, mutationCount) {
+        const urlChanged = before.url !== after.url;
+        const titleChanged = before.title !== after.title;
+        const scrollChanged =
+            Math.abs(after.scrollY - before.scrollY) > 2 ||
+            Math.abs(after.scrollX - before.scrollX) > 2;
+        const newElementCount = after.elementCount - before.elementCount;
+        return {
+            urlChanged,
+            titleChanged,
+            domMutationCount: mutationCount,
+            newElementCount,
+            scrollChanged,
+            noEffect:
+                !urlChanged && !titleChanged && !scrollChanged &&
+                mutationCount === 0 && newElementCount === 0,
+        };
+    }
+
+    /** Actions whose real page effect should be measured. */
+    const MEASURED_ACTIONS = new Set([
+        'click', 'double_click', 'right_click', 'hover', 'type', 'clear',
+        'select_option', 'checkbox_toggle', 'keypress', 'scroll',
+    ]);
+
+    // =========================================================================
     // Message Listener
     // =========================================================================
 
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (request.action === 'scan') {
             try {
-                const list = scanInteractiveElements();
+                const list = scanInteractiveElements(request.limit || 80);
                 const compressedText = extractMarkdown(document.body).replace(/\n\s*\n/g, '\n\n').trim().substring(0, 10000);
-                sendResponse({ 
-                    elements: list, 
-                    url: window.location.href, 
+                sendResponse({
+                    elements: list,
+                    url: window.location.href,
                     title: document.title,
-                    innerText: compressedText
+                    innerText: compressedText,
+                    scrollX: Math.round(window.scrollX || 0),
+                    scrollY: Math.round(window.scrollY || 0),
+                    viewportWidth: window.innerWidth || 0,
+                    viewportHeight: window.innerHeight || 0,
+                    pageHeight: Math.max(
+                        document.documentElement ? document.documentElement.scrollHeight : 0,
+                        document.body ? document.body.scrollHeight : 0
+                    )
                 });
             } catch (err) {
                 console.error("Select to AI: scan error:", err);
                 const fallbackText = document.body ? document.body.innerText.substring(0, 10000) : "";
-                sendResponse({ 
-                    elements: [], 
-                    url: window.location.href, 
-                    title: document.title, 
+                sendResponse({
+                    elements: [],
+                    url: window.location.href,
+                    title: document.title,
                     error: err.message,
                     innerText: fallbackText
                 });
@@ -1398,7 +1545,33 @@
             // Async — must return true to keep the message channel open
             (async () => {
                 try {
+                    const shouldMeasure = MEASURED_ACTIONS.has(request.data && request.data.action);
+                    if (!shouldMeasure) {
+                        sendResponse(await performAction(request.data));
+                        return;
+                    }
+
+                    // Measure the real outcome instead of reporting an
+                    // optimistic "clicked successfully": snapshot, act, wait
+                    // for the DOM to settle via waitForDomStable
+                    // (event-driven, bounded — replaces the old fixed
+                    // post-action delays), snapshot again, attach the delta.
+                    const before = captureOutcomeSnapshot();
+                    const counter = createMutationCounter();
                     const result = await performAction(request.data);
+                    if (result && result.success) {
+                        const isTyping = request.data.action === 'type';
+                        await waitForDomStable(isTyping ? 250 : 350, isTyping ? 1200 : 2200);
+                    }
+                    const mutationCount = counter.stop();
+                    const after = captureOutcomeSnapshot();
+                    if (result && result.success) {
+                        const compute =
+                            typeof SELECT_TO_AI_TOOLS !== "undefined" && SELECT_TO_AI_TOOLS.computeOutcomeDelta
+                                ? SELECT_TO_AI_TOOLS.computeOutcomeDelta
+                                : fallbackComputeOutcomeDelta;
+                        result.outcome = compute(before, after, mutationCount);
+                    }
                     sendResponse(result);
                 } catch (err) {
                     console.error("Select to AI: interact error:", err);

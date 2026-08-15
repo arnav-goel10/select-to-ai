@@ -98,15 +98,22 @@ test("cost accounting reads both OpenAI and Anthropic usage shapes", () => {
   assert.match(agent, /stream_options = \{ include_usage: true \}/);
 });
 
-test("privacy policy does not overclaim cross-session memory usage", () => {
+test("privacy policy accurately describes cross-session memory usage", () => {
   const policy = read("PRIVACY_POLICY.md");
-  // The old claim asserted the history *is used* for cross-session context.
+  // Cross-session memory read-back is now real (Phase B): the policy must
+  // say exactly what is stored (validator-confirmed outlines) and where it
+  // flows (into the planning prompt), instead of the pre-wiring claim that
+  // it was write-only.
   assert.ok(
-    !policy.includes("`chrome.storage.local` to provide cross-session context"),
-    "privacy policy still claims history is used for cross-session context",
+    !policy.includes("not currently read back into new tasks"),
+    "privacy policy still claims memory is write-only, but the planner reads it back",
   );
-  // The accurate statement: written locally, not read back yet.
-  assert.match(policy, /not currently read back into new tasks/);
+  assert.match(policy, /validator-confirmed task outlines/);
+  assert.match(policy, /read back locally into the planning step/);
+  assert.match(policy, /included in the planning prompt/);
+  // ...and the code actually gates the write on validator success.
+  const agent = read("extension/agent.js");
+  assert.match(agent, /statusState === "success" && lastValidatorPassed/);
 });
 
 test("security doc states the full header-removal scope of rules.json", () => {

@@ -31,9 +31,25 @@
   let actionHistory = [];
   let sessionRecording = [];
   let conversationHistory = [];
+  // Scratchpad memory: notes the executor saves via the `remember` action.
+  // Always included in the executor prompt so multi-page tasks keep early
+  // findings after navigation truncates the page context.
+  let sessionNotes = [];
+  // Validator bookkeeping: how many validator calls this run has spent, and
+  // whether the final answer passed (only validator-passed runs are written
+  // to cross-session memory).
+  let validatorCalls = 0;
+  let lastValidatorPassed = false;
   // Set once a provider rejects response_format/stream_options with a 400;
   // subsequent calls omit those OpenAI-compatible extras.
   let compatParamsUnsupported = false;
+  // Set once a provider rejects native tools/tool_choice with a 400 (or a
+  // model persistently returns no tool call); subsequent calls use the
+  // legacy text-JSON protocol so nothing regresses.
+  let toolsUnsupported = false;
+  // Set once the provider rejects an image payload; subsequent steps stay
+  // text-only even for models flagged as vision-capable.
+  let visionUnsupported = false;
 
   // Token & Cost Tracking
   let totalPromptTokens = 0;
@@ -158,6 +174,7 @@ You are running inside a Chrome extension side panel. The user is chatting with 
   const attachBtn = document.getElementById("attachBtn");
 
   // Dynamic message bubble references
+  let activeChecklistPanel = null;
   let activeChecklistItems = null;
   let activeProgressBar = null;
   let activeProgressPercent = null;
@@ -390,6 +407,35 @@ You are running inside a Chrome extension side panel. The user is chatting with 
       `Model "${requestedModel || "(empty)"}" is not valid for ${provider}. Using "${fallback}" for ${tier}.`,
     );
     return fallback;
+  }
+
+  /**
+   * Model tiers: the strong configured model ("pro") drives the executor;
+   * the provider's cheap catalog model ("lite") handles routing, planning,
+   * reflection, and validation. Custom gateways only have the configured
+   * model, so both tiers use it there.
+   */
+  function resolveTierModel(provider, tier) {
+    if (tier === "lite" && provider !== "custom") {
+      const fallbacks = getProviderFallbackModels(provider);
+      if (fallbacks && fallbacks.lite) return fallbacks.lite;
+    }
+    return resolveModelForProvider(
+      provider,
+      config.agentModel,
+      tier === "pro" ? "pro" : "lite",
+    );
+  }
+
+  /** True when this run should auto-attach a marked screenshot each step. */
+  function executorVisionEnabled() {
+    if (visionUnsupported) return false;
+    // Silent resolve (no fallback log spam): mirror resolveModelForProvider.
+    const provider = config.agentActiveProvider;
+    const model = isModelCompatibleWithProvider(provider, config.agentModel)
+      ? config.agentModel
+      : getProviderFallbackModels(provider).pro;
+    return SELECT_TO_AI_DEFAULTS.isVisionModel(model);
   }
 
   function getProviderKeyValidationError(provider, apiKey) {
@@ -793,36 +839,49 @@ You are running inside a Chrome extension side panel. The user is chatting with 
     }
   }
 
-  // Inject DOM scanner
+  // Inject DOM scanner (agentTools.js first: shared pure helpers for stable
+  // ids and outcome deltas used by the content script).
   function injectContentScript(tabId, callback) {
-    chrome.tabs.sendMessage(tabId, { action: "scan" }, (response) => {
+    const scanRequest = {
+      action: "scan",
+      limit: config.agentElementLimit || DEFAULTS.elementLimit,
+    };
+    chrome.tabs.sendMessage(tabId, scanRequest, (response) => {
       if (chrome.runtime.lastError || !response) {
         chrome.scripting.executeScript(
           {
             target: { tabId: tabId },
-            files: ["agentContentScript.js"],
+            files: ["agentTools.js", "agentContentScript.js"],
           },
           () => {
             if (chrome.runtime.lastError) {
               offerSiteAccess(tabId, () => injectContentScript(tabId, callback));
               return;
             }
-            setTimeout(() => {
-              chrome.tabs.sendMessage(
-                tabId,
-                { action: "scan" },
-                (retryResponse) => {
-                  if (chrome.runtime.lastError || !retryResponse) {
-                    stopAgent(
-                      "Failed to communicate with tab content script.",
-                      "error",
-                    );
-                  } else {
-                    normalizeAndCallback(retryResponse);
-                  }
-                },
-              );
-            }, 200);
+            // Event-driven readiness: wait for the DOM (body) via the
+            // content script's waitForElement handler instead of a fixed
+            // 200ms sleep, then scan.
+            chrome.tabs.sendMessage(
+              tabId,
+              { action: "waitForElement", selector: "body", timeout: 3000 },
+              () => {
+                void chrome.runtime.lastError;
+                chrome.tabs.sendMessage(
+                  tabId,
+                  scanRequest,
+                  (retryResponse) => {
+                    if (chrome.runtime.lastError || !retryResponse) {
+                      stopAgent(
+                        "Failed to communicate with tab content script.",
+                        "error",
+                      );
+                    } else {
+                      normalizeAndCallback(retryResponse);
+                    }
+                  },
+                );
+              },
+            );
           },
         );
       } else {
@@ -898,15 +957,23 @@ You are running inside a Chrome extension side panel. The user is chatting with 
     });
   }
 
-  // Render / Update checklist UI nodes
+  // Render / Update checklist UI nodes (the plan panel in the run bubble)
   function updateChecklistUI() {
     if (!activeChecklistItems) return;
     activeChecklistItems.innerHTML = "";
-    if (subtasks.length === 0) return;
+    if (subtasks.length === 0) {
+      if (activeChecklistPanel) activeChecklistPanel.style.display = "none";
+      return;
+    }
+    if (activeChecklistPanel) activeChecklistPanel.style.display = "flex";
 
     subtasks.forEach((task, index) => {
       const taskText =
         typeof task === "string" ? task : task.task || JSON.stringify(task);
+      const postcondition =
+        typeof task === "object" && task && task.postcondition
+          ? task.postcondition
+          : "";
       const item = document.createElement("div");
       item.className = "checklist-item";
       if (index === currentSubtaskIndex) item.className += " active";
@@ -919,6 +986,9 @@ You are running inside a Chrome extension side panel. The user is chatting with 
 
       const textSpan = document.createElement("span");
       textSpan.textContent = taskText;
+      if (postcondition) {
+        item.title = `Done when: ${postcondition}`;
+      }
 
       item.appendChild(bullet);
       item.appendChild(textSpan);
@@ -1351,6 +1421,9 @@ ${elementSnippet}`;
     consecutiveFailures = 0;
     parseFailureCount = 0;
     actionHistory = [];
+    sessionNotes = [];
+    validatorCalls = 0;
+    lastValidatorPassed = false;
     totalPromptTokens = 0;
     totalCompletionTokens = 0;
     totalCostUSD = 0.0;
@@ -1411,6 +1484,7 @@ ${elementSnippet}`;
     chatContainer.appendChild(assistantBubble);
 
     // Map active bubble elements
+    activeChecklistPanel = assistantBubble.querySelector(".checklist-panel");
     activeChecklistItems = assistantBubble.querySelector(
       ".activeChecklistItems",
     );
@@ -1435,8 +1509,285 @@ ${elementSnippet}`;
       `Starting task: "${currentTask}"`,
     );
 
-    // Go straight to execution loop
-    agentStep();
+    // Plan first (cheap lite-tier call), then start the execution loop.
+    generatePlan(() => agentStep());
+  }
+
+  // ==========================================
+  // PLANNER (lite tier, one call at task start)
+  // ==========================================
+
+  function generatePlan(done) {
+    const planRunId = runId;
+    setStatus("planner", "Planning the task...");
+    addLogEntry("planner", "Planning", "Breaking the task into subtasks...");
+
+    chrome.storage.local.get("agentCrossSessionMemory", (res) => {
+      if (!isRunning || planRunId !== runId) return;
+      const memoryContext = formatMemoryContext(res.agentCrossSessionMemory);
+
+      const planSystemPrompt = `<instructions>
+You are the planning module of a browser automation agent. Break the user's task into 2-6 ordered subtasks. Each subtask needs a "postcondition": an observable page condition proving it is done (e.g. "search results for X are visible", "the confirmation message appears").
+Rules:
+- Keep subtasks concrete and executable with browser actions (navigate, click, type, scroll, read).
+- Do not invent requirements the user did not state.
+- A simple task may be a single subtask.
+Call the submit_plan tool with the subtasks. If tool calling is unavailable, output ONLY a raw JSON object: {"subtasks": [{"task": "...", "postcondition": "..."}]}.
+</instructions>`;
+
+      const planUserMessage = `Task: ${currentTask}${memoryContext ? `\n${memoryContext}` : ""}`;
+
+      callLLM(
+        planSystemPrompt,
+        planUserMessage,
+        (planObj) => {
+          if (!isRunning || planRunId !== runId) return;
+          const parsed = SELECT_TO_AI_TOOLS.parsePlanResponse(planObj);
+          subtasks =
+            parsed && parsed.length > 0
+              ? parsed
+              : [
+                  {
+                    task: currentTask,
+                    postcondition: "The user's request is fully satisfied.",
+                  },
+                ];
+          currentSubtaskIndex = 0;
+          updateChecklistUI();
+          addLogEntry(
+            "planner",
+            "Plan Created",
+            subtasks.map((s, i) => `${i + 1}. ${s.task}`).join("  |  "),
+          );
+          done();
+        },
+        null,
+        0,
+        { tier: "lite", tool: SELECT_TO_AI_TOOLS.TOOL_DEFS.submit_plan },
+      );
+    });
+  }
+
+  /** Advances the checklist to the next subtask (never past the end). */
+  function advanceSubtask(reasonNote) {
+    if (currentSubtaskIndex < subtasks.length) {
+      currentSubtaskIndex++;
+      consecutiveFailures = 0;
+      updateChecklistUI();
+      if (reasonNote) {
+        addLogEntry("planner", "Subtask Advanced", reasonNote);
+      }
+    }
+  }
+
+  // ==========================================
+  // REFLECT GATE (after repeated failures)
+  // ==========================================
+
+  /**
+   * Central failure bookkeeping for the executor loop. After 2 consecutive
+   * failures a dedicated reflection call replaces blind retry; after the
+   * abandon threshold the current subtask is skipped (or the run gives up
+   * when it was the last one).
+   */
+  function registerStepFailure(feedbackMessage, keepScreenshot = false) {
+    consecutiveFailures++;
+    const abandonAt = Math.max(
+      4,
+      (config.agentFailureThreshold || DEFAULTS.failureThreshold) + 1,
+    );
+
+    if (consecutiveFailures >= abandonAt) {
+      if (currentSubtaskIndex < subtasks.length - 1) {
+        const abandoned = subtasks[currentSubtaskIndex];
+        advanceSubtask(
+          `Abandoned subtask "${abandoned ? abandoned.task : ""}" after ${consecutiveFailures} consecutive failures.`,
+        );
+        scheduleStep(
+          800,
+          `The previous subtask was abandoned after repeated failures. Move on to the new current subtask. Last problem: ${feedbackMessage}`,
+          keepScreenshot,
+        );
+      } else {
+        stopAgent(
+          `Giving up after ${consecutiveFailures} consecutive failures. Last problem: ${feedbackMessage}`,
+          "error",
+        );
+      }
+      return;
+    }
+
+    if (consecutiveFailures === 2) {
+      runReflection(feedbackMessage, keepScreenshot);
+      return;
+    }
+
+    scheduleStep(1200, feedbackMessage, keepScreenshot);
+  }
+
+  /**
+   * Dedicated reflection call (lite tier): name the wrong assumption and
+   * pick a different strategy, then feed that back into the next step.
+   */
+  function runReflection(feedbackMessage, keepScreenshot = false) {
+    const reflectRunId = runId;
+    setStatus("planner", "Reflecting on repeated failures...");
+    addLogEntry(
+      "planner",
+      "Reflection",
+      "Two consecutive failures — analyzing which assumption was wrong...",
+    );
+
+    const historySummary = actionHistory
+      .slice(-6)
+      .map(
+        (h) =>
+          `${h.success ? "OK" : "FAIL"} ${JSON.stringify(h.action)} -> ${h.message}`,
+      )
+      .join("\n");
+
+    const reflectSystemPrompt = `<instructions>
+You are the reflection module of a browser agent that has failed the same subtask twice in a row.
+Identify the single wrong assumption behind the failures and propose ONE genuinely different strategy (different element, different interaction, scrolling, direct navigation, or ask_user/give_up when appropriate).
+Output ONLY a raw JSON object: {"assumption": "the wrong assumption", "strategy": "the new approach to take next"}.
+</instructions>`;
+
+    const reflectUserMessage = `Task: ${currentTask}
+Current subtask: ${(subtasks[currentSubtaskIndex] && subtasks[currentSubtaskIndex].task) || currentTask}
+Recent attempts:
+${historySummary || "(none recorded)"}
+Latest failure feedback: ${feedbackMessage}`;
+
+    callLLM(
+      reflectSystemPrompt,
+      reflectUserMessage,
+      (obj) => {
+        if (!isRunning || reflectRunId !== runId) return;
+        const assumption =
+          obj && typeof obj.assumption === "string" && obj.assumption.trim()
+            ? obj.assumption.trim()
+            : "unknown";
+        const strategy =
+          obj && typeof obj.strategy === "string" && obj.strategy.trim()
+            ? obj.strategy.trim()
+            : "try a different element or interaction";
+        addLogEntry(
+          "planner",
+          "Reflection Result",
+          `Wrong assumption: ${assumption}. New strategy: ${strategy}`,
+        );
+        scheduleStep(
+          400,
+          `Reflection after repeated failures — the assumption "${assumption}" was wrong. Follow this new strategy now: ${strategy}. Do NOT repeat the failed action. (Original failure: ${feedbackMessage})`,
+          keepScreenshot,
+        );
+      },
+      null,
+      0,
+      { tier: "lite" },
+    );
+  }
+
+  // ==========================================
+  // VALIDATOR (lite tier, on finish)
+  // ==========================================
+
+  /**
+   * Verification-before-finish: a cheap validator call receives the final
+   * page scan and the claimed answer, and must confirm the answer is
+   * supported by on-page evidence. Reject -> feed back -> continue (bounded
+   * by remaining steps and a per-run validator budget). Only validator-passed
+   * runs are saved to cross-session memory.
+   */
+  function runValidatorOnFinish(finishAction, scanResult) {
+    const validateRunId = runId;
+    const answer = String(finishAction.answer || "").trim();
+
+    if (validatorCalls >= 3) {
+      addLogEntry(
+        "validator",
+        "Validation Budget Exhausted",
+        "Accepting the answer without confirmation (this run will not be saved to memory).",
+      );
+      lastValidatorPassed = false;
+      stopAgent(answer, "success");
+      return;
+    }
+    validatorCalls++;
+
+    setStatus("validator", "Validating the answer against the page...");
+    addLogEntry(
+      "validator",
+      "Validating Answer",
+      "Checking the claimed answer against the final page state...",
+    );
+
+    const validatorSystemPrompt = `<instructions>
+You are the validator module of a browser agent. The agent claims it completed the user's task. Decide whether the claimed answer is actually supported by the final page state provided (URL, title, page text).
+- pass: the page evidence supports the answer (the answer may paraphrase, but the facts must appear in or clearly follow from the page content or the URL/title).
+- fail: the answer is unsupported, contradicted, fabricated, or the task is visibly incomplete.
+Call the submit_validation tool with your verdict. If tool calling is unavailable, output ONLY a raw JSON object: {"verdict": "pass" | "fail", "reason": "..."}.
+</instructions>`;
+
+    const pageText = (() => {
+      const text = scanResult.innerText || "";
+      return text.length > 2500 ? `${text.substring(0, 2500)}...` : text;
+    })();
+
+    const validatorUserMessage = `User task: ${currentTask}
+Plan: ${subtasks.map((s) => (typeof s === "string" ? s : s.task)).join("; ") || "(none)"}
+Claimed answer: ${answer}
+Claimed evidence: ${finishAction.evidence || "(none provided)"}
+
+Final page URL: ${scanResult.url}
+Final page title: ${scanResult.title}
+Final page text (truncated):
+${pageText || "[No page text available]"}`;
+
+    callLLM(
+      validatorSystemPrompt,
+      validatorUserMessage,
+      (obj) => {
+        if (!isRunning || validateRunId !== runId) return;
+        const verdict = SELECT_TO_AI_TOOLS.parseValidatorResponse(obj);
+
+        if (!verdict) {
+          addLogEntry(
+            "validator",
+            "Validation Inconclusive",
+            "The validator response was unparseable — accepting the answer (not saved to memory).",
+          );
+          lastValidatorPassed = false;
+          stopAgent(answer, "success");
+          return;
+        }
+
+        if (verdict.pass) {
+          lastValidatorPassed = true;
+          addLogEntry(
+            "validator",
+            "Validation Passed",
+            verdict.reason || "The answer is supported by the page evidence.",
+          );
+          stopAgent(answer, "success");
+          return;
+        }
+
+        addLogEntry(
+          "validator",
+          "Validation Failed",
+          verdict.reason || "The answer is not supported by the page.",
+        );
+        consecutiveFailures = 0;
+        scheduleStep(
+          600,
+          `Validator rejected your answer: ${verdict.reason || "it is not supported by the page evidence"}. Gather the missing evidence on the page (navigate/read further) before finishing again.`,
+        );
+      },
+      null,
+      0,
+      { tier: "lite", tool: SELECT_TO_AI_TOOLS.TOOL_DEFS.submit_validation },
+    );
   }
 
   // Helper to check if a URL is allowed by the domain allowlist (F10)
@@ -2008,11 +2359,12 @@ ${elementSnippet}`;
     taskInput.disabled = false;
     taskInput.focus();
 
-    // Cross-session memory save (F13)
-    if (statusState === "success") {
+    // Cross-session memory save (F13): only validator-confirmed successes
+    // are written — unvalidated finishes never seed future plans.
+    if (statusState === "success" && lastValidatorPassed) {
       const memoryItem = {
         task: currentTask,
-        subtasks: subtasks,
+        subtasks: subtasks.map((s) => (typeof s === "string" ? s : s.task)),
         timestamp: Date.now(),
       };
       chrome.storage.local.get("agentCrossSessionMemory", (res) => {
@@ -2053,6 +2405,11 @@ ${elementSnippet}`;
       if (statusState === "success") {
         activeBubbleAnswer.innerHTML = `${escapeHtml(reason)}`;
         if (activeThoughtStatus) activeThoughtStatus.textContent = "completed";
+        // Mark the whole plan complete in the checklist panel.
+        if (subtasks.length > 0) {
+          currentSubtaskIndex = subtasks.length;
+          updateChecklistUI();
+        }
         setStatus("validator", "Task Completed");
         if (activeRadar) activeRadar.className = "radar success";
       } else if (statusState === "error") {
@@ -2086,11 +2443,17 @@ ${elementSnippet}`;
   // MULTI-AGENT PIPELINE
   // ==========================================
 
+  // Formats validator-confirmed past runs for the planner prompt.
   function formatMemoryContext(memory) {
     if (!memory || memory.length === 0) return "";
-    let context = "\n### Cross-Session Memory (Previously Successful Tasks):\n";
-    memory.slice(0, 5).forEach((item, idx) => {
-      context += `- Goal: "${item.task}" -> Subtasks: ${JSON.stringify(item.subtasks)}\n`;
+    let context =
+      "\n### Cross-session memory (plans that previously completed similar tasks):\n";
+    memory.slice(0, 5).forEach((item) => {
+      const plan = (item.subtasks || [])
+        .map((s) => (typeof s === "string" ? s : s && s.task))
+        .filter(Boolean)
+        .join("; ");
+      context += `- Goal: "${item.task}"${plan ? ` -> Plan: ${plan}` : ""}\n`;
     });
     return context;
   }
@@ -2146,8 +2509,9 @@ ${elementSnippet}`;
           const elementLimit = config.agentElementLimit || 60;
           const visibleElements = (scanResult.elements || []).slice(
             0,
-            elementLimit,
+            Math.max(elementLimit, 10),
           );
+          const validElementIds = new Set(visibleElements.map((el) => el.id));
           const elementsDescription = visibleElements
             .map((el) => {
               let attrs = `id="${el.id}"`;
@@ -2158,13 +2522,30 @@ ${elementSnippet}`;
               if (el.value) attrs += ` value="${el.value}"`;
               if (el.checked) attrs += ` checked="true"`;
               if (el.disabled) attrs += ` disabled="true"`;
+              if (el.rect)
+                attrs += ` at="(${el.rect.x},${el.rect.y}) ${el.rect.w}x${el.rect.h}"`;
+              if (el.position) attrs += ` position="${el.position}"`;
 
               const tag = el.tagName ? el.tagName.toLowerCase() : "element";
               return `<${tag} ${attrs}>${el.text || ""}</${tag}>`;
             })
             .join("\n");
 
-          // Action history
+          // Scroll / viewport signal so the model knows whether to scroll.
+          let scrollLine = "";
+          if (typeof scanResult.pageHeight === "number" && scanResult.pageHeight > 0) {
+            const viewportH = scanResult.viewportHeight || 0;
+            const scrollY = scanResult.scrollY || 0;
+            const belowFold = scanResult.pageHeight - (scrollY + viewportH);
+            const hints = [];
+            if (scrollY > 4) hints.push("content above the fold (scroll up to see it)");
+            if (belowFold > 4) hints.push("content below the fold (scroll down to see it)");
+            scrollLine = `Scroll position: ${scrollY}px of ${scanResult.pageHeight}px total page height (viewport ${viewportH}px). ${
+              hints.length > 0 ? `There is ${hints.join(" and ")}.` : "The full page fits in the viewport."
+            }`;
+          }
+
+          // Action history (messages already carry measured outcome deltas)
           const historyLimit = config.agentHistoryLimit || 12;
           const prunedHistory = actionHistory.slice(-historyLimit);
           let historyStr = "<history>\n";
@@ -2180,91 +2561,46 @@ ${elementSnippet}`;
           }
           historyStr += "\n</history>";
 
-          // Construct system prompt optimized for instruct models
-          const baseSystemPrompt = config.agentSystemPrompt
-            ? `${config.agentSystemPrompt}\n\n`
-            : "";
+          // Plan block: the checklist with the current subtask highlighted.
+          let planBlock = "";
+          if (subtasks.length > 0) {
+            const planLines = subtasks
+              .map((s, i) => {
+                const marker =
+                  i < currentSubtaskIndex
+                    ? "[done]"
+                    : i === currentSubtaskIndex
+                      ? "[current]"
+                      : "[pending]";
+                const post = s.postcondition
+                  ? ` (done when: ${s.postcondition})`
+                  : "";
+                return `${marker} ${i + 1}. ${s.task}${post}`;
+              })
+              .join("\n");
+            planBlock = `Plan:\n${planLines}\nSet "completedSubtask": true on the action that fulfills the current subtask's postcondition. Use "revise_plan" if the plan no longer fits what you see.`;
+          }
 
-          const systemPrompt = `${baseSystemPrompt}<instructions>
-You are an advanced, autonomous Web Browser Agent. Your objective is to complete the user's high-level request by autonomously driving a web browser. You do not ask the user for help; you execute actions until the goal is met.
+          // Scratchpad notes saved via the `remember` action.
+          const notesBlock =
+            sessionNotes.length > 0
+              ? `Your scratchpad notes (persist across pages):\n${sessionNotes
+                  .map((n, i) => `${i + 1}. ${n}`)
+                  .join("\n")}`
+              : "";
 
-### 1. Core Operating Directives
-- **Zero Hallucination**: You MUST NOT answer factual queries (sports, weather, news, movies) from your internal memory. You MUST perform a live web search to retrieve and verify the exact data.
-- **One Action Per Step**: You can only execute EXACTLY ONE action per step. You must wait for the page to update before taking the next.
-- **Think Before Acting**: Use the "thought" field to analyze the current URL, the visible elements, the action history, and plan the immediate next step.
+          // ONE prompt: the static instructions (config.agentSystemPrompt,
+          // defaulting to CONFIG.DEFAULT_SYSTEM_PROMPT) are the cacheable
+          // half; the per-step context below is the dynamic half.
+          const staticPrompt =
+            config.agentSystemPrompt || DEFAULT_SYSTEM_PROMPT;
 
-### 2. Standard Operating Procedures (SOPs)
-- **Web Searching**:
-  1. \`navigate\` to "https://www.google.com".
-  2. Locate the search input bar (usually type="search" or title="Search").
-  3. \`type\` your query into the search bar.
-  4. \`keypress\` "Enter" OR \`click\` the Google Search button.
-  5. Wait for results, read the extracted text, and if you have the answer, use \`finish\`. If not, \`click\` a search result link.
-- **Form Filling**:
-  1. Identify all required input IDs.
-  2. \`type\` into text fields, \`select_option\` for dropdowns, \`checkbox_toggle\` for radios/checkboxes.
-  3. You MUST \`click\` the Submit/Continue button after filling the form. Typing does NOT auto-submit.
-- **Dealing with Overlays**: If you see a Cookie Consent banner, Newsletter pop-up, or Login modal obstructing the page, your FIRST priority is to \`click\` the "Accept", "Decline", or "Close (X)" button to clear the viewport.
-
-### 3. Exhaustive Action Dictionary
-Choose exactly one action from this dictionary. Provide the EXACT parameters required.
-
-1. **click**: Left-clicks an element. Triggers navigation or form submission.
-   - Params: \`"id": <number>\`
-2. **double_click**: Double-clicks an element (useful for highlighting text or special webapp interactions).
-   - Params: \`"id": <number>\`
-3. **right_click**: Opens context menus.
-   - Params: \`"id": <number>\`
-4. **hover**: Moves the mouse over an element to trigger dropdowns or tooltips.
-   - Params: \`"id": <number>\`
-5. **type**: Injects text into an input field or textarea. Does NOT press Enter automatically.
-   - Params: \`"id": <number>\`, \`"text": "value to type"\`
-6. **clear**: Clears all existing text from an input field.
-   - Params: \`"id": <number>\`
-7. **select_option**: Selects a specific text option from an HTML \`<select>\` dropdown.
-   - Params: \`"id": <number>\`, \`"optionText": "exact text of the option"\`
-8. **checkbox_toggle**: Toggles the state of a checkbox or radio button.
-   - Params: \`"id": <number>\`
-9. **keypress**: Simulates pressing a specific keyboard key on a target element (or globally if id is null).
-   - Params: \`"id": <number or null>\`, \`"text": "Enter" | "Tab" | "Escape" | "Backspace"\`
-10. **scroll**: Scrolls the viewport or a specific container to reveal hidden elements. (Crucial when the target element is below the fold).
-    - Params: \`"scrollDirection": "down" | "up" | "left" | "right"\`, \`"scrollTarget": <id or null>\`
-11. **navigate**: Instructs the browser to load a specific URL in the current tab. Must be a fully qualified URL.
-    - Params: \`"url": "https://..."\`
-12. **wait**: Pauses execution for a specific duration to allow heavy SPA frameworks to render.
-    - Params: \`"duration": <milliseconds (e.g., 2000)>\`
-13. **back** / **forward**: Triggers browser history navigation.
-    - Params: None (just the action name)
-14. **request_screenshot**: Captures a full visual screenshot of the current viewport and feeds it into your very next step. Use this if the text DOM is missing context or you are failing to find a visual element.
-    - Params: None (just the action name)
-15. **open_tab** / **switch_tab** / **close_tab** / **reload_tab**: Tab management.
-    - Params (open_tab): \`"url": "https://..."\`
-    - Params (switch/close): \`"tabId": <number>\`
-16. **finish**: Terminates the automation loop. ONLY use this when the user's high-level goal is 100% complete.
-    - Params: \`"answer": "The detailed, formatted final response grounded in the web data."\`
-
-### 4. Failure Recovery Heuristics
-- If you attempt an action and receive a "Duplicate Loop Detected" feedback, it means you are stuck. You MUST try a different approach (e.g., scroll the page, click a different element, or use a keypress).
-- If an element is "not interactable" or "hidden", it might be off-screen. Try using the \`scroll\` action first.
-- If the text DOM is confusing or you are stuck, use \`request_screenshot\` to visually analyze the page layout.
-
-### Response Format Constraints
-You MUST output ONLY valid JSON. No markdown backticks, no conversational filler, no preambles.
-{
-  "thought": "Your internal reasoning...",
-  "action": "<action_name>",
-  "id": <id or null>,
-  "text": "<text or null>",
-  "url": "<url or null>",
-  "reason": "Brief summary of what you are doing"
-}
-</instructions>
-
-<current_context>
+          const dynamicContext = `<current_context>
 High-level Goal: "${currentTask}"
 Current Tab URL: ${scanResult.url}
 Current Tab Page Title: ${scanResult.title}
 
+${planBlock ? `${planBlock}\n` : ""}${notesBlock ? `${notesBlock}\n` : ""}
 Available Browser Tabs:
 ${formatTabsContext(browserTabs)}
 
@@ -2273,10 +2609,10 @@ ${historyStr}
 
 ${feedback ? `Feedback from last attempt (IMPORTANT): "${feedback}"\n` : ""}
 
-Interactive Elements on Current Page Section:
+Interactive Elements (DOM/reading order; ids are stable on this page):
 ${elementsDescription || "[No interactive elements found on this section]"}
-
-Page Text content:
+${scrollLine ? `\n${scrollLine}\n` : ""}
+Page Text content (truncated):
 ${(function () {
   if (!scanResult.innerText) return "[No text content found]";
   let text = scanResult.innerText;
@@ -2289,35 +2625,142 @@ ${(function () {
 })()}
 </current_context>`;
 
+          const systemPrompt = [
+            { text: staticPrompt, cacheable: true },
+            { text: `\n\n${dynamicContext}`, cacheable: false },
+          ];
+
+          const activeSubtaskLabel = () =>
+            (subtasks[currentSubtaskIndex] && subtasks[currentSubtaskIndex].task) ||
+            "Complete task";
+
           const executeLLM = (screenshotDataUrl) => {
             callLLM(
               systemPrompt,
-              `Goal: "${currentTask}". Choose the next action.`,
-              (actionObj) => {
+              `Goal: "${currentTask}". Call the browser_action tool with your next action.`,
+              (rawActionObj) => {
                 if (!isCurrentRun()) return;
-                if (!actionObj || !actionObj.action) {
-                  addLogEntry(
-                    "error",
-                    "Executor Error",
-                    "Failed to parse action object. Retrying.",
-                  );
-                  scheduleStep(
-                    1500,
-                    "Failed to parse action object. Please try again with valid JSON.",
+
+                // Validate the tool call against the schema BEFORE dispatch.
+                // Unknown actions, missing params, and out-of-range ids feed
+                // a structured correction back instead of executing garbage.
+                const validation = SELECT_TO_AI_TOOLS.validateToolCall(
+                  rawActionObj,
+                  { validIds: validElementIds },
+                );
+                if (!validation.ok) {
+                  addLogEntry("error", "Invalid Tool Call", validation.error);
+                  registerStepFailure(
+                    `Invalid tool call: ${validation.error}`,
                     needsScreenshot,
                   );
                   return;
                 }
+                const actionObj = validation.action;
 
-                // Duplicate action detection
+                // Stream the model's thought into the status line.
+                if (actionObj.thought) {
+                  const thought = String(actionObj.thought);
+                  setStatus(
+                    "executor",
+                    thought.length > 140 ? `${thought.slice(0, 137)}...` : thought,
+                  );
+                  addLogEntry("executor", "Thought", thought);
+                }
+
+                // The model asserts the current subtask's postcondition was
+                // just met — advance the plan when the action succeeds.
+                const shouldAdvanceSubtask = actionObj.completedSubtask === true;
+
+                // ---- Agent-level verbs (no page dispatch) ----
+
+                if (actionObj.action === "remember") {
+                  sessionNotes.push(String(actionObj.note).slice(0, 500));
+                  if (sessionNotes.length > 20)
+                    sessionNotes = sessionNotes.slice(-20);
+                  addLogEntry("executor", "Note Saved", actionObj.note);
+                  actionHistory.push({
+                    step: currentStep,
+                    subtask: activeSubtaskLabel(),
+                    action: actionObj,
+                    success: true,
+                    message: `Saved note to scratchpad.`,
+                  });
+                  if (shouldAdvanceSubtask)
+                    advanceSubtask("Subtask postcondition reported met.");
+                  scheduleStep(
+                    200,
+                    "Note saved to your scratchpad. Continue with the task.",
+                  );
+                  return;
+                }
+
+                if (actionObj.action === "ask_user") {
+                  addLogEntry("executor", "User Input Needed", actionObj.question);
+                  actionHistory.push({
+                    step: currentStep,
+                    subtask: activeSubtaskLabel(),
+                    action: actionObj,
+                    success: true,
+                    message: "Paused to ask the user for input.",
+                  });
+                  conversationHistory.push({
+                    role: "assistant",
+                    text: actionObj.question,
+                  });
+                  if (conversationHistory.length > 12)
+                    conversationHistory = conversationHistory.slice(-12);
+                  stopAgent(
+                    `I need your input to continue: ${actionObj.question}`,
+                    "idle",
+                  );
+                  return;
+                }
+
+                if (actionObj.action === "give_up") {
+                  actionHistory.push({
+                    step: currentStep,
+                    subtask: activeSubtaskLabel(),
+                    action: actionObj,
+                    success: true,
+                    message: "Agent gave up on the task.",
+                  });
+                  stopAgent(`Task abandoned: ${actionObj.reason}`, "error");
+                  return;
+                }
+
+                if (actionObj.action === "revise_plan") {
+                  subtasks = actionObj.subtasks;
+                  currentSubtaskIndex = 0;
+                  consecutiveFailures = 0;
+                  updateChecklistUI();
+                  addLogEntry(
+                    "planner",
+                    "Plan Revised",
+                    subtasks.map((s, i) => `${i + 1}. ${s.task}`).join("  |  "),
+                  );
+                  actionHistory.push({
+                    step: currentStep,
+                    subtask: activeSubtaskLabel(),
+                    action: actionObj,
+                    success: true,
+                    message: "Plan revised mid-run.",
+                  });
+                  scheduleStep(
+                    200,
+                    "Plan revised. Continue with the first remaining subtask.",
+                  );
+                  return;
+                }
+
+                // Duplicate action detection (stable ids make this reliable)
                 if (isDuplicateFailedAction(actionObj)) {
                   addLogEntry(
                     "system",
                     "Duplicate Loop Detected",
                     `Action ${actionObj.action} on ID ${actionObj.id} already failed. Retrying with feedback...`,
                   );
-                  scheduleStep(
-                    1500,
+                  registerStepFailure(
                     `Your action choice (${actionObj.action} on element [${actionObj.id}]) was identified as a duplicate of a previously failed action. Please select a different element or action.`,
                     needsScreenshot,
                   );
@@ -2332,7 +2775,7 @@ ${(function () {
                   );
                   actionHistory.push({
                     step: currentStep,
-                    subtask: "Complete task",
+                    subtask: activeSubtaskLabel(),
                     action: actionObj,
                     success: true,
                     message: "Screenshot requested successfully.",
@@ -2366,22 +2809,24 @@ ${(function () {
                 }
 
                 if (actionObj.action === "finish") {
+                  // Verification-before-finish: the schema validator already
+                  // rejected empty answers; now a cheap validator call checks
+                  // the claim against the final page state.
                   addLogEntry(
                     "executor",
-                    "Task Completed",
-                    "Signaling completion.",
+                    "Finish Requested",
+                    "Answer submitted — validating against the page...",
                   );
                   actionHistory.push({
                     step: currentStep,
-                    subtask: "Complete task",
+                    subtask: activeSubtaskLabel(),
                     action: actionObj,
                     success: true,
-                    message: "Task completed successfully.",
+                    message: "Finish requested; answer sent to the validator.",
                   });
-                  stopAgent(
-                    actionObj.answer || actionObj.reason || "Done.",
-                    "success",
-                  );
+                  if (shouldAdvanceSubtask)
+                    advanceSubtask("Final subtask reported complete.");
+                  runValidatorOnFinish(actionObj, scanResult);
                   return;
                 }
 
@@ -2397,7 +2842,7 @@ ${(function () {
                     );
                     executeBrowserAction(
                       actionObj,
-                      "Complete task",
+                      activeSubtaskLabel(),
                       screenshotDataUrl,
                       (success, message) => {
                         if (!isCurrentRun()) return;
@@ -2407,8 +2852,7 @@ ${(function () {
                             "Browser Action Failed",
                             message,
                           );
-                          scheduleStep(
-                            1500,
+                          registerStepFailure(
                             "Your last browser action failed: " + message,
                           );
                           return;
@@ -2418,10 +2862,13 @@ ${(function () {
                           "Browser Action Executed",
                           message,
                         );
+                        consecutiveFailures = 0;
+                        if (shouldAdvanceSubtask)
+                          advanceSubtask("Subtask postcondition reported met.");
                         if (actionObj.action === "list_tabs") {
                           scheduleStep(500, message);
                         } else {
-                          scheduleStep(1000);
+                          scheduleStep(300);
                         }
                       },
                     );
@@ -2455,7 +2902,7 @@ ${(function () {
                   const recordEntry = {
                     timestamp: Date.now(),
                     step: currentStep,
-                    subtask: "Complete task",
+                    subtask: activeSubtaskLabel(),
                     action: actionObj,
                     screenshot: screenshotDataUrl
                       ? screenshotDataUrl.substring(0, 100) + "..."
@@ -2492,6 +2939,71 @@ ${(function () {
                           : chrome.runtime.lastError
                             ? chrome.runtime.lastError.message
                             : "interaction failed";
+
+                        // A click/keypress that unloads the page closes the
+                        // message channel before the content script can
+                        // respond. That is a SUCCESS (navigation), not a
+                        // failure — verify by watching the tab's URL.
+                        const channelLost =
+                          !response &&
+                          /message|port|channel|receiving end|context invalidated/i.test(
+                            err || "",
+                          );
+                        const navCapable = ["click", "keypress", "double_click"].includes(
+                          actionObj.action,
+                        );
+                        if (channelLost && navCapable) {
+                          waitForTabNavigation(tabId, 400, 8000, () => {
+                            if (!isCurrentRun()) return;
+                            chrome.tabs.get(tabId, (updatedTab) => {
+                              if (!isCurrentRun()) return;
+                              if (
+                                !chrome.runtime.lastError &&
+                                updatedTab &&
+                                updatedTab.url &&
+                                updatedTab.url !== scanResult.url
+                              ) {
+                                const navMessage = `${actionObj.action} on [${actionObj.id ?? "page"}] caused a navigation to ${updatedTab.url}. Outcome: URL changed.`;
+                                addLogEntry(
+                                  "executor",
+                                  "DOM Action Caused Navigation",
+                                  navMessage,
+                                );
+                                recordEntry.success = true;
+                                recordEntry.outcome = navMessage;
+                                actionHistory.push({
+                                  step: currentStep,
+                                  subtask: activeSubtaskLabel(),
+                                  action: actionObj,
+                                  success: true,
+                                  message: navMessage,
+                                });
+                                consecutiveFailures = 0;
+                                if (shouldAdvanceSubtask)
+                                  advanceSubtask(
+                                    "Subtask postcondition reported met.",
+                                  );
+                                scheduleStep(200);
+                                return;
+                              }
+                              recordEntry.success = false;
+                              recordEntry.outcome = err;
+                              actionHistory.push({
+                                step: currentStep,
+                                subtask: activeSubtaskLabel(),
+                                action: actionObj,
+                                success: false,
+                                message: err,
+                              });
+                              addLogEntry("error", "DOM Action Failed", err);
+                              registerStepFailure(
+                                "Your last action failed: " + err,
+                              );
+                            });
+                          });
+                          return;
+                        }
+
                         addLogEntry("error", "DOM Action Failed", err);
 
                         recordEntry.success = false;
@@ -2499,33 +3011,56 @@ ${(function () {
 
                         actionHistory.push({
                           step: currentStep,
-                          subtask: "Complete task",
+                          subtask: activeSubtaskLabel(),
                           action: actionObj,
                           success: false,
                           message: err,
                         });
-                        scheduleStep(1500, "Your last action failed: " + err);
+                        registerStepFailure("Your last action failed: " + err);
                       } else {
+                        // Outcome verification: replace the optimistic
+                        // "clicked successfully" with what actually changed.
+                        const outcomeText = response.outcome
+                          ? SELECT_TO_AI_TOOLS.formatOutcomeDelta(
+                              response.outcome,
+                            )
+                          : "";
+                        const fullMessage = outcomeText
+                          ? `${response.message} ${outcomeText}`
+                          : response.message;
+
                         addLogEntry(
                           "executor",
                           "DOM Action Executed",
-                          response.message,
+                          fullMessage,
                         );
 
                         recordEntry.success = true;
-                        recordEntry.outcome = response.message;
+                        recordEntry.outcome = fullMessage;
 
                         actionHistory.push({
                           step: currentStep,
-                          subtask: "Complete task",
+                          subtask: activeSubtaskLabel(),
                           action: actionObj,
                           success: true,
-                          message: response.message,
+                          message: fullMessage,
                         });
 
-                        // Wait for tab navigation
-                        waitForTabNavigation(tabId, 300, 8000, () => {
-                          scheduleStep(1000);
+                        // Silent no-ops count toward the reflection gate;
+                        // effective actions reset it.
+                        if (response.outcome && response.outcome.noEffect) {
+                          consecutiveFailures++;
+                        } else {
+                          consecutiveFailures = 0;
+                        }
+                        if (shouldAdvanceSubtask)
+                          advanceSubtask("Subtask postcondition reported met.");
+
+                        // The content script already waited for the DOM to
+                        // settle (event-driven); only cover a possible full
+                        // navigation before the next scan.
+                        waitForTabNavigation(tabId, 250, 8000, () => {
+                          scheduleStep(150);
                         });
                       }
                     },
@@ -2550,13 +3085,23 @@ ${(function () {
                 }
               },
               screenshotDataUrl,
+              0,
+              // Strong ("pro") tier drives the executor with the native
+              // browser_action tool; text-JSON fallback engages automatically
+              // if the provider rejects tools.
+              { tier: "pro", tool: SELECT_TO_AI_TOOLS.TOOL_DEFS.browser_action },
             );
           };
 
-          if (needsScreenshot) {
+          // Vision-capable executors get the marked screenshot every step
+          // (badges are already drawn); others stay text-only unless the
+          // model explicitly asked via request_screenshot.
+          const wantScreenshot = needsScreenshot || executorVisionEnabled();
+          if (wantScreenshot) {
             chrome.runtime.sendMessage(
               { action: "captureScreenshot", tabId },
               (screenshotRes) => {
+                if (!isCurrentRun()) return;
                 executeLLM(
                   screenshotRes && screenshotRes.success
                     ? screenshotRes.dataUrl
@@ -2601,22 +3146,48 @@ ${(function () {
     );
   }
 
+  /** Joins a string-or-parts system prompt into one plain string. */
+  function systemPromptToText(systemPrompt) {
+    if (Array.isArray(systemPrompt)) {
+      return systemPrompt.map((part) => part.text || "").join("");
+    }
+    return String(systemPrompt || "");
+  }
+
+  /**
+   * Splits a system prompt into [static | dynamic] parts for caching.
+   * Callers that already know the split (the executor: static instructions
+   * first, per-step context second) pass an array of {text, cacheable}
+   * parts directly — that IS the real static block, so it is used verbatim.
+   * String prompts fall back to marking the embedded browser-capability
+   * block (the only stable region of the legacy prompts) as cacheable.
+   */
   function splitSystemPromptForCaching(systemPrompt) {
+    if (Array.isArray(systemPrompt)) {
+      return systemPrompt.filter(
+        (part) => part && part.text && part.text.trim().length > 0,
+      );
+    }
+    const text = String(systemPrompt || "");
     const stableBlock = formatBrowserCapabilityPrompt();
-    const idx = systemPrompt.indexOf(stableBlock);
+    const idx = text.indexOf(stableBlock);
     if (idx === -1) {
-      return [{ text: systemPrompt, cacheable: false }];
+      return [{ text, cacheable: false }];
     }
 
     return [
-      { text: systemPrompt.slice(0, idx), cacheable: false },
+      { text: text.slice(0, idx), cacheable: false },
       { text: stableBlock, cacheable: true },
-      { text: systemPrompt.slice(idx + stableBlock.length), cacheable: false },
+      { text: text.slice(idx + stableBlock.length), cacheable: false },
     ].filter((part) => part.text && part.text.trim().length > 0);
   }
 
   function buildAnthropicSystemContent(systemPrompt, provider, model) {
-    if (!supportsExplicitPromptCaching(provider, model)) return systemPrompt;
+    if (!supportsExplicitPromptCaching(provider, model)) {
+      // Static-first ordering still helps providers with automatic
+      // prefix caching even when explicit cache_control is unsupported.
+      return systemPromptToText(systemPrompt);
+    }
     return splitSystemPromptForCaching(systemPrompt).map((part) => {
       const block = { type: "text", text: part.text };
       if (part.cacheable) {
@@ -2628,7 +3199,9 @@ ${(function () {
 
   function buildOpenAICompatibleSystemMessage(systemPrompt, provider, model) {
     if (!supportsExplicitPromptCaching(provider, model)) {
-      return { role: "system", content: systemPrompt };
+      // Plain string, static half first: automatic-prefix-caching friendly
+      // (OpenAI, DeepSeek, Groq, and most gateways cache shared prefixes).
+      return { role: "system", content: systemPromptToText(systemPrompt) };
     }
 
     return {
@@ -2695,12 +3268,23 @@ ${(function () {
     return rawErrorText;
   }
 
+  /**
+   * @param {string|Array<{text: string, cacheable: boolean}>} systemPrompt -
+   *   Plain prompt, or [static | dynamic] parts for prompt caching.
+   * @param {Object} [options]
+   * @param {"lite"|"pro"} [options.tier] - Model tier ("pro" = configured
+   *   executor model, "lite" = the provider's cheap catalog model).
+   * @param {{name, description, parameters}} [options.tool] - Native tool to
+   *   force-call (OpenAI `tools`/`tool_choice` or Anthropic `tools`/`tool_use`).
+   *   Falls back to the text-JSON protocol when the provider rejects tools.
+   */
   function callLLM(
     systemPrompt,
     userMessage,
     callback,
     screenshotDataUrl = null,
     attempt = 0,
+    options = {},
   ) {
     // Bind this call (and any retry it schedules) to the current run
     // generation so retries never resume after Stop / into a new run.
@@ -2715,8 +3299,12 @@ ${(function () {
       return;
     }
 
-    let model = config.agentModel;
-    model = resolveModelForProvider(provider, model, "lite");
+    const tier = options.tier === "pro" ? "pro" : "lite";
+    // Per-session guard: once a provider rejects tools, every later call
+    // uses the text-JSON fallback protocol instead.
+    const activeTool = options.tool && !toolsUnsupported ? options.tool : null;
+    const model = resolveTierModel(provider, tier);
+    const systemPromptText = systemPromptToText(systemPrompt);
 
     let endpoint = baseUrl;
     if (
@@ -2762,6 +3350,18 @@ ${(function () {
           config.agentTemperature !== undefined ? config.agentTemperature : 0.1,
         stream: true,
       };
+      if (activeTool) {
+        // Anthropic shape: tools + forced tool_choice; the reply arrives as
+        // a tool_use content block streamed via input_json_delta events.
+        body.tools = [
+          SELECT_TO_AI_TOOLS.buildAnthropicTool(
+            activeTool.name,
+            activeTool.description,
+            activeTool.parameters,
+          ),
+        ];
+        body.tool_choice = { type: "tool", name: activeTool.name };
+      }
       applyPromptCachingOptions(body, headers, provider, model);
     } else {
       if (apiKey) {
@@ -2793,8 +3393,29 @@ ${(function () {
         max_tokens: config.agentMaxTokensPerCall || 2000,
         stream: true,
       };
+      if (activeTool) {
+        // OpenAI-compatible shape (OpenRouter, OpenAI, DeepSeek, Groq,
+        // Together, Mistral, xAI, custom gateways): tools + forced
+        // tool_choice; the reply streams as delta.tool_calls fragments.
+        body.tools = [
+          SELECT_TO_AI_TOOLS.buildOpenAITool(
+            activeTool.name,
+            activeTool.description,
+            activeTool.parameters,
+          ),
+        ];
+        body.tool_choice = {
+          type: "function",
+          function: { name: activeTool.name },
+        };
+      }
       if (!compatParamsUnsupported) {
-        body.response_format = { type: "json_object" };
+        // response_format and tools are mutually exclusive here: some
+        // gateways reject json_object mode when tools are attached, and the
+        // tool schema already constrains the output.
+        if (!activeTool) {
+          body.response_format = { type: "json_object" };
+        }
         // Ask OpenAI-compatible providers to attach real token usage to the
         // final stream chunk instead of forcing a character-count estimate.
         body.stream_options = { include_usage: true };
@@ -2841,6 +3462,9 @@ ${(function () {
     let replyText = "";
     let buffer = "";
     let finished = false;
+    // Accumulates native tool-call fragments from either provider shape.
+    const toolState = SELECT_TO_AI_TOOLS.createToolCallAccumulator();
+    let toolArgsStreamed = "";
 
     function handleError(err, status = 0, respHeaders = {}) {
       // Idempotent: the timeout and a late port event must not both settle
@@ -2879,6 +3503,8 @@ ${(function () {
         err.message.match(/image|vision/i)
       ) {
         if (screenshotDataUrl) {
+          // Remember for the rest of the session so auto-screenshots stop.
+          visionUnsupported = true;
           addLogEntry(
             "system",
             "Vision Unavailable",
@@ -2887,10 +3513,39 @@ ${(function () {
           const fallbackMessage = `${userMessage}\n\n[SYSTEM WARNING: You previously requested a screenshot, but your current model does not support Computer Vision. The screenshot payload was rejected by the provider. Please proceed using purely the text-based DOM context. Do NOT use the "request_screenshot" action again.]`;
           setTimeout(() => {
             if (callRunId !== runId) return;
-            callLLM(systemPrompt, fallbackMessage, callback, null, 0);
+            callLLM(systemPrompt, fallbackMessage, callback, null, 0, options);
           }, 500);
           return;
         }
+      }
+
+      // Some models/gateways reject native tools or tool_choice with a 400.
+      // Flip to the text-JSON protocol for the rest of the session and retry
+      // once, so nothing regresses versus the pre-tool-calling behavior.
+      if (
+        status === 400 &&
+        activeTool &&
+        !toolsUnsupported &&
+        /tool|function/i.test(err.message || "")
+      ) {
+        toolsUnsupported = true;
+        addLogEntry(
+          "system",
+          "Tool Calling Unsupported",
+          "Provider rejected native tools. Falling back to the text-JSON protocol for this session.",
+        );
+        setTimeout(() => {
+          if (callRunId !== runId) return;
+          callLLM(
+            systemPrompt,
+            userMessage,
+            callback,
+            screenshotDataUrl,
+            attempt,
+            options,
+          );
+        }, 250);
+        return;
       }
 
       // Some OpenAI-compatible providers reject response_format /
@@ -2911,7 +3566,14 @@ ${(function () {
         );
         setTimeout(() => {
           if (callRunId !== runId) return;
-          callLLM(systemPrompt, userMessage, callback, screenshotDataUrl, attempt);
+          callLLM(
+            systemPrompt,
+            userMessage,
+            callback,
+            screenshotDataUrl,
+            attempt,
+            options,
+          );
         }, 250);
         return;
       }
@@ -2975,6 +3637,7 @@ ${(function () {
             callback,
             screenshotDataUrl,
             attempt + 1,
+            options,
           );
         }, backoffMs);
         return;
@@ -3034,14 +3697,39 @@ ${(function () {
                 contentToken = parsed.delta.text;
               }
 
+              // Native tool-call fragments — OpenAI-compatible shape:
+              // choices[0].delta.tool_calls[{index, function:{name, arguments}}]
+              const deltaToolCalls = parsed.choices?.[0]?.delta?.tool_calls;
+              if (deltaToolCalls) {
+                SELECT_TO_AI_TOOLS.accumulateOpenAIToolCallDelta(
+                  toolState,
+                  deltaToolCalls,
+                );
+                for (const fragment of deltaToolCalls) {
+                  if (fragment?.function?.arguments) {
+                    toolArgsStreamed += fragment.function.arguments;
+                  }
+                }
+              }
+              // Native tool-use events — Anthropic shape:
+              // content_block_start (tool_use) + input_json_delta chunks.
+              SELECT_TO_AI_TOOLS.accumulateAnthropicEvent(toolState, parsed);
+              if (
+                parsed.type === "content_block_delta" &&
+                parsed.delta?.type === "input_json_delta" &&
+                parsed.delta.partial_json
+              ) {
+                toolArgsStreamed += parsed.delta.partial_json;
+              }
+
               const combinedToken = reasoningToken + contentToken;
 
               if (combinedToken) {
                 replyText += combinedToken;
-                if (activeStreamText) {
-                  activeStreamText.textContent = replyText;
-                  activeStreamText.scrollTop = activeStreamText.scrollHeight;
-                }
+              }
+              if ((combinedToken || toolArgsStreamed) && activeStreamText) {
+                activeStreamText.textContent = replyText + toolArgsStreamed;
+                activeStreamText.scrollTop = activeStreamText.scrollHeight;
               }
 
               // OpenAI-compatible: usage on the final chunk (needs
@@ -3074,9 +3762,11 @@ ${(function () {
 
         if (!usageProvided) {
           const promptTokensEst = Math.ceil(
-            (systemPrompt.length + userMessage.length) / 4,
+            (systemPromptText.length + userMessage.length) / 4,
           );
-          const completionTokensEst = Math.ceil(replyText.length / 4);
+          const completionTokensEst = Math.ceil(
+            (replyText.length + toolArgsStreamed.length) / 4,
+          );
           accumulateUsage(
             {
               prompt_tokens: promptTokensEst,
@@ -3087,44 +3777,43 @@ ${(function () {
           );
         }
 
-        try {
-          let jsonText = replyText.trim();
-          if (jsonText.startsWith("```")) {
-            jsonText = jsonText
-              .replace(/^```json/, "")
-              .replace(/^```/, "")
-              .replace(/```$/, "")
-              .trim();
+        // Primary path: the structured tool call. Its schema-validated
+        // arguments ARE the action object — no prose parsing involved.
+        if (activeTool) {
+          const toolCalls = SELECT_TO_AI_TOOLS.finalizeToolCalls(toolState);
+          const usableCall = toolCalls.find(
+            (call) => call.args && typeof call.args === "object",
+          );
+          if (usableCall) {
+            parseFailureCount = 0;
+            callback(usableCall.args);
+            return;
           }
-          const parsed = JSON.parse(jsonText);
-          parseFailureCount = 0;
-          callback(parsed);
-        } catch (err) {
-          console.error("JSON parsing error on reply:", replyText, err);
-          const match = replyText.match(/\{[\s\S]*\}/);
-          if (match) {
-            try {
-              const parsed = JSON.parse(match[0]);
-              parseFailureCount = 0;
-              callback(parsed);
-              return;
-            } catch (e) {}
-          }
+          // The model returned no (parseable) tool call — fall through to
+          // the text protocol so prose-answering models still work.
+        }
 
-          parseFailureCount++;
-          const maxParseFailures = config.agentFailureThreshold || 3;
-          if (parseFailureCount >= maxParseFailures) {
-            stopAgent(
-              `Too many consecutive JSON parsing failures (${parseFailureCount}). Aborting.`,
-              "error",
-            );
-          } else {
-            handleError(
-              new Error(
-                `API response did not contain a valid JSON object. (Failure ${parseFailureCount}/${maxParseFailures})`,
-              ),
-            );
-          }
+        const parsedText = SELECT_TO_AI_TOOLS.parseTextAction(replyText);
+        if (parsedText) {
+          parseFailureCount = 0;
+          callback(parsedText);
+          return;
+        }
+
+        console.error("No structured output in reply:", replyText);
+        parseFailureCount++;
+        const maxParseFailures = config.agentFailureThreshold || 3;
+        if (parseFailureCount >= maxParseFailures) {
+          stopAgent(
+            `Too many consecutive JSON parsing failures (${parseFailureCount}). Aborting.`,
+            "error",
+          );
+        } else {
+          handleError(
+            new Error(
+              `API response did not contain a valid tool call or JSON object. (Failure ${parseFailureCount}/${maxParseFailures})`,
+            ),
+          );
         }
       }
     });

@@ -153,6 +153,37 @@
     default: [0.0005, 0.002],
   });
 
+  // Model families with vision (image input) support, matched by substring.
+  // Used to decide whether the agent auto-attaches marked screenshots each
+  // step. Unknown models default to text-only (request_screenshot still
+  // works and the 400-vision fallback catches optimistic mistakes).
+  const VISION_MODEL_PATTERNS = Object.freeze([
+    "claude",
+    "gpt-5",
+    "gpt-4o",
+    "gpt-4.1",
+    "chatgpt",
+    "gemini",
+    "grok-4",
+    "grok-3",
+    "pixtral",
+    "llama-4",
+    "llama4",
+    "qwen-vl",
+    "qwen2-vl",
+    "qwen3-vl",
+    "vision",
+    "mistral-medium",
+    "mistral-large",
+  ]);
+
+  /** True when the model id belongs to a known vision-capable family. */
+  function isVisionModel(modelName) {
+    const nameLower = String(modelName || "").toLowerCase();
+    if (!nameLower) return false;
+    return VISION_MODEL_PATTERNS.some((pattern) => nameLower.includes(pattern));
+  }
+
   const PRICE_KEYS_LONGEST_FIRST = Object.freeze(
     Object.keys(MODEL_PRICES)
       .filter((key) => key !== "default")
@@ -180,7 +211,9 @@
     PROVIDER_FALLBACK_MODELS,
     MODEL_PRESETS,
     MODEL_PRICES,
+    VISION_MODEL_PATTERNS,
     findModelRates,
+    isVisionModel,
   });
 
   root.SELECT_TO_AI_DEFAULTS = api;
