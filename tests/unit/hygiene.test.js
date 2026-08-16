@@ -47,7 +47,7 @@ test("dead settings keys are gone from the storage schema", () => {
 });
 
 test("the openWebUi remnant is fully removed", () => {
-  // Scan code only — agent.html carries harmless CSS comments that mention
+  // Scan code only, agent.html carries harmless CSS comments that mention
   // OpenWebUI as a styling reference.
   const sources = fs
     .readdirSync(extensionRoot)

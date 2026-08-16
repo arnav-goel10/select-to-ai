@@ -47,7 +47,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // address bar, side panel dropdown, context menu).
         agentEnabled = items.showAgent === true;
         if (!agentEnabled) {
-            openAgentLabel.textContent = 'Browser Agent (off) — Settings';
+            openAgentLabel.textContent = 'Browser Agent (off) · Settings';
             agentDisabledHint.classList.remove('u-hidden');
         }
     });

@@ -649,7 +649,7 @@
     let text = `Outcome: ${parts.join("; ")}.`;
     if (delta.noEffect) {
       text +=
-        " WARNING: no observable page change — the action may have been a no-op. Try a different element or approach.";
+        " WARNING: no observable page change; the action may have been a no-op. Try a different element or approach.";
     }
     return text;
   }
@@ -671,7 +671,7 @@
   /** Inline markdown on ALREADY-ESCAPED text: links, bold, italics. */
   function renderInlineMarkdown(escapedLine) {
     let out = escapedLine;
-    // [text](https://url) — http(s) only, so javascript:/data: can never
+    // [text](https://url), http(s) only, so javascript:/data: can never
     // become an href. The URL is already HTML-escaped.
     out = out.replace(
       /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,

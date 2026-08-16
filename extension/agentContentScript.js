@@ -65,7 +65,7 @@
     const FORM_TAGS = new Set(['input', 'select', 'textarea']);
 
     /**
-     * Key metadata lookup — keyCode, code, and whether the key is printable.
+     * Key metadata lookup, keyCode, code, and whether the key is printable.
      * @type {Object<string, {keyCode: number, code: string, printable: boolean}>}
      */
     const KEY_MAP = {
@@ -141,7 +141,7 @@
     }
 
     /**
-     * Waits until the DOM is "stable" — no mutations for `quietPeriod` ms.
+     * Waits until the DOM is "stable", no mutations for `quietPeriod` ms.
      * @param {number} [quietPeriod=500] - How long (ms) with no mutations to consider stable.
      * @param {number} [timeout=3000] - Hard timeout in ms.
      * @returns {Promise<void>}
@@ -693,7 +693,7 @@
         const candidates = collectElementsRecursively(document);
         const elementLimit = Math.max(10, Math.min(parseInt(limit, 10) || 80, 150));
 
-        // Phase 1: Semantic Scoring (order index preserves document order —
+        // Phase 1: Semantic Scoring (order index preserves document order;
         // collectElementsRecursively walks the DOM, splicing shadow content
         // in right after its host).
         let scoredCandidates = [];
@@ -732,7 +732,7 @@
         const topCandidates = scoredCandidates.slice(0, elementLimit);
         topCandidates.sort((a, b) => a.order - b.order);
 
-        // Phase 3: Stable ID assignment — reuse the id already stamped on a
+        // Phase 3: Stable ID assignment, reuse the id already stamped on a
         // still-present element; allocate new ids monotonically.
         const previousIds = topCandidates.map((candidate) => {
             const stamped = parseInt(candidate.el.getAttribute("data-select-to-ai-id"), 10);
@@ -1294,12 +1294,12 @@
 
                 // A single click both toggles the state and fires the
                 // click/input/change events. (Setting .checked AND clicking
-                // toggles twice — a net no-op.)
+                // toggles twice, a net no-op.)
                 const stateBefore = isNativeCheckable ? !!el.checked : null;
                 el.click();
 
                 if (isNativeCheckable && inputType === 'checkbox' && el.checked === stateBefore) {
-                    // The page prevented the click's default action — fall
+                    // The page prevented the click's default action, fall
                     // back to setting the property and announcing the change.
                     el.checked = !stateBefore;
                     el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -1350,7 +1350,7 @@
                 };
 
                 // dispatchEvent returns false when a listener called
-                // preventDefault — i.e. the page handled the key itself.
+                // preventDefault, i.e. the page handled the key itself.
                 const keydownUnhandled = targetEl.dispatchEvent(
                     new KeyboardEvent('keydown', keyOpts),
                 );
@@ -1366,7 +1366,7 @@
                 }
 
                 // Enter fallback: only submit/click when the page did NOT
-                // handle the key events itself — otherwise the action fires
+                // handle the key events itself, otherwise the action fires
                 // twice (e.g. a form submitted by the page AND requestSubmit).
                 let enterFallbackUsed = false;
                 if (key === 'Enter' && keydownUnhandled && keypressUnhandled) {
@@ -1379,7 +1379,7 @@
                         !targetEl.isContentEditable &&
                         typeof targetEl.click === 'function'
                     ) {
-                        // Never click() text-entry surfaces — Enter there
+                        // Never click() text-entry surfaces, Enter there
                         // means "newline", not "activate".
                         targetEl.click();
                         enterFallbackUsed = true;
@@ -1455,7 +1455,7 @@
 
     /**
      * Counts DOM mutations from now until stopped. The quiet-period wait
-     * itself is waitForDomStable's job — this only measures how much
+     * itself is waitForDomStable's job, this only measures how much
      * actually changed while it settles.
      */
     function createMutationCounter() {
@@ -1542,7 +1542,7 @@
                 });
             }
         } else if (request.action === 'interact') {
-            // Async — must return true to keep the message channel open
+            // Async, must return true to keep the message channel open
             (async () => {
                 try {
                     const shouldMeasure = MEASURED_ACTIONS.has(request.data && request.data.action);
@@ -1554,7 +1554,7 @@
                     // Measure the real outcome instead of reporting an
                     // optimistic "clicked successfully": snapshot, act, wait
                     // for the DOM to settle via waitForDomStable
-                    // (event-driven, bounded — replaces the old fixed
+                    // (event-driven, bounded, replaces the old fixed
                     // post-action delays), snapshot again, attach the delta.
                     const before = captureOutcomeSnapshot();
                     const counter = createMutationCounter();

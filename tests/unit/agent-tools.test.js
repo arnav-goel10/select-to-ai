@@ -342,7 +342,7 @@ test("assignStableElementIds reuses ids for still-present elements", () => {
   assert.deepEqual(second.ids, [1, 3, 4]);
   assert.equal(second.nextId, 5);
 
-  // Element order changed on the page — ids follow the elements.
+  // Element order changed on the page, ids follow the elements.
   const third = tools.assignStableElementIds([3, 1, 4], second.nextId);
   assert.deepEqual(third.ids, [3, 1, 4]);
 });

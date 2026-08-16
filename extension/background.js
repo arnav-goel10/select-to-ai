@@ -183,7 +183,7 @@ function resolveSessionUrlSync(baseUrl) {
  * URL-parameter prefill for NEW conversations. ChatGPT and Perplexity accept
  * the prompt as a query parameter and submit it on load, which skips the
  * DOM-selector dance entirely. Only used when:
- *  - the resolved URL is the service's base URL (a new conversation — a
+ *  - the resolved URL is the service's base URL (a new conversation, a
  *    continue-session URL still needs the DOM adapter), and
  *  - the send is expected to submit (prefill URLs submit on load).
  * Returns the prefill URL, or null when the DOM path should be used.
@@ -375,7 +375,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // trusted senders above) may name a typed-but-unsaved custom-gateway
         // URL for a single connection test / model fetch. The candidate goes
         // through the SAME origin policy as a saved gateway (HTTPS or
-        // loopback, no embedded credentials, exact-origin match) — this
+        // loopback, no embedded credentials, exact-origin match), this
         // scopes only which custom origin this one request may target, and
         // the streaming agent path below still accepts the saved URL only.
         const customUrlForRequest =
@@ -412,7 +412,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message.action === 'captureScreenshot') {
         // captureVisibleTab can only capture a window's ACTIVE tab. When the
-        // target tab is already active, capture directly — no focus change at
+        // target tab is already active, capture directly, no focus change at
         // all. Otherwise activate it within its own window (never focusing
         // the window itself), capture, then restore the previously active
         // tab so the user's focus is not yanked away.
@@ -817,7 +817,7 @@ if (chrome.omnibox) {
 /**
  * Opens the preferred AI service with prepared text, honoring the user's
  * opening mode. Mirrors the context-menu flow. Auto-send honors the user's
- * Auto-send preference — for the address-bar flow it defaults ON when the
+ * Auto-send preference, for the address-bar flow it defaults ON when the
  * preference was never set (documented in the option's tooltip), because an
  * omnibox question is an explicit "send this" gesture.
  */

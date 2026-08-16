@@ -3,7 +3,7 @@
  *
  * Launches Chromium with the unpacked extension, points the agent at the
  * local scripted gateway (tests/e2e/server.js), and runs four scenarios
- * through the REAL pipeline — router, planner, executor tool calls, schema
+ * through the REAL pipeline, router, planner, executor tool calls, schema
  * validation, DOM actions in a live tab, outcome deltas, validator, memory:
  *
  *   search   - a form search ends with the expected grounded answer
@@ -27,7 +27,7 @@ const results = [];
 
 function recordResult(name, pass, detail) {
   results.push({ name, pass, detail });
-  console.log(`  ${pass ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
+  console.log(`  ${pass ? "PASS" : "FAIL"}  ${name}${detail ? `, ${detail}` : ""}`);
 }
 
 async function waitFor(fn, timeoutMs, intervalMs = 400, label = "condition") {

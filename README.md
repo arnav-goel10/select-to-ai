@@ -37,7 +37,7 @@ No build step is required. The checked-in JavaScript is the extension source Chr
 
 ### Send selected text
 
-Select text on a webpage, right-click, choose **Select to AI**, then select an enabled assistant. The extension can open the assistant in a tab or its Chrome side panel and optionally submit the prompt. For new ChatGPT and Perplexity conversations with auto-send on, the prompt travels as a URL parameter — no DOM automation involved. Other inserts use per-provider selector chains that verify the send actually happened; if no selector matches, your text is copied to the clipboard and a toast tells you so, instead of the extension clicking a guessed button.
+Select text on a webpage, right-click, choose **Select to AI**, then select an enabled assistant. The extension can open the assistant in a tab or its Chrome side panel and optionally submit the prompt. For new ChatGPT and Perplexity conversations with auto-send on, the prompt travels as a URL parameter, no DOM automation involved. Other inserts use per-provider selector chains that verify the send actually happened; if no selector matches, your text is copied to the clipboard and a toast tells you so, instead of the extension clicking a guessed button.
 
 ### Use the popup launcher
 
@@ -47,10 +47,10 @@ The toolbar popup is a launcher: open the sidebar, open the browser agent, open 
 
 Open **Browser Agent** (`Alt+A`, the popup button, the side panel dropdown, or the address bar), describe a task, and watch it work:
 
-1. **Plan** — a cheap planner model breaks the task into subtasks with observable postconditions, shown as a live checklist you can review while it runs.
-2. **Act with tool calls** — the executor performs exactly one provider-native `browser_action` tool call per step against stable element ids; every action is scored by its measured outcome (URL/title changes, DOM mutations, element-count deltas) instead of optimistic success strings.
-3. **Reflect after repeated failures** — two consecutive failures force a dedicated reflection call that names the wrong assumption and picks a genuinely different strategy before continuing.
-4. **Validate before finish** — a validator must confirm the final answer against the on-page evidence; unsupported answers are sent back, and only validated runs enter the cross-session memory that seeds future plans.
+1. **Plan:** a cheap planner model breaks the task into subtasks with observable postconditions, shown as a live checklist you can review while it runs.
+2. **Act with tool calls:** the executor performs exactly one provider-native `browser_action` tool call per step against stable element ids; every action is scored by its measured outcome (URL/title changes, DOM mutations, element-count deltas) instead of optimistic success strings.
+3. **Reflect after repeated failures:** two consecutive failures force a dedicated reflection call that names the wrong assumption and picks a genuinely different strategy before continuing.
+4. **Validate before finish:** a validator must confirm the final answer against the on-page evidence; unsupported answers are sent back, and only validated runs enter the cross-session memory that seeds future plans.
 
 The agent has honest exits: it asks you (`ask_user`) when it hits credentials, CAPTCHAs, or ambiguity, and gives up with a reason instead of fabricating a result. While a run is active you can queue one steering message that is delivered before the agent's next step, export the run log (Markdown) or the full session recording (JSON), and hard-stop at any time.
 
@@ -96,7 +96,7 @@ npm run bench:e2e      # full agent-task harness (puppeteer, local only)
 
 The benchmark covers approved endpoints, look-alike domains, exfiltration targets, unsafe schemes, local gateways, and origin mismatches. CI runs the same clean-install command on every pull request.
 
-`npm run bench:e2e` is the end-to-end receipt: it launches Chromium with the unpacked extension, points the agent at a scripted OpenAI-compatible gateway on `127.0.0.1` (the same loopback path a real local gateway uses), and drives four scenarios through the full pipeline — router, planner, native tool calls, schema validation, live DOM actions, outcome deltas, validator, and memory:
+`npm run bench:e2e` is the end-to-end receipt: it launches Chromium with the unpacked extension, points the agent at a scripted OpenAI-compatible gateway on `127.0.0.1` (the same loopback path a real local gateway uses), and drives four scenarios through the full pipeline, router, planner, native tool calls, schema validation, live DOM actions, outcome deltas, validator, and memory:
 
 | Scenario | Fixture | What must hold |
 | --- | --- | --- |

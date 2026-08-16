@@ -20,7 +20,7 @@ A quality overhaul of the browser agent and every surface around it.
 - Every action is judged by what actually changed on the page (URL, DOM mutations, element counts) instead of assuming success. Element ids stay stable while you remain on a page.
 - Honest exits: the agent asks you when it hits logins, CAPTCHAs, payments, or ambiguity, and gives up with a reason instead of inventing an answer. Only validated runs are stored in memory.
 - Stop now really stops: retries, confirmation dialogs, and in-flight typing all cancel; closing the target tab aborts the run instead of silently switching tabs.
-- Steer while it runs: queue one guidance message and it is delivered to the agent before its next step — no need to stop and restart.
+- Steer while it runs: queue one guidance message and it is delivered to the agent before its next step, no need to stop and restart.
 - Legible runs: per-step reasoning sits in collapsed expanders, final answers render clean formatting (bold, lists, safe links), the run log exports as Markdown and the full session as JSON, timestamps are readable, and the cost badge shows a clear "est." total with the exact figure on hover.
 - The agent header shows the actual provider and model in use; the decorative mode dropdown is gone. The sidebar now lists your validated recent sessions and lets you view or clear the scratchpad notes and stored task memory.
 
@@ -31,13 +31,13 @@ A quality overhaul of the browser agent and every surface around it.
 
 ### One design system
 
-- All four surfaces (popup, options, side panel, agent) share one palette, one accent, one font stack, and one light/dark theme that follows your stored preference with a system fallback — including a real light mode for the agent page.
+- All four surfaces (popup, options, side panel, agent) share one palette, one accent, one font stack, and one light/dark theme that follows your stored preference with a system fallback, including a real light mode for the agent page.
 - Keyboard accessibility across the board: visible focus rings, focusable tooltips, real labels on the theme toggles and side panel selector, and reduced-motion support on every page.
 - The popup is now a simple launcher (sidebar, agent, settings, opening mode); service shortcuts and behavior defaults live only in Options.
 
 ### Sending text to assistants is sturdier
 
-- New ChatGPT and Perplexity conversations receive your prompt via the URL itself — no fragile DOM automation.
+- New ChatGPT and Perplexity conversations receive your prompt via the URL itself, no fragile DOM automation.
 - Other inserts use per-provider selector chains that prefer stable attributes, verify the message was actually sent, and never click a guessed button; if nothing matches, your text is copied to the clipboard and a toast says so.
 - Address-bar questions honor your Auto-submit preference (on by default for that flow, documented on the option).
 

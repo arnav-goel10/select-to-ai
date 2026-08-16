@@ -286,7 +286,7 @@
 
         }).catch((error) => {
             // No composer selector matched within the wait window. Do NOT
-            // guess at elements — put the text on the clipboard and say so.
+            // guess at elements, put the text on the clipboard and say so.
             console.warn("Select to AI: composer not found:", error.message);
             copyToClipboard(text).then(() => {
                 showPageToast("Pasted text is on your clipboard");
@@ -301,9 +301,9 @@
             const btn = queryChain(adapter.send);
             if (!btn) {
                 // The text IS in the composer; only the send control was not
-                // found. Never click a guessed button — tell the user.
+                // found. Never click a guessed button, tell the user.
                 console.warn("Select to AI: Send button not found.");
-                showPageToast("Couldn't find the send button — press Enter to send.");
+                showPageToast("Couldn't find the send button, press Enter to send.");
                 return;
             }
 
@@ -320,7 +320,7 @@
                     attemptSend(element, true);
                     return;
                 }
-                showPageToast("Send didn't complete — your text is in the message box, press Enter to send.");
+                showPageToast("Send didn't complete, your text is in the message box, press Enter to send.");
             });
         }
     }

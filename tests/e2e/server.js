@@ -149,7 +149,7 @@ function renderResults(query) {
     return q.split(/\s+/).every((word) => item.name.toLowerCase().includes(word) || word === "widget");
   });
   const list = items.length
-    ? `<ul>${items.map((i) => `<li>${i.name} — <strong>${i.price}</strong></li>`).join("")}</ul>`
+    ? `<ul>${items.map((i) => `<li>${i.name}, <strong>${i.price}</strong></li>`).join("")}</ul>`
     : "<p>No products matched.</p>";
   return pageShell(
     "Search Results",
@@ -228,10 +228,10 @@ function buildScenarios(baseUrl) {
       nextAction(ctx) {
         if (ctx.url.includes("/results")) {
           return {
-            thought: "The results list shows 'Blue Widget — $19'. Goal met.",
+            thought: "The results list shows 'Blue Widget, $19'. Goal met.",
             action: "finish",
             answer: "The **Blue Widget** costs **$19** according to the search results.",
-            evidence: "Results page lists 'Blue Widget — $19'.",
+            evidence: "Results page lists 'Blue Widget, $19'.",
             completedSubtask: true,
             reason: "Report the Blue Widget price",
           };
@@ -254,7 +254,7 @@ function buildScenarios(baseUrl) {
             };
           }
           return {
-            thought: "Typing does not submit — press Enter to run the search.",
+            thought: "Typing does not submit, press Enter to run the search.",
             action: "keypress",
             id: input.id,
             text: "Enter",
@@ -309,7 +309,7 @@ function buildScenarios(baseUrl) {
           );
           if (el) {
             return {
-              thought: `Field ${field.id} still shows "${el.attrs.value || ""}" — replace it.`,
+              thought: `Field ${field.id} still shows "${el.attrs.value || ""}", replace it.`,
               action: "type",
               id: el.id,
               text: field.value,
@@ -336,7 +336,7 @@ function buildScenarios(baseUrl) {
         return {
           thought: "The confirmation message is visible. Goal met.",
           action: "finish",
-          answer: "Submitted the signup form for **Ada Lovelace** — the site confirmed the signup.",
+          answer: "Submitted the signup form for **Ada Lovelace:** the site confirmed the signup.",
           evidence: "Confirmation text 'Thanks for signing up, Ada Lovelace!' is visible.",
           completedSubtask: true,
           reason: "Report the confirmed signup",
@@ -362,7 +362,7 @@ function buildScenarios(baseUrl) {
             reason: "Go to the account page",
           };
         }
-        // Login wall: NEVER guess or invent credentials — hand back to the
+        // Login wall: NEVER guess or invent credentials, hand back to the
         // user instead.
         return {
           thought:
@@ -404,7 +404,7 @@ function buildScenarios(baseUrl) {
             };
           }
           return {
-            thought: "Item A's page shows 'Price: $25' — save it before navigating away.",
+            thought: "Item A's page shows 'Price: $25', save it before navigating away.",
             action: "remember",
             note: "Item A costs $25",
             completedSubtask: true,
@@ -421,7 +421,7 @@ function buildScenarios(baseUrl) {
             };
           }
           return {
-            thought: "Item B's page shows 'Price: $18' — save it too.",
+            thought: "Item B's page shows 'Price: $18', save it too.",
             action: "remember",
             note: "Item B costs $18",
             completedSubtask: true,
@@ -599,7 +599,7 @@ function createE2EServer(port = 8907) {
             JSON.stringify({
               thought_process: "Scripted router: every harness task drives the browser.",
               route: "browser",
-              reply: "On it — running that in the browser.",
+              reply: "On it, running that in the browser.",
               action: null,
               url: null,
               tabId: null,

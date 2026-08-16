@@ -13,7 +13,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const DEFAULT_SYSTEM_PROMPT = CONFIG.DEFAULT_SYSTEM_PROMPT;
 
   const { STORAGE } = CONFIG;
-  // Shared runtime defaults — the options UI must reflect what the agent
+  // Shared runtime defaults, the options UI must reflect what the agent
   // actually runs (extension/defaults.js is the single source of truth).
   const SHARED = SELECT_TO_AI_DEFAULTS;
   const AGENT_DEFAULTS = SHARED.AGENT_DEFAULTS;
@@ -258,7 +258,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   /**
    * Refills the datalist suggestions. The input value is only touched when
-   * `fallbackValue` is provided AND the input is currently empty — a fetch
+   * `fallbackValue` is provided AND the input is currently empty, a fetch
    * must never overwrite the user's chosen model.
    */
   function populateDatalist(inputElement, datalistElement, list, fallbackValue) {
@@ -1541,7 +1541,7 @@ document.addEventListener("DOMContentLoaded", () => {
             });
           });
         } catch (err) {
-          showToast("Import failed — see details.", true);
+          showToast("Import failed; see details.", true);
           showErrorDetails("Settings import failed", err.message);
         }
       };

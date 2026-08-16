@@ -15,7 +15,7 @@
   // Monotonically increasing run-generation token. Every deferred continuation
   // (setTimeout, async callback, confirmation handler) captures the current
   // value and bails if it no longer matches, so a stopped run's pending work
-  // can never resume — or leak into the next run.
+  // can never resume, or leak into the next run.
   let runId = 0;
   let currentTask = "";
   let subtasks = [];
@@ -98,7 +98,7 @@
       // usage was estimated; the tooltip carries the exact figure.
       costBadge.textContent = `${costIsEstimated ? "est. " : ""}$${totalCostUSD.toFixed(2)}`;
       costBadge.title =
-        `Exact: $${totalCostUSD.toFixed(6)} — tokens in: ${totalPromptTokens}, out: ${totalCompletionTokens}.` +
+        `Exact: $${totalCostUSD.toFixed(6)} · tokens in: ${totalPromptTokens}, out: ${totalCompletionTokens}.` +
         (costIsEstimated
           ? " Includes estimated usage (the provider did not report token counts for every call)."
           : " Based on provider-reported token usage.");
@@ -266,7 +266,7 @@ You are running inside a Chrome extension side panel. The user is chatting with 
 
   // The sidebar stays open until the user closes it. Only the mobile
   // backdrop (which exists solely while the sidebar overlays content)
-  // dismisses it — ordinary clicks elsewhere never force-collapse it.
+  // dismisses it, ordinary clicks elsewhere never force-collapse it.
   if (sidebarBackdrop) {
     sidebarBackdrop.addEventListener("click", () => {
       if (sidebar) sidebar.classList.add("collapsed");
@@ -388,7 +388,7 @@ You are running inside a Chrome extension side panel. The user is chatting with 
     if (sessionNotes.length === 0) {
       const empty = document.createElement("div");
       empty.className = "data-empty";
-      empty.textContent = "No notes yet — the agent saves findings here during a run.";
+      empty.textContent = "No notes yet; the agent saves findings here during a run.";
       scratchpadItems.appendChild(empty);
       return;
     }
@@ -417,7 +417,7 @@ You are running inside a Chrome extension side panel. The user is chatting with 
         const item = document.createElement("div");
         item.className = "data-item";
         const plan = (entry.subtasks || []).join("; ");
-        item.textContent = plan ? `${entry.task} — ${plan}` : entry.task;
+        item.textContent = plan ? `${entry.task} · ${plan}` : entry.task;
         memoryItems.appendChild(item);
       });
     });
@@ -708,7 +708,7 @@ You are running inside a Chrome extension side panel. The user is chatting with 
       document.documentElement.setAttribute("data-theme", theme);
 
       // Header shows the ACTUAL provider and executor model in use
-      // (silently resolved — same fallback logic as the runtime, no log spam).
+      // (silently resolved, same fallback logic as the runtime, no log spam).
       const provider = config.agentActiveProvider;
       const providerCapitalized =
         provider.charAt(0).toUpperCase() + provider.slice(1);
@@ -942,7 +942,7 @@ You are running inside a Chrome extension side panel. The user is chatting with 
         if (chrome.runtime.lastError || !tab) {
           if (isRunning) {
             // Mid-run the target tab is load-bearing: never silently
-            // retarget to some other tab — stop with a clear message.
+            // retarget to some other tab, stop with a clear message.
             stopAgent(
               "The tab the agent was working on is no longer available. Task stopped.",
               "error",
@@ -1857,7 +1857,7 @@ Call the submit_plan tool with the subtasks. If tool calling is unavailable, out
     addLogEntry(
       "planner",
       "Reflection",
-      "Two consecutive failures — analyzing which assumption was wrong...",
+      "Two consecutive failures; analyzing which assumption was wrong...",
     );
 
     const historySummary = actionHistory
@@ -1900,7 +1900,7 @@ Latest failure feedback: ${feedbackMessage}`;
         );
         scheduleStep(
           400,
-          `Reflection after repeated failures — the assumption "${assumption}" was wrong. Follow this new strategy now: ${strategy}. Do NOT repeat the failed action. (Original failure: ${feedbackMessage})`,
+          `Reflection after repeated failures: the assumption "${assumption}" was wrong. Follow this new strategy now: ${strategy}. Do NOT repeat the failed action. (Original failure: ${feedbackMessage})`,
           keepScreenshot,
         );
       },
@@ -1977,7 +1977,7 @@ ${pageText || "[No page text available]"}`;
           addLogEntry(
             "validator",
             "Validation Inconclusive",
-            "The validator response was unparseable — accepting the answer (not saved to memory).",
+            "The validator response was unparseable; accepting the answer (not saved to memory).",
           );
           lastValidatorPassed = false;
           stopAgent(answer, "success");
@@ -2077,7 +2077,7 @@ ${pageText || "[No page text available]"}`;
       }
     }
 
-    // Pressing Enter can submit a form — apply the same gates as a click on
+    // Pressing Enter can submit a form, apply the same gates as a click on
     // the target element, plus a page-context check.
     if (actionType === "keypress") {
       const key = String(actionObj.text || actionObj.key || "").toLowerCase();
@@ -2140,7 +2140,7 @@ ${pageText || "[No page text available]"}`;
     bubble.className = "message-bubble assistant confirmation-bubble";
     bubble.style.border = "1px solid var(--danger)";
     bubble.style.background = "rgba(239, 68, 68, 0.05)";
-    // Action and explanation include LLM-generated text — always escape it.
+    // Action and explanation include LLM-generated text, always escape it.
     bubble.innerHTML = `
             <div class="bubble-avatar" style="background: var(--danger); color: white;">⚠</div>
             <div class="bubble-content">
@@ -2585,7 +2585,7 @@ ${pageText || "[No page text available]"}`;
     setSteerRowVisible(false);
 
     // Cross-session memory save (F13): only validator-confirmed successes
-    // are written — unvalidated finishes never seed future plans.
+    // are written, unvalidated finishes never seed future plans.
     if (statusState === "success" && lastValidatorPassed) {
       const memoryItem = {
         task: currentTask,
@@ -2658,7 +2658,7 @@ ${pageText || "[No page text available]"}`;
 
     // Best-effort overlay cleanup on the tabs this run touched. Never
     // re-resolve tabs here (getActiveTab could recurse back into stopAgent
-    // when no webpage tab exists) — just try the known ids and ignore errors.
+    // when no webpage tab exists), just try the known ids and ignore errors.
     cleanupTabIds.forEach((tabId) => {
       chrome.tabs.sendMessage(tabId, { action: "clear" }, () => {
         void chrome.runtime.lastError;
@@ -2915,7 +2915,7 @@ ${(function () {
                 }
 
                 // The model asserts the current subtask's postcondition was
-                // just met — advance the plan when the action succeeds.
+                // just met, advance the plan when the action succeeds.
                 const shouldAdvanceSubtask = actionObj.completedSubtask === true;
 
                 // ---- Agent-level verbs (no page dispatch) ----
@@ -3063,7 +3063,7 @@ ${(function () {
                   addLogEntry(
                     "executor",
                     "Finish Requested",
-                    "Answer submitted — validating against the page...",
+                    "Answer submitted; validating against the page...",
                   );
                   actionHistory.push({
                     step: currentStep,
@@ -3191,7 +3191,7 @@ ${(function () {
                         // A click/keypress that unloads the page closes the
                         // message channel before the content script can
                         // respond. That is a SUCCESS (navigation), not a
-                        // failure — verify by watching the tab's URL.
+                        // failure, verify by watching the tab's URL.
                         const channelLost =
                           !response &&
                           /message|port|channel|receiving end|context invalidated/i.test(
@@ -3406,7 +3406,7 @@ ${(function () {
    * Splits a system prompt into [static | dynamic] parts for caching.
    * Callers that already know the split (the executor: static instructions
    * first, per-step context second) pass an array of {text, cacheable}
-   * parts directly — that IS the real static block, so it is used verbatim.
+   * parts directly, that IS the real static block, so it is used verbatim.
    * String prompts fall back to marking the embedded browser-capability
    * block (the only stable region of the legacy prompts) as cacheable.
    */
@@ -3945,7 +3945,7 @@ ${(function () {
                 contentToken = parsed.delta.text;
               }
 
-              // Native tool-call fragments — OpenAI-compatible shape:
+              // Native tool-call fragments, OpenAI-compatible shape:
               // choices[0].delta.tool_calls[{index, function:{name, arguments}}]
               const deltaToolCalls = parsed.choices?.[0]?.delta?.tool_calls;
               if (deltaToolCalls) {
@@ -3959,7 +3959,7 @@ ${(function () {
                   }
                 }
               }
-              // Native tool-use events — Anthropic shape:
+              // Native tool-use events, Anthropic shape:
               // content_block_start (tool_use) + input_json_delta chunks.
               SELECT_TO_AI_TOOLS.accumulateAnthropicEvent(toolState, parsed);
               if (
@@ -4021,12 +4021,12 @@ ${(function () {
               completion_tokens: completionTokensEst,
             },
             model,
-            true, // estimated — cost badge shows an "est." qualifier
+            true, // estimated, cost badge shows an "est." qualifier
           );
         }
 
         // Primary path: the structured tool call. Its schema-validated
-        // arguments ARE the action object — no prose parsing involved.
+        // arguments ARE the action object, no prose parsing involved.
         if (activeTool) {
           const toolCalls = SELECT_TO_AI_TOOLS.finalizeToolCalls(toolState);
           const usableCall = toolCalls.find(
@@ -4037,7 +4037,7 @@ ${(function () {
             callback(usableCall.args);
             return;
           }
-          // The model returned no (parseable) tool call — fall through to
+          // The model returned no (parseable) tool call, fall through to
           // the text protocol so prose-answering models still work.
         }
 
