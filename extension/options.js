@@ -1236,7 +1236,7 @@ document.addEventListener("DOMContentLoaded", () => {
           groq: "https://console.groq.com/keys",
           together: "https://api.together.xyz/settings/api-keys",
           xai: "https://console.x.ai/",
-          opencode: "https://zen.opencode.co",
+          opencode: "https://opencode.ai/auth",
         };
         const link = keyLinks[prov];
         const linkHtml = link
