@@ -4,7 +4,7 @@
  */
 
 // Import shared configuration
-importScripts('config.js', 'defaults.js', 'security.js', 'intentRouter.js');
+importScripts('config.js', 'defaults.js', 'security.js', 'intentRouter.js', 'routines.js');
 
 if (typeof CONFIG === 'undefined') {
     console.error("Select to AI: CONFIG failed to load in background.");
@@ -365,6 +365,82 @@ function notifyAgentDisabled() {
 // Tab Closure Detection
 chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
     chrome.runtime.sendMessage({ action: 'tabClosed', tabId: tabId }).catch(() => {});
+});
+
+// --- Routines: scheduled agent tasks (chrome.alarms) ---
+
+/**
+ * Re-registers all alarms from stored routines. Called on install/startup
+ * and whenever routines change. Alarms only fire while the browser runs;
+ * a missed schedule fires on the next matching occurrence, never retroactively.
+ */
+function syncRoutineAlarms() {
+    chrome.storage.local.get('agentRoutines', (res) => {
+        const routines = Array.isArray(res.agentRoutines) ? res.agentRoutines : [];
+        // Clear every existing routine alarm first, then recreate for enabled ones.
+        chrome.alarms.getAll((existing) => {
+            const stale = (existing || []).filter(
+                (a) => SELECT_TO_AI_ROUTINES.parseAlarmName(a.name) !== null,
+            );
+            stale.forEach((a) => chrome.alarms.clear(a.name));
+
+            const now = Date.now();
+            routines.forEach((routine) => {
+                if (!routine.enabled || !routine.id) return;
+                const normalized = SELECT_TO_AI_ROUTINES.normalizeRoutine(routine);
+                if (!normalized.ok) return;
+                const when = SELECT_TO_AI_ROUTINES.nextFireTime(normalized.routine.schedule, now);
+                chrome.alarms.create(SELECT_TO_AI_ROUTINES.alarmName(routine.id), {
+                    when,
+                    // Recurring at hour granularity keeps Chrome from coalescing
+                    // long schedules away; each fire re-derives the real next time.
+                    periodInMinutes: 60,
+                });
+            });
+        });
+    });
+}
+
+// Alarm fired: hand the task to the agent page in a new tab. The run still
+// passes through every existing gate (credentials check, risk confirmation).
+chrome.alarms.onAlarm.addListener((alarm) => {
+    const routineId = SELECT_TO_AI_ROUTINES.parseAlarmName(alarm?.name);
+    if (!routineId) return;
+
+    chrome.storage.local.get('agentRoutines', (res) => {
+        const routine = (res.agentRoutines || []).find((r) => r.id === routineId);
+        if (!routine || routine.enabled === false) return;
+
+        // One-shot pending payload consumed by the agent page on load.
+        chrome.storage.local.set({
+            companionTask: {
+                task: routine.task,
+                timestamp: Date.now(),
+                source: 'routine',
+            },
+        }, () => {
+            chrome.tabs.create({ url: `${chrome.runtime.getURL('agent.html')}?autorun=1` });
+        });
+
+        // Re-derive the true next occurrence (the 60-minute alarm period is
+        // only a keepalive; this corrects it to the real schedule).
+        const normalized = SELECT_TO_AI_ROUTINES.normalizeRoutine(routine);
+        if (normalized.ok) {
+            const when = SELECT_TO_AI_ROUTINES.nextFireTime(normalized.routine.schedule, Date.now());
+            chrome.alarms.create(SELECT_TO_AI_ROUTINES.alarmName(routineId), {
+                when,
+                periodInMinutes: 60,
+            });
+        }
+    });
+});
+
+chrome.runtime.onInstalled.addListener(() => syncRoutineAlarms());
+chrome.runtime.onStartup.addListener(() => syncRoutineAlarms());
+chrome.storage.onChanged.addListener((changes, namespace) => {
+    if (namespace === 'local' && changes.agentRoutines) {
+        syncRoutineAlarms();
+    }
 });
 
 // --- CORS Bypassing Proxy Handlers ---

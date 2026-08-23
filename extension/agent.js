@@ -146,7 +146,7 @@ You are running inside a Chrome extension side panel. The user is chatting with 
 - Inspect page state: scan the current webpage after content-script injection for visible text, page title, URL, and interactive DOM elements.
 - Capture screenshots: request a screenshot of the current agent tab for visual reasoning.
 - Control DOM elements: click, double-click, right-click, hover, type, clear inputs, select dropdown options, toggle checkboxes/radios, press keys, scroll, wait, go back, and go forward.
-- Control tabs: list tabs, switch the agent context to another tab, open a new tab, close a tab, and reload a tab.
+- Control tabs: list tabs, switch the agent context to another tab, open a new tab, close a tab, and reload a tab. The agent context FOLLOWS these switches: after open_tab or switch_tab, scans, screenshots, and page actions run in the newly selected tab, so multi-site tasks (compare product A from one site with product B from another) work by switching between tabs and remembering findings with the remember action.
 - Navigate: load an allowed URL in the current agent tab or a new tab.
 - Visual feedback: when browser actions run, the content script can show a cursor/scroll cue on the page so the user can see what is happening.
 
@@ -201,7 +201,28 @@ You are running inside a Chrome extension side panel. The user is chatting with 
   let activeAvatar = null;
 
   // Initialize Settings
-  loadSettings();
+  loadSettings(() => consumePendingCompanionTask());
+
+  /**
+   * Companion hand-off: the side panel writes a pending task to local
+   * storage before pointing the panel at this page. If a fresh task is
+   * waiting (newer than this page load), prefill it and start immediately,
+   * then clear it so it never re-fires.
+   */
+  function consumePendingCompanionTask() {
+    chrome.storage.local.get("companionTask", (items) => {
+      const pending = items && items.companionTask;
+      if (!pending || typeof pending.task !== "string" || !pending.task.trim()) {
+        return;
+      }
+      chrome.storage.local.remove("companionTask");
+      // Ignore stale deliveries (older than 60 seconds).
+      if (pending.timestamp && Date.now() - pending.timestamp > 60000) return;
+      taskInput.value = pending.task.trim();
+      adjustTextareaHeight();
+      if (!isRunning) startAgent();
+    });
+  }
 
   // Event Binds
   actionBtn.addEventListener("click", () => {
@@ -808,11 +829,53 @@ You are running inside a Chrome extension side panel. The user is chatting with 
 
   function setSimpleAssistantBubbleText(assistantBubble, text) {
     const answerBox = assistantBubble?.querySelector(".final-answer-box");
-    if (answerBox) answerBox.innerHTML = renderAnswerHtml(text);
+    if (answerBox) {
+      answerBox.innerHTML = renderAnswerHtml(text);
+      attachArtifactButtons(answerBox, text);
+    }
     conversationHistory.push({ role: "assistant", text });
     if (conversationHistory.length > 12)
       conversationHistory = conversationHistory.slice(-12);
     scrollToBottom();
+  }
+
+  /**
+   * Artifacts: when a final answer contains markdown tables or JSON arrays,
+   * offer one-click CSV downloads under the answer. Best-effort: any error
+   * must never break the answer render.
+   */
+  function attachArtifactButtons(answerBox, text) {
+    try {
+      if (
+        !window.SELECT_TO_AI_ARTIFACTS ||
+        typeof window.SELECT_TO_AI_ARTIFACTS.extractArtifacts !== "function"
+      ) {
+        return;
+      }
+      const artifacts = window.SELECT_TO_AI_ARTIFACTS.extractArtifacts(text);
+      if (!artifacts.length) return;
+      const row = document.createElement("div");
+      row.className = "artifact-row";
+      row.style.cssText =
+        "display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;";
+      const made = window.SELECT_TO_AI_ARTIFACTS.renderArtifactButtons(
+        artifacts,
+        text,
+        (label, onClick) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.textContent = label;
+          btn.style.cssText =
+            "font-size:12px;padding:5px 10px;border-radius:var(--radius-full,999px);border:1px solid var(--border,#ccc);background:transparent;color:inherit;cursor:pointer;font-family:inherit;font-weight:600;";
+          btn.addEventListener("click", onClick);
+          row.appendChild(btn);
+          return btn;
+        },
+      );
+      if (made > 0) answerBox.appendChild(row);
+    } catch (_err) {
+      // Artifact extraction is additive; never break the answer.
+    }
   }
 
   function formatConversationContext() {
@@ -1717,9 +1780,19 @@ ${elementSnippet}`;
     setStatus("planner", "Planning the task...");
     addLogEntry("planner", "Planning", "Breaking the task into subtasks...");
 
-    chrome.storage.local.get("agentCrossSessionMemory", (res) => {
+    chrome.storage.local.get(
+      ["agentCrossSessionMemory", "agentMemoryProfile"],
+      (res) => {
       if (!isRunning || planRunId !== runId) return;
       const memoryContext = formatMemoryContext(res.agentCrossSessionMemory);
+      const profileContext =
+        typeof window !== "undefined" &&
+        window.SELECT_TO_AI_MEMORY &&
+        Array.isArray(res.agentMemoryProfile)
+          ? window.SELECT_TO_AI_MEMORY.formatProfileForPrompt(
+              res.agentMemoryProfile,
+            )
+          : "";
 
       const planSystemPrompt = `<instructions>
 You are the planning module of a browser automation agent. Break the user's task into 2-6 ordered subtasks. Each subtask needs a "postcondition": an observable page condition proving it is done (e.g. "search results for X are visible", "the confirmation message appears").
@@ -1730,7 +1803,7 @@ Rules:
 Call the submit_plan tool with the subtasks. If tool calling is unavailable, output ONLY a raw JSON object: {"subtasks": [{"task": "...", "postcondition": "..."}]}.
 </instructions>`;
 
-      const planUserMessage = `Task: ${currentTask}${memoryContext ? `\n${memoryContext}` : ""}`;
+      const planUserMessage = `Task: ${currentTask}${memoryContext ? `\n${memoryContext}` : ""}${profileContext}`;
 
       callLLM(
         planSystemPrompt,
@@ -1760,7 +1833,8 @@ Call the submit_plan tool with the subtasks. If tool calling is unavailable, out
         0,
         { tier: "lite", tool: SELECT_TO_AI_TOOLS.TOOL_DEFS.submit_plan },
       );
-    });
+      },
+    );
   }
 
   /** Advances the checklist to the next subtask (never past the end). */

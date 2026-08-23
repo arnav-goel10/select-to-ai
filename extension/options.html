@@ -2019,6 +2019,99 @@
                 ></textarea>
               </div>
             </div>
+
+            <!-- MEMORY PROFILE CARD -->
+            <div class="section-card">
+              <div class="section-card-title">What the Agent Knows About You</div>
+              <p class="muted-note">
+                Durable facts and preferences the agent applies to every task
+                (e.g. "I'm based in Singapore", "always cite sources"). Stored
+                only in this browser's local storage, never synced, and fully
+                editable here. The agent sees these as context, nothing else
+                does.
+              </p>
+              <div class="form-group full-width u-mt-2">
+                <label for="memoryProfileInput">Add a fact or preference</label>
+                <div class="u-flex u-gap-3">
+                  <input
+                    type="text"
+                    id="memoryProfileInput"
+                    placeholder="e.g. Prefer metric units"
+                    aria-label="New memory fact"
+                  />
+                  <button type="button" class="btn btn-secondary" id="memory-add-btn">
+                    Add
+                  </button>
+                </div>
+              </div>
+              <ul
+                id="memory-profile-list"
+                aria-label="Saved memory facts"
+                style="list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px;"
+              ></ul>
+            </div>
+
+            <!-- ROUTINES CARD -->
+            <div class="section-card">
+              <div class="section-card-title">Routines (Scheduled Tasks)</div>
+              <p class="muted-note">
+                Run a saved task automatically on a schedule. When a routine
+                fires, the agent opens with the task ready and every normal
+                safety gate still applies. Alarms only fire while Chrome is
+                running.
+              </p>
+              <div class="form-group full-width u-mt-2">
+                <label for="routineName">Routine name</label>
+                <input
+                  type="text"
+                  id="routineName"
+                  placeholder="e.g. Morning price check"
+                  aria-label="Routine name"
+                />
+              </div>
+              <div class="form-group full-width">
+                <label for="routineTask">Task</label>
+                <textarea
+                  id="routineTask"
+                  class="ta-short"
+                  placeholder="Describe what the agent should do each time this routine runs"
+                  aria-label="Routine task"
+                ></textarea>
+              </div>
+              <div class="u-flex u-gap-3" style="align-items: flex-end;">
+                <div class="form-group">
+                  <label for="routineKind">Repeat</label>
+                  <select id="routineKind" aria-label="Schedule kind">
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                  </select>
+                </div>
+                <div class="form-group" id="routineDayGroup" style="display: none;">
+                  <label for="routineDay">On</label>
+                  <select id="routineDay" aria-label="Day of week">
+                    <option value="0">Sunday</option>
+                    <option value="1">Monday</option>
+                    <option value="2">Tuesday</option>
+                    <option value="3">Wednesday</option>
+                    <option value="4">Thursday</option>
+                    <option value="5">Friday</option>
+                    <option value="6">Saturday</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="routineTime">At (24h)</label>
+                  <input type="time" id="routineTime" value="08:00" aria-label="Time of day" />
+                </div>
+                <button type="button" class="btn btn-secondary" id="routine-add-btn">
+                  Add Routine
+                </button>
+              </div>
+              <ul
+                id="routines-list"
+                aria-label="Saved routines"
+                style="list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px;"
+              ></ul>
+            </div>
           </section>
 
           <!-- PROMPTS PANEL -->
@@ -2356,6 +2449,8 @@
     <script src="config.js"></script>
     <script src="defaults.js"></script>
     <script src="security.js"></script>
+    <script src="memoryProfile.js"></script>
+    <script src="routines.js"></script>
     <script src="options.js"></script>
   </body>
 </html>

@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.5.0 - 2026-08-24
+
+### Added
+
+- Side panel companion: quick-action chips (Summarize page, Key points, Extract data, Draft reply) read the current tab and hand a grounded, size-capped prompt straight to the agent; the agent view consumes pending hand-off tasks automatically on load.
+- Artifacts: final answers containing markdown tables or JSON arrays now offer one-click CSV downloads (correct quoting, union headers for object rows), rendered as safe buttons under the answer.
+- Memory profile: durable, user-editable facts ("Based in Singapore", "Always cite sources") stored locally, managed from Options with add/remove UI, and injected into every planning prompt with an explicit user-editable disclosure. Capped at 50 facts of 300 characters.
+- Routines: schedule a saved task daily or weekly via chrome.alarms. When one fires, the agent opens with the task queued through the same companion hand-off; every safety gate still applies. Alarms re-derive their true next occurrence after each run and only fire while Chrome is running.
+- Cross-tab agent guidance: the capability prompt now teaches the executor that its scan/screenshot/action context follows open_tab and switch_tab, enabling real multi-site tasks (compare across two sites) using remember notes between switches.
+
+130 unit tests (up from 107), security benchmark 10/10, e2e 4 of 4.
+
 ## 3.4.0 - 2026-08-24
 
 ### Added
