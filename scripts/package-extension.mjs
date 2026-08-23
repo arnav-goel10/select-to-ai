@@ -28,10 +28,38 @@ export function packageExtension({ extensionRoot, outputPath }) {
   });
 }
 
+/**
+ * Packages per browser target. Chromium targets (chrome, edge) share one
+ * source tree; each gets its own zip so store uploads stay separate.
+ */
+export function packageAllTargets({ projectRoot }) {
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(projectRoot, "extension", "manifest.json"), "utf8"),
+  );
+  const outputs = [];
+  for (const target of ["chrome", "edge"]) {
+    const outputPath = path.join(projectRoot, "dist", `select-to-ai-${target}.zip`);
+    packageExtension({
+      extensionRoot: path.join(projectRoot, "extension"),
+      outputPath,
+    });
+    outputs.push({ target, path: outputPath, version: manifest.version });
+  }
+  return outputs;
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-  packageExtension({
-    extensionRoot: path.join(projectRoot, "extension"),
-    outputPath: path.join(projectRoot, "dist/select-to-ai-extension.zip"),
-  });
+  const arg = process.argv[2];
+  if (arg === "--all") {
+    for (const entry of packageAllTargets({ projectRoot })) {
+      console.log(`packaged ${entry.target} v${entry.version} -> ${path.relative(projectRoot, entry.path)}`);
+    }
+  } else {
+    packageExtension({
+      extensionRoot: path.join(projectRoot, "extension"),
+      outputPath: path.join(projectRoot, "dist/select-to-ai-extension.zip"),
+    });
+    console.log("packaged -> dist/select-to-ai-extension.zip");
+  }
 }

@@ -1,5 +1,20 @@
 # Changelog
 
+## 4.0.0 - 2026-08-24
+
+### Added
+
+- Playbook gallery: six bundled, versioned task templates (competitor price scan, page fact extractor, job application tracker, recipe shopper, news briefing, flight options scan) with one-click run from Options and JSON import for sharing your own. Playbooks with a blank use an explicit {input} placeholder the user fills; empty input never silently drops the blank.
+- Edge Add-ons target: per-browser packaging (`npm run package -- --all` emits chrome + edge zips), a compatibility checker module (`browserTargets.js`), and a publishing runbook (`docs/publishing.md`). The same MV3 source now ships to both stores.
+- i18n scaffold: `default_locale` + `_locales/{en,de,zh_CN}` catalogs for all user-facing manifest strings, a fallback-safe `i18n.js` helper, and tests that keep every locale's key set in lockstep with en.
+- Local agent benchmark: `npm run bench:agent` runs the real pipeline (planner, executor, validator) against localhost fixtures only and writes `dist/benchmark-report.md` plus machine-readable results — honest numbers anyone can reproduce without API keys or network access.
+
+### Changed
+
+- README reflects the two-store reality, hosted mode, routines, artifacts, and the benchmark; store listing copy updated in the same release.
+
+137 unit tests, security benchmark 10/10, e2e 4 of 4, benchmark 12/12 checks.
+
 ## 3.5.0 - 2026-08-24
 
 ### Added

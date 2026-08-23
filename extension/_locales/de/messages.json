@@ -1,0 +1,38 @@
+{
+  "appName": {
+    "message": "Select to AI",
+    "description": "The extension's display name."
+  },
+  "appShortName": {
+    "message": "Select to AI",
+    "description": "Short display name for constrained surfaces."
+  },
+  "appDescription": {
+    "message": "Send selected text to leading AI assistants or run bounded browser workflows with explicit permissions and safety limits.",
+    "description": "Manifest description; must keep 'bounded' language per manifest tests."
+  },
+  "contextMenuAgent": {
+    "message": "Send to AI Browser Agent",
+    "description": "Context-menu item: hand the selection to the browser agent."
+  },
+  "notificationTaskCompleteTitle": {
+    "message": "Select to AI",
+    "description": "Notification title when a task completes."
+  },
+  "notificationTaskCompleteBody": {
+    "message": "Task completed",
+    "description": "Notification body when a task completes."
+  },
+  "omniboxKeywordHint": {
+    "message": "ai",
+    "description": "Address-bar keyword for the assistant."
+  },
+  "welcomeTitle": {
+    "message": "Wie kann ich dir auf dieser Seite helfen?",
+    "description": "Agent welcome screen headline."
+  },
+  "welcomeDescription": {
+    "message": "Gib eine Anweisung ein. Der Browser-Agent plant eine Checkliste, interagiert mit Seitenelementen und prüft das Ergebnis.",
+    "description": "Agent welcome screen description."
+  }
+}

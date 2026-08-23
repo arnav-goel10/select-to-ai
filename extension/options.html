@@ -2112,6 +2112,34 @@
                 style="list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px;"
               ></ul>
             </div>
+
+            <!-- PLAYBOOKS CARD -->
+            <div class="section-card">
+              <div class="section-card-title">Playbook Gallery</div>
+              <p class="muted-note">
+                Ready-made agent tasks. Click Run, fill in the blank if the
+                playbook has one, and it starts in the browser agent. Import
+                your own (or a friend's) as JSON.
+              </p>
+              <div class="u-flex u-gap-3 u-mt-2" style="align-items: center;">
+                <button type="button" class="btn btn-secondary" id="playbook-import-btn">
+                  Import Playbook JSON
+                </button>
+                <input
+                  type="file"
+                  id="playbook-import-file"
+                  accept=".json,application/json"
+                  style="display: none;"
+                  aria-label="Playbook JSON file"
+                />
+                <span id="playbook-import-status" class="muted-note" role="status"></span>
+              </div>
+              <ul
+                id="playbooks-list"
+                aria-label="Available playbooks"
+                style="list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px;"
+              ></ul>
+            </div>
           </section>
 
           <!-- PROMPTS PANEL -->
@@ -2451,6 +2479,7 @@
     <script src="security.js"></script>
     <script src="memoryProfile.js"></script>
     <script src="routines.js"></script>
+    <script src="playbooks.js"></script>
     <script src="options.js"></script>
   </body>
 </html>

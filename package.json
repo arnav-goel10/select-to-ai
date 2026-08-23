@@ -1,6 +1,6 @@
 {
     "name": "select-to-ai-extension",
-    "version": "3.5.0",
+    "version": "4.0.0",
     "private": true,
     "description": "Privacy-first Chrome extension for sending selected text to AI assistants and running bounded browser workflows.",
     "scripts": {
@@ -10,6 +10,7 @@
         "test": "node --test tests/unit/*.test.js",
         "benchmark": "node tests/benchmark/security-benchmark.js",
         "bench:e2e": "node tests/e2e/run-e2e.js",
+        "bench:agent": "node scripts/benchmark-agent.js",
         "package": "node scripts/package-extension.mjs"
     },
     "engines": {

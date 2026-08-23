@@ -1963,6 +1963,117 @@ document.addEventListener("DOMContentLoaded", () => {
 
   chrome.storage.local.get(ROUTINES_KEY, (res) => renderRoutines(res[ROUTINES_KEY]));
 
+  // --- Playbook Gallery ---
+  const playbookImportBtn = document.getElementById("playbook-import-btn");
+  const playbookImportFile = document.getElementById("playbook-import-file");
+  const playbookImportStatus = document.getElementById("playbook-import-status");
+  const playbooksList = document.getElementById("playbooks-list");
+  let customPlaybooks = [];
+
+  function allPlaybooks() {
+    return (window.SELECT_TO_AI_PLAYBOOKS?.BUNDLED || []).concat(customPlaybooks);
+  }
+
+  function renderPlaybooks() {
+    if (!playbooksList) return;
+    playbooksList.innerHTML = "";
+    for (const playbook of allPlaybooks()) {
+      const li = document.createElement("li");
+      li.style.cssText =
+        "display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid var(--border);border-radius:12px;padding:10px 14px;flex-wrap:wrap;";
+      const info = document.createElement("div");
+      info.style.cssText = "display:flex;flex-direction:column;min-width:0;";
+      const title = document.createElement("strong");
+      title.textContent = `${playbook.name} · ${playbook.category}`;
+      const desc = document.createElement("span");
+      desc.className = "muted-note";
+      desc.textContent = playbook.description || playbook.task.slice(0, 120);
+      info.appendChild(title);
+      info.appendChild(desc);
+
+      const runBtn = document.createElement("button");
+      runBtn.type = "button";
+      runBtn.className = "btn btn-secondary";
+      runBtn.textContent = "Run";
+      runBtn.setAttribute("aria-label", `Run playbook ${playbook.name}`);
+
+      const needsInput = /\{input\}/.test(playbook.task);
+      if (needsInput) {
+        const inputBox = document.createElement("input");
+        inputBox.type = "text";
+        inputBox.placeholder = playbook.description.replace(/\{input\}/g, "…") || "Fill in the blank";
+        inputBox.setAttribute("aria-label", `Input for ${playbook.name}`);
+        inputBox.style.cssText = "max-width:260px;";
+        info.appendChild(inputBox);
+        runBtn.addEventListener("click", () => {
+          const rendered = window.SELECT_TO_AI_PLAYBOOKS.renderTask(
+            playbook,
+            inputBox.value,
+          );
+          launchPlaybook(playbook, rendered);
+        });
+      } else {
+        runBtn.addEventListener("click", () => {
+          launchPlaybook(playbook, window.SELECT_TO_AI_PLAYBOOKS.renderTask(playbook, ""));
+        });
+      }
+
+      li.appendChild(info);
+      li.appendChild(runBtn);
+      playbooksList.appendChild(li);
+    }
+  }
+
+  /** Queues a rendered playbook task and opens the agent page. */
+  function launchPlaybook(playbook, renderedTask) {
+    chrome.storage.local.set(
+      { companionTask: { task: renderedTask, timestamp: Date.now(), source: `playbook:${playbook.id}` } },
+      () => {
+        chrome.tabs.create({ url: "agent.html?autorun=1" });
+      },
+    );
+  }
+
+  if (playbookImportBtn && playbookImportFile) {
+    playbookImportBtn.addEventListener("click", () => playbookImportFile.click());
+    playbookImportFile.addEventListener("change", () => {
+      const file = playbookImportFile.files && playbookImportFile.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const parsed = JSON.parse(String(reader.result));
+          const candidates = Array.isArray(parsed) ? parsed : [parsed];
+          let added = 0;
+          for (const candidate of candidates) {
+            const result = window.SELECT_TO_AI_PLAYBOOKS
+              ? window.SELECT_TO_AI_PLAYBOOKS.normalizePlaybook(candidate)
+              : { ok: false, error: "Playbooks module missing." };
+            if (!result.ok) {
+              playbookImportStatus.textContent = `Rejected "${candidate?.name || candidate?.id || "entry"}": ${result.error}`;
+              continue;
+            }
+            customPlaybooks = [
+              ...customPlaybooks.filter((p) => p.id !== result.playbook.id),
+              result.playbook,
+            ];
+            added += 1;
+          }
+          playbookImportStatus.textContent = added
+            ? `Imported ${added} playbook${added > 1 ? "s" : ""}.`
+            : "Nothing imported.";
+          renderPlaybooks();
+        } catch (err) {
+          playbookImportStatus.textContent = `Invalid JSON: ${err.message}`;
+        }
+      };
+      reader.readAsText(file);
+      playbookImportFile.value = "";
+    });
+  }
+
+  renderPlaybooks();
+
   // --- Init ---
   loadSettings();
   initOnboardingWizard();
