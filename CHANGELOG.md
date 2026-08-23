@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.4.0 - 2026-08-24
+
+### Added
+
+- Hosted free mode: a new "Hosted (free)" provider lets anyone run the full browser agent without creating provider accounts or touching an API key. Requests relay through the bundled zero-dependency server (`relay/server.js`, `node relay/server.js` and you are done); the upstream credential lives only on that server, which enforces per-IP rate limits, a body-size cap, an optional model allowlist, and stores nothing. Bring-your-own-key providers remain exactly as local as before.
+- Contextual suggested first tasks: the agent welcome screen now derives its three suggestion cards from the page you are actually on (GitHub repos get repo tasks, shopping pages get comparison tasks, unknown sites get universal ones), computed locally with no network calls, so a first run is one click instead of a blank prompt.
+
+### Changed
+
+- The agent runtime began its module split with zero behavior change: provider/model policy moved to `providerModels.js` (compatibility checks, tier resolution, key-shape validation) and payload building to `providerPayload.js` (system-content shapes, prompt-caching splits, error cleanup). Both are unit-tested directly; `agent.js` shrank by ~140 lines of logic now exercised by 20 new focused tests.
+
+### Fixed
+
+- The store listing no longer describes v2.0: release copy now ships in the same PR as the release (`docs/store-listing.md`), starting with this one.
+
+107 unit tests (up from 87), security benchmark 10/10, e2e 4 of 4.
+
 ## 3.3.1 - 2026-08-16
 
 ### Fixed
