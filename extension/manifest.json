@@ -3,7 +3,7 @@
     "name": "__MSG_appName__",
     "short_name": "__MSG_appShortName__",
     "description": "Send selected text to leading AI assistants or run bounded browser workflows with explicit permissions and safety limits.",
-    "version": "4.0.0",
+    "version": "3.4.1",
     "default_locale": "en",
     "homepage_url": "https://github.com/arnav-goel10/select-to-ai",
     "offline_enabled": false,

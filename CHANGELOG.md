@@ -1,6 +1,31 @@
 # Changelog
 
+## 3.4.1 - 2026-08-24
+
+### Removed
+
+- The experimental "Hosted (free)" provider and its bundled relay server. The product targets a wide audience with bring-your-own-key providers, so the relay added surface without serving that goal; it may return as a first-party free tier later.
+
+### Fixed
+
+- OpenCode Zen: the "Get API Key" link now points to https://opencode.ai/auth (zen.opencode.co no longer resolves), and the key-shape check no longer rejects Zen keys that do not start with "sk-" — the connection test verifies keys live instead.
+
 ## 4.0.0 - 2026-08-24
+
+### Added
+
+- Playbook gallery: six bundled, versioned task templates (competitor price scan, page fact extractor, job application tracker, recipe shopper, news briefing, flight options scan) with one-click run from Options and JSON import for sharing your own.
+- Edge Add-ons target: per-browser packaging and a publishing runbook (docs/publishing.md).
+- i18n scaffold: default locale en plus de/zh_CN catalogs with lockstep tests.
+- Local agent benchmark: npm run bench:agent writes dist/benchmark-report.md.
+
+## 3.5.0 - 2026-08-24
+
+### Added
+
+- Side panel companion quick actions, CSV artifacts, memory profile, scheduled routines, cross-tab agent guidance.
+
+## 3.4.0 - 2026-08-24
 
 ### Added
 

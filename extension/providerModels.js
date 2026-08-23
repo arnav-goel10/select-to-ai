@@ -14,14 +14,13 @@
 
   /**
    * Whether a model id plausibly belongs to the given provider. OpenAI-
-   * compatible multi-model catalogs (custom, hosted, openrouter, opencode)
+   * compatible multi-model catalogs (custom, openrouter, opencode)
    * accept anything; first-party providers are prefix-checked.
    */
   function isModelCompatible(provider, model) {
     if (!model) return false;
     if (
       provider === "custom" ||
-      provider === "hosted" ||
       provider === "openrouter" ||
       provider === "opencode"
     ) {
@@ -69,10 +68,10 @@
   /**
    * Tier-aware resolution matching the runtime rule: lite-tier calls use
    * the catalog's cheap model except on single-model gateways (custom,
-   * hosted), which serve both tiers with the configured model.
+   * custom), which serve both tiers with the configured model.
    */
   function resolveTierModel(provider, tier, configuredModel, defaults) {
-    if (tier === "lite" && provider !== "custom" && provider !== "hosted") {
+    if (tier === "lite" && provider !== "custom") {
       const pair = fallbackPair(provider, defaults);
       if (pair && pair.lite && isModelCompatible(provider, pair.lite)) {
         return pair.lite;
@@ -92,7 +91,7 @@
    */
   function validateKeyShape(provider, apiKey) {
     const key = String(apiKey || "").trim();
-    if (provider === "custom" || provider === "hosted") return "";
+    if (provider === "custom") return "";
     if (!key) return `Missing API key for active provider "${provider}".`;
     if (
       key === "sk-or-v1-..." ||
@@ -116,8 +115,8 @@
       return 'Groq keys usually start with "gsk_". Check that the active provider matches the key you saved.';
     if (provider === "xai" && !key.startsWith("xai-"))
       return 'xAI keys usually start with "xai-". Check that the active provider matches the key you saved.';
-    if (provider === "opencode" && !key.startsWith("sk-"))
-      return 'OpenCode keys usually start with "sk-".';
+    // OpenCode Zen keys have no stable public prefix; any non-placeholder
+    // value is accepted here and verified live by the connection test.
     return "";
   }
 

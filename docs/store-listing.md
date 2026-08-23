@@ -7,7 +7,7 @@ again. Plain text only; the store strips markdown.
 
 ## Short description (132 chars max)
 
-Send selected text to ChatGPT, Gemini, Claude, or Perplexity, or run a bounded, safety-gated browser agent. Free hosted mode, no key needed.
+Send selected text to ChatGPT, Gemini, Claude, or Perplexity, or run a bounded, safety-gated browser agent with your own API key.
 
 ## Full description
 
@@ -28,15 +28,12 @@ The AI Browser Agent plans your task into a visible checklist, performs one page
 - It asks YOU when it meets logins, CAPTCHAs, payments, or an ambiguous request, it never guesses credentials.
 - You can steer a running task with a message, export the full run log, and stop instantly at any time.
 
-START IN MINUTES, NO API KEY REQUIRED
-The agent is OFF by default. Setup takes one of two paths:
-- Hosted mode: pick "Hosted (free)" during setup and you are done. Requests relay through a small relay server to the model provider. No account, no API key, no card.
-- Bring your own key: connect OpenAI, Anthropic, Google, OpenRouter, DeepSeek, Mistral, Groq, Together, xAI, OpenCode, or your own local/self-hosted gateway. Keys never leave your browser.
-After setup the extension suggests three concrete first tasks based on the page you are on, so your first run is one click, not a blank prompt.
+CONNECT THE MODEL PROVIDER OF YOUR CHOICE
+The agent is OFF by default. Setup connects OpenAI, Anthropic, Google, OpenRouter, DeepSeek, Mistral, Groq, Together, xAI, OpenCode, or your own local/self-hosted gateway (such as Ollama), verifies your key, and suggests three concrete first tasks based on the page you are on so your first run is one click.
 
 PRIVACY AND SAFETY BY DESIGN
-- Bring-your-own-key mode is fully local: keys stay in local browser storage, are excluded from settings exports, and requests go only to the documented provider endpoints or the exact custom gateway you configured.
-- Hosted mode sends model traffic through the relay you configured; page content travels only when you run a task, and nothing is stored by the relay.
+- Your API keys stay in local browser storage and are excluded from settings exports.
+- Requests can only go to the documented provider endpoints or the exact custom gateway you configured.
 - The agent asks permission per website, one origin at a time, no blanket access to all sites.
 - High-risk actions (purchases, deletions, payments, passwords) require your explicit confirmation.
 - Step, cost, domain, and failure limits bound every run. No analytics, no telemetry, no ads.
@@ -45,6 +42,5 @@ Open source: https://github.com/arnav-goel10/select-to-ai
 
 ## What's new in 3.4.0
 
-- Hosted free mode: try the full agent without an API key; bring-your-own-key stays fully local as always.
 - Suggested first tasks: after setup, one-click starter tasks based on your current tab end the blank-prompt problem.
 - Under the hood: the agent runtime is now organized into focused modules (state, provider payloads, streaming, run loop) with zero behavior change, keeping the codebase maintainable as features land.

@@ -42,7 +42,7 @@
     return parsed.origin;
   }
 
-  function validateProviderUrl(rawUrl, customBaseUrl, hostedBaseUrl) {
+  function validateProviderUrl(rawUrl, customBaseUrl) {
     const parsed = parseHttpUrl(rawUrl);
     if (!parsed) {
       return { ok: false, error: "Invalid or unsupported provider URL." };
@@ -54,13 +54,6 @@
 
     const allowedCustomOrigin = customOrigin(customBaseUrl);
     if (allowedCustomOrigin && parsed.origin === allowedCustomOrigin) {
-      return { ok: true, url: parsed.toString() };
-    }
-
-    // Hosted mode relay: same policy as a custom gateway (HTTPS or
-    // loopback), scoped to the exact configured origin.
-    const allowedHostedOrigin = customOrigin(hostedBaseUrl);
-    if (allowedHostedOrigin && parsed.origin === allowedHostedOrigin) {
       return { ok: true, url: parsed.toString() };
     }
 

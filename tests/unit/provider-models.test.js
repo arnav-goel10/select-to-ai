@@ -13,7 +13,7 @@ test("first-party providers prefix-check model ids", () => {
 });
 
 test("multi-model catalogs accept any model id", () => {
-  for (const provider of ["custom", "hosted", "openrouter", "opencode"]) {
+  for (const provider of ["custom", "openrouter", "opencode"]) {
     assert.equal(pm.isModelCompatible(provider, "anything/at-all"), true, provider);
   }
 });
@@ -27,11 +27,11 @@ test("resolveModel falls back per tier when incompatible", () => {
   assert.equal(pm.resolveModel("anthropic", "claude-haiku-4-5", "lite", defaults), "claude-haiku-4-5");
 });
 
-test("resolveTierModel serves both tiers from the configured model on hosted gateways", () => {
-  const lite = pm.resolveTierModel("hosted", "lite", "deepseek-v4-flash-free", defaults);
-  const pro = pm.resolveTierModel("hosted", "pro", "deepseek-v4-flash-free", defaults);
-  assert.equal(lite, "deepseek-v4-flash-free");
-  assert.equal(pro, "deepseek-v4-flash-free");
+test("resolveTierModel serves both tiers from the configured model on custom gateways", () => {
+  const lite = pm.resolveTierModel("custom", "lite", "llama3", defaults);
+  const pro = pm.resolveTierModel("custom", "pro", "llama3", defaults);
+  assert.equal(lite, "llama3");
+  assert.equal(pro, "llama3");
 });
 
 test("resolveTierModel uses catalog lite models on multi-model providers", () => {
@@ -39,9 +39,10 @@ test("resolveTierModel uses catalog lite models on multi-model providers", () =>
   assert.equal(lite, defaults.PROVIDER_FALLBACK_MODELS.anthropic.lite);
 });
 
-test("validateKeyShape passes hosted and custom without keys", () => {
-  assert.equal(pm.validateKeyShape("hosted", ""), "");
+test("validateKeyShape passes custom without keys and no longer gates OpenCode prefixes", () => {
   assert.equal(pm.validateKeyShape("custom", ""), "");
+  // Zen keys have no stable public prefix; any value passes shape checks.
+  assert.equal(pm.validateKeyShape("opencode", "zen-key-abc123"), "");
 });
 
 test("validateKeyShape rejects missing and placeholder keys elsewhere", () => {

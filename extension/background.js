@@ -71,12 +71,6 @@ function updateCache() {
         cachedSettings.showAgent = items.showAgent === true;
         cachedSettings.agentCustomUrl =
             items.agentCustomUrl || SELECT_TO_AI_DEFAULTS.AGENT_DEFAULTS.customUrl;
-        // Hosted relay URL: the streaming proxy must accept the configured
-        // relay origin exactly like a custom gateway (loopback HTTP or
-        // HTTPS). Empty means the bundled-relay default.
-        cachedSettings.agentHostedUrl =
-            (typeof items.agentHostedUrl === 'string' && items.agentHostedUrl.trim()) ||
-            SELECT_TO_AI_DEFAULTS.AGENT_DEFAULTS.hostedRelayUrl;
 
         // Opening Mode Migration Logic
         let mode = items.openingMode;
@@ -465,16 +459,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 ? message.candidateCustomUrl
                 : cachedSettings.agentCustomUrl;
 
-        // Hosted mode: one-off requests (connection test, model fetch) may
-        // target the configured relay origin under the same policy as a
-        // custom gateway.
-        const hostedUrlForRequest =
-            message.provider === 'hosted' ? cachedSettings.agentHostedUrl : null;
-
         const destination = SELECT_TO_AI_SECURITY.validateProviderUrl(
             message.url,
-            customUrlForRequest,
-            hostedUrlForRequest
+            customUrlForRequest
         );
         const request = SELECT_TO_AI_SECURITY.validateProxyOptions(message.options);
         if (!destination.ok || !request.ok) {
@@ -594,10 +581,7 @@ chrome.runtime.onConnect.addListener((port) => {
         port.onMessage.addListener(async (message) => {
             const destination = SELECT_TO_AI_SECURITY.validateProviderUrl(
                 message.url,
-                cachedSettings.agentCustomUrl,
-                // Hosted mode relays through the configured relay origin;
-                // the policy treats it exactly like a custom gateway.
-                message.provider === 'hosted' ? cachedSettings.agentHostedUrl : null
+                cachedSettings.agentCustomUrl
             );
             const request = SELECT_TO_AI_SECURITY.validateProxyOptions(message.options);
             if (!destination.ok || !request.ok) {

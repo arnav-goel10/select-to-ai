@@ -533,11 +533,6 @@ You are running inside a Chrome extension side panel. The user is chatting with 
     if (provider === "custom") {
       return { apiKey: config.agentCustomKey, baseUrl: config.agentCustomUrl };
     }
-    if (provider === "hosted") {
-      // Hosted ("no key") mode: the relay injects the real credential
-      // server-side, so the extension carries and sends no API key.
-      return { apiKey: "", baseUrl: config.agentHostedUrl || DEFAULTS.hostedRelayUrl };
-    }
     const entry = (SELECT_TO_AI_DEFAULTS.PROVIDER_ENDPOINTS || {})[provider];
     if (!entry) {
       return { apiKey: "", baseUrl: "" };
@@ -572,8 +567,8 @@ You are running inside a Chrome extension side panel. The user is chatting with 
   /**
    * Model tiers: the strong configured model ("pro") drives the executor;
    * the provider's cheap catalog model ("lite") handles routing, planning,
-   * reflection, and validation. Custom and hosted gateways only have the
-   * configured model, so both tiers use it there.
+   * reflection, and validation. Custom gateways only have the configured
+   * model, so both tiers use it there.
    */
   function resolveTierModel(provider, tier) {
     return SELECT_TO_AI_PROVIDER_MODELS.resolveTierModel(
@@ -596,8 +591,8 @@ You are running inside a Chrome extension side panel. The user is chatting with 
   }
 
   function getProviderKeyValidationError(provider, apiKey) {
-    // Delegates to the shared provider-models policy; hosted and custom
-    // gateways need no key by design.
+    // Delegates to the shared provider-models policy; custom gateways
+    // need no key by design.
     return SELECT_TO_AI_PROVIDER_MODELS.validateKeyShape(provider, apiKey);
   }
 
@@ -648,11 +643,6 @@ You are running inside a Chrome extension side panel. The user is chatting with 
       config.agentOpencodeKey = items.agentOpencodeKey || "";
       config.agentCustomKey = items.agentCustomKey || "";
       config.agentCustomUrl = items.agentCustomUrl || DEFAULTS.customUrl;
-      // Hosted relay URL override; empty means the bundled-relay default.
-      config.agentHostedUrl =
-        typeof items.agentHostedUrl === "string" && items.agentHostedUrl.trim()
-          ? items.agentHostedUrl.trim()
-          : DEFAULTS.hostedRelayUrl;
 
       config.agentModel = items.agentModel || DEFAULTS.model;
 
@@ -4035,8 +4025,6 @@ ${(function () {
     try {
       port.postMessage({
         url: endpoint,
-        // The background policy needs the provider to know which extra
-        // gateway origin (the hosted relay) this request may target.
         provider: provider,
         options: {
           method: "POST",

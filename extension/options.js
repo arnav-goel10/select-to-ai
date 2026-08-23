@@ -65,12 +65,6 @@ document.addEventListener("DOMContentLoaded", () => {
   // Default models come from the shared catalog so the options UI always
   // matches the agent runtime's fallbacks.
   const PROVIDER_DEFAULTS = {
-    hosted: {
-      name: "Hosted (free)",
-      url: AGENT_DEFAULTS.hostedRelayUrl,
-      model: SHARED.PROVIDER_FALLBACK_MODELS.hosted.lite,
-      placeholder: "",
-    },
     opencode: {
       name: "OpenCode Zen",
       url: "https://opencode.ai/zen/v1",
@@ -141,7 +135,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Keep track of unsaved provider keys in local session memory
   let cachedProviderKeys = {
-    hosted: "",
     opencode: "",
     openrouter: "",
     anthropic: "",
@@ -367,7 +360,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function canFetchModelsWithoutKey(provider) {
-    return provider === "openrouter" || provider === "custom" || provider === "hosted";
+    return provider === "openrouter" || provider === "custom";
   }
 
   function normalizeFetchedModels(provider, data) {
@@ -581,19 +574,11 @@ document.addEventListener("DOMContentLoaded", () => {
     } else {
       customUrlGroup.style.display = "none";
     }
-    // Hosted mode: reveal the relay-URL override (defaults to the bundled
-    // local relay) instead of a key field.
-    const hostedUrlGroup = document.getElementById("hosted-url-group");
-    if (hostedUrlGroup) {
-      hostedUrlGroup.style.display = provider === "hosted" ? "block" : "none";
-    }
   });
 
   function getActiveProviderKey() {
     const provider = activeProviderSelect.value;
     switch (provider) {
-      case "hosted":
-        return ""; // No key by design.
       case "opencode":
         return document.getElementById("agentOpencodeKey").value.trim();
       case "openrouter":
@@ -624,7 +609,6 @@ document.addEventListener("DOMContentLoaded", () => {
   function getProviderKeyValidationError(provider, apiKey) {
     const key = (apiKey || "").trim();
     if (provider === "custom") return "";
-    if (provider === "hosted") return ""; // No key by design.
     if (!key)
       return `Missing API key for ${PROVIDER_DEFAULTS[provider]?.name || provider}.`;
     if (
@@ -742,15 +726,6 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       customUrlInput.value = items.agentCustomUrl || "";
-      const hostedUrlInput = document.getElementById("agentHostedUrl");
-      if (hostedUrlInput) {
-        hostedUrlInput.value = items.agentHostedUrl || "";
-      }
-      const hostedUrlGroup = document.getElementById("hosted-url-group");
-      if (hostedUrlGroup) {
-        hostedUrlGroup.style.display =
-          activeProvider === "hosted" ? "block" : "none";
-      }
 
       const defs = PROVIDER_DEFAULTS[activeProvider];
       if (defs) {
@@ -827,8 +802,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
       agentActiveProvider: activeProviderSelect.value,
       agentCustomUrl: customUrlInput.value.trim(),
-      agentHostedUrl:
-        document.getElementById("agentHostedUrl")?.value.trim() || "",
       agentModel: modelSelect.value,
       agentMaxSteps: parseInt(maxStepsSlider.value, 10),
 
@@ -901,21 +874,6 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     if (activeProviderSelect.value !== "custom") {
-      // Hosted mode targets the relay origin (loopback by default): request
-      // the optional host permission so the proxy can send model traffic
-      // there, mirroring custom-gateway handling.
-      if (activeProviderSelect.value === "hosted") {
-        const hostedOrigin = SELECT_TO_AI_SECURITY.customOrigin(
-          settingsToSave.agentHostedUrl || AGENT_DEFAULTS.hostedRelayUrl,
-        );
-        if (hostedOrigin) {
-          chrome.permissions.request({ origins: [`${hostedOrigin}/*`] }, () => {
-            void chrome.runtime.lastError;
-            persist();
-          });
-          return;
-        }
-      }
       persist();
       return;
     }
@@ -994,12 +952,6 @@ document.addEventListener("DOMContentLoaded", () => {
     if (provider === "custom") {
       baseUrl = candidateCustomUrl || customUrlInput.value.trim();
     }
-    if (provider === "hosted") {
-      baseUrl =
-        document.getElementById("agentHostedUrl")?.value.trim() ||
-        AGENT_DEFAULTS.hostedRelayUrl;
-    }
-
     setConnStatus("loading", "Querying API...");
 
     const { endpoint, headers } = getModelFetchRequest(provider, key, baseUrl);
@@ -1262,8 +1214,6 @@ document.addEventListener("DOMContentLoaded", () => {
       const wizardKeyLabel = document.getElementById("wizardKeyLabel");
       const wizardUrlGroup = document.getElementById("wizardUrlGroup");
       const wizardCustomUrl = document.getElementById("wizardCustomUrl");
-      const wizardHostedUrlGroup = document.getElementById("wizardHostedUrlGroup");
-      const wizardHostedUrl = document.getElementById("wizardHostedUrl");
 
       const wizardTestBtn = document.getElementById("wizard-test-btn");
       const wizardTestStatus = document.getElementById("wizard-test-status");
@@ -1275,19 +1225,6 @@ document.addEventListener("DOMContentLoaded", () => {
       function syncWizardProvider() {
         const prov = wizardProvider.value;
         const defs = PROVIDER_DEFAULTS[prov];
-
-        // Hosted mode has no key to enter; swap the key row for a relay URL.
-        if (prov === "hosted") {
-          wizardApiKey.parentElement.style.display = "none";
-          wizardHostedUrlGroup.style.display = "block";
-          wizardHostedUrl.value =
-            cachedSettingsHostedUrl() || AGENT_DEFAULTS.hostedRelayUrl;
-          wizardTestBtn.textContent = "Test Relay";
-          return;
-        }
-        wizardApiKey.parentElement.style.display = "block";
-        wizardHostedUrlGroup.style.display = "none";
-        wizardTestBtn.textContent = "Test Connection";
 
         const keyLinks = {
           openrouter: "https://openrouter.ai/keys",
@@ -1317,9 +1254,6 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       }
 
-      function cachedSettingsHostedUrl() {
-        return document.getElementById("agentHostedUrl")?.value.trim() || "";
-      }
 
       wizardProvider.addEventListener("change", syncWizardProvider);
       syncWizardProvider();
@@ -1398,15 +1332,6 @@ document.addEventListener("DOMContentLoaded", () => {
             } else {
               customUrlGroup.style.display = "none";
             }
-            if (prov === "hosted") {
-              const hostedUrlInput = document.getElementById("agentHostedUrl");
-              if (hostedUrlInput) hostedUrlInput.value = baseUrl;
-              const hostedUrlGroup = document.getElementById("hosted-url-group");
-              if (hostedUrlGroup) hostedUrlGroup.style.display = "block";
-            } else {
-              const hostedUrlGroup = document.getElementById("hosted-url-group");
-              if (hostedUrlGroup) hostedUrlGroup.style.display = "none";
-            }
             applyModelPresets(prov, { replaceValue: true });
           })
           .catch((err) => {
@@ -1422,33 +1347,6 @@ document.addEventListener("DOMContentLoaded", () => {
       wizardTestBtn.addEventListener("click", () => {
         const prov = wizardProvider.value;
         const key = wizardApiKey.value.trim();
-
-        if (prov === "hosted") {
-          // Hosted mode: test the typed relay URL. Loopback HTTP is allowed
-          // (the bundled relay runs locally); anything remote must be HTTPS.
-          const relayUrl =
-            wizardHostedUrl.value.trim() || AGENT_DEFAULTS.hostedRelayUrl;
-          const origin = SELECT_TO_AI_SECURITY.customOrigin(relayUrl);
-          if (!origin) {
-            wizardTestStatus.className = "status-indicator error";
-            wizardTestStatus.innerHTML = `${STATUS_ICONS.error} Invalid Relay URL`;
-            wizardTestStatus.title =
-              "The relay URL must use HTTPS, or http:// on localhost / 127.0.0.1.";
-            wizardTestStatus.style.display = "inline-flex";
-            return;
-          }
-          chrome.permissions.request({ origins: [`${origin}/*`] }, (granted) => {
-            if (chrome.runtime.lastError || !granted) {
-              wizardTestStatus.className = "status-indicator error";
-              wizardTestStatus.innerHTML = `${STATUS_ICONS.error} Access Not Granted`;
-              wizardTestStatus.title = `Access to ${origin} was not granted.`;
-              wizardTestStatus.style.display = "inline-flex";
-              return;
-            }
-            runWizardTest(prov, "", relayUrl);
-          });
-          return;
-        }
 
         if (prov === "custom") {
           prepareCustomGatewayCandidate(

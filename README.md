@@ -4,7 +4,7 @@
 [![Chrome MV3](https://img.shields.io/badge/Chrome-Manifest%20V3-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A privacy-first browser extension for moving selected text into ChatGPT, Gemini, Claude, or Perplexity, and for running bounded browser-agent workflows with your own model provider — or with **no API key at all** in hosted mode.
+A privacy-first browser extension for moving selected text into ChatGPT, Gemini, Claude, or Perplexity, and for running bounded browser-agent workflows with your own model provider.
 
 ![Select to AI context-menu action for sending selected text to ChatGPT](assets/select-to-ai-overview.png)
 
@@ -29,7 +29,7 @@ Requirements: a Chromium browser (Chrome or Edge 114+) and Node.js 20+ for devel
 2. Run `npm ci && npm run check`.
 3. Open `chrome://extensions` (or `edge://extensions`) and enable **Developer mode**.
 4. Choose **Load unpacked** and select the repository's `extension/` directory.
-5. Open **Extension options**. Either pick **Hosted (free)** — no API key needed; see `relay/README.md` to start the bundled relay — or connect any provider with your own key.
+5. Open **Extension options**, choose a provider (OpenCode Zen is the zero-cost default), and add your API key.
 
 No build step is required. The checked-in JavaScript is the extension source Chrome loads.
 
@@ -118,13 +118,12 @@ It is intentionally not part of `npm run check` (it downloads Chromium and takes
 | `alarms` | Fire user-created scheduled routines while the browser runs. |
 | `notifications` | Notify when an agent run completes or fails. |
 | `declarativeNetRequest` | Allow the supported assistant sites to render inside the side-panel iframe; rules are limited to those domains. |
-| Provider host access | Call only the documented model-provider endpoints, your configured custom gateway, or your configured hosted relay. |
+| Provider host access | Call only the documented model-provider endpoints or your configured custom gateway. |
 | Optional website access | Granted per origin by the user when browser automation needs it. |
 
 ## Repository guide
 
 - `extension/`: the complete build-free Manifest V3 package loaded by Chrome and Edge.
-- `relay/`: the zero-dependency hosted-mode relay server (`node relay/server.js`).
 - `tests/unit/`: dependency-free policy and storage regression tests.
 - `tests/benchmark/`: deterministic adversarial request-policy evaluation.
 - `tests/e2e/`: the puppeteer task harness (scripted gateway + fixture pages + four-scenario runner).
