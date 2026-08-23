@@ -95,6 +95,13 @@
                 "default": "Alt+A"
             },
             "description": "Run AI Browser Agent"
+        },
+        "open-task-composer": {
+            "suggested_key": {
+                "default": "Alt+T",
+                "mac": "Command+K"
+            },
+            "description": "Open the task composer"
         }
     },
     "omnibox": {

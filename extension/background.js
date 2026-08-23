@@ -339,8 +339,34 @@ chrome.commands.onCommand.addListener((command, tab) => {
                 timestamp: Date.now()
             }
         });
+    } else if (command === 'open-task-composer') {
+        // Cmd+K (Alt+T elsewhere): open the popup task composer. The popup
+        // auto-focuses its input, so this is type -> Enter -> running.
+        // chrome.action.openPopup requires the user gesture that a keyboard
+        // command provides; fall back to a notification on older Chromium.
+        if (chrome.action.openPopup) {
+            try {
+                chrome.action.openPopup(() => {
+                    void chrome.runtime.lastError;
+                });
+            } catch (_err) {
+                notifyComposerHint();
+            }
+        } else {
+            notifyComposerHint();
+        }
     }
 });
+
+/** Fallback for Chromium builds without action.openPopup(). */
+function notifyComposerHint() {
+    chrome.notifications.create({
+        type: 'basic',
+        iconUrl: 'icon128.png',
+        title: 'Select to AI',
+        message: 'Click the Select to AI icon to open the task composer (or update Chrome for Cmd+K support).'
+    });
+}
 
 /** Shared "agent is disabled" handling for gated entry points. */
 function notifyAgentDisabled() {
