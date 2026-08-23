@@ -77,7 +77,69 @@ redoBtn.addEventListener('click', () => {
     });
 });
 
-// Listen for updates from other parts of the extension
+// --- Companion quick actions ---
+// Chips above the iframe: read the active tab's visible text (scripting on
+// the active tab) and hand a grounded prompt to the agent view.
+(function initQuickActions() {
+    const bar = document.createElement('div');
+    bar.id = 'companion-quickbar';
+    bar.style.cssText = 'display:flex;gap:6px;padding:6px 10px;overflow-x:auto;flex-shrink:0;border-bottom:1px solid var(--border);background:var(--surface);';
+
+    const actions = (window.SELECT_TO_AI_COMPANION && window.SELECT_TO_AI_COMPANION.QUICK_ACTIONS) || [];
+    actions.forEach((action) => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.textContent = action.label;
+        chip.title = 'Runs in the AI Browser Agent with this page as context';
+        chip.style.cssText = 'white-space:nowrap;font-size:12px;padding:5px 10px;border-radius:var(--radius-full);border:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer;font-family:var(--font-sans);font-weight:600;';
+        chip.addEventListener('mouseenter', () => { chip.style.background = 'var(--surface-2)'; });
+        chip.addEventListener('mouseleave', () => { chip.style.background = 'var(--bg)'; });
+
+        chip.addEventListener('click', () => {
+            chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                const tab = tabs && tabs[0];
+                if (!tab || !tab.id) return;
+                // Pull readable text via the scripting API; falls back to
+                // URL-only context when injection is not possible.
+                chrome.scripting.executeScript(
+                    {
+                        target: { tabId: tab.id },
+                        func: () => ({
+                            url: window.location.href,
+                            title: document.title,
+                            text: document.body ? document.body.innerText : '',
+                        }),
+                    },
+                    (results) => {
+                        let payload = { url: tab.url || '', title: tab.title || '', text: '' };
+                        if (chrome.runtime.lastError || !results || !results[0]) {
+                            void chrome.runtime.lastError;
+                        } else {
+                            payload = results[0].result || payload;
+                        }
+                        const prompt = window.SELECT_TO_AI_COMPANION.buildQuickActionPrompt(
+                            action.id, payload.url, payload.text,
+                        );
+                        if (!prompt) return;
+                        // Hand the task to the agent page (loaded in this
+                        // panel's iframe). The agent consumes the pending
+                        // companionTask from storage on load.
+                        chrome.storage.local.set(
+                            { companionTask: { task: prompt, timestamp: Date.now() } },
+                            () => {
+                                iframe.src = CONFIG.URLS.AGENT;
+                                selector.value = CONFIG.URLS.AGENT;
+                            },
+                        );
+                    },
+                );
+            });
+        });
+        bar.appendChild(chip);
+    });
+    document.body.insertBefore(bar, iframe);
+})();
+
 chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local' && changes[STORAGE.SIDE_PANEL_STATE]) {
         updateState(changes[STORAGE.SIDE_PANEL_STATE].newValue);

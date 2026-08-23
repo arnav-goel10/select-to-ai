@@ -1,5 +1,34 @@
 # Changelog
 
+## 3.5.0 - 2026-08-24
+
+### Added
+
+- Side panel companion: quick-action chips (Summarize page, Key points, Extract data, Draft reply) read the current tab and hand a grounded, size-capped prompt straight to the agent; the agent view consumes pending hand-off tasks automatically on load.
+- Artifacts: final answers containing markdown tables or JSON arrays now offer one-click CSV downloads (correct quoting, union headers for object rows), rendered as safe buttons under the answer.
+- Memory profile: durable, user-editable facts ("Based in Singapore", "Always cite sources") stored locally, managed from Options with add/remove UI, and injected into every planning prompt with an explicit user-editable disclosure. Capped at 50 facts of 300 characters.
+- Routines: schedule a saved task daily or weekly via chrome.alarms. When one fires, the agent opens with the task queued through the same companion hand-off; every safety gate still applies. Alarms re-derive their true next occurrence after each run and only fire while Chrome is running.
+- Cross-tab agent guidance: the capability prompt now teaches the executor that its scan/screenshot/action context follows open_tab and switch_tab, enabling real multi-site tasks (compare across two sites) using remember notes between switches.
+
+130 unit tests (up from 107), security benchmark 10/10, e2e 4 of 4.
+
+## 3.4.0 - 2026-08-24
+
+### Added
+
+- Hosted free mode: a new "Hosted (free)" provider lets anyone run the full browser agent without creating provider accounts or touching an API key. Requests relay through the bundled zero-dependency server (`relay/server.js`, `node relay/server.js` and you are done); the upstream credential lives only on that server, which enforces per-IP rate limits, a body-size cap, an optional model allowlist, and stores nothing. Bring-your-own-key providers remain exactly as local as before.
+- Contextual suggested first tasks: the agent welcome screen now derives its three suggestion cards from the page you are actually on (GitHub repos get repo tasks, shopping pages get comparison tasks, unknown sites get universal ones), computed locally with no network calls, so a first run is one click instead of a blank prompt.
+
+### Changed
+
+- The agent runtime began its module split with zero behavior change: provider/model policy moved to `providerModels.js` (compatibility checks, tier resolution, key-shape validation) and payload building to `providerPayload.js` (system-content shapes, prompt-caching splits, error cleanup). Both are unit-tested directly; `agent.js` shrank by ~140 lines of logic now exercised by 20 new focused tests.
+
+### Fixed
+
+- The store listing no longer describes v2.0: release copy now ships in the same PR as the release (`docs/store-listing.md`), starting with this one.
+
+107 unit tests (up from 87), security benchmark 10/10, e2e 4 of 4.
+
 ## 3.3.1 - 2026-08-16
 
 ### Fixed

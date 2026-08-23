@@ -146,7 +146,7 @@ You are running inside a Chrome extension side panel. The user is chatting with 
 - Inspect page state: scan the current webpage after content-script injection for visible text, page title, URL, and interactive DOM elements.
 - Capture screenshots: request a screenshot of the current agent tab for visual reasoning.
 - Control DOM elements: click, double-click, right-click, hover, type, clear inputs, select dropdown options, toggle checkboxes/radios, press keys, scroll, wait, go back, and go forward.
-- Control tabs: list tabs, switch the agent context to another tab, open a new tab, close a tab, and reload a tab.
+- Control tabs: list tabs, switch the agent context to another tab, open a new tab, close a tab, and reload a tab. The agent context FOLLOWS these switches: after open_tab or switch_tab, scans, screenshots, and page actions run in the newly selected tab, so multi-site tasks (compare product A from one site with product B from another) work by switching between tabs and remembering findings with the remember action.
 - Navigate: load an allowed URL in the current agent tab or a new tab.
 - Visual feedback: when browser actions run, the content script can show a cursor/scroll cue on the page so the user can see what is happening.
 
@@ -201,7 +201,28 @@ You are running inside a Chrome extension side panel. The user is chatting with 
   let activeAvatar = null;
 
   // Initialize Settings
-  loadSettings();
+  loadSettings(() => consumePendingCompanionTask());
+
+  /**
+   * Companion hand-off: the side panel writes a pending task to local
+   * storage before pointing the panel at this page. If a fresh task is
+   * waiting (newer than this page load), prefill it and start immediately,
+   * then clear it so it never re-fires.
+   */
+  function consumePendingCompanionTask() {
+    chrome.storage.local.get("companionTask", (items) => {
+      const pending = items && items.companionTask;
+      if (!pending || typeof pending.task !== "string" || !pending.task.trim()) {
+        return;
+      }
+      chrome.storage.local.remove("companionTask");
+      // Ignore stale deliveries (older than 60 seconds).
+      if (pending.timestamp && Date.now() - pending.timestamp > 60000) return;
+      taskInput.value = pending.task.trim();
+      adjustTextareaHeight();
+      if (!isRunning) startAgent();
+    });
+  }
 
   // Event Binds
   actionBtn.addEventListener("click", () => {
@@ -218,7 +239,9 @@ You are running inside a Chrome extension side panel. The user is chatting with 
     taskInput.style.height = taskInput.scrollHeight + "px";
   }
 
-  // Suggestion prompt clicks
+  // Suggestion prompt clicks. The cards are (re)rendered from the active
+  // tab's context by SELECT_TO_AI_SUGGESTIONS so a first run is one click;
+  // the click handler here fills the input, matching the old behavior.
   document.querySelectorAll(".suggestion-card").forEach((card) => {
     card.addEventListener("click", () => {
       taskInput.value = card.getAttribute("data-prompt");
@@ -226,6 +249,22 @@ You are running inside a Chrome extension side panel. The user is chatting with 
       adjustTextareaHeight();
     });
   });
+
+  const suggestionsGrid = document.querySelector(".suggestions-grid");
+  if (
+    suggestionsGrid &&
+    window.SELECT_TO_AI_SUGGESTIONS &&
+    window.SELECT_TO_AI_SUGGESTIONS.renderContextualSuggestions
+  ) {
+    window.SELECT_TO_AI_SUGGESTIONS.renderContextualSuggestions(
+      suggestionsGrid,
+      (prompt) => {
+        taskInput.value = prompt;
+        taskInput.focus();
+        adjustTextareaHeight();
+      },
+    );
+  }
 
   // Enter key to send prompt
   taskInput.addEventListener("keydown", (e) => {
@@ -494,6 +533,11 @@ You are running inside a Chrome extension side panel. The user is chatting with 
     if (provider === "custom") {
       return { apiKey: config.agentCustomKey, baseUrl: config.agentCustomUrl };
     }
+    if (provider === "hosted") {
+      // Hosted ("no key") mode: the relay injects the real credential
+      // server-side, so the extension carries and sends no API key.
+      return { apiKey: "", baseUrl: config.agentHostedUrl || DEFAULTS.hostedRelayUrl };
+    }
     const entry = (SELECT_TO_AI_DEFAULTS.PROVIDER_ENDPOINTS || {})[provider];
     if (!entry) {
       return { apiKey: "", baseUrl: "" };
@@ -502,41 +546,14 @@ You are running inside a Chrome extension side panel. The user is chatting with 
   }
 
   function getProviderFallbackModels(provider) {
-    const catalog = SELECT_TO_AI_DEFAULTS.PROVIDER_FALLBACK_MODELS;
-    return catalog[provider] || catalog.openrouter;
+    return SELECT_TO_AI_PROVIDER_MODELS.fallbackPair(
+      provider,
+      SELECT_TO_AI_DEFAULTS,
+    );
   }
 
   function isModelCompatibleWithProvider(provider, model) {
-    if (!model) return false;
-    if (
-      provider === "custom" ||
-      provider === "openrouter" ||
-      provider === "opencode"
-    )
-      return true;
-
-    if (provider === "anthropic") return model.startsWith("claude-");
-    if (provider === "openai") return /^(gpt-|o\d|chatgpt-)/.test(model);
-    if (provider === "deepseek") return model.startsWith("deepseek-");
-    if (provider === "gemini") return model.startsWith("gemini-");
-    if (provider === "mistral")
-      return (
-        model.includes("mistral") ||
-        model.includes("ministral") ||
-        model.includes("codestral") ||
-        model.includes("magistral") ||
-        model.includes("devstral")
-      );
-    if (provider === "groq")
-      return (
-        /^(llama|llama3|llama-3|mixtral|gemma|qwen|deepseek|moonshot|gpt-oss)/.test(
-          model,
-        ) || model.includes("/")
-      );
-    if (provider === "together") return model.includes("/");
-    if (provider === "xai") return model.startsWith("grok-");
-    if (provider === "opencode") return true;
-    return true;
+    return SELECT_TO_AI_PROVIDER_MODELS.isModelCompatible(provider, model);
   }
 
   function resolveModelForProvider(provider, requestedModel, tier) {
@@ -555,18 +572,15 @@ You are running inside a Chrome extension side panel. The user is chatting with 
   /**
    * Model tiers: the strong configured model ("pro") drives the executor;
    * the provider's cheap catalog model ("lite") handles routing, planning,
-   * reflection, and validation. Custom gateways only have the configured
-   * model, so both tiers use it there.
+   * reflection, and validation. Custom and hosted gateways only have the
+   * configured model, so both tiers use it there.
    */
   function resolveTierModel(provider, tier) {
-    if (tier === "lite" && provider !== "custom") {
-      const fallbacks = getProviderFallbackModels(provider);
-      if (fallbacks && fallbacks.lite) return fallbacks.lite;
-    }
-    return resolveModelForProvider(
+    return SELECT_TO_AI_PROVIDER_MODELS.resolveTierModel(
       provider,
+      tier,
       config.agentModel,
-      tier === "pro" ? "pro" : "lite",
+      SELECT_TO_AI_DEFAULTS,
     );
   }
 
@@ -582,34 +596,9 @@ You are running inside a Chrome extension side panel. The user is chatting with 
   }
 
   function getProviderKeyValidationError(provider, apiKey) {
-    const key = (apiKey || "").trim();
-    if (provider === "custom") return "";
-    if (!key) return `Missing API key for active provider "${provider}".`;
-    if (
-      key === "sk-or-v1-..." ||
-      key === "sk-proj-..." ||
-      key === "sk-ant-..." ||
-      key === "AIzaSy..." ||
-      key === "gsk_..." ||
-      key.toLowerCase() === "api key"
-    ) {
-      return `The saved ${provider} API key looks like a placeholder, not a real key.`;
-    }
-    if (provider === "openrouter" && !key.startsWith("sk-or-"))
-      return 'OpenRouter keys usually start with "sk-or-". Check that the active provider matches the key you saved.';
-    if (provider === "anthropic" && !key.startsWith("sk-ant-"))
-      return 'Anthropic keys usually start with "sk-ant-". Check that the active provider matches the key you saved.';
-    if (provider === "openai" && !key.startsWith("sk-"))
-      return 'OpenAI keys usually start with "sk-". Check that the active provider matches the key you saved.';
-    if (provider === "gemini" && !key.startsWith("AIza"))
-      return 'Gemini API keys usually start with "AIza". Check that the active provider matches the key you saved.';
-    if (provider === "groq" && !key.startsWith("gsk_"))
-      return 'Groq keys usually start with "gsk_". Check that the active provider matches the key you saved.';
-    if (provider === "xai" && !key.startsWith("xai-"))
-      return 'xAI keys usually start with "xai-". Check that the active provider matches the key you saved.';
-    if (provider === "opencode" && !key.startsWith("sk-"))
-      return 'OpenCode keys usually start with "sk-".';
-    return "";
+    // Delegates to the shared provider-models policy; hosted and custom
+    // gateways need no key by design.
+    return SELECT_TO_AI_PROVIDER_MODELS.validateKeyShape(provider, apiKey);
   }
 
   function hasProviderCredentials(provider) {
@@ -659,6 +648,11 @@ You are running inside a Chrome extension side panel. The user is chatting with 
       config.agentOpencodeKey = items.agentOpencodeKey || "";
       config.agentCustomKey = items.agentCustomKey || "";
       config.agentCustomUrl = items.agentCustomUrl || DEFAULTS.customUrl;
+      // Hosted relay URL override; empty means the bundled-relay default.
+      config.agentHostedUrl =
+        typeof items.agentHostedUrl === "string" && items.agentHostedUrl.trim()
+          ? items.agentHostedUrl.trim()
+          : DEFAULTS.hostedRelayUrl;
 
       config.agentModel = items.agentModel || DEFAULTS.model;
 
@@ -835,11 +829,53 @@ You are running inside a Chrome extension side panel. The user is chatting with 
 
   function setSimpleAssistantBubbleText(assistantBubble, text) {
     const answerBox = assistantBubble?.querySelector(".final-answer-box");
-    if (answerBox) answerBox.innerHTML = renderAnswerHtml(text);
+    if (answerBox) {
+      answerBox.innerHTML = renderAnswerHtml(text);
+      attachArtifactButtons(answerBox, text);
+    }
     conversationHistory.push({ role: "assistant", text });
     if (conversationHistory.length > 12)
       conversationHistory = conversationHistory.slice(-12);
     scrollToBottom();
+  }
+
+  /**
+   * Artifacts: when a final answer contains markdown tables or JSON arrays,
+   * offer one-click CSV downloads under the answer. Best-effort: any error
+   * must never break the answer render.
+   */
+  function attachArtifactButtons(answerBox, text) {
+    try {
+      if (
+        !window.SELECT_TO_AI_ARTIFACTS ||
+        typeof window.SELECT_TO_AI_ARTIFACTS.extractArtifacts !== "function"
+      ) {
+        return;
+      }
+      const artifacts = window.SELECT_TO_AI_ARTIFACTS.extractArtifacts(text);
+      if (!artifacts.length) return;
+      const row = document.createElement("div");
+      row.className = "artifact-row";
+      row.style.cssText =
+        "display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;";
+      const made = window.SELECT_TO_AI_ARTIFACTS.renderArtifactButtons(
+        artifacts,
+        text,
+        (label, onClick) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.textContent = label;
+          btn.style.cssText =
+            "font-size:12px;padding:5px 10px;border-radius:var(--radius-full,999px);border:1px solid var(--border,#ccc);background:transparent;color:inherit;cursor:pointer;font-family:inherit;font-weight:600;";
+          btn.addEventListener("click", onClick);
+          row.appendChild(btn);
+          return btn;
+        },
+      );
+      if (made > 0) answerBox.appendChild(row);
+    } catch (_err) {
+      // Artifact extraction is additive; never break the answer.
+    }
   }
 
   function formatConversationContext() {
@@ -1744,9 +1780,19 @@ ${elementSnippet}`;
     setStatus("planner", "Planning the task...");
     addLogEntry("planner", "Planning", "Breaking the task into subtasks...");
 
-    chrome.storage.local.get("agentCrossSessionMemory", (res) => {
+    chrome.storage.local.get(
+      ["agentCrossSessionMemory", "agentMemoryProfile"],
+      (res) => {
       if (!isRunning || planRunId !== runId) return;
       const memoryContext = formatMemoryContext(res.agentCrossSessionMemory);
+      const profileContext =
+        typeof window !== "undefined" &&
+        window.SELECT_TO_AI_MEMORY &&
+        Array.isArray(res.agentMemoryProfile)
+          ? window.SELECT_TO_AI_MEMORY.formatProfileForPrompt(
+              res.agentMemoryProfile,
+            )
+          : "";
 
       const planSystemPrompt = `<instructions>
 You are the planning module of a browser automation agent. Break the user's task into 2-6 ordered subtasks. Each subtask needs a "postcondition": an observable page condition proving it is done (e.g. "search results for X are visible", "the confirmation message appears").
@@ -1757,7 +1803,7 @@ Rules:
 Call the submit_plan tool with the subtasks. If tool calling is unavailable, output ONLY a raw JSON object: {"subtasks": [{"task": "...", "postcondition": "..."}]}.
 </instructions>`;
 
-      const planUserMessage = `Task: ${currentTask}${memoryContext ? `\n${memoryContext}` : ""}`;
+      const planUserMessage = `Task: ${currentTask}${memoryContext ? `\n${memoryContext}` : ""}${profileContext}`;
 
       callLLM(
         planSystemPrompt,
@@ -1787,7 +1833,8 @@ Call the submit_plan tool with the subtasks. If tool calling is unavailable, out
         0,
         { tier: "lite", tool: SELECT_TO_AI_TOOLS.TOOL_DEFS.submit_plan },
       );
-    });
+      },
+    );
   }
 
   /** Advances the checklist to the next subtask (never past the end). */
@@ -3370,36 +3417,20 @@ ${(function () {
   // ==========================================
 
   function parseDataUrl(dataUrl) {
-    if (!dataUrl) return null;
-    const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-    if (match) {
-      return {
-        mediaType: match[1],
-        base64Data: match[2],
-      };
-    }
-    return null;
+    return SELECT_TO_AI_PROVIDER_PAYLOAD.parseDataUrl(dataUrl);
   }
 
   function supportsExplicitPromptCaching(provider, model) {
-    if (config.agentPromptCaching === false) return false;
-    const modelId = String(model || "").toLowerCase();
-    if (provider === "anthropic") return true;
-    if (provider !== "openrouter") return false;
-    return (
-      modelId.includes("anthropic/") ||
-      modelId.includes("claude") ||
-      modelId.includes("qwen/") ||
-      modelId.includes("qwen")
+    return SELECT_TO_AI_PROVIDER_PAYLOAD.supportsExplicitPromptCaching(
+      provider,
+      model,
+      config.agentPromptCaching,
     );
   }
 
   /** Joins a string-or-parts system prompt into one plain string. */
   function systemPromptToText(systemPrompt) {
-    if (Array.isArray(systemPrompt)) {
-      return systemPrompt.map((part) => part.text || "").join("");
-    }
-    return String(systemPrompt || "");
+    return SELECT_TO_AI_PROVIDER_PAYLOAD.systemPromptToText(systemPrompt);
   }
 
   /**
@@ -3411,57 +3442,30 @@ ${(function () {
    * block (the only stable region of the legacy prompts) as cacheable.
    */
   function splitSystemPromptForCaching(systemPrompt) {
-    if (Array.isArray(systemPrompt)) {
-      return systemPrompt.filter(
-        (part) => part && part.text && part.text.trim().length > 0,
-      );
-    }
-    const text = String(systemPrompt || "");
-    const stableBlock = formatBrowserCapabilityPrompt();
-    const idx = text.indexOf(stableBlock);
-    if (idx === -1) {
-      return [{ text, cacheable: false }];
-    }
-
-    return [
-      { text: text.slice(0, idx), cacheable: false },
-      { text: stableBlock, cacheable: true },
-      { text: text.slice(idx + stableBlock.length), cacheable: false },
-    ].filter((part) => part.text && part.text.trim().length > 0);
+    return SELECT_TO_AI_PROVIDER_PAYLOAD.splitSystemPromptForCaching(
+      systemPrompt,
+      formatBrowserCapabilityPrompt(),
+    );
   }
 
   function buildAnthropicSystemContent(systemPrompt, provider, model) {
-    if (!supportsExplicitPromptCaching(provider, model)) {
-      // Static-first ordering still helps providers with automatic
-      // prefix caching even when explicit cache_control is unsupported.
-      return systemPromptToText(systemPrompt);
-    }
-    return splitSystemPromptForCaching(systemPrompt).map((part) => {
-      const block = { type: "text", text: part.text };
-      if (part.cacheable) {
-        block.cache_control = { type: "ephemeral" };
-      }
-      return block;
-    });
+    return SELECT_TO_AI_PROVIDER_PAYLOAD.buildAnthropicSystemContent(
+      systemPrompt,
+      provider,
+      model,
+      config.agentPromptCaching,
+      formatBrowserCapabilityPrompt(),
+    );
   }
 
   function buildOpenAICompatibleSystemMessage(systemPrompt, provider, model) {
-    if (!supportsExplicitPromptCaching(provider, model)) {
-      // Plain string, static half first: automatic-prefix-caching friendly
-      // (OpenAI, DeepSeek, Groq, and most gateways cache shared prefixes).
-      return { role: "system", content: systemPromptToText(systemPrompt) };
-    }
-
-    return {
-      role: "system",
-      content: splitSystemPromptForCaching(systemPrompt).map((part) => {
-        const block = { type: "text", text: part.text };
-        if (part.cacheable) {
-          block.cache_control = { type: "ephemeral" };
-        }
-        return block;
-      }),
-    };
+    return SELECT_TO_AI_PROVIDER_PAYLOAD.buildOpenAICompatibleSystemMessage(
+      systemPrompt,
+      provider,
+      model,
+      config.agentPromptCaching,
+      formatBrowserCapabilityPrompt(),
+    );
   }
 
   function applyPromptCachingOptions(body, headers, provider, model) {
@@ -3473,47 +3477,9 @@ ${(function () {
     }
   }
 
-  // Clean up API error messages (handling raw JSON objects/arrays or long stacks) (B9)
+  // Clean up API error messages (handling raw JSON objects/arrays or long stacks)
   function cleanErrorMessage(rawErrorText, status) {
-    if (!rawErrorText) return `API error (HTTP ${status || "unknown"})`;
-
-    let trimmed = rawErrorText.trim();
-    try {
-      // Un-wrap array if it's wrapped in square brackets (e.g. Google APIs or custom endpoints)
-      if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-        const arr = JSON.parse(trimmed);
-        if (arr && arr[0]) {
-          trimmed =
-            typeof arr[0] === "object"
-              ? JSON.stringify(arr[0])
-              : String(arr[0]);
-        }
-      }
-
-      const obj = JSON.parse(trimmed);
-
-      // Check nested error messages
-      if (obj.error) {
-        if (typeof obj.error === "object") {
-          if (obj.error.message) {
-            return obj.error.message;
-          }
-        } else if (typeof obj.error === "string") {
-          return obj.error;
-        }
-      }
-      if (obj.message) {
-        return obj.message;
-      }
-    } catch (e) {
-      // Not a JSON, fallback to plain text processing
-    }
-
-    // If it's plain text but too long, truncate it
-    if (rawErrorText.length > 200) {
-      return rawErrorText.substring(0, 200) + "...";
-    }
-    return rawErrorText;
+    return SELECT_TO_AI_PROVIDER_PAYLOAD.cleanErrorMessage(rawErrorText, status);
   }
 
   /**
@@ -4069,6 +4035,9 @@ ${(function () {
     try {
       port.postMessage({
         url: endpoint,
+        // The background policy needs the provider to know which extra
+        // gateway origin (the hosted relay) this request may target.
+        provider: provider,
         options: {
           method: "POST",
           headers: headers,
