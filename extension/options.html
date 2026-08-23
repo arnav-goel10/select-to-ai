@@ -1323,6 +1323,7 @@
                 <div class="form-group full-width">
                   <label for="agentActiveProvider">Active API Gateway</label>
                   <select id="agentActiveProvider">
+                    <option value="hosted">Hosted (free, no API key)</option>
                     <option value="openrouter">OpenRouter (Recommended)</option>
                     <option value="opencode">OpenCode Zen</option>
                     <option value="anthropic">Anthropic Claude API</option>
@@ -1346,6 +1347,22 @@
                     id="agentCustomUrl"
                     placeholder="http://127.0.0.1:11434/v1"
                   />
+                </div>
+
+                <div class="form-group full-width" id="hosted-url-group" style="display: none">
+                  <label for="agentHostedUrl">Relay URL</label>
+                  <input
+                    type="text"
+                    id="agentHostedUrl"
+                    placeholder="http://localhost:8787/v1"
+                  />
+                  <p class="muted-note">
+                    Hosted mode needs no API key: requests relay through the
+                    server at this URL (default: the bundled local relay,
+                    `node relay/server.js`). The relay injects its own
+                    upstream credential; nothing about your browsing is
+                    stored there.
+                  </p>
                 </div>
               </div>
 
@@ -2162,12 +2179,15 @@
           <h2 class="onboarding-title">Connect a Model Provider</h2>
           <p class="onboarding-desc">
             Pick the gateway the agent should call and paste its API key. Keys
-            are stored only in this browser's local storage.
+            are stored only in this browser's local storage. Choose
+            <strong>Hosted (free)</strong> to skip keys entirely: the agent
+            relays through a small server you point it at.
           </p>
           <div class="onboarding-form">
             <div class="form-group">
               <label for="wizardProvider">Provider</label>
               <select id="wizardProvider">
+                <option value="hosted">Hosted (free, no API key)</option>
                 <option value="openrouter">OpenRouter (Recommended)</option>
                 <option value="opencode">OpenCode Zen</option>
                 <option value="anthropic">Anthropic Claude API</option>
@@ -2188,6 +2208,14 @@
                 id="wizardApiKey"
                 placeholder="Paste your API key"
                 aria-label="Provider API key"
+              />
+            </div>
+            <div class="form-group" id="wizardHostedUrlGroup" style="display: none">
+              <label for="wizardHostedUrl">Relay URL</label>
+              <input
+                type="text"
+                id="wizardHostedUrl"
+                placeholder="http://localhost:8787/v1"
               />
             </div>
             <div class="form-group" id="wizardUrlGroup" style="display: none">

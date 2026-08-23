@@ -17,6 +17,10 @@
     activeProvider: "opencode",
     model: "deepseek-v4-flash-free",
     customUrl: "http://localhost:11434/v1",
+    // Hosted ("no key") mode relays through a small OpenAI-compatible relay
+    // server. The default targets the bundled zero-dependency relay
+    // (relay/server.js) running on the user's own machine.
+    hostedRelayUrl: "http://localhost:8787/v1",
     maxSteps: 25,
     elementLimit: 60,
     historyLimit: 12,
@@ -45,6 +49,11 @@
     together: { keyName: "agentTogetherKey", baseUrl: "https://api.together.xyz/v1" },
     xai: { keyName: "agentXaiKey", baseUrl: "https://api.x.ai/v1" },
     opencode: { keyName: "agentOpencodeKey", baseUrl: "https://opencode.ai/zen/v1" },
+    // Hosted mode has no user key: the relay injects its own upstream
+    // credential. The extension treats it like a custom OpenAI-compatible
+    // gateway whose URL comes from AGENT_DEFAULTS.hostedRelayUrl (user
+    // override stored under agentHostedUrl).
+    hosted: { keyName: "", baseUrl: "" },
   });
 
   const PROVIDER_FALLBACK_MODELS = Object.freeze({
@@ -70,6 +79,10 @@
       lite: "deepseek-v4-flash-free",
       pro: "deepseek-v4-flash-free",
     },
+    hosted: {
+      lite: "deepseek-v4-flash-free",
+      pro: "deepseek-v4-flash-free",
+    },
     custom: { lite: "llama3", pro: "llama3" },
   });
 
@@ -89,6 +102,10 @@
       "deepseek-v4-flash-free",
       "deepseek-v4-pro",
       "meta-llama/llama-3.3-70b-instruct:free",
+    ],
+    hosted: [
+      "deepseek-v4-flash-free",
+      "deepseek-v4-pro",
     ],
     anthropic: [
       "claude-haiku-4-5",

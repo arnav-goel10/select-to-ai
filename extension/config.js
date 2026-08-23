@@ -143,6 +143,7 @@ const CONFIG = {
             'showAgent',
             'agentActiveProvider',
             'agentCustomUrl',
+            'agentHostedUrl',
             'agentModel',
             'agentMaxSteps',
             'agentSystemPrompt',
