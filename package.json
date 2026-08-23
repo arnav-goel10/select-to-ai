@@ -1,6 +1,6 @@
 {
     "name": "select-to-ai-extension",
-    "version": "3.4.1",
+    "version": "4.1.0",
     "private": true,
     "description": "Privacy-first Chrome extension for sending selected text to AI assistants and running bounded browser workflows.",
     "scripts": {

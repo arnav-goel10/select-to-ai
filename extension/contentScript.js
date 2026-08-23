@@ -189,7 +189,6 @@
             insertMode = 'append';
         }
 
-        console.log(`Select to AI: Processing text for ${hostname} (Mode: ${insertMode})`);
 
         waitForChain(adapter.input).then((element) => {
             window.focus();
@@ -277,7 +276,6 @@
                 else if (hostname.includes(HOSTS.PERPLEXITY)) delay = DELAYS.PERPLEXITY;
                 else if (hostname.includes(HOSTS.CLAUDE)) delay = DELAYS.CLAUDE;
 
-                console.log(`Select to AI: Auto-sending in ${delay}ms...`);
 
                 setTimeout(() => {
                     attemptSend(element);
@@ -312,7 +310,6 @@
 
             verifySendWorked(element, probeCountBefore).then((sent) => {
                 if (sent) {
-                    console.log("Select to AI: send verified (composer emptied or message bubble appeared).");
                     return;
                 }
                 if (!isRetry) {

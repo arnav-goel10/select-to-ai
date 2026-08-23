@@ -242,15 +242,7 @@ You are running inside a Chrome extension side panel. The user is chatting with 
   // Suggestion prompt clicks. The cards are (re)rendered from the active
   // tab's context by SELECT_TO_AI_SUGGESTIONS so a first run is one click;
   // the click handler here fills the input, matching the old behavior.
-  document.querySelectorAll(".suggestion-card").forEach((card) => {
-    card.addEventListener("click", () => {
-      taskInput.value = card.getAttribute("data-prompt");
-      taskInput.focus();
-      adjustTextareaHeight();
-    });
-  });
-
-  const suggestionsGrid = document.querySelector(".suggestions-grid");
+  const suggestionsGrid = document.getElementById("suggestionsGrid");
   if (
     suggestionsGrid &&
     window.SELECT_TO_AI_SUGGESTIONS &&
@@ -264,6 +256,11 @@ You are running inside a Chrome extension side panel. The user is chatting with 
         adjustTextareaHeight();
       },
     );
+    // Staggered entrance: each card rises in 70ms after the previous one.
+    [...suggestionsGrid.children].forEach((card, i) => {
+      card.classList.add("anim-rise");
+      card.style.setProperty("--anim-delay", `${120 + i * 70}ms`);
+    });
   }
 
   // Enter key to send prompt
@@ -2639,6 +2636,32 @@ ${pageText || "[No page text available]"}`;
           renderRecentSessions();
         });
       });
+    }
+
+    // Task-history status sync: mark the newest matching "running" entry
+    // with this run's outcome so popup history stays truthful. Best-effort.
+    try {
+      const historyStatus =
+        statusState === "success"
+          ? "success"
+          : statusState === "error"
+            ? "error"
+            : "stopped";
+      const detail = String(reason || "").slice(0, 300);
+      chrome.storage.local.get("taskHistory", (res) => {
+        const history = Array.isArray(res.taskHistory) ? res.taskHistory : [];
+        const idx = history.findIndex(
+          (h) =>
+            h.status === "running" &&
+            h.route === "agent" &&
+            (h.task || "").slice(0, 200) === String(currentTask || "").slice(0, 200),
+        );
+        if (idx === -1) return;
+        history[idx] = { ...history[idx], status: historyStatus, detail };
+        chrome.storage.local.set({ taskHistory: history });
+      });
+    } catch (_err) {
+      /* history is best-effort */
     }
 
     // Trigger notifications (F16)

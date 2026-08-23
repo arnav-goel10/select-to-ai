@@ -1,5 +1,20 @@
 # Changelog
 
+## 4.1.0 - 2026-08-24
+
+### Added
+
+- The popup is now the primary task surface: type anything and a live routing preview shows exactly where it goes (browser agent, question, or direct site open) before you press Enter, powered by the same deterministic router as the address bar. Enter runs it.
+- Task history: every popup run (agent tasks, questions, site opens, playbooks, routines) is recorded locally with its route and outcome; the newest entries appear in the popup and clicking one refills the composer. Agent runs sync their final status (success / failed / stopped) back into history automatically.
+- Design-system motion tokens: one easing family, shared durations, elevation scale, and entrance primitives (`anim-rise` / `anim-fade` / `anim-pop` with stagger support), applied across the agent page.
+
+### Changed
+
+- Agent page visual overhaul: the welcome screen drops the gradient-logo AI cliché for a calm typographic entry with a context kicker; suggestion cards get a quieter rest state with a springy hover lift; message bubbles, input dock, header, checklist, and log items all moved onto the shared token timings. Removed ~12 dead CSS rule blocks left over from earlier layouts.
+- Cleanup: removed leftover console.log statements from background/content/sidepanel scripts.
+
+144 unit tests, security benchmark 10/10, e2e 4 of 4.
+
 ## 3.4.1 - 2026-08-24
 
 ### Removed

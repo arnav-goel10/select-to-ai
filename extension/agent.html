@@ -53,10 +53,8 @@
             grid-template-columns: 1fr auto 1fr;
             align-items: center;
             padding: 10px 24px;
-            border-bottom: 1px solid var(--border-card);
-            background: var(--bg-card);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+            background: var(--bg);
             z-index: 100;
         }
 
@@ -167,48 +165,47 @@
             animation: fadeIn 0.4s ease-out forwards;
         }
 
-        .welcome-logo {
-            width: 54px;
-            height: 54px;
-            border-radius: 16px;
-            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
-            display: flex;
+        .welcome-kicker {
+            display: inline-flex;
             align-items: center;
-            justify-content: center;
-            color: #ffffff;
-            margin-bottom: 20px;
-            box-shadow: 0 8px 20px var(--accent-glow);
-            animation: pulseLogo 2.5s infinite alternate;
-        }
-
-        @keyframes pulseLogo {
-            0% { transform: scale(1); box-shadow: 0 8px 20px var(--accent-glow); }
-            100% { transform: scale(1.06); box-shadow: 0 10px 24px var(--accent); }
-        }
-
-        .welcome-logo svg {
-            transition: transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
-        }
-
-        .welcome-screen:hover .welcome-logo svg {
-            transform: rotate(360deg);
+            gap: 6px;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--accent);
+            background: var(--accent-glow);
+            border-radius: var(--radius-full);
+            padding: 5px 12px;
+            margin-bottom: 18px;
         }
 
         .welcome-title {
-            font-size: 21px;
+            font-size: 24px;
             font-weight: 700;
-            margin-bottom: 8px;
-            letter-spacing: -0.02em;
-            background: linear-gradient(135deg, var(--text-main) 30%, var(--accent) 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+            letter-spacing: -0.025em;
+            color: var(--text-main);
         }
 
         .welcome-desc {
             font-size: 13.5px;
             color: var(--text-muted);
-            margin-bottom: 28px;
-            line-height: 1.45;
+            margin-bottom: 26px;
+            line-height: 1.5;
+            max-width: 400px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .suggestions-caption {
+            font-size: 10.5px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            color: var(--text-muted);
+            opacity: 0.75;
+            margin-bottom: 10px;
         }
 
         .suggestions-grid {
@@ -219,43 +216,49 @@
         }
 
         .suggestion-card {
-            background-color: var(--bg-card);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid var(--border-card);
-            border-left: 4px solid var(--accent);
-            border-radius: 12px;
-            padding: 15px 20px;
+            background-color: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 14px 18px;
             font-size: 13.5px;
             font-weight: 500;
             text-align: left;
             cursor: pointer;
-            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            transition:
+                border-color var(--dur-fast) ease,
+                background-color var(--dur-fast) ease,
+                transform var(--dur-base) var(--ease-spring),
+                box-shadow var(--dur-base) ease;
             color: var(--text-main);
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
             display: flex;
             align-items: center;
             justify-content: space-between;
+            gap: 12px;
         }
 
         .suggestion-card:hover {
             border-color: var(--accent);
-            border-left-color: var(--accent);
-            background-color: var(--border-card);
-            transform: translateX(4px);
-            box-shadow: 0 6px 16px var(--accent-glow);
+            background-color: var(--bg);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .suggestion-card:active {
+            transform: translateY(0) scale(0.99);
+            transition-duration: var(--dur-fast);
         }
 
         .suggestion-card::after {
             content: '→';
             font-size: 15px;
             color: var(--accent);
-            opacity: 0.6;
-            transition: transform 0.25s ease, opacity 0.25s ease;
+            opacity: 0;
+            transform: translateX(-6px);
+            transition: transform var(--dur-base) var(--ease-out), opacity var(--dur-base) ease;
         }
 
         .suggestion-card:hover::after {
-            transform: translateX(4px);
+            transform: translateX(0);
             opacity: 1;
         }
 
@@ -273,13 +276,7 @@
         .message-bubble {
             display: flex;
             gap: 16px;
-            animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-            opacity: 0;
-            transform: translateY(16px);
-        }
-
-        @keyframes slideUp {
-            to { opacity: 1; transform: translateY(0); }
+            animation: ui-rise var(--dur-slow) var(--ease-out) both;
         }
 
         @keyframes fadeIn {
@@ -335,14 +332,12 @@
         }
 
         .message-bubble.user .bubble-content {
-            background-color: var(--chat-user-bg);
-            border: 1px solid var(--accent-glow);
+            background-color: var(--accent);
             border-radius: 18px 18px 4px 18px;
-            padding: 12px 18px;
+            padding: 11px 16px;
             font-size: 14px;
             line-height: 1.45;
-            color: var(--text-main);
-            box-shadow: 0 4px 12px var(--accent-glow);
+            color: var(--accent-contrast);
         }
 
         .message-bubble.assistant .bubble-content {
@@ -350,78 +345,7 @@
             font-size: 14px;
             line-height: 1.5;
             color: var(--text-main);
-        }
-
-        /* Expandable Thought Block (OpenWebUI details style) */
-        .thought-process-container {
-            border: 1px solid var(--border-card);
-            border-left: 3px solid var(--accent);
-            background-color: var(--thought-bg);
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
-            border-radius: 12px;
-            margin-bottom: 8px;
-            width: 100%;
-            overflow: hidden;
-            transition: border-color 0.3s;
-        }
-
-        .thought-process-container details summary::-webkit-details-marker {
-            display: none;
-        }
-        .thought-process-container details summary {
-            list-style: none;
-        }
-
-        .thought-summary {
-            padding: 12px 18px;
-            font-size: 13px;
-            font-weight: 600;
-            color: var(--accent);
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            user-select: none;
-            transition: background-color 0.2s;
-        }
-
-        .thought-summary::after {
-            content: '';
-            width: 6px;
-            height: 6px;
-            border-right: 2.5px solid var(--accent);
-            border-bottom: 2.5px solid var(--accent);
-            transform: rotate(45deg);
-            transition: transform 0.2s ease;
-            margin-right: 4px;
-        }
-
-        .thought-process-container details[open] .thought-summary::after {
-            transform: rotate(-135deg);
-        }
-
-        .thought-summary:hover {
-            background-color: var(--hover-overlay);
-        }
-
-        .thought-summary-status {
-            font-size: 11px;
-            font-weight: 500;
-            color: var(--text-muted);
-            margin-right: auto;
-            margin-left: 12px;
-        }
-
-        .thought-details-content {
-            padding: 0 18px 18px 18px;
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            border-top: 1px solid var(--border-card);
-        }
-
-        /* Inner Sub-Tasks Checklist */
+        }/* Inner Sub-Tasks Checklist */
         .checklist-panel {
             display: flex;
             flex-direction: column;
@@ -450,7 +374,7 @@
             width: 0%;
             height: 100%;
             background: linear-gradient(90deg, var(--planner) 0%, var(--validator) 100%);
-            transition: width 0.4s ease;
+            transition: width var(--dur-slow) var(--ease-out);
         }
 
         .checklist-items {
@@ -542,18 +466,13 @@
         .log-item {
             padding: 10px 12px;
             background: var(--hover-overlay);
-            border: 1px solid var(--border-card);
-            border-radius: 8px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
             font-size: 11.5px;
             display: flex;
             flex-direction: column;
             gap: 3px;
-            animation: logFadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-
-        @keyframes logFadeIn {
-            from { opacity: 0; transform: translateY(6px); }
-            to { opacity: 1; transform: translateY(0); }
+            animation: ui-fade var(--dur-base) ease-out both;
         }
 
 
@@ -620,28 +539,7 @@
             border-radius: 8px;
             border: 1px solid var(--border-card);
             line-height: 1.45;
-        }
-
-        .agent-run-status {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            color: var(--text-muted);
-            font-size: 13px;
-            line-height: 1.4;
-            padding: 2px 0;
-        }
-
-        .agent-run-status .status-dot {
-            width: 7px;
-            height: 7px;
-            border-radius: 999px;
-            background: var(--accent);
-            box-shadow: 0 0 0 4px var(--accent-glow);
-            animation: pulseDot 1.2s ease-in-out infinite alternate;
-        }
-
-        @keyframes pulseDot {
+        }@keyframes pulseDot {
             from { opacity: 0.55; transform: scale(0.9); }
             to { opacity: 1; transform: scale(1.05); }
         }
@@ -659,20 +557,7 @@
 
         @keyframes cursorBlink {
             50% { opacity: 0; }
-        }
-
-        /* Current Action Footer */
-        .assistant-status-footer {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            font-size: 13px;
-            font-weight: 500;
-            color: var(--accent);
-            padding: 4px 0;
-        }
-
-        /* Waveform Jumping Status animation */
+        }/* Waveform Jumping Status animation */
         .status-wave {
             display: flex;
             align-items: center;
@@ -790,23 +675,23 @@
 
         /* OpenWebUI Chat input box container */
         .chat-input-box {
-            background-color: var(--input-container-bg);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid var(--border-card);
-            border-radius: 20px;
+            background-color: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 22px;
             padding: 6px 10px 6px 16px;
             display: flex;
             align-items: center;
             gap: 12px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: var(--shadow-md);
+            transition:
+                border-color var(--dur-fast) ease,
+                box-shadow var(--dur-base) ease,
+                transform var(--dur-base) var(--ease-out);
         }
 
         .chat-input-box:focus-within {
             border-color: var(--accent);
-            box-shadow: 0 10px 30px var(--accent-glow), 0 2px 8px rgba(0, 0, 0, 0.05);
-            transform: translateY(-1px);
+            box-shadow: 0 0 0 3px var(--accent-glow), var(--shadow-md);
         }
 
         textarea {
@@ -837,21 +722,29 @@
             height: 34px;
             border-radius: 50%;
             background-color: var(--accent);
-            color: #ffffff;
+            color: var(--accent-contrast);
             border: none;
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
             flex-shrink: 0;
-            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            transition:
+                transform var(--dur-base) var(--ease-spring),
+                background-color var(--dur-fast) ease,
+                box-shadow var(--dur-base) ease;
             align-self: center;
-            box-shadow: 0 4px 10px var(--accent-glow);
+            box-shadow: var(--shadow-sm);
         }
 
         .action-circle-btn:hover {
-            transform: scale(1.08);
-            box-shadow: 0 6px 14px var(--accent);
+            transform: scale(1.07);
+            box-shadow: var(--shadow-md);
+        }
+
+        .action-circle-btn:active {
+            transform: scale(0.96);
+            transition-duration: var(--dur-fast);
         }
 
         .action-circle-btn:disabled {
@@ -1447,36 +1340,16 @@
         <div class="chat-container" id="chatContainer">
             
             <!-- Welcome Screen Home -->
-            <div class="welcome-screen" id="welcomeScreen">
-                <div class="welcome-logo">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                        <circle cx="12" cy="12" r="10" />
-                        <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
-                    </svg>
-                </div>
-                <h2 class="welcome-title">How can I assist you on this page?</h2>
-                <p class="welcome-desc">Input an instruction. The browser agent will plan a checklist, interact with page components, and validate the output.</p>
-                
-                <div class="suggestions-grid">
-                    <button type="button" class="suggestion-card" data-prompt="Find the main headline on this page and summarize it.">
-                        <span class="suggestion-label">
-                            <span class="icon" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg></span>
-                            "Find the main headline on this page..."
-                        </span>
-                    </button>
-                    <button type="button" class="suggestion-card" data-prompt="Search this page for contact information and extract it.">
-                        <span class="suggestion-label">
-                            <span class="icon" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg></span>
-                            "Search this page for contact details..."
-                        </span>
-                    </button>
-                    <button type="button" class="suggestion-card" data-prompt="Scroll to the bottom of the page, click the FAQ section, and retrieve information.">
-                        <span class="suggestion-label">
-                            <span class="icon" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg></span>
-                            "Scroll down, open FAQ, and fetch details..."
-                        </span>
-                    </button>
-                </div>
+            <div class="welcome-screen anim-rise" id="welcomeScreen">
+                <span class="welcome-kicker">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                    Browser Agent
+                </span>
+                <h2 class="welcome-title">What should I do on this page?</h2>
+                <p class="welcome-desc">Describe a task. The agent plans it into a checklist, acts step by step in your browser, and validates its answer against the page before calling it done.</p>
+
+                <div class="suggestions-caption">Try one of these</div>
+                <div class="suggestions-grid" id="suggestionsGrid"><!-- populated from the active tab by suggestions.js --></div>
             </div>
 
             <!-- Dynamic Chat Bubbles will be loaded here by agent.js -->

@@ -6,7 +6,6 @@
     }
     window.selectToAiAgentInitialized = true;
 
-    console.log("Select to AI: Agent Content Script injected and running.");
 
     // =========================================================================
     // State
@@ -826,7 +825,6 @@
             overlayContainer.appendChild(fragment);
         }
 
-        console.log(`Select to AI: Found ${resultList.length} top-scored interactive elements.`);
         return resultList;
     }
 

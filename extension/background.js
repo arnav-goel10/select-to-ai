@@ -89,7 +89,6 @@ function updateCache() {
 
         cachedSettings.singleMode = (activeCount === 1);
 
-        console.log("Settings Cache Updated:", cachedSettings);
         updateContextMenus();
     });
 }

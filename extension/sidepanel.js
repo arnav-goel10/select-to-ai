@@ -34,7 +34,6 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
 // Handle manual switching via dropdown
 selector.addEventListener('change', () => {
     const url = selector.value;
-    console.log("Switching service to:", url);
     iframe.src = url;
 
     // Persist the change so it becomes the new default
@@ -62,7 +61,6 @@ redoBtn.addEventListener('click', () => {
         const contextMsg = `Context: ${tab.url}\n\n`;
         const currentServiceUrl = iframe.src;
 
-        console.log("Sending Context:", contextMsg);
 
         // Update storage to trigger content script injection
         chrome.storage.local.set({
@@ -157,7 +155,6 @@ function updateState(state) {
 
     // Only reload if URL changed
     if (iframe.src !== state.url) {
-        console.log("Loading URL:", state.url);
         iframe.src = state.url;
     }
 
@@ -218,7 +215,6 @@ Promise.all([
                 chrome.storage.local.get([storageKey], (res) => {
                     const savedUrl = res[storageKey];
                     if (savedUrl && savedUrl.includes(hostname)) {
-                        console.log("Restoring session on direct open:", savedUrl);
                         iframe.src = savedUrl;
                     } else {
                         iframe.src = defaultUrl;
