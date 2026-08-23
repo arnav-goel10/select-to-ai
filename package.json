@@ -1,22 +1,23 @@
 {
-  "name": "select-to-ai-extension",
-  "version": "3.3.1",
-  "private": true,
-  "description": "Privacy-first Chrome extension for sending selected text to AI assistants and running bounded browser workflows.",
-  "scripts": {
-    "check": "npm run check:syntax && npm run check:manifest && npm test && npm run benchmark",
-    "check:syntax": "node scripts/check-syntax.mjs",
-    "check:manifest": "node scripts/validate-manifest.mjs",
-    "test": "node --test tests/unit/*.test.js",
-    "benchmark": "node tests/benchmark/security-benchmark.js",
-    "bench:e2e": "node tests/e2e/run-e2e.js",
-    "package": "node scripts/package-extension.mjs"
-  },
-  "engines": {
-    "node": ">=20"
-  },
-  "license": "MIT",
-  "devDependencies": {
-    "puppeteer": "^25.7.0"
-  }
+    "name": "select-to-ai-extension",
+    "version": "4.1.0",
+    "private": true,
+    "description": "Privacy-first Chrome extension for sending selected text to AI assistants and running bounded browser workflows.",
+    "scripts": {
+        "check": "npm run check:syntax && npm run check:manifest && npm test && npm run benchmark",
+        "check:syntax": "node scripts/check-syntax.mjs",
+        "check:manifest": "node scripts/validate-manifest.mjs",
+        "test": "node --test tests/unit/*.test.js",
+        "benchmark": "node tests/benchmark/security-benchmark.js",
+        "bench:e2e": "node tests/e2e/run-e2e.js",
+        "bench:agent": "node scripts/benchmark-agent.js",
+        "package": "node scripts/package-extension.mjs"
+    },
+    "engines": {
+        "node": ">=20"
+    },
+    "license": "MIT",
+    "devDependencies": {
+        "puppeteer": "^25.7.0"
+    }
 }

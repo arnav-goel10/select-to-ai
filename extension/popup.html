@@ -8,114 +8,284 @@
     <style>
         body {
             font-family: var(--font-sans);
-            width: 280px;
-            padding: var(--space-4);
+            width: 340px;
+            padding: 14px;
             background-color: var(--bg);
             color: var(--text);
             margin: 0;
         }
 
-        h1 {
-            margin: 0 0 var(--space-4) 0;
-            font-size: 15px;
-            font-weight: 600;
-            padding-bottom: var(--space-2);
-            border-bottom: 1px solid var(--border);
+        /* ---------- Header ---------- */
+        .popup-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            margin-bottom: 12px;
         }
 
-        /* Launcher buttons */
-        .launcher-btn {
-            width: 100%;
-            padding: 11px 14px;
-            margin-bottom: var(--space-2);
-            border: 1px solid var(--border);
-            border-radius: var(--radius-md);
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14.5px;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+        }
+
+        .brand-mark {
+            width: 22px;
+            height: 22px;
+            border-radius: 7px;
+            background: var(--accent);
+            color: var(--accent-contrast);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 800;
+        }
+
+        /* ---------- Task composer (the hero) ---------- */
+        .task-composer {
             background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 10px;
+            transition: border-color var(--dur-fast) ease, box-shadow var(--dur-base) ease;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .task-composer:focus-within {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-glow), var(--shadow-sm);
+        }
+
+        .task-input-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+        }
+
+        #taskInput {
+            flex: 1;
+            border: none;
+            background: none;
             color: var(--text);
             font-family: var(--font-sans);
             font-size: 13.5px;
-            font-weight: 600;
+            line-height: 1.45;
+            resize: none;
+            outline: none;
+            min-height: 38px;
+            max-height: 110px;
+        }
+
+        #taskInput::placeholder {
+            color: var(--text-muted);
+            opacity: 0.8;
+        }
+
+        .run-btn {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: var(--accent);
+            color: var(--accent-contrast);
+            border: none;
             cursor: pointer;
             display: flex;
             align-items: center;
-            gap: 10px;
-            text-align: left;
-            transition: background 0.15s, border-color 0.15s;
+            justify-content: center;
+            flex-shrink: 0;
+            transition:
+                transform var(--dur-base) var(--ease-spring),
+                background-color var(--dur-fast) ease,
+                opacity var(--dur-fast) ease;
         }
 
-        .launcher-btn:hover {
-            background: var(--surface-2);
-            border-color: var(--border-strong);
-        }
+        .run-btn:hover { transform: scale(1.08); }
+        .run-btn:active { transform: scale(0.94); }
+        .run-btn:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
 
-        .launcher-btn .icon {
-            color: var(--accent);
-        }
-
-        .launcher-btn.primary {
-            background: var(--accent);
-            border-color: var(--accent);
-            color: var(--accent-contrast);
-        }
-
-        .launcher-btn.primary .icon {
-            color: var(--accent-contrast);
-        }
-
-        .launcher-btn.primary:hover {
-            background: var(--accent-hover);
-            border-color: var(--accent-hover);
-        }
-
-        .launcher-hint {
-            font-size: 11px;
+        /* Routing preview row */
+        .route-preview {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid var(--border);
+            font-size: 11.5px;
             color: var(--text-muted);
-            margin: -4px 0 var(--space-2) 0;
-            padding-left: 2px;
+            min-height: 26px;
+        }
+
+        .route-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+            padding: 2px 8px;
+            border-radius: var(--radius-full);
+            background: var(--accent-glow);
+            color: var(--accent);
+            white-space: nowrap;
+        }
+
+        .route-preview .route-desc {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .composer-error {
+            display: none;
+            margin-top: 8px;
+            font-size: 11.5px;
+            color: var(--danger);
             line-height: 1.35;
         }
 
-        .divider {
-            border-top: 1px solid var(--border);
-            margin: var(--space-3) 0;
+        .composer-error.visible { display: block; animation: ui-fade var(--dur-base) ease-out both; }
+
+        /* ---------- Recent tasks ---------- */
+        .history-section { margin-top: 14px; }
+
+        .history-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
         }
 
-        .field-row {
+        .section-label {
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.07em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+
+        .clear-history-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 11px;
+            cursor: pointer;
+            padding: 2px 4px;
+            border-radius: var(--radius-sm);
+            text-decoration: underline;
+            font-family: var(--font-sans);
+        }
+
+        .clear-history-btn:hover { color: var(--danger); }
+
+        .history-list {
             display: flex;
             flex-direction: column;
-            gap: var(--space-1);
+            gap: 4px;
+            max-height: 168px;
+            overflow-y: auto;
         }
 
-        .field-row label {
-            font-size: 12px;
-            font-weight: 600;
-            color: var(--text);
+        .history-item {
             display: flex;
             align-items: center;
+            gap: 8px;
+            padding: 7px 9px;
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            border: 1px solid transparent;
+            transition: background-color var(--dur-fast) ease, border-color var(--dur-fast) ease;
         }
 
-        select {
-            width: 100%;
-            padding: 8px 10px;
-            border-radius: var(--radius-sm);
-            border: 1px solid var(--border);
-            background-color: var(--surface);
-            color: var(--text);
-            font-family: var(--font-sans);
-            font-size: 13px;
+        .history-item:hover {
+            background: var(--surface);
+            border-color: var(--border);
         }
 
-        .footer-note {
-            margin-top: var(--space-3);
-            font-size: 10.5px;
+        .history-item .h-icon {
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 5px;
+            font-size: 9px;
+            font-weight: 800;
+            letter-spacing: 0.02em;
+        }
+
+        .h-icon.route-agent { background: var(--accent-glow); color: var(--accent); }
+        .h-icon.route-question { background: var(--success-bg); color: var(--success); }
+        .h-icon.route-site { background: var(--warning-bg); color: var(--warning); }
+        .h-icon.route-playbook, .h-icon.route-routine, .h-icon.route-quick-action {
+            background: var(--surface-2); color: var(--text-muted);
+        }
+
+        .history-item .h-text {
+            flex: 1;
+            font-size: 12.5px;
+            line-height: 1.3;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .history-item .h-status {
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .h-status.success { background: var(--success); }
+        .h-status.error { background: var(--danger); }
+        .h-status.running { background: var(--accent); animation: pulseDot 1s infinite alternate; }
+        .h-status.stopped, .h-status.needs-input { background: var(--text-muted); }
+
+        @keyframes pulseDot { from { opacity: 0.4; } to { opacity: 1; } }
+
+        .history-empty {
+            font-size: 12px;
             color: var(--text-muted);
-            text-align: center;
+            padding: 8px 2px;
+            line-height: 1.4;
         }
 
-        /* Theme toggle (sun/moon) */
+        /* ---------- Footer links ---------- */
+        .popup-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 14px;
+            padding-top: 10px;
+            border-top: 1px solid var(--border);
+        }
+
+        .footer-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 11.5px;
+            font-weight: 600;
+            cursor: pointer;
+            padding: 4px 6px;
+            border-radius: var(--radius-sm);
+            font-family: var(--font-sans);
+            transition: color var(--dur-fast) ease, background-color var(--dur-fast) ease;
+        }
+
+        .footer-link:hover { color: var(--text); background: var(--surface); }
+        .footer-link.primary-link { color: var(--accent); }
+
+        /* Theme toggle (kept from before) */
         .theme-toggle {
             background: none;
             border: none;
@@ -126,201 +296,86 @@
             line-height: 0;
         }
 
-        .sun-and-moon> :is(.moon, .sun, .sun-beams) {
-            transform-origin: center center;
-        }
-
-        .sun-and-moon> :is(.moon, .sun) {
-            fill: var(--text);
-        }
-
-        .theme-toggle:is(:hover, :focus-visible)>.sun-and-moon> :is(.moon, .sun) {
-            fill: var(--accent);
-        }
-
-        .sun-and-moon>.sun-beams {
-            stroke: var(--text);
-            stroke-width: 2px;
-        }
-
-        .theme-toggle:is(:hover, :focus-visible) .sun-and-moon>.sun-beams {
-            stroke: var(--accent);
-        }
-
-        [data-theme="dark"] .sun-and-moon>.sun {
-            transform: scale(1.75);
-        }
-
-        [data-theme="dark"] .sun-and-moon>.sun-beams {
-            opacity: 0;
-        }
-
-        [data-theme="dark"] .sun-and-moon>.moon>circle {
-            transform: translateX(-7px);
-        }
-
+        .sun-and-moon> :is(.moon, .sun, .sun-beams) { transform-origin: center center; }
+        .sun-and-moon> :is(.moon, .sun) { fill: var(--text); }
+        .theme-toggle:is(:hover, :focus-visible)>.sun-and-moon> :is(.moon, .sun) { fill: var(--accent); }
+        .sun-and-moon>.sun-beams { stroke: var(--text); stroke-width: 2px; }
+        .theme-toggle:is(:hover, :focus-visible) .sun-and-moon>.sun-beams { stroke: var(--accent); }
+        [data-theme="dark"] .sun-and-moon>.sun { transform: scale(1.75); }
+        [data-theme="dark"] .sun-and-moon>.sun-beams { opacity: 0; }
+        [data-theme="dark"] .sun-and-moon>.moon>circle { transform: translateX(-7px); }
         @supports (cx: 1) {
-            [data-theme="dark"] .sun-and-moon>.moon>circle {
-                transform: translateX(0);
-                cx: 17;
-            }
+            [data-theme="dark"] .sun-and-moon>.moon>circle { transform: translateX(0); cx: 17; }
         }
-
-        .sun-and-moon>.sun {
-            transition: transform .5s cubic-bezier(.5, 1.25, .75, 1.25);
-        }
-
-        .sun-and-moon>.sun-beams {
-            transition: transform .5s cubic-bezier(.5, 1.5, .75, 1.25), opacity .5s cubic-bezier(.25, 0, .3, 1);
-        }
-
-        .sun-and-moon .moon>circle {
-            transition: transform .25s cubic-bezier(0, 0, 0, 1);
-        }
-
-        @supports (cx: 1) {
-            .sun-and-moon .moon>circle {
-                transition: cx .25s cubic-bezier(0, 0, 0, 1);
-            }
-        }
-
-        /* Tooltip */
-        .tooltip-container {
-            display: inline-flex;
-            align-items: center;
-            margin-left: 6px;
-            position: relative;
-        }
-
-        .info-icon {
-            width: 14px;
-            height: 14px;
-            color: var(--text-muted);
-            cursor: help;
-            transition: color 0.2s;
-        }
-
-        .info-icon:hover {
-            color: var(--text);
-        }
-
-        .tooltip-text {
-            visibility: hidden;
-            width: 200px;
-            background-color: var(--surface-2);
-            color: var(--text);
-            border: 1px solid var(--border);
-            text-align: center;
-            border-radius: var(--radius-sm);
-            padding: 8px;
-            position: absolute;
-            z-index: 100;
-            bottom: 125%;
-            left: 50%;
-            margin-left: -100px;
-            opacity: 0;
-            transition: opacity 0.3s, transform 0.3s;
-            transform: translateY(5px);
-            font-size: 12px;
-            font-weight: normal;
-            line-height: 1.4;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            pointer-events: none;
-        }
-
-        .tooltip-container:hover .tooltip-text {
-            visibility: visible;
-            opacity: 1;
-            transform: translateY(0);
-        }
+        .sun-and-moon>.sun { transition: transform .5s cubic-bezier(.5, 1.25, .75, 1.25); }
+        .sun-and-moon>.sun-beams { transition: transform .5s cubic-bezier(.5, 1.5, .75, 1.25), opacity .5s cubic-bezier(.25, 0, .3, 1); }
+        .sun-and-moon .moon>circle { transition: transform .25s cubic-bezier(0, 0, 0, 1); }
+        @supports (cx: 1) { .sun-and-moon .moon>circle { transition: cx .25s cubic-bezier(0, 0, 0, 1); } }
     </style>
 </head>
 
 <body>
-    <h1>
-        Select to AI
-        <button class="theme-toggle" id="theme-toggle" title="Toggle light and dark theme" aria-label="Toggle color theme"
-            aria-live="polite">
-            <svg class="sun-and-moon" aria-hidden="true" width="22" height="22" viewBox="0 0 24 24">
+    <div class="popup-header anim-fade">
+        <div class="brand"><span class="brand-mark">S</span> Select to AI</div>
+        <button class="theme-toggle" id="theme-toggle" title="Toggle light and dark theme"
+            aria-label="Toggle color theme" aria-live="polite">
+            <svg class="sun-and-moon" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24">
                 <mask class="moon" id="moon-mask">
                     <rect x="0" y="0" width="100%" height="100%" fill="white" />
                     <circle cx="24" cy="10" r="6" fill="black" />
                 </mask>
                 <circle class="sun" cx="12" cy="12" r="6" mask="url(#moon-mask)" fill="currentColor" />
                 <g class="sun-beams" stroke="currentColor">
-                    <line x1="12" y1="1" x2="12" y2="3" />
-                    <line x1="12" y1="21" x2="12" y2="23" />
-                    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-                    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-                    <line x1="1" y1="12" x2="3" y2="12" />
-                    <line x1="21" y1="12" x2="23" y2="12" />
-                    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-                    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                    <line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" />
+                    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                    <line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" />
+                    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
                 </g>
             </svg>
         </button>
-    </h1>
-
-    <button id="openSidebarBtn" class="launcher-btn primary">
-        <span class="icon" aria-hidden="true">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <line x1="9" y1="3" x2="9" y2="21" />
-            </svg>
-        </span>
-        Open Sidebar
-    </button>
-
-    <button id="openAgentBtn" class="launcher-btn">
-        <span class="icon" aria-hidden="true">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10" />
-                <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
-            </svg>
-        </span>
-        <span id="openAgentLabel">Open Browser Agent</span>
-    </button>
-    <div class="launcher-hint u-hidden" id="agentDisabledHint">
-        The browser agent is off. Opening Settings lets you enable it and add an API key.
     </div>
 
-    <button id="openOptionsBtn" class="launcher-btn">
-        <span class="icon" aria-hidden="true">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="3" />
-                <path
-                    d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
-        </span>
-        Settings
-    </button>
-
-    <div class="divider" role="presentation"></div>
-
-    <div class="field-row">
-        <label for="openingMode">
-            Opening mode
-            <span class="tooltip-container" tabindex="0" aria-label="Opening mode help">
-                <svg class="info-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                    <path
-                        d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" />
-                </svg>
-                <span class="tooltip-text">Choose whether assistants open in the sidebar or a new tab.</span>
-            </span>
-        </label>
-        <select id="openingMode" aria-label="Assistant opening mode">
-            <option value="sidePanel">Sidebar</option>
-            <option value="tab">New Tab</option>
-        </select>
+    <!-- Task composer: the primary surface -->
+    <div class="task-composer anim-rise">
+        <div class="task-input-row">
+            <textarea id="taskInput" rows="2"
+                placeholder="Ask anything, or give the agent a task…"></textarea>
+            <button id="runBtn" class="run-btn" title="Run (Enter)" disabled
+                aria-label="Run task">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+        </div>
+        <div class="route-preview" id="routePreview" aria-live="polite"></div>
+        <div class="composer-error" id="composerError" role="alert"></div>
     </div>
 
-    <div class="footer-note">
-        Service shortcuts and behavior live in <strong>Settings</strong>.
+    <!-- Recent tasks -->
+    <div class="history-section anim-rise" style="--anim-delay: 60ms;">
+        <div class="history-header">
+            <span class="section-label">Recent tasks</span>
+            <button class="clear-history-btn" id="clearHistoryBtn">Clear</button>
+        </div>
+        <div class="history-list" id="historyList"></div>
+    </div>
+
+    <div class="popup-footer anim-rise" style="--anim-delay: 100ms;">
+        <button class="footer-link primary-link" id="openAgentBtn" title="Open the full agent view">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            Full Agent View
+        </button>
+        <button class="footer-link" id="openSidebarBtn" title="Open your AI assistant sidebar">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+            Sidebar
+        </button>
+        <button class="footer-link" id="openOptionsBtn" title="Settings">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            Settings
+        </button>
     </div>
 
     <script src="config.js"></script>
+    <script src="intentRouter.js"></script>
+    <script src="taskHistory.js"></script>
     <script src="popup.js"></script>
 </body>
 

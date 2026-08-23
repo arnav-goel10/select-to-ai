@@ -1,9 +1,10 @@
 {
     "manifest_version": 3,
-    "name": "Select to AI",
-    "short_name": "Select to AI",
+    "name": "__MSG_appName__",
+    "short_name": "__MSG_appShortName__",
     "description": "Send selected text to leading AI assistants or run bounded browser workflows with explicit permissions and safety limits.",
-    "version": "3.3.1",
+    "version": "4.1.0",
+    "default_locale": "en",
     "homepage_url": "https://github.com/arnav-goel10/select-to-ai",
     "offline_enabled": false,
     "action": {
@@ -19,6 +20,7 @@
         "sidePanel",
         "tabs",
         "activeTab",
+        "alarms",
         "declarativeNetRequest",
         "scripting",
         "notifications"
@@ -93,6 +95,13 @@
                 "default": "Alt+A"
             },
             "description": "Run AI Browser Agent"
+        },
+        "open-task-composer": {
+            "suggested_key": {
+                "default": "Alt+T",
+                "mac": "Command+K"
+            },
+            "description": "Open the task composer"
         }
     },
     "omnibox": {

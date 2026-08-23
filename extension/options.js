@@ -22,12 +22,13 @@ document.addEventListener("DOMContentLoaded", () => {
   // `candidateCustomUrl` lets the options page test a TYPED (not yet saved)
   // custom-gateway URL: the background validates that candidate through the
   // same origin rules and accepts it for this single request only.
-  function fetchProxy(url, options = {}, candidateCustomUrl = null) {
+  function fetchProxy(url, options = {}, candidateCustomUrl = null, provider = null) {
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(
         {
           action: "fetchProxy",
           url: url,
+          provider: provider,
           options: options,
           ...(candidateCustomUrl ? { candidateCustomUrl } : {}),
         },
@@ -951,7 +952,6 @@ document.addEventListener("DOMContentLoaded", () => {
     if (provider === "custom") {
       baseUrl = candidateCustomUrl || customUrlInput.value.trim();
     }
-
     setConnStatus("loading", "Querying API...");
 
     const { endpoint, headers } = getModelFetchRequest(provider, key, baseUrl);
@@ -960,6 +960,7 @@ document.addEventListener("DOMContentLoaded", () => {
       endpoint,
       { method: "GET", headers: headers },
       provider === "custom" ? baseUrl : null,
+      provider,
     )
       .then((res) => {
         if (!res.ok) {
@@ -1052,6 +1053,7 @@ document.addEventListener("DOMContentLoaded", () => {
       endpoint,
       { method: "POST", headers: headers, body: JSON.stringify(body) },
       provider === "custom" ? baseUrl : null,
+      provider,
     )
       .then((res) => {
         if (!res.ok) {
@@ -1234,7 +1236,7 @@ document.addEventListener("DOMContentLoaded", () => {
           groq: "https://console.groq.com/keys",
           together: "https://api.together.xyz/settings/api-keys",
           xai: "https://console.x.ai/",
-          opencode: "https://zen.opencode.co",
+          opencode: "https://opencode.ai/auth",
         };
         const link = keyLinks[prov];
         const linkHtml = link
@@ -1251,6 +1253,7 @@ document.addEventListener("DOMContentLoaded", () => {
           wizardUrlGroup.style.display = "none";
         }
       }
+
 
       wizardProvider.addEventListener("change", syncWizardProvider);
       syncWizardProvider();
@@ -1298,6 +1301,7 @@ document.addEventListener("DOMContentLoaded", () => {
           endpoint,
           { method: "POST", headers: headers, body: JSON.stringify(body) },
           prov === "custom" ? baseUrl : null,
+          prov,
         )
           .then((res) => {
             if (!res.ok) {
@@ -1649,6 +1653,324 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   }
+
+  // --- Memory Profile Editor ---
+  // Durable facts the agent applies to every task. Local-only storage,
+  // fully user-editable; injected into planning prompts via memoryProfile.js.
+  const MEMORY_KEY = "agentMemoryProfile";
+  const memoryInput = document.getElementById("memoryProfileInput");
+  const memoryAddBtn = document.getElementById("memory-add-btn");
+  const memoryList = document.getElementById("memory-profile-list");
+
+  function renderMemoryProfile(facts) {
+    if (!memoryList) return;
+    memoryList.innerHTML = "";
+    const list = Array.isArray(facts) ? facts : [];
+    if (list.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "muted-note";
+      empty.textContent = "Nothing yet. Add preferences the agent should always consider.";
+      memoryList.appendChild(empty);
+      return;
+    }
+    list.forEach((fact) => {
+      const text = typeof fact === "string" ? fact : fact?.text || "";
+      const li = document.createElement("li");
+      li.style.cssText =
+        "display:flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid var(--border);border-radius:var(--radius-full,999px);padding:6px 14px;font-size:13px;";
+      const span = document.createElement("span");
+      span.textContent = text;
+      span.style.overflow = "hidden";
+      span.style.textOverflow = "ellipsis";
+      const del = document.createElement("button");
+      del.type = "button";
+      del.textContent = "Remove";
+      del.setAttribute("aria-label", `Remove fact: ${text}`);
+      del.style.cssText =
+        "border:none;background:none;color:var(--text-muted,#888);cursor:pointer;font-size:12px;text-decoration:underline;padding:0;";
+      del.addEventListener("click", () => {
+        chrome.storage.local.get(MEMORY_KEY, (res) => {
+          const next = window.SELECT_TO_AI_MEMORY
+            ? window.SELECT_TO_AI_MEMORY.removeFact(res[MEMORY_KEY], text)
+            : (res[MEMORY_KEY] || []).filter(
+                (f) => (typeof f === "string" ? f : f.text).toLowerCase() !== text.toLowerCase(),
+              );
+          chrome.storage.local.set({ [MEMORY_KEY]: next }, () =>
+            renderMemoryProfile(next),
+          );
+        });
+      });
+      li.appendChild(span);
+      li.appendChild(del);
+      memoryList.appendChild(li);
+    });
+  }
+
+  if (memoryAddBtn && memoryInput) {
+    memoryAddBtn.addEventListener("click", () => {
+      const value = memoryInput.value.trim();
+      if (!value) return;
+      chrome.storage.local.get(MEMORY_KEY, (res) => {
+        const next = window.SELECT_TO_AI_MEMORY
+          ? window.SELECT_TO_AI_MEMORY.addFact(res[MEMORY_KEY], value)
+          : [...(res[MEMORY_KEY] || []), { text: value, addedAt: Date.now() }];
+        chrome.storage.local.set({ [MEMORY_KEY]: next }, () => {
+          memoryInput.value = "";
+          renderMemoryProfile(next);
+          showToast("Saved. The agent will know this.");
+        });
+      });
+    });
+    memoryInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        memoryAddBtn.click();
+      }
+    });
+  }
+
+  // Load existing facts once on open.
+  chrome.storage.local.get(MEMORY_KEY, (res) => renderMemoryProfile(res[MEMORY_KEY]));
+
+  // --- Routines Editor ---
+  const ROUTINES_KEY = "agentRoutines";
+  const routineName = document.getElementById("routineName");
+  const routineTask = document.getElementById("routineTask");
+  const routineKind = document.getElementById("routineKind");
+  const routineDay = document.getElementById("routineDay");
+  const routineDayGroup = document.getElementById("routineDayGroup");
+  const routineTime = document.getElementById("routineTime");
+  const routineAddBtn = document.getElementById("routine-add-btn");
+  const routinesList = document.getElementById("routines-list");
+
+  if (routineKind && routineDayGroup) {
+    routineKind.addEventListener("change", () => {
+      routineDayGroup.style.display =
+        routineKind.value === "weekly" ? "block" : "none";
+    });
+  }
+
+  function describeRoutine(routine) {
+    const dayNames = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+    const s = routine.schedule;
+    return s.kind === "weekly"
+      ? `Weekly on ${dayNames[s.day]} at ${s.time}`
+      : `Daily at ${s.time}`;
+  }
+
+  function renderRoutines(facts) {
+    if (!routinesList) return;
+    routinesList.innerHTML = "";
+    const list = Array.isArray(facts) ? facts : [];
+    if (list.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "muted-note";
+      empty.textContent = "No routines yet.";
+      routinesList.appendChild(empty);
+      return;
+    }
+    list.forEach((routine) => {
+      const li = document.createElement("li");
+      li.style.cssText =
+        "display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid var(--border);border-radius:12px;padding:10px 14px;font-size:13px;flex-wrap:wrap;";
+      const info = document.createElement("div");
+      info.style.cssText = "display:flex;flex-direction:column;min-width:0;";
+      const title = document.createElement("strong");
+      title.textContent = routine.name;
+      const meta = document.createElement("span");
+      meta.className = "muted-note";
+      meta.textContent = `${describeRoutine(routine)} — ${routine.task}`;
+      info.appendChild(title);
+      info.appendChild(meta);
+
+      const controls = document.createElement("div");
+      controls.style.cssText = "display:flex;gap:8px;align-items:center;";
+
+      const toggleLabel = document.createElement("label");
+      toggleLabel.style.cssText =
+        "display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;";
+      const enabledBox = document.createElement("input");
+      enabledBox.type = "checkbox";
+      enabledBox.checked = routine.enabled !== false;
+      enabledBox.setAttribute("aria-label", `Enable routine ${routine.name}`);
+      enabledBox.addEventListener("change", () => {
+        chrome.storage.local.get(ROUTINES_KEY, (res) => {
+          const next = (res[ROUTINES_KEY] || []).map((r) =>
+            r.id === routine.id ? { ...r, enabled: enabledBox.checked } : r,
+          );
+          chrome.storage.local.set({ [ROUTINES_KEY]: next }, () => {
+            showToast(enabledBox.checked ? "Routine enabled." : "Routine paused.");
+          });
+        });
+      });
+      toggleLabel.appendChild(enabledBox);
+      toggleLabel.appendChild(document.createTextNode("On"));
+      controls.appendChild(toggleLabel);
+
+      const del = document.createElement("button");
+      del.type = "button";
+      del.textContent = "Delete";
+      del.setAttribute("aria-label", `Delete routine ${routine.name}`);
+      del.style.cssText =
+        "border:none;background:none;color:var(--text-muted,#888);cursor:pointer;font-size:12px;text-decoration:underline;padding:0;";
+      del.addEventListener("click", () => {
+        chrome.storage.local.get(ROUTINES_KEY, (res) => {
+          const next = (res[ROUTINES_KEY] || []).filter((r) => r.id !== routine.id);
+          chrome.storage.local.set({ [ROUTINES_KEY]: next }, () => renderRoutines(next));
+        });
+      });
+      controls.appendChild(del);
+
+      li.appendChild(info);
+      li.appendChild(controls);
+      routinesList.appendChild(li);
+    });
+  }
+
+  if (routineAddBtn) {
+    routineAddBtn.addEventListener("click", () => {
+      const candidate = window.SELECT_TO_AI_ROUTINES
+        ? window.SELECT_TO_AI_ROUTINES.normalizeRoutine({
+            id: `routine-${Date.now()}`,
+            name: routineName.value,
+            task: routineTask.value,
+            schedule: {
+              kind: routineKind.value,
+              ...(routineKind.value === "weekly"
+                ? { day: Number(routineDay.value) }
+                : {}),
+              time: routineTime.value,
+            },
+          })
+        : { ok: false, error: "Routines module missing." };
+      if (!candidate.ok) {
+        showToast(candidate.error, true);
+        return;
+      }
+      chrome.storage.local.get(ROUTINES_KEY, (res) => {
+        const next = [...(res[ROUTINES_KEY] || []), candidate.routine];
+        chrome.storage.local.set({ [ROUTINES_KEY]: next }, () => {
+          routineName.value = "";
+          routineTask.value = "";
+          renderRoutines(next);
+          showToast("Routine scheduled.");
+        });
+      });
+    });
+  }
+
+  chrome.storage.local.get(ROUTINES_KEY, (res) => renderRoutines(res[ROUTINES_KEY]));
+
+  // --- Playbook Gallery ---
+  const playbookImportBtn = document.getElementById("playbook-import-btn");
+  const playbookImportFile = document.getElementById("playbook-import-file");
+  const playbookImportStatus = document.getElementById("playbook-import-status");
+  const playbooksList = document.getElementById("playbooks-list");
+  let customPlaybooks = [];
+
+  function allPlaybooks() {
+    return (window.SELECT_TO_AI_PLAYBOOKS?.BUNDLED || []).concat(customPlaybooks);
+  }
+
+  function renderPlaybooks() {
+    if (!playbooksList) return;
+    playbooksList.innerHTML = "";
+    for (const playbook of allPlaybooks()) {
+      const li = document.createElement("li");
+      li.style.cssText =
+        "display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid var(--border);border-radius:12px;padding:10px 14px;flex-wrap:wrap;";
+      const info = document.createElement("div");
+      info.style.cssText = "display:flex;flex-direction:column;min-width:0;";
+      const title = document.createElement("strong");
+      title.textContent = `${playbook.name} · ${playbook.category}`;
+      const desc = document.createElement("span");
+      desc.className = "muted-note";
+      desc.textContent = playbook.description || playbook.task.slice(0, 120);
+      info.appendChild(title);
+      info.appendChild(desc);
+
+      const runBtn = document.createElement("button");
+      runBtn.type = "button";
+      runBtn.className = "btn btn-secondary";
+      runBtn.textContent = "Run";
+      runBtn.setAttribute("aria-label", `Run playbook ${playbook.name}`);
+
+      const needsInput = /\{input\}/.test(playbook.task);
+      if (needsInput) {
+        const inputBox = document.createElement("input");
+        inputBox.type = "text";
+        inputBox.placeholder = playbook.description.replace(/\{input\}/g, "…") || "Fill in the blank";
+        inputBox.setAttribute("aria-label", `Input for ${playbook.name}`);
+        inputBox.style.cssText = "max-width:260px;";
+        info.appendChild(inputBox);
+        runBtn.addEventListener("click", () => {
+          const rendered = window.SELECT_TO_AI_PLAYBOOKS.renderTask(
+            playbook,
+            inputBox.value,
+          );
+          launchPlaybook(playbook, rendered);
+        });
+      } else {
+        runBtn.addEventListener("click", () => {
+          launchPlaybook(playbook, window.SELECT_TO_AI_PLAYBOOKS.renderTask(playbook, ""));
+        });
+      }
+
+      li.appendChild(info);
+      li.appendChild(runBtn);
+      playbooksList.appendChild(li);
+    }
+  }
+
+  /** Queues a rendered playbook task and opens the agent page. */
+  function launchPlaybook(playbook, renderedTask) {
+    chrome.storage.local.set(
+      { companionTask: { task: renderedTask, timestamp: Date.now(), source: `playbook:${playbook.id}` } },
+      () => {
+        chrome.tabs.create({ url: "agent.html?autorun=1" });
+      },
+    );
+  }
+
+  if (playbookImportBtn && playbookImportFile) {
+    playbookImportBtn.addEventListener("click", () => playbookImportFile.click());
+    playbookImportFile.addEventListener("change", () => {
+      const file = playbookImportFile.files && playbookImportFile.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const parsed = JSON.parse(String(reader.result));
+          const candidates = Array.isArray(parsed) ? parsed : [parsed];
+          let added = 0;
+          for (const candidate of candidates) {
+            const result = window.SELECT_TO_AI_PLAYBOOKS
+              ? window.SELECT_TO_AI_PLAYBOOKS.normalizePlaybook(candidate)
+              : { ok: false, error: "Playbooks module missing." };
+            if (!result.ok) {
+              playbookImportStatus.textContent = `Rejected "${candidate?.name || candidate?.id || "entry"}": ${result.error}`;
+              continue;
+            }
+            customPlaybooks = [
+              ...customPlaybooks.filter((p) => p.id !== result.playbook.id),
+              result.playbook,
+            ];
+            added += 1;
+          }
+          playbookImportStatus.textContent = added
+            ? `Imported ${added} playbook${added > 1 ? "s" : ""}.`
+            : "Nothing imported.";
+          renderPlaybooks();
+        } catch (err) {
+          playbookImportStatus.textContent = `Invalid JSON: ${err.message}`;
+        }
+      };
+      reader.readAsText(file);
+      playbookImportFile.value = "";
+    });
+  }
+
+  renderPlaybooks();
 
   // --- Init ---
   loadSettings();

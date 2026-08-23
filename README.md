@@ -4,7 +4,7 @@
 [![Chrome MV3](https://img.shields.io/badge/Chrome-Manifest%20V3-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A privacy-first Chrome extension for moving selected text into ChatGPT, Gemini, Claude, or Perplexity, and for running bounded browser-agent workflows with your own model provider.
+A privacy-first browser extension for moving selected text into ChatGPT, Gemini, Claude, or Perplexity, and for running bounded browser-agent workflows with your own model provider.
 
 ![Select to AI context-menu action for sending selected text to ChatGPT](assets/select-to-ai-overview.png)
 
@@ -23,13 +23,13 @@ This repository contains the next-generation agent and security architecture.
 
 ## Quick start
 
-Requirements: Chrome 114+ and Node.js 20+ for development checks.
+Requirements: a Chromium browser (Chrome or Edge 114+) and Node.js 20+ for development checks.
 
 1. Clone the repository.
 2. Run `npm ci && npm run check`.
-3. Open `chrome://extensions` and enable **Developer mode**.
+3. Open `chrome://extensions` (or `edge://extensions`) and enable **Developer mode**.
 4. Choose **Load unpacked** and select the repository's `extension/` directory.
-5. Open **Extension options**, choose a provider, and add your API key.
+5. Open **Extension options**, choose a provider (OpenCode Zen is the zero-cost default), and add your API key.
 
 No build step is required. The checked-in JavaScript is the extension source Chrome loads.
 
@@ -115,19 +115,20 @@ It is intentionally not part of `npm run check` (it downloads Chromium and takes
 | `storage` | Store preferences, local credentials, and local task memory. |
 | `sidePanel` | Render the chosen assistant or browser agent beside the page. |
 | `tabs`, `activeTab`, `scripting` | Inspect and operate the user-selected tab. |
+| `alarms` | Fire user-created scheduled routines while the browser runs. |
 | `notifications` | Notify when an agent run completes or fails. |
 | `declarativeNetRequest` | Allow the supported assistant sites to render inside the side-panel iframe; rules are limited to those domains. |
-| Provider host access | Call only the documented model-provider endpoints. |
+| Provider host access | Call only the documented model-provider endpoints or your configured custom gateway. |
 | Optional website access | Granted per origin by the user when browser automation needs it. |
 
 ## Repository guide
 
-- `extension/`: the complete build-free Manifest V3 package loaded by Chrome.
+- `extension/`: the complete build-free Manifest V3 package loaded by Chrome and Edge.
 - `tests/unit/`: dependency-free policy and storage regression tests.
 - `tests/benchmark/`: deterministic adversarial request-policy evaluation.
 - `tests/e2e/`: the puppeteer task harness (scripted gateway + fixture pages + four-scenario runner).
-- `scripts/`: repository validation tooling.
-- `docs/`: architecture and security design documentation.
+- `scripts/`: repository validation, packaging, and the local agent benchmark (`npm run bench:agent` writes `dist/benchmark-report.md`).
+- `docs/`: architecture, security design, store listing copy, and publishing runbooks.
 - [`docs/provenance.md`](docs/provenance.md): project origin, attribution, and Arnav Goel's contribution.
 
 ## Contributing

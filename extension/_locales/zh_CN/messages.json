@@ -1,0 +1,38 @@
+{
+  "appName": {
+    "message": "Select to AI",
+    "description": "The extension's display name."
+  },
+  "appShortName": {
+    "message": "Select to AI",
+    "description": "Short display name for constrained surfaces."
+  },
+  "appDescription": {
+    "message": "Send selected text to leading AI assistants or run bounded browser workflows with explicit permissions and safety limits.",
+    "description": "Manifest description; must keep 'bounded' language per manifest tests."
+  },
+  "contextMenuAgent": {
+    "message": "Send to AI Browser Agent",
+    "description": "Context-menu item: hand the selection to the browser agent."
+  },
+  "notificationTaskCompleteTitle": {
+    "message": "Select to AI",
+    "description": "Notification title when a task completes."
+  },
+  "notificationTaskCompleteBody": {
+    "message": "Task completed",
+    "description": "Notification body when a task completes."
+  },
+  "omniboxKeywordHint": {
+    "message": "ai",
+    "description": "Address-bar keyword for the assistant."
+  },
+  "welcomeTitle": {
+    "message": "我如何能在此页面上帮助你？",
+    "description": "Agent welcome screen headline."
+  },
+  "welcomeDescription": {
+    "message": "输入指令。浏览器代理会规划清单、操作页面元素并验证输出。",
+    "description": "Agent welcome screen description."
+  }
+}

@@ -1,5 +1,89 @@
 # Changelog
 
+## 4.1.0 - 2026-08-24
+
+### Added
+
+- The popup is now the primary task surface: type anything and a live routing preview shows exactly where it goes (browser agent, question, or direct site open) before you press Enter, powered by the same deterministic router as the address bar. Enter runs it.
+- Task history: every popup run (agent tasks, questions, site opens, playbooks, routines) is recorded locally with its route and outcome; the newest entries appear in the popup and clicking one refills the composer. Agent runs sync their final status (success / failed / stopped) back into history automatically.
+- Design-system motion tokens: one easing family, shared durations, elevation scale, and entrance primitives (`anim-rise` / `anim-fade` / `anim-pop` with stagger support), applied across the agent page.
+
+### Changed
+
+- Agent page visual overhaul: the welcome screen drops the gradient-logo AI cliché for a calm typographic entry with a context kicker; suggestion cards get a quieter rest state with a springy hover lift; message bubbles, input dock, header, checklist, and log items all moved onto the shared token timings. Removed ~12 dead CSS rule blocks left over from earlier layouts.
+- Cleanup: removed leftover console.log statements from background/content/sidepanel scripts.
+
+144 unit tests, security benchmark 10/10, e2e 4 of 4.
+
+## 3.4.1 - 2026-08-24
+
+### Removed
+
+- The experimental "Hosted (free)" provider and its bundled relay server. The product targets a wide audience with bring-your-own-key providers, so the relay added surface without serving that goal; it may return as a first-party free tier later.
+
+### Fixed
+
+- OpenCode Zen: the "Get API Key" link now points to https://opencode.ai/auth (zen.opencode.co no longer resolves), and the key-shape check no longer rejects Zen keys that do not start with "sk-" — the connection test verifies keys live instead.
+
+## 4.0.0 - 2026-08-24
+
+### Added
+
+- Playbook gallery: six bundled, versioned task templates (competitor price scan, page fact extractor, job application tracker, recipe shopper, news briefing, flight options scan) with one-click run from Options and JSON import for sharing your own.
+- Edge Add-ons target: per-browser packaging and a publishing runbook (docs/publishing.md).
+- i18n scaffold: default locale en plus de/zh_CN catalogs with lockstep tests.
+- Local agent benchmark: npm run bench:agent writes dist/benchmark-report.md.
+
+## 3.5.0 - 2026-08-24
+
+### Added
+
+- Side panel companion quick actions, CSV artifacts, memory profile, scheduled routines, cross-tab agent guidance.
+
+## 3.4.0 - 2026-08-24
+
+### Added
+
+- Playbook gallery: six bundled, versioned task templates (competitor price scan, page fact extractor, job application tracker, recipe shopper, news briefing, flight options scan) with one-click run from Options and JSON import for sharing your own. Playbooks with a blank use an explicit {input} placeholder the user fills; empty input never silently drops the blank.
+- Edge Add-ons target: per-browser packaging (`npm run package -- --all` emits chrome + edge zips), a compatibility checker module (`browserTargets.js`), and a publishing runbook (`docs/publishing.md`). The same MV3 source now ships to both stores.
+- i18n scaffold: `default_locale` + `_locales/{en,de,zh_CN}` catalogs for all user-facing manifest strings, a fallback-safe `i18n.js` helper, and tests that keep every locale's key set in lockstep with en.
+- Local agent benchmark: `npm run bench:agent` runs the real pipeline (planner, executor, validator) against localhost fixtures only and writes `dist/benchmark-report.md` plus machine-readable results — honest numbers anyone can reproduce without API keys or network access.
+
+### Changed
+
+- README reflects the two-store reality, hosted mode, routines, artifacts, and the benchmark; store listing copy updated in the same release.
+
+137 unit tests, security benchmark 10/10, e2e 4 of 4, benchmark 12/12 checks.
+
+## 3.5.0 - 2026-08-24
+
+### Added
+
+- Side panel companion: quick-action chips (Summarize page, Key points, Extract data, Draft reply) read the current tab and hand a grounded, size-capped prompt straight to the agent; the agent view consumes pending hand-off tasks automatically on load.
+- Artifacts: final answers containing markdown tables or JSON arrays now offer one-click CSV downloads (correct quoting, union headers for object rows), rendered as safe buttons under the answer.
+- Memory profile: durable, user-editable facts ("Based in Singapore", "Always cite sources") stored locally, managed from Options with add/remove UI, and injected into every planning prompt with an explicit user-editable disclosure. Capped at 50 facts of 300 characters.
+- Routines: schedule a saved task daily or weekly via chrome.alarms. When one fires, the agent opens with the task queued through the same companion hand-off; every safety gate still applies. Alarms re-derive their true next occurrence after each run and only fire while Chrome is running.
+- Cross-tab agent guidance: the capability prompt now teaches the executor that its scan/screenshot/action context follows open_tab and switch_tab, enabling real multi-site tasks (compare across two sites) using remember notes between switches.
+
+130 unit tests (up from 107), security benchmark 10/10, e2e 4 of 4.
+
+## 3.4.0 - 2026-08-24
+
+### Added
+
+- Hosted free mode: a new "Hosted (free)" provider lets anyone run the full browser agent without creating provider accounts or touching an API key. Requests relay through the bundled zero-dependency server (`relay/server.js`, `node relay/server.js` and you are done); the upstream credential lives only on that server, which enforces per-IP rate limits, a body-size cap, an optional model allowlist, and stores nothing. Bring-your-own-key providers remain exactly as local as before.
+- Contextual suggested first tasks: the agent welcome screen now derives its three suggestion cards from the page you are actually on (GitHub repos get repo tasks, shopping pages get comparison tasks, unknown sites get universal ones), computed locally with no network calls, so a first run is one click instead of a blank prompt.
+
+### Changed
+
+- The agent runtime began its module split with zero behavior change: provider/model policy moved to `providerModels.js` (compatibility checks, tier resolution, key-shape validation) and payload building to `providerPayload.js` (system-content shapes, prompt-caching splits, error cleanup). Both are unit-tested directly; `agent.js` shrank by ~140 lines of logic now exercised by 20 new focused tests.
+
+### Fixed
+
+- The store listing no longer describes v2.0: release copy now ships in the same PR as the release (`docs/store-listing.md`), starting with this one.
+
+107 unit tests (up from 87), security benchmark 10/10, e2e 4 of 4.
+
 ## 3.3.1 - 2026-08-16
 
 ### Fixed

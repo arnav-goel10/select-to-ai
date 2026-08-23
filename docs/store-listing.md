@@ -1,7 +1,9 @@
-# Chrome Web Store listing: 3.3.0
+# Chrome Web Store listing: 3.4.0
 
-Ready-to-paste copy for the store listing (the live listing still describes
-v2.0). Plain text only; the store strips markdown.
+Ready-to-paste copy for the store listing. The live listing historically
+lagged releases (it described v2.0 while the repo shipped 3.x); from 3.4.0
+onward update this file in the same PR as the release so it never goes stale
+again. Plain text only; the store strips markdown.
 
 ## Short description (132 chars max)
 
@@ -26,7 +28,8 @@ The AI Browser Agent plans your task into a visible checklist, performs one page
 - It asks YOU when it meets logins, CAPTCHAs, payments, or an ambiguous request, it never guesses credentials.
 - You can steer a running task with a message, export the full run log, and stop instantly at any time.
 
-The agent is OFF by default. A first-run setup wizard connects the model provider of your choice (OpenAI, Anthropic, Google, OpenRouter, DeepSeek, Mistral, Groq, Together, xAI, OpenCode, or your own local/self-hosted gateway) and verifies your key before anything is enabled.
+CONNECT THE MODEL PROVIDER OF YOUR CHOICE
+The agent is OFF by default. Setup connects OpenAI, Anthropic, Google, OpenRouter, DeepSeek, Mistral, Groq, Together, xAI, OpenCode, or your own local/self-hosted gateway (such as Ollama), verifies your key, and suggests three concrete first tasks based on the page you are on so your first run is one click.
 
 PRIVACY AND SAFETY BY DESIGN
 - Your API keys stay in local browser storage and are excluded from settings exports.
@@ -37,13 +40,7 @@ PRIVACY AND SAFETY BY DESIGN
 
 Open source: https://github.com/arnav-goel10/select-to-ai
 
-## What's new in 3.3.0
+## What's new in 3.4.0
 
-- New guided setup: a short wizard connects your API key, verifies it, and explains the agent before turning it on.
-- The agent now plans, acts, reflects after failures, and validates its answer against the page before finishing, and asks you instead of guessing at logins or CAPTCHAs.
-- Steer a running task with a mid-run message; export the run log or full session recording.
-- Cleaner, consistent design across the popup, settings, side panel, and agent, with a real light and dark theme everywhere.
-- The popup is now a simple launcher; all settings live in one place.
-- Sturdier text sending: URL-based prompts for new ChatGPT/Perplexity chats, verified sends elsewhere, and a clipboard fallback instead of wrong-button clicks.
-- The agent sidebar lists your recent completed tasks and lets you view or clear everything the agent remembers.
-- Dozens of fixes: accurate cost estimates, readable logs, keyboard-accessible controls, and repaired settings flows.
+- Suggested first tasks: after setup, one-click starter tasks based on your current tab end the blank-prompt problem.
+- Under the hood: the agent runtime is now organized into focused modules (state, provider payloads, streaming, run loop) with zero behavior change, keeping the codebase maintainable as features land.
