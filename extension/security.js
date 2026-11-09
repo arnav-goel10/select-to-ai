@@ -10,12 +10,15 @@
     "https://openrouter.ai",
     "https://api.anthropic.com",
     "https://api.openai.com",
+    // Sign in with ChatGPT: the token endpoint, key set and revocation.
+    "https://auth.openai.com",
     "https://api.deepseek.com",
     "https://generativelanguage.googleapis.com",
     "https://api.mistral.ai",
     "https://api.groq.com",
     "https://api.together.xyz",
     "https://api.x.ai",
+    "https://api.cerebras.ai",
   ]);
 
   const MAX_PROXY_BODY_BYTES = 2 * 1024 * 1024;

@@ -24,7 +24,7 @@
 
 - Browser-local storage is not an encrypted vault; a compromised machine or browser profile can expose keys.
 - Page content can contain prompt-injection instructions. Human confirmation and bounded actions reduce, but do not eliminate, this class of risk.
-- The side-panel feature (`extension/rules.json`) removes several security response headers, `X-Frame-Options`, the full `Content-Security-Policy`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Embedder-Policy`, and `Permissions-Policy`/`Feature-Policy`, on `sub_frame` and `xmlhttprequest` responses for the explicitly listed assistant domains. This is broader than frame-busting removal alone: while those sites are embedded in the side panel they run without their own CSP and related protections. The rule list and its scope should be reviewed before releases, and upstream site changes can still break embeds.
+- The side panel embeds ChatGPT, Gemini, Perplexity and Claude, whose sites forbid framing. A session rule installed by `background.js` (`installSidePanelFrameRule`) removes `X-Frame-Options`, the full `Content-Security-Policy`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Embedder-Policy` and `Permissions-Policy`/`Feature-Policy` from `sub_frame` responses of those domains, and only for requests that belong to no tab (`tabIds: [TAB_ID_NONE]`), which is the side panel. Websites in ordinary tabs cannot frame those assistants because of it; before 3.4 a static rule applied to every iframe, which exposed signed-in users to clickjacking. While embedded in the side panel the assistants run without their own CSP, and upstream site changes can still break embeds.
 - AI providers receive the content required for a user-requested operation and apply their own retention policies.
 
 ## Verification

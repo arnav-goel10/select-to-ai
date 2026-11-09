@@ -1,0 +1,60 @@
+[
+ {
+  "id": "dev-orders-de",
+  "app": "orders",
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "i18n",
+    "lang": "de",
+    "map": {
+     "Track your order": "Sendung verfolgen",
+     "Order number": "Bestellnummer",
+     "Delivery postcode": "Postleitzahl",
+     "Track order": "Sendung suchen",
+     "Status": "Status",
+     "Carrier": "Versanddienst",
+     "Tracking number": "Sendungsnummer",
+     "Delivery instructions": "Lieferhinweise",
+     "Save instructions": "Hinweise speichern",
+     "Cancel order": "Bestellung stornieren",
+     "Track": "Verfolgen",
+     "Help": "Hilfe"
+    }
+   }
+  ],
+  "family": "i18n"
+ },
+ {
+  "id": "dev-account-fr",
+  "app": "account",
+  "tasks": [
+   "account.notify",
+   "account.name"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "i18n",
+    "lang": "fr",
+    "map": {
+     "Weekly email digest": "Résumé hebdomadaire par e-mail",
+     "SMS delivery alerts": "Alertes de livraison par SMS",
+     "Product news": "Actualités produit",
+     "Partner offers": "Offres partenaires",
+     "Save preferences": "Enregistrer les préférences",
+     "Turn off all notifications": "Désactiver toutes les notifications",
+     "Display name": "Nom d'affichage",
+     "Save profile": "Enregistrer le profil",
+     "No thanks": "Non merci",
+     "Start free trial": "Commencer l'essai",
+     "Essential only": "Essentiels uniquement",
+     "Accept all": "Tout accepter",
+     "Profile": "Profil",
+     "Addresses": "Adresses"
+    }
+   }
+  ],
+  "family": "i18n"
+ }
+]

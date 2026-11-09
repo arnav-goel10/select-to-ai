@@ -1,0 +1,242 @@
+{
+  "wiki": {
+    "url": "en.wikipedia.org/wiki/Black_hole",
+    "lines": [
+      {
+        "y": 234.390625,
+        "h": 18,
+        "x0": 264,
+        "x1": 718.453125
+      },
+      {
+        "y": 260.390625,
+        "h": 18,
+        "x0": 264,
+        "x1": 727.796875
+      },
+      {
+        "y": 286.390625,
+        "h": 18,
+        "x0": 264,
+        "x1": 695.0625
+      },
+      {
+        "y": 312.390625,
+        "h": 18,
+        "x0": 264,
+        "x1": 696.203125
+      },
+      {
+        "y": 338.390625,
+        "h": 18,
+        "x0": 264,
+        "x1": 735.109375
+      }
+    ],
+    "text": "A black hole is an astronomical body so compact that its gravity prevents anything, including light, from escaping. Albert Einstein's theory of general relativity, which describes gravitation as the curvature of spacetime, predicts that any sufficiently compact mass will form a black hole. The boundary of no escape is called the event horizon. In general relativity, crossing a black hole's event horizon traps an object inside but produces no locally detectable change. General relativity also predicts that every black hole should have a central singularity, where the curvature of spacetime is i",
+    "title": "Black hole - Wikipedia"
+  },
+  "recipe": {
+    "url": "allrecipes.com/recipe/10813/best-chocolate-chip-cookies",
+    "title": "Best Chocolate Chip Cookies Recipe (with Video)",
+    "h1": "Best Chocolate Chip Cookies",
+    "preheat": "Preheat the oven to 350 degrees F (175 degrees C).",
+    "bake": "Bake in a preheated 350 degrees F (175 degrees C) oven — the chocolate chip cookies should be perfectly baked in about 10 minutes. The edges should be golden brown and the cookies should be mostly set (they'll continue to set as the cool).",
+    "rating": "4.6\n(19,468)",
+    "len": 17630
+  },
+  "amazon": {
+    "url": "amazon.com/s?k=noise+cancelling+headphones",
+    "homeBox": {
+      "x": 303.609375,
+      "y": 11,
+      "w": 539.53125,
+      "h": 38
+    },
+    "cards": [
+      {
+        "x": 266.40625,
+        "y": 215,
+        "w": 1001.59375,
+        "h": 259,
+        "title": "Soundcore by Anker Q20i Hybrid Active Noise Cancelling Headphones, Black",
+        "price": "",
+        "rating": "4.5",
+        "reviews": "(75.3K)",
+        "sponsored": false
+      },
+      {
+        "x": 266.40625,
+        "y": 474,
+        "w": 1001.59375,
+        "h": 292,
+        "title": "Sony WH-CH720N Wireless Noise Cancelling Over-Ear Headphones, Black",
+        "price": "",
+        "rating": "4.4",
+        "reviews": "(757)",
+        "sponsored": false
+      },
+      {
+        "x": 266.40625,
+        "y": 766,
+        "w": 1001.59375,
+        "h": 281,
+        "title": "OHAYO Sleep Earbuds A10 Bluetooth 6.0 Noise Isolation Headphones for Side Sleepers No Touc",
+        "price": "$55.99",
+        "rating": "4.3",
+        "reviews": "(83)",
+        "sponsored": false
+      },
+      {
+        "x": 266.40625,
+        "y": 1047,
+        "w": 1001.59375,
+        "h": 228,
+        "title": "Bose QuietComfort Headphones - Wireless Bluetooth Headphones, Active Over Ear Noise Cancel",
+        "price": "",
+        "rating": "4.5",
+        "reviews": "(21.9K)",
+        "sponsored": false
+      },
+      {
+        "x": 266.40625,
+        "y": 1275,
+        "w": 1001.59375,
+        "h": 353,
+        "title": "Hybrid Active Noise Cancelling Headphones 120H Playtime Wireless Headphones Bluetooth 6.0 ",
+        "price": "$99.99",
+        "rating": "5.0",
+        "reviews": "(34)",
+        "sponsored": false
+      },
+      {
+        "x": 266.40625,
+        "y": 1628,
+        "w": 1001.59375,
+        "h": 228,
+        "title": "Hybrid Active Noise Cancelling Bluetooth Headphones Wireless Headphones",
+        "price": "$32.99",
+        "rating": "5.0",
+        "reviews": "(55)",
+        "sponsored": false
+      },
+      {
+        "x": 266.40625,
+        "y": 1856,
+        "w": 1001.59375,
+        "h": 292,
+        "title": "Sony ULT WEAR Over-Ear Noise Canceling Wireless Headphones, Black",
+        "price": "",
+        "rating": "4.3",
+        "reviews": "(3.6K)",
+        "sponsored": false
+      },
+      {
+        "x": 266.40625,
+        "y": 2148,
+        "w": 1001.59375,
+        "h": 321,
+        "title": "TOZO HT3 Hybrid Noise Cancelling Wireless Headphones, 90H Over Ear Headset",
+        "price": "$29.99",
+        "rating": "4.6",
+        "reviews": "(3.4K)",
+        "sponsored": false
+      },
+      {
+        "x": 266.40625,
+        "y": 2469,
+        "w": 1001.59375,
+        "h": 297,
+        "title": "KVIDIO Hybrid Active Noise Cancelling Headphones Over Ear",
+        "price": "$22.97",
+        "rating": "4.4",
+        "reviews": "(15.5K)",
+        "sponsored": false
+      },
+      {
+        "x": 266.40625,
+        "y": 2766,
+        "w": 1001.59375,
+        "h": 312,
+        "title": "Bluetooth 6.0 Noise Cancelling Headphones - Over Ear Headphones with -35dB ANC, 66H Playti",
+        "price": "$39.99",
+        "rating": "4.6",
+        "reviews": "(114)",
+        "sponsored": false
+      },
+      {
+        "x": 266.40625,
+        "y": 3078,
+        "w": 1001.59375,
+        "h": 277,
+        "title": "Hybrid Active Noise Cancelling Bluetooth Headphones Wireless Headphones",
+        "price": "$39.99",
+        "rating": "4.4",
+        "reviews": "(492)",
+        "sponsored": false
+      },
+      {
+        "x": 266.40625,
+        "y": 3355,
+        "w": 1001.59375,
+        "h": 228,
+        "title": "Bose QuietComfort Headphones - Wireless Bluetooth Headphones, Active Over Ear Noise Cancel",
+        "price": "",
+        "rating": "4.5",
+        "reviews": "(21.9K)",
+        "sponsored": false
+      },
+      {
+        "x": 266.40625,
+        "y": 3583,
+        "w": 1001.59375,
+        "h": 231,
+        "title": "Bose QuietComfort Headphones - Wireless Bluetooth Headphones, Active Over Ear Noise Cancel",
+        "price": "",
+        "rating": "4.5",
+        "reviews": "(21.9K)",
+        "sponsored": false
+      },
+      {
+        "x": 266.40625,
+        "y": 3814,
+        "w": 1001.59375,
+        "h": 228,
+        "title": "Sony WH-CH520 Wireless On-Ear Bluetooth Headphones with Microphone, Blue",
+        "price": "",
+        "rating": "4.4",
+        "reviews": "(2.2K)",
+        "sponsored": false
+      },
+      {
+        "x": 266.40625,
+        "y": 4042,
+        "w": 1001.59375,
+        "h": 228,
+        "title": "Sony WH-1000XM5 Premium Noise Cancelling Wireless Headphones, Midnight Blue",
+        "price": "",
+        "rating": "4.1",
+        "reviews": "(2.9K)",
+        "sponsored": false
+      },
+      {
+        "x": 266.40625,
+        "y": 4270,
+        "w": 1001.59375,
+        "h": 321,
+        "title": "TOZO HT3 Hybrid Noise Cancelling Wireless Headphones, 90H Over Ear Headset",
+        "price": "$33.99",
+        "rating": "4.6",
+        "reviews": "(3.4K)",
+        "sponsored": false
+      }
+    ],
+    "box": {
+      "x": 293.046875,
+      "y": 11,
+      "w": 550.09375,
+      "h": 38
+    },
+    "title": "Amazon.com : noise cancelling headphones"
+  }
+}

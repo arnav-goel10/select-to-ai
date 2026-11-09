@@ -4,55 +4,14 @@ const assert = require("node:assert/strict");
 const tools = require("../../extension/agentTools.js");
 
 // =========================================================================
-// Tool schema
+// Tool shapes
 // =========================================================================
 
-test("the browser_action tool covers every legacy verb plus the new ones", () => {
-  const expected = [
-    // legacy executor verbs
-    "click",
-    "double_click",
-    "right_click",
-    "hover",
-    "type",
-    "clear",
-    "select_option",
-    "checkbox_toggle",
-    "keypress",
-    "scroll",
-    "navigate",
-    "wait",
-    "back",
-    "forward",
-    "open_tab",
-    "switch_tab",
-    "close_tab",
-    "reload_tab",
-    "list_tabs",
-    "request_screenshot",
-    "finish",
-    // new verbs
-    "ask_user",
-    "give_up",
-    "remember",
-    "revise_plan",
-  ];
-  for (const verb of expected) {
-    assert.ok(
-      tools.ACTION_NAMES.includes(verb),
-      `verb "${verb}" missing from the tool schema`,
-    );
-  }
-  const schemaEnum =
-    tools.TOOL_DEFS.browser_action.parameters.properties.action.enum;
-  assert.deepEqual([...schemaEnum].sort(), [...tools.ACTION_NAMES].sort());
-});
-
 test("both provider tool shapes wrap the same parameters", () => {
-  const def = tools.TOOL_DEFS.browser_action;
+  const def = { name: "step", description: "One step.", parameters: { type: "object", properties: { goal: { type: "string" } }, required: ["goal"] } };
   const openai = tools.buildOpenAITool(def.name, def.description, def.parameters);
   assert.equal(openai.type, "function");
-  assert.equal(openai.function.name, "browser_action");
+  assert.equal(openai.function.name, "step");
   assert.equal(openai.function.parameters, def.parameters);
 
   const anthropic = tools.buildAnthropicTool(
@@ -60,183 +19,9 @@ test("both provider tool shapes wrap the same parameters", () => {
     def.description,
     def.parameters,
   );
-  assert.equal(anthropic.name, "browser_action");
+  assert.equal(anthropic.name, "step");
   assert.equal(anthropic.input_schema, def.parameters);
   assert.ok(!("type" in anthropic), "anthropic tools carry no type field");
-});
-
-test("plan and validation tools exist with required fields", () => {
-  const plan = tools.TOOL_DEFS.submit_plan.parameters;
-  assert.deepEqual(plan.required, ["subtasks"]);
-  assert.deepEqual(plan.properties.subtasks.items.required, [
-    "task",
-    "postcondition",
-  ]);
-  const validation = tools.TOOL_DEFS.submit_validation.parameters;
-  assert.deepEqual(validation.required, ["verdict", "reason"]);
-  assert.deepEqual(validation.properties.verdict.enum, ["pass", "fail"]);
-});
-
-// =========================================================================
-// validateToolCall
-// =========================================================================
-
-test("validateToolCall accepts a well-formed click and normalizes string ids", () => {
-  const result = tools.validateToolCall(
-    { thought: "t", action: "click", id: "7" },
-    { validIds: new Set([7, 8]) },
-  );
-  assert.equal(result.ok, true);
-  assert.equal(result.action.id, 7);
-});
-
-test("validateToolCall rejects unknown actions with the valid list", () => {
-  const result = tools.validateToolCall({ action: "teleport" });
-  assert.equal(result.ok, false);
-  assert.match(result.error, /Unknown action "teleport"/);
-  assert.match(result.error, /click/);
-});
-
-test("validateToolCall rejects element actions without a valid id", () => {
-  assert.equal(tools.validateToolCall({ action: "click" }).ok, false);
-  assert.equal(tools.validateToolCall({ action: "click", id: 0 }).ok, false);
-  assert.equal(
-    tools.validateToolCall({ action: "click", id: 1.5 }).ok,
-    false,
-  );
-  const outOfScan = tools.validateToolCall(
-    { action: "click", id: 99 },
-    { validIds: [1, 2, 3] },
-  );
-  assert.equal(outOfScan.ok, false);
-  assert.match(outOfScan.error, /not in the current element list/);
-});
-
-test("validateToolCall enforces per-action required params", () => {
-  assert.equal(tools.validateToolCall({ action: "type", id: 1 }).ok, false);
-  assert.equal(
-    tools.validateToolCall({ action: "type", id: 1, text: "hi" }).ok,
-    true,
-  );
-  assert.equal(
-    tools.validateToolCall({ action: "select_option", id: 1 }).ok,
-    false,
-  );
-  assert.equal(
-    tools.validateToolCall({
-      action: "select_option",
-      id: 1,
-      optionText: "Blue",
-    }).ok,
-    true,
-  );
-  assert.equal(
-    tools.validateToolCall({
-      action: "select_option",
-      id: 1,
-      optionIndex: 2,
-    }).ok,
-    true,
-  );
-  assert.equal(tools.validateToolCall({ action: "scroll" }).ok, false);
-  assert.equal(
-    tools.validateToolCall({ action: "scroll", scrollDirection: "down" }).ok,
-    true,
-  );
-  assert.equal(
-    tools.validateToolCall({ action: "scroll", scrollDirection: "diagonal" })
-      .ok,
-    false,
-  );
-  assert.equal(tools.validateToolCall({ action: "switch_tab" }).ok, false);
-  assert.equal(
-    tools.validateToolCall({ action: "switch_tab", tabId: "42" }).action?.tabId,
-    42,
-  );
-  // keypress works without an id (global key)
-  assert.equal(
-    tools.validateToolCall({ action: "keypress", text: "Enter" }).ok,
-    true,
-  );
-  // keypress accepts the "key" alias and normalizes it to "text"
-  const aliased = tools.validateToolCall({ action: "keypress", key: "Enter" });
-  assert.equal(aliased.ok, true);
-  assert.equal(aliased.action.text, "Enter");
-  assert.equal(tools.validateToolCall({ action: "keypress" }).ok, false);
-});
-
-test("validateToolCall normalizes and requires http(s) urls", () => {
-  const bare = tools.validateToolCall({ action: "navigate", url: "example.com" });
-  assert.equal(bare.ok, true);
-  assert.equal(bare.action.url, "https://example.com");
-  assert.equal(tools.validateToolCall({ action: "navigate" }).ok, false);
-  assert.equal(
-    tools.validateToolCall({ action: "open_tab", url: "   " }).ok,
-    false,
-  );
-});
-
-test("validateToolCall rejects an empty-answer finish", () => {
-  const empty = tools.validateToolCall({ action: "finish", answer: "   " });
-  assert.equal(empty.ok, false);
-  assert.match(empty.error, /finish rejected/);
-  const ok = tools.validateToolCall({
-    action: "finish",
-    answer: "Canberra",
-    evidence: "answer box",
-  });
-  assert.equal(ok.ok, true);
-});
-
-test("validateToolCall enforces the new-verb params", () => {
-  assert.equal(tools.validateToolCall({ action: "ask_user" }).ok, false);
-  assert.equal(
-    tools.validateToolCall({ action: "ask_user", question: "Which account?" })
-      .ok,
-    true,
-  );
-  assert.equal(tools.validateToolCall({ action: "give_up" }).ok, false);
-  assert.equal(
-    tools.validateToolCall({ action: "give_up", reason: "site is down" }).ok,
-    true,
-  );
-  assert.equal(tools.validateToolCall({ action: "remember" }).ok, false);
-  assert.equal(
-    tools.validateToolCall({ action: "remember", note: "price is $9" }).ok,
-    true,
-  );
-});
-
-test("validateToolCall normalizes revise_plan subtasks", () => {
-  assert.equal(
-    tools.validateToolCall({ action: "revise_plan", subtasks: [] }).ok,
-    false,
-  );
-  const mixed = tools.validateToolCall({
-    action: "revise_plan",
-    subtasks: [
-      "open the site",
-      { task: "search", postcondition: "results visible" },
-      { bogus: true },
-    ],
-  });
-  assert.equal(mixed.ok, true);
-  assert.deepEqual(mixed.action.subtasks, [
-    { task: "open the site", postcondition: "" },
-    { task: "search", postcondition: "results visible" },
-  ]);
-});
-
-test("validateToolCall clamps wait durations", () => {
-  const long = tools.validateToolCall({ action: "wait", duration: 99999 });
-  assert.equal(long.ok, true);
-  assert.equal(long.action.duration, 10000);
-});
-
-test("validateToolCall rejects non-object payloads", () => {
-  assert.equal(tools.validateToolCall(null).ok, false);
-  assert.equal(tools.validateToolCall("click").ok, false);
-  assert.equal(tools.validateToolCall([1, 2]).ok, false);
 });
 
 // =========================================================================
@@ -383,7 +168,6 @@ test("computeOutcomeDelta detects silent no-ops", () => {
   assert.equal(delta.noEffect, true);
   assert.equal(delta.urlChanged, false);
   assert.equal(delta.domMutationCount, 0);
-  assert.match(tools.formatOutcomeDelta(delta), /no observable page change/);
 });
 
 test("computeOutcomeDelta reports real changes", () => {
@@ -407,11 +191,7 @@ test("computeOutcomeDelta reports real changes", () => {
   assert.equal(delta.scrollChanged, true);
   assert.equal(delta.newElementCount, 15);
   assert.equal(delta.noEffect, false);
-  const text = tools.formatOutcomeDelta(delta);
-  assert.match(text, /URL changed/);
-  assert.match(text, /120 DOM mutations/);
-  assert.match(text, /\+15 interactive elements/);
-  assert.ok(!/no observable page change/.test(text));
+  assert.equal(delta.domMutationCount, 120);
 });
 
 test("computeOutcomeDelta tolerates tiny scroll jitter and missing counts", () => {
@@ -423,46 +203,38 @@ test("computeOutcomeDelta tolerates tiny scroll jitter and missing counts", () =
   assert.equal(tools.computeOutcomeDelta(null, null, NaN).domMutationCount, 0);
 });
 
-// =========================================================================
-// Plan / validator parsing
-// =========================================================================
-
-test("parsePlanResponse normalizes subtasks and rejects garbage", () => {
-  const plan = tools.parsePlanResponse({
-    subtasks: [
-      { task: "open google", postcondition: "google is loaded" },
-      "search for cats",
-    ],
-  });
-  assert.deepEqual(plan, [
-    { task: "open google", postcondition: "google is loaded" },
-    { task: "search for cats", postcondition: "" },
-  ]);
-  assert.equal(tools.parsePlanResponse({ subtasks: [] }), null);
-  assert.equal(tools.parsePlanResponse({ subtasks: [{}] }), null);
-  assert.equal(tools.parsePlanResponse(null), null);
-  assert.equal(tools.parsePlanResponse({}), null);
-  // Caps at 8 subtasks.
-  const many = tools.parsePlanResponse({
-    subtasks: Array.from({ length: 12 }, (_v, i) => `step ${i}`),
-  });
-  assert.equal(many.length, 8);
+test("colourName gives the plain word for a colour", () => {
+  const cases = [
+    [[255, 0, 0], "red"], [[220, 53, 69], "red"], [[128, 0, 0], "red"],
+    [[255, 165, 0], "orange"], [[255, 140, 0], "orange"],
+    [[255, 255, 0], "yellow"], [[255, 215, 0], "yellow"],
+    [[0, 128, 0], "green"], [[40, 167, 69], "green"], [[144, 238, 144], "green"],
+    [[0, 128, 128], "teal"], [[0, 255, 255], "cyan"], [[0, 188, 212], "cyan"],
+    [[0, 0, 255], "blue"], [[13, 110, 253], "blue"], [[0, 0, 128], "blue"],
+    [[128, 0, 128], "purple"], [[103, 58, 183], "purple"],
+    [[255, 192, 203], "pink"], [[255, 105, 180], "pink"], [[233, 30, 99], "pink"],
+    [[139, 69, 19], "brown"], [[121, 85, 72], "brown"],
+    [[0, 0, 0], "black"], [[34, 34, 34], "black"],
+    [[255, 255, 255], "white"], [[248, 249, 250], "white"],
+    [[128, 128, 128], "grey"], [[204, 204, 204], "grey"], [[238, 238, 238], "grey"],
+  ];
+  for (const [[r, g, b], want] of cases) assert.equal(tools.colourName({ r, g, b }), want, `rgb(${r}, ${g}, ${b})`);
 });
 
-test("parseValidatorResponse normalizes verdict shapes", () => {
-  assert.deepEqual(
-    tools.parseValidatorResponse({ verdict: "pass", reason: "supported" }),
-    { pass: true, reason: "supported" },
-  );
-  assert.deepEqual(
-    tools.parseValidatorResponse({ verdict: "FAIL", reason: "no evidence" }),
-    { pass: false, reason: "no evidence" },
-  );
-  assert.deepEqual(tools.parseValidatorResponse({ valid: true }), {
-    pass: true,
-    reason: "",
-  });
-  assert.equal(tools.parseValidatorResponse({ verdict: "maybe" }), null);
-  assert.equal(tools.parseValidatorResponse({}), null);
-  assert.equal(tools.parseValidatorResponse(null), null);
+test("a wordless control is listed by its colour, its markings and where it is", () => {
+  assert.equal(tools.formatElementLine({ id: 7, tagName: "div", colour: "red", at: { x: 120, y: 85 } }), "[7] div no name, red at 120,85");
+  assert.equal(tools.formatElementLine({ id: 8, tagName: "div", colour: "green", marked: "box-3", at: { x: 1, y: 2 } }), '[8] div no name, green, marked "box-3" at 1,2');
+  assert.equal(tools.formatElementLine({ id: 9, tagName: "span", marked: "star", at: { x: 1, y: 2 }, rect: { x: 1, y: 2, w: 3, h: 4 } }, { withGeometry: true }), '[9] span no name, marked "star" at=(1,2) 3x4');
+});
+
+test("a long value is shown by its start and its end; a short or secret one as before", () => {
+  const long = `${"a".repeat(120)}${"m".repeat(1220)}${"z".repeat(80)}`;
+  const line = tools.formatElementLine({ id: 1, tagName: "textarea", accName: "Notes", value: long });
+  assert.equal(line, `[1] textarea "Notes" value="${"a".repeat(120)}... (1,420 characters) ...${"z".repeat(80)}"`);
+  const mid = "word ".repeat(20).trim();
+  assert.match(tools.formatElementLine({ id: 2, tagName: "input", inputType: "text", accName: "Title", value: mid }), /value="(word ){11}word…"$/, "an input up to 120 characters is clipped as before");
+  assert.match(tools.formatElementLine({ id: 3, tagName: "textarea", accName: "Notes", value: mid }), new RegExp(`value="${mid}"$`), "a textarea up to 120 characters is shown whole");
+  assert.match(tools.formatElementLine({ id: 4, tagName: "input", inputType: "text", accName: "Bio", value: "b".repeat(130) }), /value="b{120}\.\.\. \(130 characters\) \.\.\.b{10}"$/, "the start and the end do not overlap");
+  assert.equal(tools.formatElementLine({ id: 5, tagName: "textarea", accName: "Notes", value: long, mask: "the user's address" }), `[5] textarea "Notes" value="the user's address"`);
+  assert.equal(tools.formatElementLine({ id: 6, tagName: "input", inputType: "password", accName: "Password", value: "", sensitive: "password", filled: true }), '[6] input(password) "Password" secret(password) filled');
 });

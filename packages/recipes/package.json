@@ -1,0 +1,96 @@
+{
+  "name": "@recipes/core",
+  "version": "0.1.0",
+  "description": "Record a Playwright run once, replay it with no model. When the site changes, repair the broken step under a contract, stop when its meaning changed, and end every run with a receipt.",
+  "keywords": [
+    "playwright",
+    "browser-automation",
+    "self-healing",
+    "test-automation",
+    "e2e",
+    "web-scraping",
+    "rpa",
+    "ai-agents",
+    "llm",
+    "reliability"
+  ],
+  "homepage": "https://github.com/OWNER/REPO/tree/main/packages/recipes#readme",
+  "bugs": {
+    "url": "https://github.com/OWNER/REPO/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OWNER/REPO.git",
+    "directory": "packages/recipes"
+  },
+  "license": "MIT",
+  "author": "Arnav Goel",
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./driver-playwright": {
+      "types": "./driver-playwright.d.ts",
+      "default": "./driver-playwright.js"
+    },
+    "./anthropic": {
+      "types": "./anthropic.d.ts",
+      "default": "./anthropic.js"
+    },
+    "./demo-app": {
+      "types": "./examples/demo/app.d.ts",
+      "default": "./examples/demo/app.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "recipes": "./cli.js"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "driver-playwright.js",
+    "driver-playwright.d.ts",
+    "anthropic.js",
+    "anthropic.d.ts",
+    "page-script.js",
+    "cli.js",
+    "core/*.js",
+    "examples/demo/app.js",
+    "examples/demo/app.d.ts"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "demo": "node examples/demo/demo.js",
+    "example:login": "node examples/login-form.js",
+    "example:scrape": "node examples/scrape-paginated.js",
+    "prepublishOnly": "npm test && npm pack --dry-run"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@anthropic-ai/sdk": ">=1.0.0",
+    "playwright": ">=1.45.0"
+  },
+  "peerDependenciesMeta": {
+    "@anthropic-ai/sdk": {
+      "optional": true
+    },
+    "playwright": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^1.6.0",
+    "@playwright/test": "^1.65.0",
+    "playwright": "^1.65.0"
+  }
+}

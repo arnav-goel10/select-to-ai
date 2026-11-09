@@ -1,0 +1,665 @@
+{
+  "schema": "select-to-ai.recipe/1",
+  "id": "rcp_060b6d05f0126481",
+  "lineage": "rcp_060b6d05f0126481",
+  "title": "Check the amount and status of invoice {invoice}",
+  "request": "Check the amount and status of invoice {invoice}",
+  "sites": [
+    "127.0.0.1"
+  ],
+  "start": {
+    "url": {
+      "origin": "http://127.0.0.1:4317",
+      "path": "/invoices",
+      "query": {}
+    },
+    "newTab": false
+  },
+  "variables": [
+    {
+      "name": "invoice",
+      "type": "text",
+      "required": true,
+      "example": "INV-1012",
+      "source": "user_marked",
+      "checked": "none"
+    }
+  ],
+  "steps": [
+    {
+      "id": "s1",
+      "intent": "open http://127.0.0.1:4317/invoices",
+      "class": "read",
+      "risk": [],
+      "pre": {
+        "page": {
+          "url": null,
+          "titleWords": [],
+          "outline": [],
+          "forms": []
+        },
+        "targetPresent": false,
+        "noBlockers": true
+      },
+      "action": {
+        "do": "navigate",
+        "url": "http://127.0.0.1:4317/invoices"
+      },
+      "target": null,
+      "post": {
+        "all": [
+          {
+            "k": "page",
+            "match": {
+              "origin": "http://127.0.0.1:4317",
+              "path": "/invoices",
+              "query": {}
+            },
+            "heading": "Invoices"
+          }
+        ],
+        "strength": "strong"
+      },
+      "wait": {
+        "recordedSettleMs": 221,
+        "deadlineMs": 3000
+      }
+    },
+    {
+      "id": "s2",
+      "intent": "read the value \"amount\" \"5,007.50\"",
+      "class": "read",
+      "risk": [],
+      "pre": {
+        "page": {
+          "url": {
+            "origin": "http://127.0.0.1:4317",
+            "path": "/invoices",
+            "query": {
+              "page": "*"
+            }
+          },
+          "titleWords": [
+            "invoices",
+            "supplier",
+            "portal"
+          ],
+          "outline": [
+            "Invoices"
+          ],
+          "forms": []
+        },
+        "targetPresent": true,
+        "noBlockers": true
+      },
+      "action": {
+        "do": "read",
+        "name": "amount"
+      },
+      "target": {
+        "attrs": {
+          "kind": "text",
+          "accName": "5,007.50",
+          "text": "5,007.50",
+          "group": "{invoice} | Contoso | 2026-10-28 | 5,007.50 | Overdue",
+          "groupKind": "item",
+          "heading": "Invoices",
+          "column": "Amount (USD)",
+          "ancestors": [
+            "table",
+            "main Invoices"
+          ],
+          "siblings": [
+            "2026-10-28",
+            "Overdue",
+            "Contoso",
+            "{invoice}"
+          ],
+          "ordinal": {
+            "of": 0,
+            "n": 1
+          },
+          "rect": {
+            "x": 449,
+            "y": 288,
+            "w": 187,
+            "h": 31,
+            "vw": 1280,
+            "vh": 720
+          },
+          "frame": 0,
+          "onTop": true
+        },
+        "weights": {
+          "accName": 0,
+          "text": 0,
+          "column": 2,
+          "kind": 1.5,
+          "group": 1.5,
+          "heading": 1,
+          "ancestors": 1,
+          "siblings": 0.75,
+          "ordinal": 0,
+          "rect": 0.5
+        },
+        "ambiguousAtRecord": 0,
+        "read": true,
+        "scope": {
+          "groupKind": "item",
+          "contains": "{invoice}"
+        },
+        "loc": "internal:role=row >> internal:has-text=\"{invoice}\"i >> internal:role=cell >> nth=3"
+      },
+      "post": {
+        "all": [],
+        "strength": "strong"
+      },
+      "wait": {
+        "recordedSettleMs": 0,
+        "deadlineMs": 3000
+      },
+      "seek": {
+        "target": {
+          "attrs": {
+            "kind": "link",
+            "accName": "Next",
+            "text": "Next",
+            "hrefPath": "/invoices",
+            "group": "Pages",
+            "groupKind": "navigation",
+            "heading": "Invoices",
+            "ancestors": [
+              "nav Pages",
+              "main Invoices"
+            ],
+            "siblings": [
+              "Invoice Customer Due Amount (USD) Status",
+              "Page 1 of 3",
+              "Invoices"
+            ],
+            "ordinal": {
+              "of": 0,
+              "n": 1
+            },
+            "rect": {
+              "x": 32,
+              "y": 456,
+              "w": 34,
+              "h": 18,
+              "vw": 1280,
+              "vh": 720
+            },
+            "frame": 0,
+            "onTop": true
+          },
+          "weights": {
+            "accName": 3,
+            "text": 2,
+            "hrefPath": 2,
+            "kind": 1.5,
+            "group": 1.5,
+            "heading": 1,
+            "ancestors": 1,
+            "siblings": 0.75,
+            "ordinal": 0,
+            "rect": 0.5
+          },
+          "ambiguousAtRecord": 0
+        },
+        "max": 12
+      },
+      "ctx": {
+        "page": "Invoices",
+        "section": "Invoices",
+        "column": "Amount (USD)",
+        "notes": "Page 2 of 3 | Invoices",
+        "unit": "0"
+      }
+    },
+    {
+      "id": "s3",
+      "intent": "read the value \"status\" \"Overdue\"",
+      "class": "read",
+      "risk": [],
+      "pre": {
+        "page": {
+          "url": {
+            "origin": "http://127.0.0.1:4317",
+            "path": "/invoices",
+            "query": {
+              "page": "*"
+            }
+          },
+          "titleWords": [
+            "invoices",
+            "supplier",
+            "portal"
+          ],
+          "outline": [
+            "Invoices"
+          ],
+          "forms": []
+        },
+        "targetPresent": true,
+        "noBlockers": true
+      },
+      "action": {
+        "do": "read",
+        "name": "status"
+      },
+      "target": {
+        "attrs": {
+          "kind": "text",
+          "accName": "Overdue",
+          "text": "Overdue",
+          "group": "{invoice} | Contoso | 2026-10-28 | 5,007.50 | Overdue",
+          "groupKind": "item",
+          "heading": "Invoices",
+          "column": "Status",
+          "ancestors": [
+            "table",
+            "main Invoices"
+          ],
+          "siblings": [
+            "5,007.50",
+            "2026-10-28",
+            "Contoso",
+            "{invoice}"
+          ],
+          "ordinal": {
+            "of": 0,
+            "n": 1
+          },
+          "rect": {
+            "x": 636,
+            "y": 288,
+            "w": 116,
+            "h": 31,
+            "vw": 1280,
+            "vh": 720
+          },
+          "frame": 0,
+          "onTop": true
+        },
+        "weights": {
+          "accName": 0,
+          "text": 0,
+          "column": 2,
+          "kind": 1.5,
+          "group": 1.5,
+          "heading": 1,
+          "ancestors": 1,
+          "siblings": 0.75,
+          "ordinal": 0,
+          "rect": 0.5
+        },
+        "ambiguousAtRecord": 0,
+        "read": true,
+        "scope": {
+          "groupKind": "item",
+          "contains": "{invoice}"
+        },
+        "loc": "internal:role=row >> internal:has-text=\"{invoice}\"i >> internal:role=cell >> nth=4"
+      },
+      "post": {
+        "all": [],
+        "strength": "strong"
+      },
+      "wait": {
+        "recordedSettleMs": 0,
+        "deadlineMs": 3000
+      },
+      "ctx": {
+        "page": "Invoices",
+        "section": "Invoices",
+        "column": "Status",
+        "notes": "Page 2 of 3 | Invoices"
+      }
+    }
+  ],
+  "result": {
+    "kind": "extract",
+    "extract": [
+      {
+        "name": "amount",
+        "at": "s2"
+      },
+      {
+        "name": "status",
+        "at": "s3"
+      }
+    ],
+    "done": []
+  },
+  "state": "draft",
+  "trust": null,
+  "schedule": null,
+  "provenance": {
+    "source": "record",
+    "compiledAt": 1793982657638,
+    "compiler": "recipes/0.1",
+    "author": "you"
+  },
+  "versions": [
+    {
+      "v": 1,
+      "at": 1793982657638,
+      "by": "record",
+      "parent": null,
+      "ops": [],
+      "steps": [
+        {
+          "id": "s1",
+          "intent": "open http://127.0.0.1:4317/invoices",
+          "class": "read",
+          "risk": [],
+          "pre": {
+            "page": {
+              "url": null,
+              "titleWords": [],
+              "outline": [],
+              "forms": []
+            },
+            "targetPresent": false,
+            "noBlockers": true
+          },
+          "action": {
+            "do": "navigate",
+            "url": "http://127.0.0.1:4317/invoices"
+          },
+          "target": null,
+          "post": {
+            "all": [
+              {
+                "k": "page",
+                "match": {
+                  "origin": "http://127.0.0.1:4317",
+                  "path": "/invoices",
+                  "query": {}
+                },
+                "heading": "Invoices"
+              }
+            ],
+            "strength": "strong"
+          },
+          "wait": {
+            "recordedSettleMs": 221,
+            "deadlineMs": 3000
+          }
+        },
+        {
+          "id": "s2",
+          "intent": "read the value \"amount\" \"5,007.50\"",
+          "class": "read",
+          "risk": [],
+          "pre": {
+            "page": {
+              "url": {
+                "origin": "http://127.0.0.1:4317",
+                "path": "/invoices",
+                "query": {
+                  "page": "*"
+                }
+              },
+              "titleWords": [
+                "invoices",
+                "supplier",
+                "portal"
+              ],
+              "outline": [
+                "Invoices"
+              ],
+              "forms": []
+            },
+            "targetPresent": true,
+            "noBlockers": true
+          },
+          "action": {
+            "do": "read",
+            "name": "amount"
+          },
+          "target": {
+            "attrs": {
+              "kind": "text",
+              "accName": "5,007.50",
+              "text": "5,007.50",
+              "group": "{invoice} | Contoso | 2026-10-28 | 5,007.50 | Overdue",
+              "groupKind": "item",
+              "heading": "Invoices",
+              "column": "Amount (USD)",
+              "ancestors": [
+                "table",
+                "main Invoices"
+              ],
+              "siblings": [
+                "2026-10-28",
+                "Overdue",
+                "Contoso",
+                "{invoice}"
+              ],
+              "ordinal": {
+                "of": 0,
+                "n": 1
+              },
+              "rect": {
+                "x": 449,
+                "y": 288,
+                "w": 187,
+                "h": 31,
+                "vw": 1280,
+                "vh": 720
+              },
+              "frame": 0,
+              "onTop": true
+            },
+            "weights": {
+              "accName": 0,
+              "text": 0,
+              "column": 2,
+              "kind": 1.5,
+              "group": 1.5,
+              "heading": 1,
+              "ancestors": 1,
+              "siblings": 0.75,
+              "ordinal": 0,
+              "rect": 0.5
+            },
+            "ambiguousAtRecord": 0,
+            "read": true,
+            "scope": {
+              "groupKind": "item",
+              "contains": "{invoice}"
+            },
+            "loc": "internal:role=row >> internal:has-text=\"{invoice}\"i >> internal:role=cell >> nth=3"
+          },
+          "post": {
+            "all": [],
+            "strength": "strong"
+          },
+          "wait": {
+            "recordedSettleMs": 0,
+            "deadlineMs": 3000
+          },
+          "seek": {
+            "target": {
+              "attrs": {
+                "kind": "link",
+                "accName": "Next",
+                "text": "Next",
+                "hrefPath": "/invoices",
+                "group": "Pages",
+                "groupKind": "navigation",
+                "heading": "Invoices",
+                "ancestors": [
+                  "nav Pages",
+                  "main Invoices"
+                ],
+                "siblings": [
+                  "Invoice Customer Due Amount (USD) Status",
+                  "Page 1 of 3",
+                  "Invoices"
+                ],
+                "ordinal": {
+                  "of": 0,
+                  "n": 1
+                },
+                "rect": {
+                  "x": 32,
+                  "y": 456,
+                  "w": 34,
+                  "h": 18,
+                  "vw": 1280,
+                  "vh": 720
+                },
+                "frame": 0,
+                "onTop": true
+              },
+              "weights": {
+                "accName": 3,
+                "text": 2,
+                "hrefPath": 2,
+                "kind": 1.5,
+                "group": 1.5,
+                "heading": 1,
+                "ancestors": 1,
+                "siblings": 0.75,
+                "ordinal": 0,
+                "rect": 0.5
+              },
+              "ambiguousAtRecord": 0
+            },
+            "max": 12
+          },
+          "ctx": {
+            "page": "Invoices",
+            "section": "Invoices",
+            "column": "Amount (USD)",
+            "notes": "Page 2 of 3 | Invoices",
+            "unit": "0"
+          }
+        },
+        {
+          "id": "s3",
+          "intent": "read the value \"status\" \"Overdue\"",
+          "class": "read",
+          "risk": [],
+          "pre": {
+            "page": {
+              "url": {
+                "origin": "http://127.0.0.1:4317",
+                "path": "/invoices",
+                "query": {
+                  "page": "*"
+                }
+              },
+              "titleWords": [
+                "invoices",
+                "supplier",
+                "portal"
+              ],
+              "outline": [
+                "Invoices"
+              ],
+              "forms": []
+            },
+            "targetPresent": true,
+            "noBlockers": true
+          },
+          "action": {
+            "do": "read",
+            "name": "status"
+          },
+          "target": {
+            "attrs": {
+              "kind": "text",
+              "accName": "Overdue",
+              "text": "Overdue",
+              "group": "{invoice} | Contoso | 2026-10-28 | 5,007.50 | Overdue",
+              "groupKind": "item",
+              "heading": "Invoices",
+              "column": "Status",
+              "ancestors": [
+                "table",
+                "main Invoices"
+              ],
+              "siblings": [
+                "5,007.50",
+                "2026-10-28",
+                "Contoso",
+                "{invoice}"
+              ],
+              "ordinal": {
+                "of": 0,
+                "n": 1
+              },
+              "rect": {
+                "x": 636,
+                "y": 288,
+                "w": 116,
+                "h": 31,
+                "vw": 1280,
+                "vh": 720
+              },
+              "frame": 0,
+              "onTop": true
+            },
+            "weights": {
+              "accName": 0,
+              "text": 0,
+              "column": 2,
+              "kind": 1.5,
+              "group": 1.5,
+              "heading": 1,
+              "ancestors": 1,
+              "siblings": 0.75,
+              "ordinal": 0,
+              "rect": 0.5
+            },
+            "ambiguousAtRecord": 0,
+            "read": true,
+            "scope": {
+              "groupKind": "item",
+              "contains": "{invoice}"
+            },
+            "loc": "internal:role=row >> internal:has-text=\"{invoice}\"i >> internal:role=cell >> nth=4"
+          },
+          "post": {
+            "all": [],
+            "strength": "strong"
+          },
+          "wait": {
+            "recordedSettleMs": 0,
+            "deadlineMs": 3000
+          },
+          "ctx": {
+            "page": "Invoices",
+            "section": "Invoices",
+            "column": "Status",
+            "notes": "Page 2 of 3 | Invoices"
+          }
+        }
+      ],
+      "status": "active"
+    }
+  ],
+  "active": 0,
+  "counters": {
+    "runs": 0,
+    "replayOk": 0,
+    "repaired": 0,
+    "repairsRolledBack": 0,
+    "stopped": {
+      "drift": 0,
+      "blocker": 0,
+      "refused": 0,
+      "user": 0,
+      "site": 0
+    },
+    "overrides": 0,
+    "last5": [],
+    "lastRunAt": 0,
+    "lastOkAt": 0,
+    "perStep": {},
+    "drift": {}
+  }
+}

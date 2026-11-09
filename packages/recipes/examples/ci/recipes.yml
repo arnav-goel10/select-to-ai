@@ -1,0 +1,63 @@
+# Replay a saved recipe on a schedule and keep the receipt.
+#
+# Copy this file to .github/workflows/recipes.yml. As written it runs the
+# example in this package against the local example portal. In your own repo:
+#   - set working-directory to wherever your recipes live,
+#   - delete the "Start the example portal" step (your site is already up),
+#   - add ANTHROPIC_API_KEY as a repository secret if you want cosmetic
+#     changes repaired; without it, any change stops the run.
+#
+# The job fails unless the receipt says done_proven. The receipt is uploaded
+# either way, and printed in the job summary.
+
+name: recipes
+
+on:
+  schedule:
+    - cron: "17 * * * *" # hourly
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: packages/recipes
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/recipes/package-lock.json
+
+      - run: npm ci
+
+      - run: npx playwright install --with-deps chromium
+
+      # Stand-in for your site. Delete this step in your own repo.
+      - name: Start the example portal
+        run: |
+          node examples/fixtures/portal.js 4317 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:4317/invoices > /dev/null && exit 0; sleep 1; done
+          echo "portal did not start"; exit 1
+
+      - name: Replay the recipe
+        run: node examples/ci/replay.js examples/ci/invoice-status.recipe.json examples/ci/invoice-status.vars.json --out receipts
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Secrets the recipe needs at replay, for example a password:
+          # RECIPE_VAR_password: ${{ secrets.PORTAL_PASSWORD }}
+
+      - name: Upload the receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recipe-receipts
+          path: packages/recipes/receipts/
+          if-no-files-found: warn

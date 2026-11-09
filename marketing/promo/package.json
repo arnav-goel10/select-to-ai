@@ -1,0 +1,20 @@
+{
+  "name": "select-to-ai-promo",
+  "private": true,
+  "description": "Promo video for Select to AI, built with Remotion.",
+  "scripts": {
+    "music": "node scripts/music.mjs",
+    "studio": "remotion studio src/index.ts",
+    "render": "node -e \"process.exit(require('./src/beat.json').music?0:1)\" && (node scripts/edit-music.mjs && node scripts/music.mjs --sfx) || node scripts/music.mjs; remotion render src/index.ts Promo out/select-to-ai-promo.mp4 --codec=h264 --crf=17",
+    "still": "remotion still src/index.ts Promo out/still.png",
+    "sync": "node scripts/sync-music.mjs"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.530",
+    "@remotion/google-fonts": "4.0.530",
+    "@remotion/transitions": "4.0.530",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "remotion": "4.0.530"
+  }
+}

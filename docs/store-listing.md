@@ -1,49 +1,89 @@
-# Chrome Web Store listing: 3.3.0
+# Chrome Web Store listing: 4.0.0
 
-Ready-to-paste copy for the store listing (the live listing still describes
-v2.0). Plain text only; the store strips markdown.
+Copy to paste into the developer dashboard. The store strips markdown, so the long description is plain text. The live listing still describes 2.0.
 
-## Short description (132 chars max)
+## Title
 
-Send selected text to ChatGPT, Gemini, Claude, or Perplexity, or run a bounded, safety-gated browser agent with your own API key.
+Select to AI
 
-## Full description
+(From the manifest `name`. Unchanged, so existing users and search keep finding it.)
 
-Select to AI does two things, both under your control.
+## Short description (125 of 132 characters)
 
-SEND SELECTED TEXT TO ANY ASSISTANT
-Highlight text on any page, right-click, and send it to ChatGPT, Gemini, Claude, or Perplexity, in a new tab or Chrome's side panel. New ChatGPT and Perplexity conversations receive your prompt through the URL itself, so nothing fragile happens on the page. Optional auto-submit and automatic page-context appending are one switch each in Settings. If the extension ever cannot find the chat box, it copies your text to the clipboard and tells you; it never clicks a guessed button.
+Send selected text to ChatGPT, Claude, Gemini or Perplexity, or ask an AI agent to read and use websites in your own browser.
 
-Type "ai" plus a space in the address bar and just say what you want: a site name opens the site, a question goes to your preferred assistant, and a multi-step task is handed to the browser agent. The suggestion row shows exactly what Enter will do before you press it.
+(The store takes this from the manifest `description`, which now matches.)
 
-A BROWSER AGENT THAT SHOWS ITS WORK
-The AI Browser Agent plans your task into a visible checklist, performs one page action at a time, and checks its own results:
+## Long description
 
-- It plans subtasks with observable "done when" conditions you can watch complete.
-- Every click and keystroke is verified by what actually changed on the page, not assumed.
-- After repeated failures it stops and rethinks its approach instead of looping.
-- Before it says "done", a validator checks the answer against what is actually on the page.
-- It asks YOU when it meets logins, CAPTCHAs, payments, or an ambiguous request, it never guesses credentials.
-- You can steer a running task with a message, export the full run log, and stop instantly at any time.
+```
+Highlight text on any page, right-click, and send it to ChatGPT, Claude, Gemini or Perplexity. The chat opens in Chrome's side panel or a new tab with your text already in it. This part needs no account with us and no API key.
 
-The agent is OFF by default. A first-run setup wizard connects the model provider of your choice (OpenAI, Anthropic, Google, OpenRouter, DeepSeek, Mistral, Groq, Together, xAI, OpenCode, or your own local/self-hosted gateway) and verifies your key before anything is enabled.
+The agent does tasks on websites for you. Type what you want, for example "what's the top story on Hacker News" or "find the cheapest of these three laptops", and it opens pages, clicks, types, scrolls and reads in your tab, then gives you the answer with the pages it came from. Before it answers, it checks its quotes against the pages it read. You can follow each step as it happens, send it a message to change course, or stop it.
 
-PRIVACY AND SAFETY BY DESIGN
-- Your API keys stay in local browser storage and are excluded from settings exports.
-- Requests can only go to the documented provider endpoints or the exact custom gateway you configured.
-- The agent asks permission per website, one origin at a time, no blanket access to all sites.
-- High-risk actions (purchases, deletions, payments, passwords) require your explicit confirmation.
-- Step, cost, domain, and failure limits bound every run. No analytics, no telemetry, no ads.
+Start it from the side panel, the toolbar button, the quick box (Alt+K on Windows and Linux, Control+Shift+Q on Mac) or by typing ai and a space in the address bar.
 
-Open source: https://github.com/arnav-goel10/select-to-ai
+YOUR DATA
+There is no Select to AI server. Page text, tab titles, URLs and screenshots go only to the AI provider you chose, and only while a task runs. API keys stay in this browser. No analytics, no ads. The agent works only on sites you allow, site by site or on every site. The privacy policy lists everything it stores and sends.
 
-## What's new in 3.3.0
+WHAT YOU NEED
+The agent needs an AI model. Connect a free OpenRouter account in one click, no card needed. Free models have a daily limit and do less well on long tasks, so for regular use paste a key from OpenAI, Anthropic, Google Gemini, Groq, xAI, DeepSeek, Mistral or another listed provider, or point it at your own local model.
 
-- New guided setup: a short wizard connects your API key, verifies it, and explains the agent before turning it on.
-- The agent now plans, acts, reflects after failures, and validates its answer against the page before finishing, and asks you instead of guessing at logins or CAPTCHAs.
-- Steer a running task with a mid-run message; export the run log or full session recording.
-- Cleaner, consistent design across the popup, settings, side panel, and agent, with a real light and dark theme everywhere.
-- The popup is now a simple launcher; all settings live in one place.
-- Sturdier text sending: URL-based prompts for new ChatGPT/Perplexity chats, verified sends elsewhere, and a clipboard fallback instead of wrong-button clicks.
-- The agent sidebar lists your recent completed tasks and lets you view or clear everything the agent remembers.
-- Dozens of fixes: accurate cost estimates, readable logs, keyboard-accessible controls, and repaired settings flows.
+WHAT IT WON'T DO WITHOUT YOU
+It stops and asks before anything that pays, sends or deletes.
+It hands sign-ins, CAPTCHAs and one-time codes back to you, and carries on once you are done. It never types a password or a card number.
+
+MEMORY
+Tell it your details once (name, email, address) and it fills forms with them. They are stored encrypted in your browser. It also keeps preferences you state and what it learned about sites you use, such as where a site keeps its search. Settings > Memory shows every entry, and you can edit or delete any of them.
+
+RECIPES
+Save a task that worked as a recipe and run it again later. If the pages haven't changed, a recipe replays without calling the AI. If a page has changed, it checks that step with your AI model, and it stops if a button now does something different.
+
+Chrome shows a "debugging this browser" bar while the agent controls a tab. That's how it types and clicks the way a person does.
+
+Open source, MIT licence: https://github.com/arnav-goel10/select-to-ai
+```
+
+## What's new in 4.0.0 (for the release notes field, if shown)
+
+```
+The agent is rebuilt. Runs live in the background, so you can close the panel and come back.
+It pauses for sign-ins, CAPTCHAs, codes and payments, and carries on when you are done.
+Memory: your details fill forms, stored encrypted in your browser.
+Recipes: save a task that worked and replay it without calling the AI while the pages stay the same.
+New shortcuts on Mac: Control+Shift+S side panel, Control+Shift+G agent, Control+Shift+Q quick box.
+```
+
+## Permission justifications (Privacy practices tab)
+
+- contextMenus: the "Send to ChatGPT / Claude / Gemini / Perplexity" items on the right-click menu for selected text.
+- storage: preferences, the user's API key, their memory (encrypted) and saved recipes, all on the device.
+- sidePanel: shows the chat sites and the agent in Chrome's side panel.
+- tabs: lets the agent read tab titles and addresses, and open and switch tabs, for a task the user asked for.
+- activeTab: reads the current page when the user starts the agent from the toolbar button, a shortcut or the menu.
+- scripting: runs the agent's page reader on sites the user allowed, so it can see and act on the page.
+- debugger: sends real key presses and pointer input (Enter, Tab, hover menus, drag, presses inside another site's frame, canvas) and takes screenshots of a tab behind another, only on a tab where the user is running an agent task. Chrome does not allow `debugger` to be optional. Without it, 7 of the 59 scripted end-to-end scenarios fail (see docs/debugger-permission.md).
+- favicon: shows site icons next to the pages a task used.
+- declarativeNetRequest: lets ChatGPT, Claude, Gemini and Perplexity load inside the side panel. The rule covers only those four sites and only the side panel's frames.
+- notifications: tells the user a task finished or is waiting for them while they are away from it.
+- alarms: one reminder two minutes after a task paused for the user.
+- idle: checks whether the user is at the computer, so a waiting task notifies them only when they are away.
+- identity: opens OpenRouter's sign-in window for "Continue with OpenRouter" (OAuth with PKCE).
+- Host permissions, AI provider domains: sends the user's requests to the provider they picked.
+- Host permissions, chatgpt.com, claude.ai, gemini.google.com and perplexity.ai: puts the user's selected text into that site's chat box when they send it from the right-click menu or side panel.
+- Host permissions, localhost and 127.0.0.1: lets a user run the agent on a model served on their own computer (for example Ollama). Requests go to the exact address they enter.
+- Optional host permissions (all sites): asked for only when the user lets the agent work on websites, per site or for all.
+
+## Data usage answers
+
+See docs/privacy-disclosure.md, section "Store dashboard answers". In short: tick Personally identifiable information, Authentication information, Personal communications, Web history, User activity and Website content; tick all three certifications; remote code is No.
+
+## Note to the reviewer (optional field)
+
+```
+4.0.0 adds a browser agent that acts only on sites the user grants, one at a time or all at once. The debugger permission is used for real key and pointer input and background-tab screenshots during a task the user started; Chrome does not allow it as an optional permission. Recipes are saved JSON replayed by packaged code; no remote code is loaded. There is no developer server: page content goes only to the AI provider the user configures. Sign in with ChatGPT is present in the code but turned off in this build.
+```
+
+## Screenshots
+
+Real captures from the built extension are in docs/screens/ (see docs/screens/README.md). The store wants 1280x800 or 640x400.

@@ -73,50 +73,43 @@ test("the openWebUi remnant is fully removed", () => {
   }
 });
 
-test("risk confirmation dialog escapes model text and avoids duplicate ids", () => {
+test("cards the run waits on show model text as text, never as markup", () => {
   const agent = read("extension/agent.js");
-  assert.ok(
-    !agent.includes('id="confirmRiskBtn"'),
-    "risk dialog still uses a duplicate #confirmRiskBtn id",
-  );
-  assert.match(
-    agent,
-    /escapeHtml\(String\(actionObj\.action/,
-    "risk dialog does not escape the LLM-provided action",
-  );
-  assert.match(
-    agent,
-    /escapeHtml\(explanation\)/,
-    "risk dialog does not escape the LLM-provided explanation",
-  );
+  assert.ok(!agent.includes('id="confirmRiskBtn"'), "a duplicate #confirmRiskBtn id");
+  const start = agent.indexOf("function drawWait");
+  const card = agent.slice(start, agent.indexOf("\n  }\n", start));
+  assert.match(card, /text\.textContent = wait\.question/);
+  assert.match(card, /row\.textContent = line/);
+  assert.doesNotMatch(card, /innerHTML/, "a waiting card renders markup");
 });
 
 test("cost accounting reads both OpenAI and Anthropic usage shapes", () => {
-  const agent = read("extension/agent.js");
-  assert.match(agent, /usage\.prompt_tokens \?\? usage\.input_tokens/);
-  assert.match(agent, /usage\.completion_tokens \?\? usage\.output_tokens/);
-  assert.match(agent, /stream_options = \{ include_usage: true \}/);
+  const llm = read("extension/core/llm.js");
+  assert.match(llm, /u\.prompt_tokens \?\? u\.input_tokens/);
+  assert.match(llm, /stream_options = \{ include_usage: true \}/);
 });
 
-test("privacy policy accurately describes cross-session memory usage", () => {
+test("privacy policy accurately describes the run history", () => {
   const policy = read("PRIVACY_POLICY.md");
-  // Cross-session memory read-back is now real (Phase B): the policy must
-  // say exactly what is stored (validator-confirmed outlines) and where it
-  // flows (into the planning prompt), instead of the pre-wiring claim that
-  // it was write-only.
-  assert.ok(
-    !policy.includes("not currently read back into new tasks"),
-    "privacy policy still claims memory is write-only, but the planner reads it back",
-  );
-  assert.match(policy, /validator-confirmed task outlines/);
-  assert.match(policy, /read back locally into the planning step/);
-  assert.match(policy, /included in the planning prompt/);
-  // ...and the code actually gates the write on validator success.
-  const agent = read("extension/agent.js");
-  assert.match(agent, /statusState === "success" && lastValidatorPassed/);
+  // The history keeps the words of the task, which include any text selected for the quick box.
+  assert.match(policy, /Your last 20 tasks: the words you typed \(including any text you selected for the quick box\)/);
+  assert.doesNotMatch(policy, /never page contents/, "a quick-box task carries the selected page text");
+  assert.doesNotMatch(policy, /decision model|planning prompt|validator-confirmed/, "the policy still describes the removed loop or router");
+  // ...and the engine writes only finished runs, with no page text.
+  const engine = read("extension/engine.js");
+  assert.match(engine, /\["success", "unconfirmed", "error", "limit", "idle"\]\.includes\(run\.outcome\.state\)\) \{\s*\/\/ The sidebar's list of recent tasks, each with how it ended\./);
+  assert.match(engine, /\{ task: run\.task, subtasks: \[\], timestamp: Date\.now\(\), outcome: run\.outcome\.state \}/);
 });
 
-test("security doc states the full header-removal scope of rules.json", () => {
+test("the framing rule only applies to the side panel, never to tabs", () => {
+  const bg = read("extension/background.js");
+  assert.match(bg, /tabIds: \[chrome\.tabs\.TAB_ID_NONE\]/);
+  assert.match(bg, /resourceTypes: \['sub_frame'\]/);
+  const manifest = read("extension/manifest.json");
+  assert.ok(!manifest.includes("rule_resources"), "no static header rule that applies to every site");
+});
+
+test("security doc states the full header-removal scope of the side-panel rule", () => {
   const doc = read("docs/security.md");
   assert.ok(
     !doc.includes("framing-related response headers only"),

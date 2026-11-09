@@ -1,0 +1,32 @@
+[
+ {
+  "id": "dev-reports-noexport",
+  "app": "reports",
+  "tasks": [
+   "reports.export"
+  ],
+  "expected": "must-stop",
+  "ops": [
+   {
+    "op": "remove",
+    "k": "export-csv"
+   }
+  ],
+  "family": "feature-removed"
+ },
+ {
+  "id": "dev-wizard-nodraft",
+  "app": "wizard",
+  "tasks": [
+   "wizard.draft"
+  ],
+  "expected": "must-stop",
+  "ops": [
+   {
+    "op": "remove",
+    "k": "save-draft"
+   }
+  ],
+  "family": "feature-removed"
+ }
+]

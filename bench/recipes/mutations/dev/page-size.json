@@ -1,0 +1,20 @@
+[
+ {
+  "id": "dev-inventory-size5",
+  "app": "inventory",
+  "expected": "repairable",
+  "flags": {
+   "pageSize": 5
+  },
+  "family": "page-size"
+ },
+ {
+  "id": "dev-inventory-size12",
+  "app": "inventory",
+  "expected": "repairable",
+  "flags": {
+   "pageSize": 12
+  },
+  "family": "page-size"
+ }
+]

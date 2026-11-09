@@ -1,0 +1,51 @@
+[
+ {
+  "id": "dev-admin-path",
+  "app": "admin",
+  "expected": "repairable",
+  "flags": {
+   "pathMove": [
+    {
+     "from": "/admin/users",
+     "to": "/admin/people"
+    }
+   ]
+  },
+  "family": "url-path-moved"
+ },
+ {
+  "id": "dev-reports-path",
+  "app": "reports",
+  "tasks": [
+   "reports.schedule"
+  ],
+  "expected": "repairable",
+  "flags": {
+   "pathMove": [
+    {
+     "from": "/reports/schedules",
+     "to": "/reports/exports/scheduled"
+    }
+   ]
+  },
+  "family": "url-path-moved"
+ },
+ {
+  "id": "dev-wizard-path",
+  "app": "wizard",
+  "tasks": [
+   "wizard.submit",
+   "wizard.draft"
+  ],
+  "expected": "repairable",
+  "flags": {
+   "pathMove": [
+    {
+     "from": "/wizard/step1",
+     "to": "/wizard/apply/company"
+    }
+   ]
+  },
+  "family": "url-path-moved"
+ }
+]

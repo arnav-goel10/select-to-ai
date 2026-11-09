@@ -189,11 +189,19 @@
             insertMode = 'append';
         }
 
-        console.log(`Select to AI: Processing text for ${hostname} (Mode: ${insertMode})`);
 
         waitForChain(adapter.input).then((element) => {
             window.focus();
             element.focus();
+
+            // A second delivery of the same request (two frames, a storage
+            // event plus a message) must never double the prompt ("abcabc").
+            const already = readComposerText(element).replace(/\s+/g, " ").trim();
+            const incoming = String(text || "").replace(/\s+/g, " ").trim();
+            if (incoming && (already === incoming || already.endsWith(incoming))) {
+                if (autoSend && adapter.send && adapter.send.length > 0) setTimeout(() => attemptSend(element), DELAYS.POLLING_INTERVAL);
+                return;
+            }
 
             const tagName = element.tagName.toLowerCase();
             const isEditable =
@@ -277,7 +285,6 @@
                 else if (hostname.includes(HOSTS.PERPLEXITY)) delay = DELAYS.PERPLEXITY;
                 else if (hostname.includes(HOSTS.CLAUDE)) delay = DELAYS.CLAUDE;
 
-                console.log(`Select to AI: Auto-sending in ${delay}ms...`);
 
                 setTimeout(() => {
                     attemptSend(element);
@@ -312,7 +319,6 @@
 
             verifySendWorked(element, probeCountBefore).then((sent) => {
                 if (sent) {
-                    console.log("Select to AI: send verified (composer emptied or message bubble appeared).");
                     return;
                 }
                 if (!isRetry) {
@@ -328,9 +334,26 @@
     /**
      * Initializes the main state checking, runtime message listening, and session saving hooks.
      */
+    // This script also runs in the user's ordinary assistant tabs. Text sent
+    // to the side panel (sidePanelState) belongs only to the copy inside the
+    // side panel; without this check every open ChatGPT or Claude tab pasted,
+    // and with auto-send submitted, the same selection.
+    function isInSidePanel() {
+        try {
+            const origins = window.location.ancestorOrigins;
+            return !!origins && origins.length > 0 &&
+                origins[origins.length - 1] === `chrome-extension://${chrome.runtime.id}`;
+        } catch (e) {
+            return false;
+        }
+    }
+
     function init() {
+        const inSidePanel = isInSidePanel();
+        if (window !== window.top && !inSidePanel) return;
+
         // 1. Initial State Check (Polling)
-        chrome.storage.local.get([CONFIG.STORAGE.SIDE_PANEL_STATE], (items) => {
+        if (inSidePanel) chrome.storage.local.get([CONFIG.STORAGE.SIDE_PANEL_STATE], (items) => {
             if (items[CONFIG.STORAGE.SIDE_PANEL_STATE]) {
                 const state = items[CONFIG.STORAGE.SIDE_PANEL_STATE];
                 const timeDiff = Date.now() - (state.timestamp || 0);
@@ -347,7 +370,7 @@
 
         // 2. Storage Listener
         chrome.storage.onChanged.addListener((changes, namespace) => {
-            if (namespace === 'local' && changes[CONFIG.STORAGE.SIDE_PANEL_STATE]) {
+            if (inSidePanel && namespace === 'local' && changes[CONFIG.STORAGE.SIDE_PANEL_STATE]) {
                 const newState = changes[CONFIG.STORAGE.SIDE_PANEL_STATE].newValue;
                 if (newState && newState.selectedText && adapter) {
                     if (newState.timestamp && newState.timestamp > lastProcessedTimestamp) {
@@ -381,6 +404,9 @@
         chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             if (!adapter) return;
             if (message.selectedText) {
+                // Text is for the page's own composer: sub-frames (ads, embeds)
+                // must not act on it, except inside the side panel.
+                if (window !== window.top && !isInSidePanel()) return;
                 // Deduplication
                 if (message.timestamp && message.timestamp <= lastProcessedTimestamp) {
                     sendResponse({ status: "success", info: "duplicate" });
@@ -419,8 +445,10 @@
                 }
             };
 
-            // Aggressive polling/event listening for SPA URL changes
-            setInterval(saveSessionUrl, 500);
+            // Event-driven SPA URL tracking (no background polling interval)
+            if (typeof window.navigation === 'object' && window.navigation && typeof window.navigation.addEventListener === 'function') {
+                window.navigation.addEventListener('navigate', () => setTimeout(saveSessionUrl, 0));
+            }
             window.addEventListener('popstate', saveSessionUrl);
             window.addEventListener('hashchange', saveSessionUrl);
             document.addEventListener('click', () => setTimeout(saveSessionUrl, 100)); // Capture clicks

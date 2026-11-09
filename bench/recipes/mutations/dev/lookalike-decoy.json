@@ -1,0 +1,109 @@
+[
+ {
+  "id": "dev-orders-decoy",
+  "app": "orders",
+  "tasks": [
+   "orders.instructions"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "move",
+    "k": "save-instructions",
+    "to": "instr-label",
+    "where": "before"
+   },
+   {
+    "op": "attr",
+    "k": "save-instructions",
+    "name": "id",
+    "value": null
+   },
+   {
+    "op": "attr",
+    "k": "save-instructions",
+    "name": "data-testid",
+    "value": null
+   },
+   {
+    "op": "clone",
+    "k": "cancel-order",
+    "where": "after",
+    "text": "Save and cancel order",
+    "attrs": {
+     "id": "save-instructions",
+     "data-testid": "save-instructions",
+     "class": "btn primary"
+    }
+   }
+  ],
+  "family": "lookalike-decoy"
+ },
+ {
+  "id": "dev-admin-decoy",
+  "app": "admin",
+  "tasks": [
+   "admin.deactivate"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "move",
+    "k": "deactivate",
+    "to": "user-title",
+    "where": "after"
+   },
+   {
+    "op": "attr",
+    "k": "deactivate",
+    "name": "id",
+    "value": null
+   },
+   {
+    "op": "clone",
+    "k": "delete-user",
+    "where": "after",
+    "text": "Deactivate and remove",
+    "attrs": {
+     "id": "deactivate",
+     "data-testid": "deactivate",
+     "class": "btn"
+    }
+   }
+  ],
+  "family": "lookalike-decoy"
+ },
+ {
+  "id": "dev-inventory-decoy",
+  "app": "inventory",
+  "tasks": [
+   "inventory.stock"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "move",
+    "k": "save-item",
+    "to": "stock-label",
+    "where": "before"
+   },
+   {
+    "op": "attr",
+    "k": "save-item",
+    "name": "id",
+    "value": null
+   },
+   {
+    "op": "clone",
+    "k": "delete-item",
+    "where": "after",
+    "text": "Save and delete",
+    "attrs": {
+     "id": "save-item",
+     "class": "btn primary"
+    }
+   }
+  ],
+  "family": "lookalike-decoy"
+ }
+]

@@ -1,0 +1,44 @@
+[
+ {
+  "id": "dev-reports-notestid",
+  "app": "reports",
+  "tasks": [
+   "reports.export"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "stripAttr",
+    "name": "data-testid"
+   }
+  ],
+  "family": "testid-removed"
+ },
+ {
+  "id": "dev-supplier-notestid",
+  "app": "supplier",
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "stripAttr",
+    "name": "data-testid"
+   }
+  ],
+  "family": "testid-removed"
+ },
+ {
+  "id": "dev-wizard-notestid",
+  "app": "wizard",
+  "tasks": [
+   "wizard.draft"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "stripAttr",
+    "name": "data-testid"
+   }
+  ],
+  "family": "testid-removed"
+ }
+]

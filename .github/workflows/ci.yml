@@ -9,7 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  validate:
+  checks:
+    name: Unit tests, manifest and package
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -18,15 +19,37 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # puppeteer is only needed by the manual e2e workflow; skip its
-      # Chromium download so the required check job stays fast.
+      # No browser is needed here, so skip both browser downloads.
       - run: npm ci
         env:
           PUPPETEER_SKIP_DOWNLOAD: "true"
-      - run: npm run check
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - run: npm run check:fast
       - run: npm run package
       - uses: actions/upload-artifact@v4
         with:
           name: select-to-ai-extension
           path: dist/select-to-ai-extension.zip
           if-no-files-found: error
+
+  browser:
+    name: Browser tests (Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      # Installed explicitly, so the job does not depend on install scripts:
+      # Chrome for the Puppeteer suites, Chromium for the Playwright ones.
+      - run: npx puppeteer browsers install chrome
+      - run: npx playwright install --with-deps chromium
+      # Ubuntu 24.04 blocks the unprivileged user namespaces Chrome's sandbox
+      # needs; without this every launch fails with "No usable sandbox".
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: npm run check:browser

@@ -1,0 +1,14 @@
+[
+  { "id": "wikipedia-population", "level": "easy", "url": "https://en.wikipedia.org/wiki/Singapore", "task": "What is Singapore's population according to this page, and what year is that figure from?" },
+  { "id": "pypi-latest-version", "level": "easy", "url": "https://pypi.org/", "task": "What is the latest version of the requests package, and when was it released?" },
+  { "id": "hn-top-story", "level": "easy", "url": "https://news.ycombinator.com/", "task": "What is the title of the top story right now, and how many points does it have?" },
+  { "id": "wikipedia-search", "level": "medium", "url": "https://www.wikipedia.org/", "task": "Find the article on the Eiffel Tower and tell me its height and the year it was completed." },
+  { "id": "mdn-flatmap", "level": "medium", "url": "https://developer.mozilla.org/en-US/", "task": "Find the page for Array.prototype.flatMap and tell me what the method returns." },
+  { "id": "github-repo-facts", "level": "easy", "url": "https://github.com/browser-use/browser-use", "task": "How many stars does this repository have, and what licence is it under?" },
+  { "id": "govuk-passport-fee", "level": "medium", "url": "https://www.gov.uk/", "task": "Find how much a standard adult passport costs when you apply online." },
+  { "id": "arxiv-authors", "level": "medium", "url": "https://arxiv.org/", "task": "Find the paper 'Attention Is All You Need' and list its authors." },
+  { "id": "openlibrary-book", "level": "medium", "url": "https://openlibrary.org/", "task": "Who wrote 'The Left Hand of Darkness', and in what year was it first published?" },
+  { "id": "timeanddate-tokyo", "level": "easy", "url": "https://www.timeanddate.com/worldclock/", "task": "What time is it in Tokyo right now?" },
+  { "id": "allrecipes-flour", "level": "hard", "url": "https://www.allrecipes.com/", "task": "Find a chocolate chip cookie recipe with at least 4.5 stars and tell me how much flour it needs." },
+  { "id": "hn-second-page", "level": "hard", "url": "https://news.ycombinator.com/", "task": "Go to the second page of stories and tell me the title of the story with the most points on it." }
+]

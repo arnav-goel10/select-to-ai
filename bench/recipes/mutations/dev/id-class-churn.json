@@ -1,0 +1,41 @@
+[
+ {
+  "id": "dev-admin-churn",
+  "app": "admin",
+  "expected": "repairable",
+  "seed": 11,
+  "ops": [
+   {
+    "op": "churn",
+    "salt": "a"
+   }
+  ],
+  "family": "id-class-churn"
+ },
+ {
+  "id": "dev-orders-churn",
+  "app": "orders",
+  "expected": "repairable",
+  "seed": 12,
+  "ops": [
+   {
+    "op": "churn",
+    "salt": "b"
+   }
+  ],
+  "family": "id-class-churn"
+ },
+ {
+  "id": "dev-inventory-churn",
+  "app": "inventory",
+  "expected": "repairable",
+  "seed": 13,
+  "ops": [
+   {
+    "op": "churn",
+    "salt": "c"
+   }
+  ],
+  "family": "id-class-churn"
+ }
+]

@@ -14,24 +14,30 @@
   // Agent runtime defaults. The options UI, the agent runtime, and the
   // background worker all read these so they can never drift apart.
   const AGENT_DEFAULTS = Object.freeze({
-    activeProvider: "opencode",
-    model: "deepseek-v4-flash-free",
+    // OpenRouter's free router works with no credit card and survives any
+    // single free model being rate limited or retired (verified Sep 2026:
+    // 3/3 agent actions correct at ~4s per step). OpenCode's free models
+    // refuse calls from outside the OpenCode app, so they cannot be a default.
+    activeProvider: "openrouter",
+    model: "openrouter/free",
     customUrl: "http://localhost:11434/v1",
-    maxSteps: 25,
-    elementLimit: 60,
-    historyLimit: 12,
-    timeoutMs: 60000,
-    maxTokensPerCall: 2000,
-    temperature: 0.1,
+    // How long a run works before it asks the user whether to go on.
+    checkInMinutes: 5,
+    // Spending limit per task in US dollars; 0 is none.
     costBudget: 0,
-    failureThreshold: 3,
-    promptCaching: true,
-    riskConfirmation: true,
+  });
+
+  // Features that ship turned off until they have been run end to end.
+  // Sign in with ChatGPT is tested only against a played OpenAI
+  // (tests/unit/chatgpt.test.js), never on a real Plus plan, so its buttons
+  // are not shown and the worker refuses to start it.
+  const FEATURES = Object.freeze({
+    chatgptSignIn: false,
   });
 
   // Per-provider fallback models used when the configured model is not valid
   // for the active provider. "lite" is the cheap default, "pro" the flagship.
-  // Catalog verified against provider documentation in August 2026.
+  // Catalog verified against the providers' live model lists on 28 Sep 2026.
   // Provider endpoints and the storage key each provider's API key lives under.
   // "custom" is intentionally absent: its base URL comes from user settings.
   const PROVIDER_ENDPOINTS = Object.freeze({
@@ -45,56 +51,78 @@
     together: { keyName: "agentTogetherKey", baseUrl: "https://api.together.xyz/v1" },
     xai: { keyName: "agentXaiKey", baseUrl: "https://api.x.ai/v1" },
     opencode: { keyName: "agentOpencodeKey", baseUrl: "https://opencode.ai/zen/v1" },
+    cerebras: { keyName: "agentCerebrasKey", baseUrl: "https://api.cerebras.ai/v1" },
   });
 
   const PROVIDER_FALLBACK_MODELS = Object.freeze({
     openrouter: {
-      lite: "google/gemini-3.5-flash",
+      // "openrouter/free" is OpenRouter's own router across its free tier:
+      // tool calling and vision, and it survives any single free model being
+      // rate limited or retired, which hardcoded free ids do not.
+      lite: "openrouter/free",
       pro: "anthropic/claude-sonnet-4.6",
     },
     anthropic: {
-      lite: "claude-haiku-4-5",
-      pro: "claude-sonnet-4-6",
+      lite: "claude-haiku-5-5",
+      pro: "claude-sonnet-5-5",
     },
     openai: { lite: "gpt-5.4-mini", pro: "gpt-5.5" },
     deepseek: { lite: "deepseek-chat", pro: "deepseek-reasoner" },
     gemini: { lite: "gemini-flash-latest", pro: "gemini-pro-latest" },
-    mistral: { lite: "mistral-small-latest", pro: "mistral-large-latest" },
+    // On Mistral's free plan (checked 1 Oct 2026) medium allows 1,000 requests a
+    // minute and large 15, so an agent run uses medium.
+    mistral: { lite: "mistral-small-latest", pro: "mistral-medium-latest" },
     groq: { lite: "openai/gpt-oss-20b", pro: "openai/gpt-oss-120b" },
     together: {
       lite: "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
       pro: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
     },
     xai: { lite: "grok-4-1-fast-non-reasoning", pro: "grok-4-6" },
+    // OpenCode Zen is a paid gateway from an extension: its "-free" models
+    // answer "free tier can only be used from within OpenCode".
     opencode: {
-      lite: "deepseek-v4-flash-free",
-      pro: "deepseek-v4-flash-free",
+      lite: "deepseek-v4.1-flash",
+      pro: "claude-sonnet-5",
     },
+    // Cerebras's free tier (checked 1 Oct 2026): gpt-oss-120b allows 5 requests
+    // a minute, Qwen3.8 27B 450 a minute, so an agent run uses Qwen.
+    cerebras: { lite: "qwen-3.8-27b", pro: "qwen-3.8-27b" },
+    // Signed in with ChatGPT, the account's own model list decides
+    // (chatgptAuth.js bestModel). This is the model OpenAI's plan-usage
+    // guide uses in its examples, for before that list has loaded.
+    chatgpt: { lite: "gpt-6.1-sol", pro: "gpt-6.1-sol" },
     custom: { lite: "llama3", pro: "llama3" },
   });
 
   // Datalist presets shown in the options page per provider.
   const MODEL_PRESETS = Object.freeze({
     openrouter: [
-      "google/gemini-3.5-flash",
-      "anthropic/claude-sonnet-4.6",
+      "openrouter/free",
+      "nvidia/nemotron-3-super-120b-a12b:free",
+      "nvidia/nemotron-3.5-lightning:free",
+      "google/gemma-4-31b-it:free",
+      "qwen/qwen3.8-27b:free",
+      "google/gemini-3.8-flash",
+      "anthropic/claude-sonnet-5",
       "anthropic/claude-haiku-4.5",
+      "openai/gpt-6-luna",
       "openai/gpt-5.4-mini",
-      "openai/gpt-5.5",
-      "deepseek/deepseek-chat",
-      "deepseek/deepseek-reasoner",
-      "meta-llama/llama-3.3-70b-instruct",
+      "deepseek/deepseek-v4.1-flash",
     ],
     opencode: [
-      "deepseek-v4-flash-free",
-      "deepseek-v4-pro",
-      "meta-llama/llama-3.3-70b-instruct:free",
+      "deepseek-v4.1-flash",
+      "gpt-6-luna",
+      "gpt-5.4-mini",
+      "claude-haiku-4-5",
+      "claude-sonnet-5",
+      "gemini-3.8-flash",
     ],
     anthropic: [
+      "claude-haiku-5-5",
+      "claude-sonnet-5-5",
+      "claude-opus-5-5",
       "claude-haiku-4-5",
       "claude-sonnet-4-6",
-      "claude-sonnet-4-5",
-      "claude-opus-5",
     ],
     openai: ["gpt-5.4-mini", "gpt-5.4", "gpt-5.4-nano", "gpt-5.5"],
     deepseek: ["deepseek-chat", "deepseek-reasoner"],
@@ -119,8 +147,146 @@
       "deepseek-ai/DeepSeek-V3",
     ],
     xai: ["grok-4-1-fast-non-reasoning", "grok-4-1-fast-reasoning", "grok-4-6"],
+    cerebras: ["qwen-3.8-27b", "gpt-oss-120b"],
+    // Filled from the signed-in account's model list instead.
+    chatgpt: [],
     custom: ["llama3", "mistral", "qwen2.5-coder", "phi3"],
   });
+
+  // Providers with a free tier that can serve as a backup when the main
+  // provider's limit runs out, in the order they are suggested. Checked
+  // against the providers' own pages, Sep 2026.
+  const FREE_BACKUPS = Object.freeze([
+    Object.freeze({ provider: "gemini", model: "gemini-flash-latest", note: "Free on its Flash models, no card. Outside the EU and UK, Google may use free-tier prompts to improve its products." }),
+    Object.freeze({ provider: "cerebras", model: "qwen-3.8-27b", note: "Free and fast, with generous limits on Qwen3.8 27B." }),
+    Object.freeze({ provider: "groq", model: "openai/gpt-oss-120b", note: "Free: 1,000 requests a day, but only 8,000 tokens a minute, so better for questions than long tasks." }),
+  ]);
+
+  // What "openrouter/free" is sent as. The free router picks at random
+  // among every free model that accepts the request, which has meant a 2.6B
+  // model, a note-taking preview and a content-safety classifier. These are
+  // asked first, in order; OpenRouter moves down the list when one is rate
+  // limited or down, and the router itself is the last resort. Checked Sep
+  // 2026 with tests/decisions: qwen3.8-27b and nemotron-3-super each made
+  // 28 of 28 next-step decisions right. gemma-4-31b was rate limited for
+  // most of the run, so it could not be scored and comes after them.
+  const OPENROUTER_FREE_CHAIN = Object.freeze([
+    "qwen/qwen3.8-27b:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "google/gemma-4-31b-it:free",
+    "openrouter/free",
+  ]);
+
+  // Models of one provider that stand in for each other when one is
+  // overloaded (HTTP 503 "high demand") or out of its own per-model
+  // allowance (429), in the order they are tried. Seen
+  // 1 Oct 2026: Gemini's free Flash models answered 503 for hours while the
+  // Flash-Lite ones answered at once.
+  const MODEL_SIBLINGS = Object.freeze({
+    gemini: Object.freeze(["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]),
+    mistral: Object.freeze(["mistral-medium-latest", "mistral-small-latest", "ministral-14b-latest"]),
+  });
+
+  /** The next model to try after `tried` were overloaded, or "" when there is none. */
+  function siblingModel(provider, model, tried) {
+    const chain = MODEL_SIBLINGS[provider] || [];
+    if (!chain.includes(model)) return "";
+    const done = new Set([...(tried || []), model]);
+    return chain.find((m) => !done.has(m)) || "";
+  }
+
+  // How much a model is shown and asked for in one step. A small model
+  // does better with a shorter page listing and fewer actions at once
+  // ("Read More, Think More", Apr 2026: compact listings suit smaller
+  // models; long inputs make them invent). The text budget is generous on purpose: on
+  // 1 Oct 2026, with 3,600 characters of page text, read was the commonest
+  // action of a small model's runs, each one a whole model call spent on
+  // seeing a little more. A frontier model reads more and does more per
+  // step. Every model's finished answer is checked (core/run.js), whatever
+  // its size. Matched on the model's name, first
+  // match wins; anything unknown is treated as mid-sized.
+  // A name is read for what it says about size, in this order: a family
+  // known to be a maker's largest; a parameter count in the name ("-20b",
+  // "550b"); a word that marks a maker's small model, as a whole word
+  // ("mini" is not the end of "gemini"). A name that says nothing is
+  // treated as mid-sized. Earlier, every Gemini, Llama, Qwen and Nemotron
+  // model was taken for small, whatever its size.
+  const FRONTIER_FAMILY = /claude-(fable|opus|sonnet)|gpt-(5|6)(?![\w.-]*(mini|nano))|gemini-[\w.-]*pro|grok-4/i;
+  const SMALL_WORD = /(?:^|[^a-z])(mini|nano|lite|small|haiku|ministral|tiny)(?![a-z])|openrouter\/free|(?:^|[^a-z0-9])e\d+b(?![a-z0-9])/i;
+  const FRONTIER_LIMITS = Object.freeze({ tier: "frontier", lines: 320, pageBudget: 24000, maxActions: 8 });
+  const SMALL_LIMITS = Object.freeze({ tier: "small", lines: 140, pageBudget: 8000, maxActions: 5 });
+  /** The largest parameter count a model's name states, in billions, or 0. */
+  function billionsIn(id) {
+    let most = 0;
+    for (const m of String(id).matchAll(/(?:^|[^a-z0-9.])(\d+(?:\.\d+)?)b(?![a-z0-9])/gi)) most = Math.max(most, parseFloat(m[1]));
+    return most;
+  }
+  function limitsFor(id) {
+    if (FRONTIER_FAMILY.test(id)) return FRONTIER_LIMITS;
+    const size = billionsIn(id);
+    // Large by its size alone: given a large model's room.
+    if (size >= 200) return FRONTIER_LIMITS;
+    if (size > 0) return size < 40 ? SMALL_LIMITS : STANDARD_PROFILE;
+    return SMALL_WORD.test(id) ? SMALL_LIMITS : STANDARD_PROFILE;
+  }
+  const STANDARD_PROFILE = Object.freeze({ tier: "standard", lines: 220, pageBudget: 12000, maxActions: 6 });
+
+  // Claude models that think adaptively (thinking: {type: "adaptive"}) and
+  // refuse a thinking budget; the same models refuse a forced tool while
+  // thinking, so the tool is offered to them, never forced.
+  const CLAUDE_ADAPTIVE = /claude-(?:fable|mythos|haiku-[5-9]|sonnet-(?:[5-9]|4-6)|opus-(?:[5-9]|4-[6-9]))/i;
+  const CLAUDE_FIXED_SAMPLING = /claude-(?:fable|mythos|haiku-[5-9]|sonnet-[5-9]|opus-(?:[5-9]|4-[7-9]))/i;
+
+  // Sampling the makers themselves ask for, where a low temperature is
+  // known to hurt: Gemini 3 ("lower values can cause looping", Gemini 3
+  // guide, Sep 2026), Qwen3 ("do not use greedy decoding", model card), and
+  // reasoning models that take no temperature at all. Everything else keeps
+  // the steady 0.1 the agent has always used.
+  const MODEL_SAMPLING = Object.freeze([
+    [/gemini-3/i, Object.freeze({ temperature: 1 })],
+    [/qwen/i, Object.freeze({ temperature: 0.6 })],
+    [/^(gpt-(5|6)|o\d)/i, Object.freeze({ temperature: null })],
+    // Anthropic's current models refuse a temperature other than their own
+    // (Haiku 5.5 and Sonnet 5.5 take only 1; Opus 4.7 and later take none).
+    [CLAUDE_FIXED_SAMPLING, Object.freeze({ temperature: null })],
+  ]);
+  // Models that think before they answer need room for both.
+  const THINKING_MODELS = /gpt-oss|nemotron|qwen|gemini|deepseek-r|magistral|claude-(fable|mythos|opus|sonnet|haiku-[5-9])|gpt-(5|6)|grok-4|:free|openrouter\/free/i;
+
+  /** What a run on this model is given: listing size, actions per step, sampling, and whether it thinks. */
+  function modelProfile(model) {
+    const id = String(model || "");
+    const base = limitsFor(id);
+    const sampling = (MODEL_SAMPLING.find(([re]) => re.test(id)) || [null, { temperature: 0.1 }])[1];
+    const thinks = THINKING_MODELS.test(id);
+    return { ...base, temperature: sampling.temperature, maxTokens: thinks ? 6000 : 4000, thinks, adaptive: CLAUDE_ADAPTIVE.test(id) };
+  }
+
+  /**
+   * Extra request fields for OpenRouter: the free chain in place of the
+   * bare free router, and one tool call per reply.
+   */
+  function openRouterOptions(model, hasTool) {
+    const out = {};
+    if (model === "openrouter/free") {
+      out.model = OPENROUTER_FREE_CHAIN[0];
+      out.models = OPENROUTER_FREE_CHAIN.slice(1);
+    }
+    if (hasTool) out.parallel_tool_calls = false;
+    return out;
+  }
+
+  /**
+   * The model the agent runs on after switching to a backup provider. A free
+   * backup names the model its free tier covers; any other backup is the
+   * user's own paid key, so the agent keeps a full-strength model.
+   */
+  function backupModelFor(provider) {
+    const free = FREE_BACKUPS.find((b) => b.provider === provider);
+    if (free && free.model) return free.model;
+    const models = PROVIDER_FALLBACK_MODELS[provider] || {};
+    return models.pro || models.lite || "";
+  }
 
   // USD per 1K tokens: [input, output]. Published list prices, August 2026.
   // Keys are matched exact-first, then longest-substring-first, so specific
@@ -128,6 +294,11 @@
   const MODEL_PRICES = Object.freeze({
     // Anthropic (family keys also match OpenRouter slugs like
     // "anthropic/claude-sonnet-4.6")
+    // Anthropic list prices (platform.claude.com pricing, checked 6 Nov 2026).
+    // Haiku 5.5 is $0.10/$0.50 up to 100K prompt tokens ($0.50/$2.50 above).
+    "claude-haiku-5": [0.0001, 0.0005],
+    "claude-sonnet-5": [0.002, 0.01],
+    "claude-opus-5-5": [0.004, 0.02],
     "claude-haiku": [0.001, 0.005],
     "claude-sonnet": [0.003, 0.015],
     "claude-opus": [0.005, 0.025],
@@ -150,7 +321,6 @@
     "gemini-2.5-flash": [0.0003, 0.0025],
     "gemini-2.5-pro": [0.00125, 0.01],
     // DeepSeek
-    "deepseek-v4-flash-free": [0, 0],
     "deepseek-chat": [0.00028, 0.00042],
     "deepseek-reasoner": [0.00028, 0.00042],
     // xAI
@@ -190,6 +360,15 @@
     "vision",
     "mistral-medium",
     "mistral-large",
+    // Free-tier families shipped as OpenRouter presets. Without these the
+    // agent silently drops to text-only DOM on a vision-capable free model.
+    // "openrouter/free" is deliberately absent: the router may land on a
+    // text-only model, so it runs on the DOM and asks for a screenshot only
+    // when it needs one (request_screenshot).
+    "gemma-4",
+    "nemotron-nano-12b",
+    "omni",
+    "dots-3",
   ]);
 
   /** True when the model id belongs to a known vision-capable family. */
@@ -212,6 +391,16 @@
    */
   function findModelRates(modelName) {
     const nameLower = String(modelName || "").toLowerCase();
+    // Free tiers are advertised by suffix, not by a price table entry:
+    // OpenRouter uses ":free", other gateways use a "-free" id. Without this
+    // the generic default rate applies and a zero-cost run reports a cost.
+    if (
+      nameLower.endsWith(":free") ||
+      nameLower.endsWith("-free") ||
+      nameLower === "openrouter/free"
+    ) {
+      return [0, 0];
+    }
     if (Object.prototype.hasOwnProperty.call(MODEL_PRICES, nameLower) && nameLower !== "default") {
       return MODEL_PRICES[nameLower];
     }
@@ -223,9 +412,17 @@
 
   const api = Object.freeze({
     AGENT_DEFAULTS,
+    FEATURES,
     PROVIDER_ENDPOINTS,
     PROVIDER_FALLBACK_MODELS,
     MODEL_PRESETS,
+    FREE_BACKUPS,
+    backupModelFor,
+    OPENROUTER_FREE_CHAIN,
+    openRouterOptions,
+    MODEL_SIBLINGS,
+    siblingModel,
+    modelProfile,
     MODEL_PRICES,
     VISION_MODEL_PATTERNS,
     findModelRates,

@@ -1,0 +1,88 @@
+[
+ {
+  "id": "dev-wizard-opposite",
+  "app": "wizard",
+  "tasks": [
+   "wizard.submit"
+  ],
+  "expected": "must-stop",
+  "ops": [
+   {
+    "op": "clone",
+    "k": "cancel-application",
+    "where": "after",
+    "text": "Withdraw application",
+    "attrs": {
+     "id": "submit-application",
+     "data-testid": "submit",
+     "class": "btn primary"
+    }
+   },
+   {
+    "op": "remove",
+    "k": "submit-application"
+   }
+  ],
+  "family": "opposite-action"
+ },
+ {
+  "id": "dev-orders-opposite",
+  "app": "orders",
+  "tasks": [
+   "orders.instructions"
+  ],
+  "expected": "must-stop",
+  "ops": [
+   {
+    "op": "clone",
+    "k": "cancel-order",
+    "where": "after",
+    "text": "Cancel order",
+    "attrs": {
+     "id": "save-instructions",
+     "data-testid": "save-instructions",
+     "class": "btn primary"
+    }
+   },
+   {
+    "op": "remove",
+    "k": "save-instructions"
+   }
+  ],
+  "family": "opposite-action"
+ },
+ {
+  "id": "dev-admin-opposite",
+  "app": "admin",
+  "tasks": [
+   "admin.role"
+  ],
+  "expected": "must-stop",
+  "ops": [
+   {
+    "op": "clone",
+    "k": "reset-password",
+    "where": "after",
+    "as": "decoy-confirm",
+    "text": "Remove all access",
+    "attrs": {
+     "class": "btn primary",
+     "data-testid": "role-confirm",
+     "id": "role-confirm",
+     "form": "role-form"
+    }
+   },
+   {
+    "op": "remove",
+    "k": "role-confirm"
+   },
+   {
+    "op": "move",
+    "k": "decoy-confirm",
+    "to": "role-cancel",
+    "where": "after"
+   }
+  ],
+  "family": "opposite-action"
+ }
+]

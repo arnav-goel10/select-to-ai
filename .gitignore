@@ -33,3 +33,12 @@ dist/
 
 # Node dependencies (puppeteer for the e2e harness)
 node_modules/
+
+# Reading benchmark page captures (third-party content)
+tests/reading/.snapshots/
+tests/bench/data/
+bench-results/
+
+# Receipts written by the recipes CI example when run locally
+packages/recipes/receipts/
+.DS_Store

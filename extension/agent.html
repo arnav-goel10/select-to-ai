@@ -1,1536 +1,218 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 
 <head>
     <meta charset="UTF-8">
-    <title>AI Browser Agent</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Agent · Select to AI</title>
     <link rel="stylesheet" href="tokens.css">
-    <style>
-        /* Agent-page tokens built on the shared design system: real light
-           mode by default (tokens.css :root), dark values below. */
-        :root {
-            --chat-user-bg: var(--surface);
-            --chat-assistant-bg: transparent;
-            --thought-bg: var(--surface);
-            --input-container-bg: var(--surface);
-            --executor: #4f46e5;
-            --planner: #7c3aed;
-            --validator: #0f766e;
-
-            --export-btn-bg: var(--accent-glow);
-            --export-btn-text: var(--accent);
-            --export-btn-border: var(--accent-glow);
-        }
-
-        [data-theme="dark"] {
-            --executor: #6366f1;
-            --planner: #8b5cf6;
-            --validator: #10b981;
-        }
-
-        * {
-            box-sizing: border-box;
-            font-family: var(--font-sans);
-            margin: 0;
-            padding: 0;
-        }
-
-        body,
-        html {
-            height: 100%;
-            width: 100%;
-            background-color: var(--bg-base);
-            color: var(--text-main);
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-            transition: background-color 0.3s ease;
-        }
-
-        /* Header bar matching OpenWebUI styling */
-        header {
-            display: grid;
-            grid-template-columns: 1fr auto 1fr;
-            align-items: center;
-            padding: 10px 24px;
-            border-bottom: 1px solid var(--border-card);
-            background: var(--bg-card);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            z-index: 100;
-        }
-
-        .header-left {
-            display: flex;
-            align-items: center;
-        }
-
-        .header-center {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            position: relative;
-        }
-
-        .header-right {
-            display: flex;
-            justify-content: flex-end;
-            align-items: center;
-        }
-
-        header h1 {
-            font-size: 16px;
-            font-weight: 700;
-            letter-spacing: -0.025em;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        header h1 span {
-            color: var(--accent);
-        }
-
-        /* Header provider/model display: shows what the runtime will
-           actually call; the decorative Auto/Hardcoded dropdown is gone. */
-        .header-model {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 6px 12px;
-            border-radius: var(--radius-md);
-            border: 1px solid var(--border);
-            background: var(--surface);
-            color: var(--text);
-            font-size: 12.5px;
-            font-weight: 600;
-            max-width: 340px;
-        }
-
-        .header-model .model-name {
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .header-model .icon {
-            color: var(--accent);
-        }
-
-        .cost-badge {
-            background-color: var(--success-bg);
-            border: 1px solid var(--success-bg);
-            color: var(--success);
-            font-weight: 700;
-            cursor: help;
-        }
-
-        .model-badge {
-            border-radius: 20px;
-            padding: 4px 10px;
-            font-size: 10px;
-            font-weight: 600;
-            letter-spacing: -0.01em;
-            transition: all 0.2s ease;
-        }
-
-        /* Chat Viewport Area */
-        .chat-viewport {
-            flex: 1;
-            overflow-y: auto;
-            padding: 24px;
-            display: flex;
-            flex-direction: column;
-            gap: 24px;
-            scroll-behavior: smooth;
-        }
-
-        .chat-container {
-            width: 100%;
-            max-width: 720px;
-            margin: 0 auto;
-            display: flex;
-            flex-direction: column;
-            gap: 24px;
-        }
-
-        /* Welcome suggestions container */
-        .welcome-screen {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            text-align: center;
-            margin: auto;
-            padding: 40px 20px;
-            max-width: 500px;
-            animation: fadeIn 0.4s ease-out forwards;
-        }
-
-        .welcome-logo {
-            width: 54px;
-            height: 54px;
-            border-radius: 16px;
-            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #ffffff;
-            margin-bottom: 20px;
-            box-shadow: 0 8px 20px var(--accent-glow);
-            animation: pulseLogo 2.5s infinite alternate;
-        }
-
-        @keyframes pulseLogo {
-            0% { transform: scale(1); box-shadow: 0 8px 20px var(--accent-glow); }
-            100% { transform: scale(1.06); box-shadow: 0 10px 24px var(--accent); }
-        }
-
-        .welcome-logo svg {
-            transition: transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
-        }
-
-        .welcome-screen:hover .welcome-logo svg {
-            transform: rotate(360deg);
-        }
-
-        .welcome-title {
-            font-size: 21px;
-            font-weight: 700;
-            margin-bottom: 8px;
-            letter-spacing: -0.02em;
-            background: linear-gradient(135deg, var(--text-main) 30%, var(--accent) 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-
-        .welcome-desc {
-            font-size: 13.5px;
-            color: var(--text-muted);
-            margin-bottom: 28px;
-            line-height: 1.45;
-        }
-
-        .suggestions-grid {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 12px;
-            width: 100%;
-        }
-
-        .suggestion-card {
-            background-color: var(--bg-card);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid var(--border-card);
-            border-left: 4px solid var(--accent);
-            border-radius: 12px;
-            padding: 15px 20px;
-            font-size: 13.5px;
-            font-weight: 500;
-            text-align: left;
-            cursor: pointer;
-            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-            color: var(--text-main);
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        .suggestion-card:hover {
-            border-color: var(--accent);
-            border-left-color: var(--accent);
-            background-color: var(--border-card);
-            transform: translateX(4px);
-            box-shadow: 0 6px 16px var(--accent-glow);
-        }
-
-        .suggestion-card::after {
-            content: '→';
-            font-size: 15px;
-            color: var(--accent);
-            opacity: 0.6;
-            transition: transform 0.25s ease, opacity 0.25s ease;
-        }
-
-        .suggestion-card:hover::after {
-            transform: translateX(4px);
-            opacity: 1;
-        }
-
-        .suggestion-label {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .suggestion-label .icon {
-            color: var(--accent);
-        }
-
-        /* Message Bubbles */
-        .message-bubble {
-            display: flex;
-            gap: 16px;
-            animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-            opacity: 0;
-            transform: translateY(16px);
-        }
-
-        @keyframes slideUp {
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        @keyframes fadeIn {
-            to { opacity: 1; }
-        }
-
-        .message-bubble.user {
-            justify-content: flex-end;
-        }
-
-        .bubble-avatar {
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: 600;
-            font-size: 13px;
-            flex-shrink: 0;
-            transition: all 0.3s ease;
-        }
-
-        .message-bubble.user .bubble-avatar {
-            display: none;
-        }
-
-        .message-bubble.assistant .bubble-avatar {
-            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
-            box-shadow: 0 2px 8px var(--accent-glow);
-        }
-
-        .message-bubble.assistant .bubble-avatar.thinking {
-            animation: pulseAvatar 2s infinite alternate, glowAvatar 2s infinite alternate;
-        }
-
-        @keyframes pulseAvatar {
-            0% { transform: scale(1); }
-            100% { transform: scale(1.1); }
-        }
-
-        @keyframes glowAvatar {
-            0% { box-shadow: 0 0 6px var(--accent-glow); }
-            100% { box-shadow: 0 0 16px var(--accent); }
-        }
-
-        .bubble-content {
-            max-width: 85%;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        .message-bubble.user .bubble-content {
-            background-color: var(--chat-user-bg);
-            border: 1px solid var(--accent-glow);
-            border-radius: 18px 18px 4px 18px;
-            padding: 12px 18px;
-            font-size: 14px;
-            line-height: 1.45;
-            color: var(--text-main);
-            box-shadow: 0 4px 12px var(--accent-glow);
-        }
-
-        .message-bubble.assistant .bubble-content {
-            flex: 1;
-            font-size: 14px;
-            line-height: 1.5;
-            color: var(--text-main);
-        }
-
-        /* Expandable Thought Block (OpenWebUI details style) */
-        .thought-process-container {
-            border: 1px solid var(--border-card);
-            border-left: 3px solid var(--accent);
-            background-color: var(--thought-bg);
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
-            border-radius: 12px;
-            margin-bottom: 8px;
-            width: 100%;
-            overflow: hidden;
-            transition: border-color 0.3s;
-        }
-
-        .thought-process-container details summary::-webkit-details-marker {
-            display: none;
-        }
-        .thought-process-container details summary {
-            list-style: none;
-        }
-
-        .thought-summary {
-            padding: 12px 18px;
-            font-size: 13px;
-            font-weight: 600;
-            color: var(--accent);
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            user-select: none;
-            transition: background-color 0.2s;
-        }
-
-        .thought-summary::after {
-            content: '';
-            width: 6px;
-            height: 6px;
-            border-right: 2.5px solid var(--accent);
-            border-bottom: 2.5px solid var(--accent);
-            transform: rotate(45deg);
-            transition: transform 0.2s ease;
-            margin-right: 4px;
-        }
-
-        .thought-process-container details[open] .thought-summary::after {
-            transform: rotate(-135deg);
-        }
-
-        .thought-summary:hover {
-            background-color: var(--hover-overlay);
-        }
-
-        .thought-summary-status {
-            font-size: 11px;
-            font-weight: 500;
-            color: var(--text-muted);
-            margin-right: auto;
-            margin-left: 12px;
-        }
-
-        .thought-details-content {
-            padding: 0 18px 18px 18px;
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            border-top: 1px solid var(--border-card);
-        }
-
-        /* Inner Sub-Tasks Checklist */
-        .checklist-panel {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            padding-top: 14px;
-        }
-
-        .checklist-title {
-            font-size: 10px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--text-muted);
-        }
-
-        .progress-bar-container {
-            width: 100%;
-            height: 4px;
-            background: var(--surface-2);
-            border-radius: 2px;
-            overflow: hidden;
-            margin: 2px 0 6px 0;
-        }
-
-        .progress-bar {
-            width: 0%;
-            height: 100%;
-            background: linear-gradient(90deg, var(--planner) 0%, var(--validator) 100%);
-            transition: width 0.4s ease;
-        }
-
-        .checklist-items {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            max-height: 140px;
-            overflow-y: auto;
-        }
-
-        .checklist-item {
-            display: flex;
-            align-items: flex-start;
-            gap: 10px;
-            font-size: 12.5px;
-            color: var(--text-muted);
-            line-height: 1.4;
-            transition: color 0.3s;
-        }
-
-        .checklist-item.active {
-            color: var(--text-main);
-            font-weight: 500;
-        }
-
-        .checklist-item.completed {
-            text-decoration: line-through;
-            opacity: 0.5;
-        }
-
-        .checklist-bullet {
-            width: 15px;
-            height: 15px;
-            border-radius: 50%;
-            border: 2px solid var(--border-card);
-            flex-shrink: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-top: 1px;
-            font-size: 8.5px;
-            font-weight: 800;
-            transition: all 0.3s;
-        }
-
-        .checklist-item.active .checklist-bullet {
-            border-color: var(--planner);
-            background: var(--accent-glow);
-            animation: pulseActiveBullet 1s infinite alternate;
-        }
-
-        .checklist-item.completed .checklist-bullet {
-            border-color: var(--validator);
-            background: var(--validator);
-            color: #ffffff;
-        }
-
-        @keyframes pulseActiveBullet {
-            0% { transform: scale(1); }
-            100% { transform: scale(1.15); }
-        }
-
-        /* Inner Steps Log list */
-        .logs-panel {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            border-top: 1px solid var(--border-card);
-            padding-top: 14px;
-        }
-
-        .logs-title {
-            font-size: 10px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--text-muted);
-        }
-
-        .logs-wrapper {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            max-height: 180px;
-            overflow-y: auto;
-            padding-right: 4px;
-        }
-
-        .log-item {
-            padding: 10px 12px;
-            background: var(--hover-overlay);
-            border: 1px solid var(--border-card);
-            border-radius: 8px;
-            font-size: 11.5px;
-            display: flex;
-            flex-direction: column;
-            gap: 3px;
-            animation: logFadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-
-        @keyframes logFadeIn {
-            from { opacity: 0; transform: translateY(6px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-
-        .log-item.planner-role { border-left: 2px solid var(--planner); }
-        .log-item.executor-role { border-left: 2px solid var(--executor); }
-        .log-item.validator-role { border-left: 2px solid var(--validator); }
-        .log-item.system-role { border-left: 2px solid var(--text-muted); }
-        .log-item.error-role { border-left: 2px solid var(--danger); }
-
-        .log-header {
-            display: flex;
-            justify-content: space-between;
-            font-weight: 600;
-            font-size: 10.5px;
-        }
-
-        .log-time {
-            font-size: 11px;
-            opacity: 0.7;
-        }
-
-        .log-content {
-            opacity: 0.85;
-            line-height: 1.35;
-        }
-
-        .export-logs-btn {
-            background-color: var(--export-btn-bg);
-            color: var(--export-btn-text);
-            border: 1px solid var(--export-btn-border);
-            padding: 3px 8px;
-            border-radius: 6px;
-            font-size: 10px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-
-        .export-logs-btn:hover {
-            opacity: 0.9;
-            transform: scale(1.03);
-        }
-
-        /* Stream Panel styles */
-        .stream-panel {
-            display: none;
-            flex-direction: column;
-            gap: 6px;
-            border-top: 1px solid var(--border-card);
-            padding-top: 14px;
-            margin-top: 12px;
-        }
-
-        .stream-text {
-            font-family: monospace;
-            font-size: 11px;
-            white-space: pre-wrap;
-            word-break: break-all;
-            opacity: 0.85;
-            max-height: 120px;
-            overflow-y: auto;
-            background: var(--surface-2);
-            padding: 10px 12px;
-            border-radius: 8px;
-            border: 1px solid var(--border-card);
-            line-height: 1.45;
-        }
-
-        .agent-run-status {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            color: var(--text-muted);
-            font-size: 13px;
-            line-height: 1.4;
-            padding: 2px 0;
-        }
-
-        .agent-run-status .status-dot {
-            width: 7px;
-            height: 7px;
-            border-radius: 999px;
-            background: var(--accent);
-            box-shadow: 0 0 0 4px var(--accent-glow);
-            animation: pulseDot 1.2s ease-in-out infinite alternate;
-        }
-
-        @keyframes pulseDot {
-            from { opacity: 0.55; transform: scale(0.9); }
-            to { opacity: 1; transform: scale(1.05); }
-        }
-
-
-        .stream-text::after {
-            content: "▋";
-            display: inline-block;
-            color: var(--accent);
-            animation: cursorBlink 1.2s step-end infinite;
-            margin-left: 2px;
-            font-size: 10px;
-            vertical-align: middle;
-        }
-
-        @keyframes cursorBlink {
-            50% { opacity: 0; }
-        }
-
-        /* Current Action Footer */
-        .assistant-status-footer {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            font-size: 13px;
-            font-weight: 500;
-            color: var(--accent);
-            padding: 4px 0;
-        }
-
-        /* Waveform Jumping Status animation */
-        .status-wave {
-            display: flex;
-            align-items: center;
-            gap: 3px;
-            height: 12px;
-            margin-right: 2px;
-        }
-
-        .status-wave span {
-            width: 2.5px;
-            height: 100%;
-            background-color: var(--accent);
-            border-radius: 1px;
-            display: inline-block;
-            animation: bounceWave 0.9s infinite ease-in-out;
-        }
-
-        .status-wave span:nth-child(1) { animation-delay: -0.8s; }
-        .status-wave span:nth-child(2) { animation-delay: -0.6s; }
-        .status-wave span:nth-child(3) { animation-delay: -0.4s; }
-        .status-wave span:nth-child(4) { animation-delay: -0.2s; }
-
-        @keyframes bounceWave {
-            0%, 100% { transform: scaleY(0.25); }
-            50% { transform: scaleY(1); }
-        }
-
-        /* Pulse radar */
-        .radar {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            position: relative;
-        }
-        .radar.idle { background-color: var(--text-muted); }
-        .radar.success { background-color: var(--success); }
-        .radar.error { background-color: var(--danger); }
-        .radar.planner-active { background-color: var(--planner); }
-        .radar.executor-active { background-color: var(--executor); }
-        .radar.validator-active { background-color: var(--validator); }
-
-        .radar.planner-active::after,
-        .radar.executor-active::after,
-        .radar.validator-active::after {
-            content: '';
-            position: absolute;
-            width: 100%;
-            height: 100%;
-            border-radius: 50%;
-            top: 0;
-            left: 0;
-            animation: pulseWave 1.4s infinite linear;
-        }
-        .radar.planner-active::after { background-color: var(--planner); }
-        .radar.executor-active::after { background-color: var(--executor); }
-        .radar.validator-active::after { background-color: var(--validator); }
-
-        @keyframes pulseWave {
-            0% { transform: scale(1); opacity: 0.8; }
-            100% { transform: scale(3.5); opacity: 0; }
-        }
-
-        /* Final answer body: rendered from a minimal safe markdown subset
-           (bold, italics, bullet lists, links), everything escaped first. */
-        .final-answer-box {
-            font-size: 14px;
-            line-height: 1.55;
-            padding: 8px 0;
-            border-top: 1px dashed var(--border-card);
-            margin-top: 8px;
-            animation: fadeIn 0.3s ease-out forwards;
-        }
-
-        .final-answer-box p {
-            margin: 0 0 8px 0;
-        }
-
-        .final-answer-box p:last-child {
-            margin-bottom: 0;
-        }
-
-        .final-answer-box ul {
-            margin: 0 0 8px 0;
-            padding-left: 22px;
-        }
-
-        .final-answer-box li {
-            margin-bottom: 3px;
-        }
-
-        .final-answer-box a {
-            color: var(--accent);
-            text-decoration: underline;
-        }
-
-        .final-answer-box strong {
-            font-weight: 700;
-        }
-
-        /* Bottom Pinned Console Area */
-        .console-pinned-bottom {
-            background: linear-gradient(180deg, transparent 0%, var(--bg-base) 35%);
-            padding: 16px 24px 24px 24px;
-            z-index: 10;
-        }
-
-        .console-wrapper {
-            width: 100%;
-            max-width: 720px;
-            margin: 0 auto;
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-        }
-
-        /* OpenWebUI Chat input box container */
-        .chat-input-box {
-            background-color: var(--input-container-bg);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid var(--border-card);
-            border-radius: 20px;
-            padding: 6px 10px 6px 16px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        .chat-input-box:focus-within {
-            border-color: var(--accent);
-            box-shadow: 0 10px 30px var(--accent-glow), 0 2px 8px rgba(0, 0, 0, 0.05);
-            transform: translateY(-1px);
-        }
-
-        textarea {
-            flex: 1;
-            border: none;
-            background: none;
-            color: var(--text-main);
-            font-size: 14px;
-            line-height: 1.5;
-            resize: none;
-            outline: none;
-            max-height: 180px;
-            min-height: 24px;
-            height: 24px;
-            padding: 0;
-            margin: 6px 0;
-            align-self: center;
-        }
-
-        textarea::placeholder {
-            color: var(--text-muted);
-            opacity: 0.85;
-        }
-
-        /* Send/Stop Action Circle Button */
-        .action-circle-btn {
-            width: 34px;
-            height: 34px;
-            border-radius: 50%;
-            background-color: var(--accent);
-            color: #ffffff;
-            border: none;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-shrink: 0;
-            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-            align-self: center;
-            box-shadow: 0 4px 10px var(--accent-glow);
-        }
-
-        .action-circle-btn:hover {
-            transform: scale(1.08);
-            box-shadow: 0 6px 14px var(--accent);
-        }
-
-        .action-circle-btn:disabled {
-            background-color: var(--border-card) !important;
-            color: var(--text-muted) !important;
-            cursor: not-allowed;
-            transform: none !important;
-            box-shadow: none !important;
-        }
-
-        .action-circle-btn.stop-btn {
-            background-color: var(--danger);
-            box-shadow: 0 4px 10px rgba(239, 68, 68, 0.3);
-        }
-
-        .action-circle-btn.stop-btn:hover {
-            box-shadow: 0 6px 14px var(--danger);
-        }
-
-        /* Warning Banner */
-        .warning-card {
-            background: var(--danger-bg);
-            border: 1px solid var(--danger-bg);
-            color: var(--danger);
-            border-radius: 12px;
-            padding: 12px;
-            font-size: 12.5px;
-            line-height: 1.4;
-            display: none;
-            flex-direction: column;
-            gap: 4px;
-            margin-top: 4px;
-        }
-
-        .input-helper-text {
-            display: flex;
-            justify-content: center;
-            font-size: 10.5px;
-            color: var(--text-muted);
-            opacity: 0.7;
-            margin-top: 4px;
-        }
-
-        /* Steer-while-running input (visible only during a run) */
-        .steer-row {
-            display: none;
-            flex-direction: column;
-            gap: 4px;
-            margin-top: 8px;
-            padding: 10px 12px;
-            border: 1px dashed var(--border-strong);
-            border-radius: var(--radius-lg);
-            background: var(--surface);
-        }
-
-        .steer-row.active {
-            display: flex;
-        }
-
-        .steer-label {
-            font-size: 10.5px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--text-muted);
-        }
-
-        .steer-controls {
-            display: flex;
-            gap: 8px;
-        }
-
-        .steer-controls input {
-            flex: 1;
-            border: 1px solid var(--border);
-            border-radius: var(--radius-sm);
-            background: var(--bg);
-            color: var(--text-main);
-            font-size: 12.5px;
-            padding: 7px 10px;
-            outline: none;
-        }
-
-        .steer-controls input:focus {
-            border-color: var(--accent);
-        }
-
-        .steer-send-btn {
-            border: 1px solid var(--accent);
-            background: var(--accent);
-            color: var(--accent-contrast);
-            border-radius: var(--radius-sm);
-            padding: 7px 14px;
-            font-size: 12px;
-            font-weight: 600;
-            cursor: pointer;
-        }
-
-        .steer-send-btn:hover {
-            background: var(--accent-hover);
-        }
-
-        .steer-pending {
-            font-size: 11px;
-            color: var(--text-muted);
-        }
-
-        /* Logs panel header row with export actions */
-        .logs-title-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 8px;
-        }
-
-        .logs-actions {
-            display: flex;
-            gap: 6px;
-        }
-
-        /* Collapsed-by-default thought expander inside log entries */
-        .log-thought details summary {
-            cursor: pointer;
-            font-weight: 600;
-            color: var(--accent);
-            list-style: none;
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-        }
-
-        .log-thought details summary::-webkit-details-marker {
-            display: none;
-        }
-
-        .log-thought details summary::after {
-            content: '';
-            width: 5px;
-            height: 5px;
-            border-right: 2px solid var(--accent);
-            border-bottom: 2px solid var(--accent);
-            transform: rotate(45deg);
-            transition: transform 0.15s ease;
-        }
-
-        .log-thought details[open] summary::after {
-            transform: rotate(-135deg);
-        }
-
-        .log-thought .log-content {
-            margin-top: 4px;
-        }
-
-        /* App Layout Containers */
-        .app-container {
-            display: flex;
-            flex-direction: row;
-            height: 100%;
-            width: 100%;
-            overflow: hidden;
-        }
-
-        /* Sidebar Styling (matching OpenWebUI) */
-        .sidebar-container {
-            width: 260px;
-            background-color: var(--surface-sunken);
-            border-right: 1px solid var(--border);
-            display: flex;
-            flex-direction: column;
-            height: 100%;
-            flex-shrink: 0;
-            transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), margin-left 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
-            z-index: 50;
-        }
-
-        .sidebar-container.collapsed {
-            margin-left: -260px;
-            transform: translateX(-260px);
-            width: 260px;
-        }
-
-        .sidebar-header {
-            padding: 16px 14px 10px 14px;
-        }
-
-        .new-task-btn {
-            width: 100%;
-            background: none;
-            border: 1px solid var(--border-strong);
-            border-radius: 8px;
-            padding: 10px 14px;
-            color: var(--text-main);
-            font-size: 13px;
-            font-weight: 500;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            transition: background 0.2s, border-color 0.2s;
-        }
-
-        .new-task-btn:hover {
-            background-color: var(--hover-overlay);
-            border-color: var(--accent);
-        }
-
-        .sidebar-chats-list {
-            flex: 1;
-            overflow-y: auto;
-            padding: 10px 8px;
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-        }
-
-        .chat-list-section-title {
-            font-size: 10px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--text-muted);
-            padding: 8px 12px 4px 12px;
-        }
-
-        .sidebar-chat-item {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 9px 12px;
-            border-radius: 8px;
-            font-size: 13px;
-            color: var(--text-main);
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-
-        .sidebar-chat-item:hover {
-            background-color: var(--hover-overlay);
-        }
-
-        .sidebar-chat-item.active {
-            background-color: var(--surface-2);
-            font-weight: 500;
-        }
-
-        .sidebar-chat-item svg {
-            color: var(--text-muted);
-            flex-shrink: 0;
-        }
-
-        .sidebar-footer {
-            padding: 12px;
-            border-top: 1px solid var(--border);
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-        }
-
-        .sidebar-footer-link {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 10px 12px;
-            border-radius: 8px;
-            color: var(--text-main);
-            text-decoration: none;
-            font-size: 13px;
-            transition: background 0.2s;
-        }
-
-        .sidebar-footer-link:hover {
-            background-color: var(--hover-overlay);
-        }
-
-        .sidebar-footer-link svg {
-            color: var(--text-muted);
-        }
-
-        .sidebar-footer-link.as-button {
-            background: none;
-            border: none;
-            width: 100%;
-            cursor: pointer;
-            font-family: var(--font-sans);
-            text-align: left;
-        }
-
-        .sidebar-chat-item .session-title {
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            flex: 1;
-        }
-
-        .sidebar-chat-item .session-time {
-            font-size: 10px;
-            color: var(--text-muted);
-            flex-shrink: 0;
-        }
-
-        .sidebar-empty-note {
-            font-size: 12px;
-            color: var(--text-muted);
-            padding: 6px 12px;
-            line-height: 1.4;
-        }
-
-        /* Inline data panel in the sidebar (scratchpad / memory viewer) */
-        .sidebar-data-panel {
-            display: none;
-            flex-direction: column;
-            gap: 6px;
-            margin: 4px 8px;
-            padding: 10px;
-            border: 1px solid var(--border);
-            border-radius: var(--radius-md);
-            background: var(--surface);
-            max-height: 200px;
-            overflow-y: auto;
-        }
-
-        .sidebar-data-panel.open {
-            display: flex;
-        }
-
-        .sidebar-data-panel .data-title {
-            font-size: 10px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--text-muted);
-        }
-
-        .sidebar-data-panel .data-item {
-            font-size: 11.5px;
-            line-height: 1.4;
-            color: var(--text-main);
-            border-left: 2px solid var(--accent);
-            padding-left: 8px;
-            word-break: break-word;
-        }
-
-        .sidebar-data-panel .data-empty {
-            font-size: 11.5px;
-            color: var(--text-muted);
-        }
-
-        .sidebar-data-panel .data-clear-btn {
-            align-self: flex-start;
-            margin-top: 4px;
-            background: var(--danger-bg);
-            color: var(--danger);
-            border: 1px solid var(--danger-bg);
-            border-radius: var(--radius-sm);
-            padding: 4px 10px;
-            font-size: 11px;
-            font-weight: 600;
-            cursor: pointer;
-        }
-
-        .sidebar-data-panel .data-clear-btn:hover {
-            opacity: 0.85;
-        }
-
-        .main-container {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            height: 100%;
-            overflow: hidden;
-            background-color: var(--bg-base);
-            position: relative;
-        }
-
-        .sidebar-toggle-btn {
-            background: none;
-            border: none;
-            cursor: pointer;
-            color: var(--text-main);
-            padding: 6px;
-            border-radius: 6px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-right: 8px;
-            transition: background 0.2s;
-        }
-
-        .sidebar-toggle-btn:hover {
-            background-color: var(--hover-overlay);
-        }
-
-        /* Attachment Button */
-        .input-icon-btn {
-            background: none;
-            border: none;
-            cursor: pointer;
-            color: var(--text-muted);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 6px;
-            border-radius: 50%;
-            transition: background 0.2s, color 0.2s;
-            flex-shrink: 0;
-            align-self: center;
-        }
-
-        .input-icon-btn:hover {
-            background-color: var(--hover-overlay);
-            color: var(--text-main);
-        }
-
-        /* Custom scrollbars */
-        ::-webkit-scrollbar {
-            width: 6px;
-            height: 6px;
-        }
-
-        ::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: var(--border-strong);
-            border-radius: 3px;
-        }
-
-        /* Sidebar Backdrop Overlay */
-        .sidebar-backdrop {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.4);
-            backdrop-filter: blur(2px);
-            -webkit-backdrop-filter: blur(2px);
-            z-index: 45;
-            display: none;
-            opacity: 0;
-            transition: opacity 0.2s ease;
-        }
-
-        .sidebar-backdrop.active {
-            display: block;
-            opacity: 1;
-        }
-
-        /* Suggestion card wrapping text fix */
-        .suggestion-card {
-            white-space: normal !important;
-            word-break: break-word !important;
-            text-align: left;
-            line-height: 1.4;
-        }
-
-        /* Responsive Layout Updates for Sidebar / Side Panel (very narrow screens) */
-        @media (max-width: 768px) {
-            .sidebar-container {
-                position: absolute;
-                left: 0;
-                top: 0;
-                bottom: 0;
-                height: 100%;
-                z-index: 1000;
-                box-shadow: 5px 0 25px rgba(0, 0, 0, 0.5);
-            }
-            
-            .sidebar-container.collapsed {
-                margin-left: 0;
-                transform: translateX(-260px);
-                width: 260px; /* Keep width so transform transition works */
-            }
-            
-            .chat-viewport {
-                padding: 16px;
-            }
-            
-            .console-pinned-bottom {
-                padding: 10px 14px 16px 14px;
-            }
-
-            .chat-input-box {
-                padding: 6px 8px 6px 12px;
-                gap: 8px;
-            }
-        }
-
-        @media (max-width: 500px) {
-            header h1 {
-                display: none; /* Hide 'Browser Agent' logo to save space */
-            }
-            header {
-                grid-template-columns: auto 1fr auto;
-                padding: 8px 12px;
-            }
-            .header-model {
-                font-size: 11px;
-                padding: 4px 8px;
-                max-width: 180px;
-            }
-            .welcome-title {
-                font-size: 18px;
-            }
-            .welcome-desc {
-                font-size: 12.5px;
-                margin-bottom: 20px;
-            }
-            .suggestions-grid {
-                gap: 8px;
-            }
-            .suggestion-card {
-                padding: 10px 14px;
-                font-size: 12.5px;
-            }
-        }
-    </style>
+    <link rel="stylesheet" href="ui.css">
+    <link rel="stylesheet" href="agent.css">
 </head>
 
 <body>
     <div class="app-container">
-        <!-- Sidebar Backdrop Overlay -->
         <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
-        <!-- Collapsible Sidebar (OpenWebUI Style) -->
-        <div class="sidebar-container" id="sidebar">
+
+        <!-- Task history: a drawer beside the run on a wide page, over it in the side panel. -->
+        <nav class="sidebar-container" id="sidebar" aria-label="Tasks">
             <div class="sidebar-header">
-                <button class="new-task-btn" id="newTaskBtn" title="Clear chat & start a new task">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                    New Task
+                <div class="brand"><img src="icon48.png" alt="" />Select to AI</div>
+                <button type="button" class="icon-btn sm sidebar-close" id="sidebarCloseBtn" aria-label="Hide tasks" title="Hide tasks">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+                </button>
+            </div>
+            <div class="sidebar-new">
+                <button type="button" class="new-task-btn" id="newTaskBtn" title="Clear the conversation and start a new task">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                    New task
                 </button>
             </div>
             <div class="sidebar-chats-list" id="sidebarChatsList">
-                <div class="chat-list-section-title">Recent Sessions</div>
-                <!-- Populated by agent.js from the cross-session memory store
-                     (validator-confirmed task outlines). Click to reuse. -->
-                <div id="recentSessionsList"></div>
-            </div>
-            <div class="sidebar-data-panel" id="scratchpadPanel">
-                <div class="data-title">Scratchpad notes (this run)</div>
-                <div id="scratchpadItems"></div>
-                <button type="button" class="data-clear-btn" id="clearScratchpadBtn">Clear notes</button>
-            </div>
-            <div class="sidebar-data-panel" id="memoryPanel">
-                <div class="data-title">Stored task memory</div>
-                <div id="memoryItems"></div>
-                <button type="button" class="data-clear-btn" id="clearMemoryBtn">Clear stored memory</button>
+                <div class="chat-list-section-title" id="recentTitle">Recent</div>
+                <div id="recentSessionsList" role="list" aria-labelledby="recentTitle"></div>
             </div>
             <div class="sidebar-footer">
-                <button type="button" class="sidebar-footer-link as-button" id="toggleScratchpadBtn" aria-expanded="false">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
-                    Scratchpad Notes
+                <button type="button" class="sidebar-footer-link" id="openRecipesBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><path d="m3 6 1 1 2-2M3 12l1 1 2-2M3 18l1 1 2-2"/></svg>
+                    Recipes
                 </button>
-                <button type="button" class="sidebar-footer-link as-button" id="toggleMemoryBtn" aria-expanded="false">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8"></path><path d="M1 3h22v5H1z"></path><line x1="10" y1="12" x2="14" y2="12"></line></svg>
-                    Stored Memory
+                <button type="button" class="sidebar-footer-link" id="openMemoryBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/></svg>
+                    Memory
                 </button>
                 <a href="options.html" target="_blank" class="sidebar-footer-link">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-                    Settings Dashboard
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    Settings
                 </a>
             </div>
-        </div>
+        </nav>
 
-        <!-- Main Chat Area -->
-        <div class="main-container">
-            <!-- Top Header Bar -->
-            <header>
-                <div class="header-left">
-                    <button class="sidebar-toggle-btn" id="sidebarToggleBtn" title="Toggle Sidebar" aria-label="Toggle sidebar">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
-                    </button>
-                    <h1>Browser <span>Agent</span></h1>
+        <main class="main-container">
+            <!-- One line at the top. While the agent works it holds the live
+                 header: the goal, the site, the time and Stop. -->
+            <header class="topbar">
+                <button type="button" class="icon-btn sidebar-toggle-btn" id="sidebarToggleBtn" title="Tasks" aria-label="Show tasks" aria-controls="sidebar" aria-expanded="false">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+                </button>
+                <div class="topbar-title" id="topbarTitle"><span>Agent</span></div>
+                <div class="live-header" id="liveHeader" data-state="working" hidden>
+                    <span class="live-dot" aria-hidden="true"></span>
+                    <span class="live-goal" id="liveGoal" role="status" aria-live="polite"></span>
+                    <span class="live-site" id="liveSite" hidden><img alt="" id="liveFavicon" /><span id="liveHost"></span></span>
+                    <span class="live-time tabular" id="liveTime" aria-label="Time worked">0:00</span>
                 </div>
-        
-        <div class="header-center">
-            <!-- Shows the ACTUAL provider and model the runtime will call. -->
-            <div class="header-model" id="headerModel" title="Active provider and model (change in Settings)">
-                <span class="icon" aria-hidden="true">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
-                </span>
-                <span class="model-name" id="selectedModelName">Loading model…</span>
-            </div>
-        </div>
-
-        <div class="header-right">
-            <span id="costDashboardBadge" class="model-badge cost-badge" style="display: none;">$0.0000</span>
-        </div>
-    </header>
-
-    <!-- Chat Viewport -->
-    <div class="chat-viewport" id="chatViewport">
-        <div class="chat-container" id="chatContainer">
-            
-            <!-- Welcome Screen Home -->
-            <div class="welcome-screen" id="welcomeScreen">
-                <div class="welcome-logo">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                        <circle cx="12" cy="12" r="10" />
-                        <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
-                    </svg>
+                <div class="topbar-actions">
+                    <button type="button" class="btn btn-sm live-stop" id="liveStopBtn" hidden>
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/></svg>
+                        Stop
+                    </button>
+                    <div class="assistants" id="assistantsWrap" hidden>
+                        <button type="button" class="icon-btn" id="assistantsBtn" title="Ask an assistant site" aria-label="Ask an assistant site" aria-haspopup="menu" aria-expanded="false">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/></svg>
+                        </button>
+                        <div class="menu-pop assistants-menu" id="assistantsMenu" role="menu" hidden></div>
+                    </div>
                 </div>
-                <h2 class="welcome-title">How can I assist you on this page?</h2>
-                <p class="welcome-desc">Input an instruction. The browser agent will plan a checklist, interact with page components, and validate the output.</p>
-                
-                <div class="suggestions-grid">
-                    <button type="button" class="suggestion-card" data-prompt="Find the main headline on this page and summarize it.">
-                        <span class="suggestion-label">
-                            <span class="icon" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg></span>
-                            "Find the main headline on this page..."
-                        </span>
-                    </button>
-                    <button type="button" class="suggestion-card" data-prompt="Search this page for contact information and extract it.">
-                        <span class="suggestion-label">
-                            <span class="icon" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg></span>
-                            "Search this page for contact details..."
-                        </span>
-                    </button>
-                    <button type="button" class="suggestion-card" data-prompt="Scroll to the bottom of the page, click the FAQ section, and retrieve information.">
-                        <span class="suggestion-label">
-                            <span class="icon" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg></span>
-                            "Scroll down, open FAQ, and fetch details..."
-                        </span>
-                    </button>
+            </header>
+
+            <div class="chat-viewport" id="chatViewport">
+                <div class="chat-container" id="chatContainer">
+                    <!-- Empty state: what it can do, and three ways to start, right above the composer. -->
+                    <div class="welcome-screen" id="welcomeScreen">
+                        <div class="welcome-hero">
+                            <img class="welcome-logo" src="icon128.png" alt="" />
+                            <h1 class="welcome-title">What should I do?</h1>
+                            <p class="welcome-desc">It works in your browser on the tab you came from, reads your other tabs when you mention them, and asks before anything that costs money.</p>
+                        </div>
+                        <div class="suggestions-grid" role="group" aria-label="Suggestions">
+                            <button type="button" class="suggestion-card" data-prompt="Summarize this page in 5 short bullet points.">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h6"/></svg>
+                                <span class="suggestion-label">Summarize this page</span>
+                            </button>
+                            <button type="button" class="suggestion-card" data-prompt="Find the cheapest option on this page and tell me its name and price.">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg>
+                                <span class="suggestion-label">Find the cheapest option</span>
+                            </button>
+                            <button type="button" class="suggestion-card" data-prompt="Compare the tabs I have open and tell me which is the better choice, with one line on why.">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M7 7V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v9"/></svg>
+                                <span class="suggestion-label">Compare my open tabs</span>
+                            </button>
+                        </div>
+                    </div>
+                    <!-- The conversation is drawn here by agent.js. -->
                 </div>
             </div>
 
-            <!-- Dynamic Chat Bubbles will be loaded here by agent.js -->
+            <div class="console-pinned-bottom">
+                <div class="console-wrapper">
+                    <!-- No model connected yet. -->
+                    <div id="credentialsWarning" class="warning-card" role="alert">
+                        <span class="warning-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/></svg>
+                        </span>
+                        <span class="warning-text"><strong>Connect a model to start.</strong> It is free and takes about 20 seconds.</span>
+                        <button type="button" class="btn btn-primary btn-sm warning-action" id="openKeySettings">Connect</button>
+                    </div>
 
+                    <div class="chat-input-box" id="composer">
+                        <label class="visually-hidden" for="taskInput">Task for the agent</label>
+                        <textarea id="taskInput" placeholder="Ask anything, or tell it what to do" rows="1"></textarea>
+                        <div class="composer-bar">
+                            <a class="pill header-model" id="headerModel" href="options.html" target="_blank" title="Active provider and model (change in Settings)">
+                                <span class="model-name" id="selectedModelName">Loading model</span>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+                            </a>
+                            <span id="costDashboardBadge" class="cost-badge tabular" hidden>$0.00</span>
+                            <span class="composer-hint" id="composerHint"><kbd>Enter</kbd> to send</span>
+                            <button id="actionBtn" class="action-circle-btn" title="Run" aria-label="Run">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="input-helper-text" id="steerPending" role="status" aria-live="polite"></div>
+                    <div class="input-helper-text" id="chatgptPlanNote" hidden>Using your ChatGPT plan · <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener">Manage usage</a></div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div class="modal memory-modal recipes-modal" id="recipesModal" hidden>
+        <div class="modal-sheet memory-sheet" role="dialog" aria-modal="true" aria-labelledby="recipesTitle">
+            <div class="memory-head">
+                <h2 id="recipesTitle">Recipes</h2>
+                <button type="button" class="icon-btn memory-close" id="recipesClose" aria-label="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="memory-body">
+                <p class="memory-lede">Runs you saved, to repeat without the AI. Each step is checked as it runs. If a page changed only in looks, the step is fixed with your model's cheap tier and checked again. If what a step means changed, the recipe stops before that step and tells you why.</p>
+                <ul class="memory-list" id="recipesList"></ul>
+                <div class="recipe-detail" id="recipeDetail" hidden></div>
+            </div>
         </div>
     </div>
 
-    <!-- Pinned Console Bottom -->
-    <div class="console-pinned-bottom">
-        <div class="console-wrapper">
-            
-            <!-- API Key Error Box -->
-            <div id="credentialsWarning" class="warning-card">
-                <span><strong>Missing API Credentials:</strong> Please configure your API provider keys in the Settings dashboard tab.</span>
-            </div>
-
-            <!-- Chat input area container -->
-            <div class="chat-input-box">
-                <button class="input-icon-btn" id="attachBtn" title="Attachment Options">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                </button>
-                <textarea id="taskInput" placeholder="Ask the browser agent..." rows="1"></textarea>
-                <button id="actionBtn" class="action-circle-btn" title="Run Agent">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
+    <div class="modal memory-modal" id="memoryModal" hidden>
+        <div class="modal-sheet memory-sheet" role="dialog" aria-modal="true" aria-labelledby="memoryTitle">
+            <div class="memory-head">
+                <h2 id="memoryTitle">Memory</h2>
+                <button type="button" class="icon-btn memory-close" id="memoryClose" aria-label="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
                 </button>
             </div>
-            
-            <!-- Steer-while-running: queues ONE guidance message that is
-                 delivered to the agent before its next step. Hard Stop is
-                 unchanged (the red button / Escape). -->
-            <div class="steer-row" id="steerRow">
-                <label class="steer-label" for="steerInput">Steer the running agent</label>
-                <div class="steer-controls">
-                    <input type="text" id="steerInput" maxlength="500"
-                        placeholder="Guidance for the next step (does not stop the run)…"
-                        aria-label="Guidance for the running agent" />
-                    <button type="button" id="steerSendBtn" class="steer-send-btn">Queue</button>
+            <div class="memory-body" id="memoryKnown">
+                <p class="memory-lede">What the assistant knows about you, so you never tell it twice. It stays in this browser, encrypted. Your details are put into forms by the extension itself; your AI provider is only sent one when the assistant has to write with it, and you are shown when that happens.</p>
+                <label class="memory-toggle"><span class="switch"><input type="checkbox" id="knownPaused" /><span></span></span><span>Pause memory: use and learn nothing until this is off</span></label>
+                <section>
+                    <h3>Your details</h3>
+                    <p class="memory-hint">For filling forms. It asks before using them on a site for the first time. Passwords, cards and codes are never kept.</p>
+                    <div class="known-fields" id="knownFields"></div>
+                </section>
+                <section>
+                    <h3>Preferences</h3>
+                    <ul class="memory-list" id="knownPrefs"></ul>
+                    <form class="memory-add" id="knownAddForm" autocomplete="off">
+                        <input class="input" id="knownAddInput" maxlength="240" placeholder="Add one, e.g. Show prices in SGD" aria-label="Add a preference" />
+                        <button class="btn" type="submit">Add</button>
+                    </form>
+                </section>
+                <section>
+                    <h3>About you</h3>
+                    <p class="memory-hint">Lasting things you mentioned in tasks, such as where you study or work and the services you use, so the next request makes sense without asking. Only from what you typed, never from a page.</p>
+                    <ul class="memory-list" id="knownContext"></ul>
+                    <form class="memory-add" id="knownContextForm" autocomplete="off">
+                        <input class="input" id="knownContextInput" maxlength="240" placeholder="Add one, e.g. Work at Fernhill; team chat is on Slack" aria-label="Add something about you" />
+                        <button class="btn" type="submit">Add</button>
+                    </form>
+                </section>
+                <section>
+                    <h3>Learned on sites</h3>
+                    <p class="memory-hint">Notes and routines from tasks that worked, and lessons from your corrections. Each is used only on its own site, and dropped if it stops helping.</p>
+                    <ul class="memory-list" id="knownSites"></ul>
+                </section>
+                <section>
+                    <h3>Sites that may use your details</h3>
+                    <ul class="memory-list" id="knownConsents"></ul>
+                </section>
+                <div class="memory-foot known-foot">
+                    <button type="button" class="btn btn-ghost" id="knownExport">Export</button>
+                    <button type="button" class="btn btn-ghost" id="knownImport">Import</button>
+                    <input type="file" id="knownImportFile" accept="application/json" hidden />
+                    <span class="grow"></span>
+                    <button type="button" class="btn btn-danger" id="knownWipe">Forget everything</button>
                 </div>
-                <div class="steer-pending" id="steerPending" role="status"></div>
             </div>
-
-            <div class="input-helper-text">
-                <span>Press Enter to send • Escape to stop</span>
-            </div>
-            
         </div>
     </div>
-    </div> <!-- .main-container -->
-    </div> <!-- .app-container -->
 
     <script src="config.js"></script>
     <script src="defaults.js"></script>
-    <script src="security.js"></script>
-    <script src="agentTools.js"></script>
+    <script src="chatgptAuth.js"></script>
+    <script src="answerFormat.js"></script>
+    <script src="core/memory.js"></script>
+    <script src="core/runlog.js"></script>
+    <script src="omnibox.js"></script>
     <script src="agent.js"></script>
 </body>
 

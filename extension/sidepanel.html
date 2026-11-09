@@ -1,141 +1,68 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 
 <head>
     <meta charset="UTF-8">
     <title>Select to AI Sidebar</title>
     <link rel="stylesheet" href="tokens.css">
+    <link rel="stylesheet" href="ui.css">
     <style>
-        * {
-            box-sizing: border-box;
-        }
-
-        body,
-        html {
-            margin: 0;
-            padding: 0;
+        html,
+        body {
             height: 100%;
             width: 100%;
             overflow: hidden;
+        }
+
+        body {
             display: flex;
             flex-direction: column;
-            background-color: var(--bg);
-            color: var(--text);
-            font-family: var(--font-sans);
         }
 
-        header {
-            height: 48px;
-            background: var(--surface);
-            border-bottom: 1px solid var(--border);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 0 16px;
+        /* Shown only while an assistant site is in the panel: the way back
+           to the agent, the site picker, and "send this page's address". */
+        .sp-bar {
+            height: 44px;
             flex-shrink: 0;
-        }
-
-        .header-content {
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 6px;
+            padding: 0 8px;
+            background: var(--bg);
+            border-bottom: 1px solid var(--border);
         }
 
-        select {
-            appearance: none;
-            -webkit-appearance: none;
-            padding: 8px 32px 8px 12px;
-            height: 32px;
+        .sp-bar .grow { flex: 1; }
+
+        .sp-bar select.input {
+            height: 30px;
+            font-weight: var(--weight-medium);
             border-radius: var(--radius-full);
-            border: 1px solid var(--border);
-            background-color: var(--bg);
-            color: var(--text);
-            font-family: var(--font-sans);
-            font-size: 13px;
-            font-weight: 600;
-            cursor: pointer;
-            background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888895' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
-            background-repeat: no-repeat;
-            background-position: right 10px center;
-            background-size: 14px;
-        }
-
-        select:hover {
-            background-color: var(--surface-2);
-        }
-
-        select option {
-            background-color: var(--bg);
-            color: var(--text);
-            padding: 8px;
+            padding-left: 12px;
         }
 
         iframe {
             flex: 1;
             width: 100%;
             border: none;
-            background-color: var(--bg);
-        }
-
-        /* Loading indicator */
-        .loading {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: var(--text);
-            font-size: 14px;
-            opacity: 0.7;
-        }
-
-        /* Send-context button */
-        .redo-btn {
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            border: 1px solid var(--border);
-            background-color: var(--bg);
-            color: var(--text);
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: background 0.2s, transform 0.2s;
-        }
-
-        .redo-btn:hover {
-            background-color: var(--surface-2);
-            transform: rotate(180deg);
-        }
-
-        .redo-btn:active {
-            transform: rotate(180deg) scale(0.95);
-        }
-
-        .redo-btn svg {
-            width: 18px;
-            height: 18px;
+            background: var(--bg);
         }
     </style>
 </head>
 
 <body>
-    <header>
-        <div class="header-content">
-            <select id="serviceSelector" aria-label="Choose which AI service the sidebar shows">
-                <!-- Options populated by JS -->
-            </select>
-            <button id="redoContextBtn" class="redo-btn" title="Send current page URL as context"
-                aria-label="Send current page URL as context">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                    stroke-linejoin="round" aria-hidden="true">
-                    <path d="M23 4v6h-6" />
-                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-                </svg>
-            </button>
-        </div>
+    <header class="sp-bar" id="spBar" hidden>
+        <button type="button" class="btn btn-ghost btn-sm" id="backToAgentBtn" hidden>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+            Agent
+        </button>
+        <span class="grow"></span>
+        <select id="serviceSelector" class="input" aria-label="Choose which assistant the side panel shows"></select>
+        <button id="redoContextBtn" class="icon-btn" title="Send this page's address to the assistant" aria-label="Send this page's address to the assistant">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
+        </button>
     </header>
-    <iframe id="contentFrame" src="about:blank" title="Selected AI service"></iframe>
+    <iframe id="contentFrame" src="about:blank" title="Select to AI"></iframe>
     <script src="config.js"></script>
     <script src="sidepanel.js"></script>
 </body>

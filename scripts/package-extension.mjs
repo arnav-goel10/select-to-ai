@@ -4,11 +4,17 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const forbidden = /(^|\/)(\.DS_Store|\.env|.*\.log|.*\.map)$/;
+// Chrome writes _metadata/ into an unpacked extension it has loaded; the Web
+// Store reserves the name and refuses uploads that contain it.
+const forbiddenDirs = new Set(["_metadata"]);
 
 function collectFiles(directory, rootDirectory) {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const absolutePath = path.join(directory, entry.name);
-    if (entry.isDirectory()) return collectFiles(absolutePath, rootDirectory);
+    if (entry.isDirectory()) {
+      if (directory === rootDirectory && forbiddenDirs.has(entry.name)) return [];
+      return collectFiles(absolutePath, rootDirectory);
+    }
     if (entry.isSymbolicLink()) return [];
     const relativePath = path.relative(rootDirectory, absolutePath).split(path.sep).join("/");
     return forbidden.test(relativePath) ? [] : [relativePath];

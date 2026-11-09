@@ -1,9 +1,9 @@
-name: E2E agent harness
+name: E2E, headed and slow
 
-# Manual-only: the puppeteer harness downloads Chromium and runs four full
-# agent scenarios against a scripted local gateway. It is deliberately kept
-# out of the required `npm run check` CI job to keep PR feedback fast.
-# Run locally with: npm run bench:e2e
+# Manual only. The agent scenarios in a visible browser under xvfb (the
+# browser job in ci.yml runs the same scenarios headless), and the recipes
+# benchmark's check that no degenerate policy can pass it, which runs every
+# degenerate adapter over the dev mutation set and takes several minutes.
 on:
   workflow_dispatch:
 
@@ -13,7 +13,7 @@ permissions:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,6 +21,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: xvfb-run --auto-servernum npm run bench:e2e
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - run: npx puppeteer browsers install chrome
+      - run: npx playwright install --with-deps chromium
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: xvfb-run --auto-servernum npm run test:v4
         env:
           E2E_HEADFUL: "1"
+      - run: node --test tests/recipes/degenerate.test.js

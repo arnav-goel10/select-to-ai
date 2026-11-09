@@ -1,0 +1,66 @@
+[
+ {
+  "id": "dev-crm-icon",
+  "app": "crm",
+  "tasks": [
+   "crm.note"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "iconOnly",
+    "k": "add-note",
+    "label": "Add note"
+   },
+   {
+    "op": "attr",
+    "k": "add-note",
+    "name": "id",
+    "value": null
+   }
+  ],
+  "family": "icon-only"
+ },
+ {
+  "id": "dev-account-icon",
+  "app": "account",
+  "tasks": [
+   "account.address"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "iconOnly",
+    "k": "address-remove",
+    "label": "Remove address"
+   },
+   {
+    "op": "stripAttr",
+    "name": "data-testid"
+   }
+  ],
+  "family": "icon-only"
+ },
+ {
+  "id": "dev-orders-icon",
+  "app": "orders",
+  "tasks": [
+   "orders.instructions"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "iconOnly",
+    "k": "save-instructions",
+    "label": "Save instructions"
+   },
+   {
+    "op": "attr",
+    "k": "save-instructions",
+    "name": "id",
+    "value": null
+   }
+  ],
+  "family": "icon-only"
+ }
+]

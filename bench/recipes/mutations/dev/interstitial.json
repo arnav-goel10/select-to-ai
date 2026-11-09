@@ -1,0 +1,44 @@
+[
+ {
+  "id": "dev-supplier-cookie",
+  "app": "supplier",
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "insert",
+    "to": "body",
+    "where": "append",
+    "html": "<div data-overlay data-once=\"sp-consent\" class=\"bar\" role=\"dialog\" aria-label=\"Privacy choices\"><div class=\"dlg\"><p>We use cookies to improve the portal and remember your settings.</p><div class=\"actions\"><button type=\"button\" class=\"btn\" data-dismiss=\"reject\">Reject all</button><button type=\"button\" class=\"btn primary\" data-dismiss=\"accept\">Accept all</button></div></div></div>"
+   }
+  ],
+  "family": "interstitial"
+ },
+ {
+  "id": "dev-reports-announce",
+  "app": "reports",
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "insert",
+    "to": "body",
+    "where": "append",
+    "html": "<div data-overlay data-once=\"rp-whatsnew\" role=\"dialog\" aria-label=\"What is new\"><div class=\"dlg\"><h3>New: scheduled exports</h3><p>You can now send reports on a schedule.</p><div class=\"actions\"><button type=\"button\" class=\"btn\" data-dismiss=\"\">Got it</button><a class=\"btn primary\" href=\"/reports/schedules\">Show me</a></div></div></div>"
+   }
+  ],
+  "family": "interstitial"
+ },
+ {
+  "id": "dev-crm-survey",
+  "app": "crm",
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "insert",
+    "to": "body",
+    "where": "append",
+    "html": "<div data-overlay data-once=\"crm-nps\" role=\"dialog\" aria-label=\"Feedback\"><div class=\"dlg\"><h3>How likely are you to recommend Pipeline CRM?</h3><p>It takes 30 seconds.</p><div class=\"actions\"><button type=\"button\" class=\"btn\" data-dismiss=\"\">Not now</button><a class=\"btn primary\" href=\"/crm/contacts\">Take the survey</a></div></div></div>"
+   }
+  ],
+  "family": "interstitial"
+ }
+]

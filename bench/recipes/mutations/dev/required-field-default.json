@@ -1,0 +1,52 @@
+[
+ {
+  "id": "dev-supplier-category",
+  "app": "supplier",
+  "tasks": [
+   "supplier.dispute"
+  ],
+  "expected": "repairable",
+  "flags": {
+   "disputeCategory": {
+    "default": "Pricing"
+   }
+  },
+  "family": "required-field-default"
+ },
+ {
+  "id": "dev-inventory-reason",
+  "app": "inventory",
+  "tasks": [
+   "inventory.stock"
+  ],
+  "expected": "repairable",
+  "flags": {
+   "stockReason": {
+    "default": "Stock count"
+   }
+  },
+  "family": "required-field-default"
+ },
+ {
+  "id": "dev-wizard-size",
+  "app": "wizard",
+  "tasks": [
+   "wizard.submit",
+   "wizard.draft"
+  ],
+  "expected": "repairable",
+  "flags": {
+   "extraField": {
+    "label": "Company size",
+    "options": [
+     "1-10",
+     "11-50",
+     "51-250",
+     "250+"
+    ],
+    "default": "11-50"
+   }
+  },
+  "family": "required-field-default"
+ }
+]

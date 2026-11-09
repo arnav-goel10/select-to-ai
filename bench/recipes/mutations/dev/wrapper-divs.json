@@ -1,0 +1,83 @@
+[
+ {
+  "id": "dev-supplier-wrap",
+  "app": "supplier",
+  "tasks": [
+   "supplier.download"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "wrap",
+    "k": "row-download",
+    "depth": 2,
+    "cls": "cell"
+   }
+  ],
+  "family": "wrapper-divs"
+ },
+ {
+  "id": "dev-crm-wrap",
+  "app": "crm",
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "wrap",
+    "k": "contact-link",
+    "depth": 2,
+    "cls": "lnk"
+   }
+  ],
+  "family": "wrapper-divs"
+ },
+ {
+  "id": "dev-account-wrap",
+  "app": "account",
+  "tasks": [
+   "account.notify"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "wrap",
+    "k": "pref-input-productNews",
+    "depth": 1,
+    "cls": "sw"
+   },
+   {
+    "op": "wrap",
+    "k": "pref-input-emailDigest",
+    "depth": 1,
+    "cls": "sw"
+   }
+  ],
+  "family": "wrapper-divs"
+ },
+ {
+  "id": "dev-wizard-section",
+  "app": "wizard",
+  "tasks": [
+   "wizard.submit"
+  ],
+  "expected": "repairable",
+  "family": "wrapper-divs",
+  "ops": [
+   {
+    "op": "wrapTag",
+    "k": "step1-form",
+    "tag": "section",
+    "attrs": {
+     "class": "panel"
+    }
+   },
+   {
+    "op": "wrapTag",
+    "k": "agree-label",
+    "tag": "div",
+    "attrs": {
+     "class": "consent"
+    }
+   }
+  ]
+ }
+]

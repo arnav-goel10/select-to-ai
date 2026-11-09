@@ -1,0 +1,65 @@
+PASS  search
+PASS  form
+PASS  booking
+PASS  hijack
+PASS  hijackQuiet
+PASS  article
+  first answer shown 762 ms after the request; final 3296 ms (trace: 616 ms and 3120 ms)
+PASS  decade
+PASS  decadeSentBack
+PASS  aboutSelection
+  page brought to front once, drawn after 25 ms; bar told 10 times
+PASS  followBar
+PASS  followTouched
+PASS  followPanel
+PASS  followRead
+PASS  signin
+PASS  signinPushy
+PASS  signinAuto
+PASS  signinAsleep
+PASS  humanCheck
+PASS  framed
+PASS  findQuote
+PASS  newTab
+PASS  fromNothingBlank
+PASS  fromNothingBrowserPage
+PASS  omniboxHandoff
+PASS  listened
+PASS  slowResults
+PASS  stillLoading
+PASS  busyPage
+PASS  slowResultsNoDebugger
+PASS  hoverMenu
+PASS  pointerHover
+PASS  pointerFrame
+PASS  pointerDrag
+PASS  pointerNoDebugger
+PASS  pointerCanvas
+PASS  pointerRisk
+PASS  realKeys
+PASS  humanAuto
+PASS  humanPushy
+PASS  code
+PASS  calcAsks
+PASS  commentSends
+PASS  payPress
+PASS  profileForm
+PASS  rememberSaid
+PASS  rememberPoison
+PASS  userFilled
+PASS  question
+PASS  compare
+PASS  learnNote
+PASS  keepAnswer
+PASS  lesson
+PASS  contextLearned
+PASS  reopen
+PASS  helper
+PASS  longRun
+PASS  checkIn
+PASS  delegate
+PASS  delegateDecline
+
+wait after the press: Search for flights and tell me the cheap: 3567 ms; Show the note.: 473 ms; Search for flights and tell me the cheap: 3516 ms
+
+59/59 v4 scenarios passed

@@ -4,7 +4,14 @@
  */
 
 // Import shared configuration
-importScripts('config.js', 'defaults.js', 'security.js', 'intentRouter.js');
+importScripts('config.js', 'defaults.js', 'security.js', 'commonWords.js', 'omnibox.js');
+// The agent's runs live in this worker (engine.js), not in the side panel.
+importScripts('publicSuffixes.js', 'agentTools.js', 'agentPrompt.js', 'usageLimits.js', 'pageSearch.js',
+    'chatgptAuth.js', 'chatgptConnect.js',
+    'core/step.js', 'core/observe.js', 'core/memory.js', 'core/context.js', 'core/policy.js', 'core/run.js', 'core/llm.js', 'core/learn.js', 'core/view.js', 'core/inject.js',
+    'recipes/vendor/recipes-core.js', 'recipes/driver.js', 'recipes/service.js', 'engine.js');
+// Saved runs ("recipes") and their replays, for the agent's page.
+if (self.SELECT_TO_AI_RECIPES) self.SELECT_TO_AI_RECIPES.install(chrome);
 
 if (typeof CONFIG === 'undefined') {
     console.error("Select to AI: CONFIG failed to load in background.");
@@ -13,9 +20,6 @@ if (typeof CONFIG === 'undefined') {
 // Cached settings to minimize storage reads
 let cachedSettings = {
     autoSend: false,
-    // Address-bar questions auto-send by default UNLESS the user explicitly
-    // turned Auto-send off (documented in the option's tooltip in Options).
-    omniboxAutoSend: true,
     autoContext: false,
     openingMode: 'sidePanel',
     showChatGPT: true,
@@ -43,12 +47,87 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
 // the options page so new users meet the onboarding wizard: it explains that
 // the browser agent exists, that it is off by default, and that it needs an
 // API key before it can run.
+/**
+ * 3.4 migration: OpenCode's "-free" models only answer inside the OpenCode
+ * app, so anyone saved on one (the old default) is moved to OpenRouter's
+ * free router, which works from the extension.
+ */
+function migrateAppOnlyFreeModels() {
+    chrome.storage.sync.get(['agentActiveProvider', 'agentModel'], (items) => {
+        const provider = items.agentActiveProvider;
+        const model = String(items.agentModel || '');
+        const onAppOnlyFree = (!provider || provider === 'opencode') && /-free$/.test(model);
+        if (!onAppOnlyFree) return;
+        const d = SELECT_TO_AI_DEFAULTS.AGENT_DEFAULTS;
+        chrome.storage.sync.set({ agentActiveProvider: d.activeProvider, agentModel: d.model });
+    });
+}
+
+/**
+ * Settings pages before 3.4 saved every field on any change, which froze a
+ * full copy of the agent's instructions (and every tuning default) into
+ * storage. The agent then used that stale copy forever. Drop the copies so
+ * the built-in values apply; a prompt the user really wrote themselves is
+ * kept as their own instructions, which are now added to the built-in ones.
+ */
+const RETIRED_SETTINGS = [
+    'agentSystemPrompt', 'agentPromptCaching', 'agentTimeout', 'agentMaxTokensPerCall',
+    'agentTemperature', 'agentElementLimit', 'agentHistoryLimit', 'agentFailureThreshold',
+    'promptLibrary',
+    // The pre-v4 loop and the address bar's router (removed in 4.0).
+    'agentEngine', 'agentMaxSteps', 'omniboxSmartRouting', 'inlineTemporaryChat', 'inlineProvider',
+];
+function migrateFrozenSettings() {
+    chrome.storage.sync.get(['agentSystemPrompt', 'agentExtraInstructions'], (items) => {
+        const old = String(items.agentSystemPrompt || '').trim();
+        const wasOurs = /<instructions>|browser_action|Select to AI/i.test(old);
+        const keep = old && !wasOurs && !items.agentExtraInstructions && old.length <= 2000;
+        const done = () => chrome.storage.sync.remove(RETIRED_SETTINGS);
+        if (keep) chrome.storage.sync.set({ agentExtraInstructions: old }, done);
+        else done();
+    });
+}
+
+/**
+ * The side panel embeds the assistants' own sites, which send headers that
+ * forbid framing. This rule lifts them, but only for requests that belong to
+ * no tab: the extension's side panel. It used to be a static rule applying to
+ * every iframe, so any website could frame a signed-in ChatGPT or Claude
+ * (clickjacking). Session rules vanish when the browser closes, so it is
+ * installed at every start.
+ */
+const SIDE_PANEL_FRAME_RULE_ID = 1;
+function installSidePanelFrameRule() {
+    chrome.declarativeNetRequest.updateSessionRules({
+        removeRuleIds: [SIDE_PANEL_FRAME_RULE_ID],
+        addRules: [{
+            id: SIDE_PANEL_FRAME_RULE_ID,
+            priority: 1,
+            action: {
+                type: 'modifyHeaders',
+                responseHeaders: ['x-frame-options', 'frame-options', 'content-security-policy',
+                    'cross-origin-opener-policy', 'cross-origin-embedder-policy', 'permissions-policy', 'feature-policy']
+                    .map((header) => ({ header, operation: 'remove' })),
+            },
+            condition: {
+                requestDomains: ['chatgpt.com', 'gemini.google.com', 'perplexity.ai', 'claude.ai'],
+                resourceTypes: ['sub_frame'],
+                tabIds: [chrome.tabs.TAB_ID_NONE],
+            },
+        }],
+    }, () => void chrome.runtime.lastError);
+}
+installSidePanelFrameRule();
+chrome.runtime.onStartup.addListener(installSidePanelFrameRule);
+
 chrome.runtime.onInstalled.addListener((details) => {
     updateContextMenus();
+    if (details && details.reason === 'update') {
+        migrateAppOnlyFreeModels();
+        migrateFrozenSettings();
+    }
     if (details && details.reason === 'install') {
-        chrome.runtime.openOptionsPage(() => {
-            void chrome.runtime.lastError;
-        });
+        chrome.tabs.create({ url: chrome.runtime.getURL('welcome.html') });
     }
 });
 
@@ -59,8 +138,6 @@ chrome.runtime.onInstalled.addListener((details) => {
 function updateCache() {
     chrome.storage.sync.get(CONFIG.STORAGE.SETTINGS, (items) => {
         cachedSettings.autoSend = items.autoSend === true;
-        // Omnibox flow: default ON when unset, honoring an explicit OFF.
-        cachedSettings.omniboxAutoSend = items.autoSend !== false;
         cachedSettings.autoContext = items.autoContext !== false; // Default true
 
         // Settings defaults
@@ -71,6 +148,8 @@ function updateCache() {
         cachedSettings.showAgent = items.showAgent === true;
         cachedSettings.agentCustomUrl =
             items.agentCustomUrl || SELECT_TO_AI_DEFAULTS.AGENT_DEFAULTS.customUrl;
+        cachedSettings.agentActiveProvider =
+            items.agentActiveProvider || SELECT_TO_AI_DEFAULTS.AGENT_DEFAULTS.activeProvider;
 
         // Opening Mode Migration Logic
         let mode = items.openingMode;
@@ -89,7 +168,6 @@ function updateCache() {
 
         cachedSettings.singleMode = (activeCount === 1);
 
-        console.log("Settings Cache Updated:", cachedSettings);
         updateContextMenus();
     });
 }
@@ -120,7 +198,7 @@ function updateContextMenus() {
             } else if (cachedSettings.showClaude) {
                 create({ id: "openClaude", title: "Send to Claude", contexts: ["selection"] });
             } else if (cachedSettings.showAgent) {
-                create({ id: "openAgent", title: "Open AI Browser Agent", contexts: ["selection"] });
+                create({ id: "openAgent", title: "Ask the agent about this", contexts: ["selection"] });
             }
         } else {
             // Nested menu for multiple services
@@ -129,7 +207,7 @@ function updateContextMenus() {
             if (cachedSettings.showGemini) create({ id: "openGemini", parentId: "parentFolder", title: "Send to Gemini", contexts: ["selection"] });
             if (cachedSettings.showPerplexity) create({ id: "openPerplexity", parentId: "parentFolder", title: "Send to Perplexity", contexts: ["selection"] });
             if (cachedSettings.showClaude) create({ id: "openClaude", parentId: "parentFolder", title: "Send to Claude", contexts: ["selection"] });
-            if (cachedSettings.showAgent) create({ id: "openAgent", parentId: "parentFolder", title: "Open AI Browser Agent", contexts: ["selection"] });
+            if (cachedSettings.showAgent) create({ id: "openAgent", parentId: "parentFolder", title: "Ask the agent about this", contexts: ["selection"] });
         }
     });
 }
@@ -201,6 +279,36 @@ function buildPrefillUrl(finalUrl, serviceBaseUrl, text, willAutoSend) {
 
 // --- Interaction Handlers ---
 
+// Where the selection a request is about is kept until the agent page takes
+// it: per tab, in session storage, so it survives the click that would
+// clear the page's own selection and never outlives the browser session.
+const SELECTION_KEY = (tabId) => `agentSelection:${tabId}`;
+const SELECTION_BUDGET = 900; // characters of passage around the selection
+
+/**
+ * "Ask the agent about this": the agent opens on the tab, and what was
+ * selected goes with it, with its place on the page (agentTools.js
+ * selectionPlace), for the composer to show and the run to be given.
+ * The panel is opened first, inside the click's user gesture.
+ */
+function askAgentAboutSelection(info, tab) {
+    if (!tab || !tab.id) return;
+    const url = `${CONFIG.URLS.AGENT}?tabId=${tab.id}&about=selection`;
+    if (cachedSettings.openingMode === 'sidePanel') {
+        chrome.sidePanel.open({ windowId: tab.windowId }, () => {
+            if (chrome.runtime.lastError) console.warn('Side panel did not open:', chrome.runtime.lastError.message);
+        });
+        chrome.storage.local.set({ sidePanelState: { url, selectedText: "", autoSend: false, timestamp: Date.now() } });
+    } else {
+        chrome.tabs.create({ url }, () => void chrome.runtime.lastError);
+    }
+    const fallback = { text: String(info.selectionText || "").replace(/\s+/g, " ").trim().slice(0, 2000), title: tab.title || "", url: tab.url || "", heading: "", passage: "", row: "", column: "" };
+    const keep = (place) => chrome.storage.session.set({ [SELECTION_KEY(tab.id)]: { ...(place && place.text ? place : fallback), tabId: tab.id, at: Date.now() } }).catch(() => {});
+    if (!chrome.scripting || !self.SELECT_TO_AI_TOOLS.selectionPlace) { keep(null); return; }
+    chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: info.frameId ? [info.frameId] : [0] }, func: self.SELECT_TO_AI_TOOLS.selectionPlace, args: [SELECTION_BUDGET] })
+        .then((r) => keep(r && r[0] && r[0].result), () => keep(null));
+}
+
 chrome.contextMenus.onClicked.addListener((info, tab) => {
     let serviceBaseUrl = "";
 
@@ -214,10 +322,8 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
         default: return; // Unknown menu item
     }
 
+    if (info.menuItemId === "openAgent") { askAgentAboutSelection(info, tab); return; }
     let finalUrl = resolveSessionUrlSync(serviceBaseUrl);
-    if (info.menuItemId === "openAgent" && tab && tab.id) {
-        finalUrl += `?tabId=${tab.id}`;
-    }
     const selectedText = info.selectionText || "";
 
     // Prepare content
@@ -242,7 +348,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
         // SIDE PANEL MODE
         // 1. Open Side Panel (Sync, requires user gesture usually, context menu provides it)
         chrome.sidePanel.open({ windowId: tab.windowId }, () => {
-            if (chrome.runtime.lastError) console.error("Side Panel Open Error:", chrome.runtime.lastError);
+            if (chrome.runtime.lastError) console.warn('Side panel did not open:', chrome.runtime.lastError.message);
         });
 
         // 2. Set State (Content script listens for this)
@@ -257,43 +363,102 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 
     } else {
         // TAB MODE
-        chrome.tabs.create({ url: finalUrl }, (newTab) => {
-            if (prefillUrl) return; // the URL itself carries the prompt
-            // Wait for tab to load before sending message
-            const listener = (tabId, changeInfo) => {
-                if (tabId === newTab.id && changeInfo.status === 'complete') {
-                    chrome.tabs.onUpdated.removeListener(listener);
-                    chrome.tabs.sendMessage(newTab.id, {
-                        selectedText: finalText,
-                        autoSend: cachedSettings.autoSend,
-                        timestamp: Date.now()
-                    });
-                }
-            };
-            chrome.tabs.onUpdated.addListener(listener);
-        });
+        if (prefillUrl) {
+            // the URL itself carries the prompt, nothing to deliver afterwards
+            chrome.tabs.create({ url: finalUrl }, () => void chrome.runtime.lastError);
+        } else {
+            createTabAndSend(finalUrl, {
+                selectedText: finalText,
+                autoSend: cachedSettings.autoSend,
+                timestamp: Date.now(),
+            });
+        }
     }
 });
 
 // Keyboard Command Handler (Open Sidebar or Run Agent)
+/**
+ * Opens the in-page command palette on the active tab.
+ *
+ * Injected on demand rather than registered as a content script: it costs
+ * nothing on pages where the shortcut is never pressed, and activeTab means
+ * no broad host permission is added to the install prompt.
+ */
+function openCommandPalette(tab) {
+    const tabId = tab && tab.id;
+    if (!tabId || !chrome.scripting) return;
+    chrome.scripting.executeScript(
+        { target: { tabId }, files: ['commandPalette.js'] },
+        () => {
+            if (chrome.runtime.lastError) {
+                // Chrome blocks injection on its own pages and the Web Store.
+                chrome.notifications.create({
+                    type: 'basic',
+                    iconUrl: 'icon128.png',
+                    title: 'Select to AI',
+                    message: 'The command palette cannot open on this page. Try it on a normal website tab.',
+                });
+            }
+        },
+    );
+}
+
+/**
+ * Starts the agent on what was typed in the palette, with any text the user
+ * had highlighted when they opened it, on the tab it was opened on.
+ */
+function runPaletteInput(rawText, rawSelection, originTabId) {
+    const trimmed = String(rawText || '').slice(0, SELECT_TO_AI_OMNIBOX.LIMIT).trim();
+    if (!trimmed) return;
+    if (!cachedSettings.showAgent) { notifyAgentDisabled(); return; }
+    const selection = String(rawSelection || '').trim().slice(0, 4000);
+    const task = selection
+        ? trimmed + '\n\n--- selected text from the page ---\n' + selection
+        : trimmed;
+    // Pass the tab the palette was opened on. Without it the agent falls
+    // back to the window's active tab, which can be a different page.
+    const tabParam = originTabId != null ? `&tabId=${originTabId}` : '';
+    chrome.tabs.create(
+        { url: `${CONFIG.URLS.AGENT}?task=${encodeURIComponent(task)}&autostart=1${tabParam}` },
+        () => void chrome.runtime.lastError,
+    );
+}
+
+chrome.runtime.onMessage.addListener((message, sender) => {
+    if (message && message.type === 'SELECT_TO_AI_PALETTE_SUBMIT') {
+        runPaletteInput(message.text, message.selection, sender && sender.tab ? sender.tab.id : null);
+    }
+});
+
 chrome.commands.onCommand.addListener((command, tab) => {
+    if (command === CONFIG.COMMANDS.OPEN_PALETTE) {
+        openCommandPalette(tab);
+        return;
+    }
     if (command === CONFIG.COMMANDS.OPEN_SIDEBAR) {
         // 1. Open Side Panel
         const openPanel = (winId) => {
             chrome.sidePanel.open({ windowId: winId }, () => {
-                if (chrome.runtime.lastError) console.error("Side Panel Open Error:", chrome.runtime.lastError);
+                if (chrome.runtime.lastError) console.warn('Side panel did not open:', chrome.runtime.lastError.message);
             });
         };
 
         if (tab && tab.windowId) openPanel(tab.windowId);
-        else chrome.windows.getCurrent((win) => openPanel(win.id));
+        else chrome.windows.getCurrent((win) => {
+            if (chrome.runtime.lastError || !win) { void chrome.runtime.lastError; return; }
+            openPanel(win.id);
+        });
 
         // 2. Set State (Restore last used or default)
         chrome.storage.local.get([CONFIG.STORAGE.SIDE_PANEL_STATE], (result) => {
             let targetBaseUrl = CONFIG.URLS.CHATGPT; // Absolute fallback
             const existing = result[CONFIG.STORAGE.SIDE_PANEL_STATE];
 
-            if (existing && existing.url) {
+            if (cachedSettings.showAgent) {
+                // With the agent on, the side panel opens on the agent; the
+                // assistant sites are a click away inside it.
+                targetBaseUrl = chrome.runtime.getURL('agent.html') + (tab && tab.id ? `?tabId=${tab.id}` : '');
+            } else if (existing && existing.url) {
                 targetBaseUrl = existing.url; // Use last used
             } else {
                 // Determine default hierarchy relative to what is enabled
@@ -325,7 +490,7 @@ chrome.commands.onCommand.addListener((command, tab) => {
         }
         const openPanel = (winId) => {
             chrome.sidePanel.open({ windowId: winId }, () => {
-                if (chrome.runtime.lastError) console.error("Side Panel Open Error:", chrome.runtime.lastError);
+                if (chrome.runtime.lastError) console.warn('Side panel did not open:', chrome.runtime.lastError.message);
             });
         };
         if (tab && tab.windowId) openPanel(tab.windowId);
@@ -344,27 +509,64 @@ chrome.commands.onCommand.addListener((command, tab) => {
 });
 
 /** Shared "agent is disabled" handling for gated entry points. */
-function notifyAgentDisabled() {
-    chrome.notifications.create({
-        type: 'basic',
-        iconUrl: 'icon128.png',
-        title: 'Select to AI',
-        message: 'The AI Browser Agent is turned off. Enable it in Settings (General Setup) to use this entry point.'
-    });
-    chrome.runtime.openOptionsPage(() => {
-        void chrome.runtime.lastError;
+/**
+ * Opens a tab and delivers the prompt once it has finished loading.
+ *
+ * Guards three failure paths the previous inline versions did not: a create
+ * that fails leaves newTab undefined (reading newTab.id threw), a tab that
+ * never reaches "complete" because it was closed or blocked left its
+ * onUpdated listener attached for the life of the service worker, and
+ * sendMessage into a tab with no content script raised an unchecked
+ * lastError.
+ */
+function createTabAndSend(url, message) {
+    chrome.tabs.create({ url }, (newTab) => {
+        if (chrome.runtime.lastError || !newTab || !newTab.id) {
+            void chrome.runtime.lastError;
+            return;
+        }
+        const tabId = newTab.id;
+        let finished = false;
+
+        const cleanup = () => {
+            if (finished) return;
+            finished = true;
+            chrome.tabs.onUpdated.removeListener(onUpdated);
+            chrome.tabs.onRemoved.removeListener(onRemoved);
+            clearTimeout(timer);
+        };
+        const onUpdated = (id, changeInfo) => {
+            if (id !== tabId || changeInfo.status !== 'complete') return;
+            cleanup();
+            // The top frame only: the content script also runs in sub-frames.
+            chrome.tabs.sendMessage(tabId, message, { frameId: 0 }, () => void chrome.runtime.lastError);
+        };
+        const onRemoved = (id) => { if (id === tabId) cleanup(); };
+
+        const timer = setTimeout(cleanup, 30000);
+        chrome.tabs.onUpdated.addListener(onUpdated);
+        chrome.tabs.onRemoved.addListener(onRemoved);
     });
 }
 
-// Tab Closure Detection
-chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
-    chrome.runtime.sendMessage({ action: 'tabClosed', tabId: tabId }).catch(() => {});
-});
+function notifyAgentDisabled() {
+    // Straight to the one-step setup instead of a settings page to hunt through.
+    chrome.tabs.create({ url: chrome.runtime.getURL('welcome.html?step=connect') });
+}
 
 // --- CORS Bypassing Proxy Handlers ---
 
 // 1. Unary Message Proxy (for one-off requests like connection tests and model fetches) and Utility Handlers
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    // The popup's "Quick box" row: open the palette on the tab behind it.
+    if (message.action === 'openPaletteFromPopup') {
+        if (!SELECT_TO_AI_SECURITY.isTrustedExtensionSender(sender, chrome.runtime.id)) return false;
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            if (tabs && tabs[0]) openCommandPalette(tabs[0]);
+        });
+        return false;
+    }
+
     if (message.action === 'fetchProxy') {
         if (!SELECT_TO_AI_SECURITY.isTrustedExtensionSender(sender, chrome.runtime.id)) {
             sendResponse({ success: false, error: 'Untrusted proxy caller.' });
@@ -377,7 +579,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // through the SAME origin policy as a saved gateway (HTTPS or
         // loopback, no embedded credentials, exact-origin match), this
         // scopes only which custom origin this one request may target, and
-        // the streaming agent path below still accepts the saved URL only.
+        // the engine's own requests still accept the saved URL only.
         const customUrlForRequest =
             typeof message.candidateCustomUrl === 'string' && message.candidateCustomUrl
                 ? message.candidateCustomUrl
@@ -409,466 +611,64 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             });
         return true; // Keep message channel open for async response
     }
-
-    if (message.action === 'captureScreenshot') {
-        // captureVisibleTab can only capture a window's ACTIVE tab. When the
-        // target tab is already active, capture directly, no focus change at
-        // all. Otherwise activate it within its own window (never focusing
-        // the window itself), capture, then restore the previously active
-        // tab so the user's focus is not yanked away.
-        const capture = (windowId, done) => {
-            chrome.tabs.captureVisibleTab(windowId, { format: 'jpeg', quality: 60 }, (dataUrl) => {
-                if (chrome.runtime.lastError) {
-                    done({ success: false, error: chrome.runtime.lastError.message });
-                } else {
-                    done({ success: true, dataUrl: dataUrl });
-                }
-            });
-        };
-
-        if (message.tabId) {
-            chrome.tabs.get(message.tabId, (tab) => {
-                if (chrome.runtime.lastError || !tab) {
-                    sendResponse({ success: false, error: chrome.runtime.lastError?.message || 'Target tab not found.' });
-                    return;
-                }
-
-                if (tab.active) {
-                    capture(tab.windowId, sendResponse);
-                    return;
-                }
-
-                chrome.tabs.query({ active: true, windowId: tab.windowId }, (activeTabs) => {
-                    const previousActive = activeTabs && activeTabs[0];
-                    chrome.tabs.update(message.tabId, { active: true }, () => {
-                        if (chrome.runtime.lastError) {
-                            sendResponse({ success: false, error: chrome.runtime.lastError.message });
-                            return;
-                        }
-                        // Give the tab a moment to paint before capturing.
-                        setTimeout(() => {
-                            capture(tab.windowId, (result) => {
-                                if (previousActive && previousActive.id && previousActive.id !== message.tabId) {
-                                    chrome.tabs.update(previousActive.id, { active: true }, () => {
-                                        void chrome.runtime.lastError;
-                                        sendResponse(result);
-                                    });
-                                } else {
-                                    sendResponse(result);
-                                }
-                            });
-                        }, 150);
-                    });
-                });
-            });
-        } else {
-            capture(null, sendResponse);
-        }
-        return true;
-    }
-
-    if (message.action === 'showNotification') {
-        chrome.notifications.create({
-            type: 'basic',
-            iconUrl: 'icon128.png',
-            title: message.title || 'Select to AI',
-            message: message.message || 'Task completed'
-        });
-        sendResponse({ success: true });
-        return true;
-    }
-
-    if (message.action === 'injectAgentScript') {
-        if (!SELECT_TO_AI_SECURITY.isTrustedExtensionSender(sender, chrome.runtime.id)) {
-            sendResponse({ success: false, error: 'Untrusted script-injection caller.' });
-            return true;
-        }
-        chrome.scripting.executeScript({
-            target: { tabId: message.tabId, allFrames: true },
-            files: ['agentTools.js', 'agentContentScript.js']
-        }, () => {
-            sendResponse({ success: !chrome.runtime.lastError });
-        });
-        return true;
-    }
 });
-
-// 2. Streaming Port Proxy (for agent LLM completion runs)
-chrome.runtime.onConnect.addListener((port) => {
-    if (port.name === 'streamFetch') {
-        if (!SELECT_TO_AI_SECURITY.isTrustedExtensionSender(port.sender, chrome.runtime.id)) {
-            port.disconnect();
-            return;
-        }
-        let abortController = null;
-
-        port.onMessage.addListener(async (message) => {
-            const destination = SELECT_TO_AI_SECURITY.validateProviderUrl(
-                message.url,
-                cachedSettings.agentCustomUrl
-            );
-            const request = SELECT_TO_AI_SECURITY.validateProxyOptions(message.options);
-            if (!destination.ok || !request.ok) {
-                port.postMessage({ type: 'error', error: destination.error || request.error });
-                return;
-            }
-            abortController = new AbortController();
-            const signal = abortController.signal;
-
-            try {
-                const response = await fetch(destination.url, {
-                    ...request.options,
-                    signal
-                });
-
-                if (!response.ok) {
-                    const text = await response.text();
-                    const headers = {};
-                    response.headers.forEach((value, key) => {
-                        headers[key] = value;
-                    });
-                    port.postMessage({
-                        type: 'error',
-                        status: response.status,
-                        statusText: response.statusText,
-                        error: text,
-                        headers: headers
-                    });
-                    return;
-                }
-
-                // Send initial response metadata
-                const headers = {};
-                response.headers.forEach((value, key) => {
-                    headers[key] = value;
-                });
-                port.postMessage({
-                    type: 'connected',
-                    status: response.status,
-                    headers
-                });
-
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder('utf-8');
-
-                try {
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) {
-                            port.postMessage({ type: 'done' });
-                            break;
-                        }
-                        const chunk = decoder.decode(value, { stream: true });
-                        port.postMessage({ type: 'chunk', chunk });
-                    }
-                } catch (readError) {
-                    if (signal.aborted) return;
-                    port.postMessage({ type: 'error', error: readError.message });
-                } finally {
-                    reader.releaseLock();
-                }
-            } catch (error) {
-                if (signal.aborted || error.name === 'AbortError') {
-                    // silent
-                } else {
-                    port.postMessage({ type: 'error', error: error.message || String(error) });
-                }
-            }
-        });
-
-        port.onDisconnect.addListener(() => {
-            if (abortController) {
-                abortController.abort();
-            }
-        });
-    }
-});
-
 
 // --- Omnibox: type "ai" then space in the address bar ---
-// The intent router decides whether the text is a site to open, a question
-// for the AI, or a task for the browser agent. Suggestions show the routing
-// live so the user always sees what Enter will do, and one prefix (ask/do/open)
-// overrides the guess.
+// Enter starts the agent on what was typed (omnibox.js). The rows under it
+// are earlier requests that fit what is typed.
 
-const OMNIBOX_LIMIT = 400;
-
-function omniboxEscape(text) {
-    return String(text)
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&apos;');
+// The window the user is typing in and its active tab, kept up to date so
+// Enter can open the side panel before awaiting anything (the gesture an
+// omnibox Enter carries does not survive an await).
+const omniboxWhere = { windowId: null, tabId: null };
+function noteWhere(windowId, tabId) {
+    if (Number.isInteger(windowId) && windowId >= 0) omniboxWhere.windowId = windowId;
+    if (Number.isInteger(tabId)) omniboxWhere.tabId = tabId;
 }
-
-function omniboxDescribe(route, text) {
-    const shown = omniboxEscape(text.length > 60 ? text.slice(0, 57) + '...' : text);
-    if (route.intent === 'navigate') {
-        let host = route.query;
-        try { host = new URL(route.url).hostname; } catch (_e) { /* keep query */ }
-        return `Open <match>${omniboxEscape(host)}</match> <dim>· go straight there</dim>`;
-    }
-    if (route.intent === 'agent') {
-        return `Agent task: <match>${shown}</match> <dim>· plans first, risky actions need your OK</dim>`;
-    }
-    return `Ask AI: <match>${shown}</match>`;
-}
-
-
-// --- Smart omnibox routing: a tiny cached model call refines the heuristic ---
-// The heuristic answer is always shown instantly; while the user is still
-// typing, one small lite-tier request classifies the input and (if it lands
-// before Enter) upgrades the suggestion. Enter never waits on the network.
-const SMART_ROUTE_CACHE_MAX = 50;
-const smartRouteCache = new Map();
-let smartRouteTimer = null;
-let smartRouteAbort = null;
-let smartRouteLastInput = '';
-
-const SMART_ROUTE_PROMPT =
-    'Classify one browser address-bar input. Reply with ONLY a JSON object: ' +
-    '{"intent":"navigate|ask|agent","url":"https://..."}. ' +
-    'navigate = the input names a website or destination; set "url" to the most likely real https URL. ' +
-    'ask = a question or request for information; omit "url". ' +
-    'agent = a multi-step task to perform in the browser; omit "url". No other text.';
-
-function cacheSmartRoute(input, routed) {
-    smartRouteCache.set(input, routed);
-    if (smartRouteCache.size > SMART_ROUTE_CACHE_MAX) {
-        smartRouteCache.delete(smartRouteCache.keys().next().value);
-    }
-}
-
-async function fetchSmartRoute(input) {
-    const sync = await chrome.storage.sync.get(['omniboxSmartRouting', 'agentActiveProvider', 'agentModel']);
-    if (sync.omniboxSmartRouting === false) return null;
-    const provider = sync.agentActiveProvider || SELECT_TO_AI_DEFAULTS.AGENT_DEFAULTS.activeProvider;
-    const isCustom = provider === 'custom';
-    const entry = SELECT_TO_AI_DEFAULTS.PROVIDER_ENDPOINTS[provider];
-    if (!entry && !isCustom) return null;
-    const keyName = isCustom ? 'agentCustomKey' : entry.keyName;
-    const local = await chrome.storage.local.get([keyName]);
-    const apiKey = local[keyName] || '';
-    if (!apiKey && !isCustom) return null;
-    const baseUrl = isCustom ? cachedSettings.agentCustomUrl : entry.baseUrl;
-    if (!baseUrl) return null;
-    const fallbacks = SELECT_TO_AI_DEFAULTS.PROVIDER_FALLBACK_MODELS[provider] || {};
-    const model = fallbacks.lite || sync.agentModel;
-    if (!model) return null;
-
-    if (smartRouteAbort) smartRouteAbort.abort();
-    smartRouteAbort = new AbortController();
-    const timeout = setTimeout(() => smartRouteAbort.abort(), 3500);
-    try {
-        let raw = '';
-        if (provider === 'anthropic') {
-            const res = await fetch(baseUrl, {
-                method: 'POST',
-                signal: smartRouteAbort.signal,
-                headers: {
-                    'content-type': 'application/json',
-                    'x-api-key': apiKey,
-                    'anthropic-version': '2023-06-01',
-                },
-                body: JSON.stringify({
-                    model,
-                    max_tokens: 60,
-                    system: SMART_ROUTE_PROMPT,
-                    messages: [{ role: 'user', content: input }],
-                }),
-            });
-            if (!res.ok) return null;
-            const data = await res.json();
-            raw = (data.content || []).map((blockItem) => blockItem.text || '').join('');
-        } else {
-            let endpoint = String(baseUrl).replace(/\/$/, '');
-            if (!endpoint.endsWith('/chat/completions')) endpoint += '/chat/completions';
-            const res = await fetch(endpoint, {
-                method: 'POST',
-                signal: smartRouteAbort.signal,
-                headers: {
-                    'content-type': 'application/json',
-                    ...(apiKey ? { authorization: 'Bearer ' + apiKey } : {}),
-                },
-                body: JSON.stringify({
-                    model,
-                    temperature: 0,
-                    max_tokens: 60,
-                    messages: [
-                        { role: 'system', content: SMART_ROUTE_PROMPT },
-                        { role: 'user', content: input },
-                    ],
-                }),
-            });
-            if (!res.ok) return null;
-            const data = await res.json();
-            raw = data.choices?.[0]?.message?.content || '';
-        }
-        return SELECT_TO_AI_INTENT.parseSmartRoute(raw);
-    } catch (_error) {
-        return null;
-    } finally {
-        clearTimeout(timeout);
-    }
-}
-
-function smartRouteAsRoute(smart, text) {
-    return { intent: smart.intent, url: smart.url, query: text, confidence: 'high', reason: 'smart route' };
-}
-
-function scheduleSmartRoute(trimmed) {
-    clearTimeout(smartRouteTimer);
-    smartRouteTimer = setTimeout(() => {
-        fetchSmartRoute(trimmed).then((smart) => {
-            if (!smart) return;
-            cacheSmartRoute(trimmed, smart);
-            if (smartRouteLastInput === trimmed && chrome.omnibox) {
-                chrome.omnibox.setDefaultSuggestion({
-                    description: omniboxDescribe(smartRouteAsRoute(smart, trimmed), trimmed) + ' <dim>· smart</dim>',
-                });
-            }
+function refreshWhere() {
+    chrome.windows.getLastFocused({ windowTypes: ['normal'] }, (win) => {
+        if (chrome.runtime.lastError || !win) { void chrome.runtime.lastError; return; }
+        noteWhere(win.id, null);
+        chrome.tabs.query({ active: true, windowId: win.id }, (tabs) => {
+            if (chrome.runtime.lastError) { void chrome.runtime.lastError; return; }
+            if (tabs && tabs[0]) noteWhere(win.id, tabs[0].id);
         });
-    }, 350);
+    });
 }
+chrome.tabs.onActivated.addListener((info) => {
+    if (info.windowId === omniboxWhere.windowId || omniboxWhere.windowId === null) noteWhere(info.windowId, info.tabId);
+});
+chrome.windows.onFocusChanged.addListener((windowId) => {
+    if (windowId !== chrome.windows.WINDOW_ID_NONE) refreshWhere();
+});
+refreshWhere();
+
+// The run history the suggestions draw on: the agent's finished tasks.
+let omniboxHistory = [];
+// The address bar suggests only tasks that worked; the history also keeps the rest.
+const finishedTasks = (list) => list.filter((x) => x && (!x.outcome || x.outcome === 'success'));
+chrome.storage.local.get('agentCrossSessionMemory', (res) => {
+    if (!chrome.runtime.lastError && res && Array.isArray(res.agentCrossSessionMemory)) omniboxHistory = finishedTasks(res.agentCrossSessionMemory);
+});
+chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.agentCrossSessionMemory) omniboxHistory = finishedTasks(changes.agentCrossSessionMemory.newValue || []);
+});
 
 if (chrome.omnibox) {
-    chrome.omnibox.onInputChanged.addListener((text, suggest) => {
-        const trimmed = String(text || '').slice(0, OMNIBOX_LIMIT).trim();
-        if (!trimmed) {
-            chrome.omnibox.setDefaultSuggestion({
-                description: 'Type a site to open it, a question to ask, or a task for the agent',
-            });
-            suggest([]);
-            return;
-        }
-        const route = SELECT_TO_AI_INTENT.classifyOmniboxInput(trimmed);
-        smartRouteLastInput = trimmed;
-        const cachedSmart = smartRouteCache.get(trimmed);
-        if (cachedSmart) {
-            chrome.omnibox.setDefaultSuggestion({
-                description: omniboxDescribe(smartRouteAsRoute(cachedSmart, trimmed), trimmed) + ' <dim>· smart</dim>',
-            });
-        } else {
-            chrome.omnibox.setDefaultSuggestion({ description: omniboxDescribe(route, trimmed) });
-            if (route.confidence !== 'high' && trimmed.length >= 3) {
-                scheduleSmartRoute(trimmed);
-            }
-        }
+    const OMNI = SELECT_TO_AI_OMNIBOX;
+    chrome.omnibox.onInputStarted.addListener(() => refreshWhere());
 
-        const alternates = [];
-        if (route.intent !== 'ask') {
-            alternates.push({
-                content: `ask ${trimmed}`,
-                description: `Ask AI instead: <match>${omniboxEscape(trimmed)}</match>`,
-            });
-        }
-        if (route.intent !== 'agent') {
-            alternates.push({
-                content: `do ${trimmed}`,
-                description: `Run as agent task instead: <match>${omniboxEscape(trimmed)}</match>`,
-            });
-        }
-        if (route.intent !== 'navigate') {
-            const nav = SELECT_TO_AI_INTENT.normalizeNavigationUrl(trimmed.split(/\s+/)[0]);
-            if (nav) {
-                alternates.push({
-                    content: `open ${trimmed.split(/\s+/)[0]}`,
-                    description: `Open the site instead: <match>${omniboxEscape(trimmed.split(/\s+/)[0])}</match>`,
-                });
-            }
-        }
-        suggest(alternates);
+    chrome.omnibox.onInputChanged.addListener((text, suggest) => {
+        const shown = OMNI.suggestionsFor(text, omniboxHistory, { agentOn: !!cachedSettings.showAgent });
+        chrome.omnibox.setDefaultSuggestion({ description: shown.defaultDescription });
+        suggest(shown.suggestions);
     });
 
     chrome.omnibox.onInputEntered.addListener((text, disposition) => {
-        const trimmed = String(text || '').slice(0, OMNIBOX_LIMIT).trim();
-        if (!trimmed) return;
-        let route = SELECT_TO_AI_INTENT.classifyOmniboxInput(trimmed);
-        const smart = smartRouteCache.get(trimmed);
-        if (smart && route.confidence !== 'high') {
-            route = smartRouteAsRoute(smart, trimmed);
-        }
-
-        if (route.intent === 'navigate' && route.url) {
-            if (disposition === 'currentTab') {
-                chrome.tabs.update({ url: route.url });
-            } else {
-                chrome.tabs.create({ url: route.url, active: disposition !== 'newBackgroundTab' });
-            }
-            return;
-        }
-
-        if (route.intent === 'agent') {
-            // Same master gate as Alt+A / popup / side panel.
-            if (!cachedSettings.showAgent) {
-                notifyAgentDisabled();
-                return;
-            }
-            const agentUrl = `${CONFIG.URLS.AGENT}?task=${encodeURIComponent(route.query)}&autostart=1`;
-            chrome.tabs.create({ url: agentUrl });
-            return;
-        }
-
-        openServiceWithText(route.query);
-    });
-}
-
-/**
- * Opens the preferred AI service with prepared text, honoring the user's
- * opening mode. Mirrors the context-menu flow. Auto-send honors the user's
- * Auto-send preference, for the address-bar flow it defaults ON when the
- * preference was never set (documented in the option's tooltip), because an
- * omnibox question is an explicit "send this" gesture.
- */
-function openServiceWithText(text) {
-    let serviceBaseUrl = CONFIG.URLS.CHATGPT;
-    if (cachedSettings.showChatGPT) serviceBaseUrl = CONFIG.URLS.CHATGPT;
-    else if (cachedSettings.showGemini) serviceBaseUrl = CONFIG.URLS.GEMINI;
-    else if (cachedSettings.showPerplexity) serviceBaseUrl = CONFIG.URLS.PERPLEXITY;
-    else if (cachedSettings.showClaude) serviceBaseUrl = CONFIG.URLS.CLAUDE;
-
-    let finalUrl = resolveSessionUrlSync(serviceBaseUrl);
-    const willAutoSend = cachedSettings.omniboxAutoSend;
-
-    // New-conversation prefill (ChatGPT / Perplexity): the URL parameter
-    // carries and submits the prompt, so no DOM insertion is needed.
-    const prefillUrl = buildPrefillUrl(finalUrl, serviceBaseUrl, text, willAutoSend);
-    let finalText = text;
-    if (prefillUrl) {
-        finalUrl = prefillUrl;
-        finalText = "";
-    }
-
-    if (cachedSettings.openingMode === 'sidePanel') {
-        chrome.windows.getLastFocused((win) => {
-            chrome.sidePanel.open({ windowId: win.id }, () => {
-                if (chrome.runtime.lastError) console.error('Side Panel Open Error:', chrome.runtime.lastError);
-            });
-            chrome.storage.local.set({
-                sidePanelState: {
-                    url: finalUrl,
-                    selectedText: finalText,
-                    autoSend: prefillUrl ? false : willAutoSend,
-                    timestamp: Date.now(),
-                },
-            });
-        });
-        return;
-    }
-
-    chrome.tabs.create({ url: finalUrl }, (newTab) => {
-        if (prefillUrl) return; // the URL itself carries the prompt
-        const listener = (tabId, changeInfo) => {
-            if (tabId === newTab.id && changeInfo.status === 'complete') {
-                chrome.tabs.onUpdated.removeListener(listener);
-                chrome.tabs.sendMessage(newTab.id, {
-                    selectedText: finalText,
-                    autoSend: willAutoSend,
-                    timestamp: Date.now(),
-                });
-            }
-        };
-        chrome.tabs.onUpdated.addListener(listener);
+        const plan = OMNI.planEntry(text, disposition);
+        if (!plan) return;
+        // Same gate as Alt+A, the palette and the side panel.
+        if (!cachedSettings.showAgent) { notifyAgentDisabled(); return; }
+        OMNI.startRun(chrome, plan, omniboxWhere).catch((e) => console.warn('Select to AI: the address bar request did not start:', e));
     });
 }

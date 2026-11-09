@@ -1,0 +1,14 @@
+[
+ {
+  "id": "dev-wizard-split",
+  "app": "wizard",
+  "tasks": [
+   "wizard.submit"
+  ],
+  "expected": "repairable",
+  "flags": {
+   "splitStep": true
+  },
+  "family": "step-split"
+ }
+]

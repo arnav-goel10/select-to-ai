@@ -1,108 +1,43 @@
 /**
- * Select to AI - Browser Agent Client Page Logic
- * Manages the multi-agent autonomous loop (Planner, Executor, Validator).
+ * Select to AI - the agent page.
+ *
+ * A view of the run the service worker carries out (engine.js): it sends
+ * what the user types and draws the run from the entries the engine sends.
+ *
+ * The run reads as a story: the request, the steps as a quiet timeline, a
+ * card for anything that needs the user, then the answer as a document and
+ * what the run offers to keep. While the run works, the top bar holds a live
+ * header with the current goal, the site, the time worked and Stop.
  */
 
 (function () {
   "use strict";
 
-  const DEFAULT_SYSTEM_PROMPT = CONFIG.DEFAULT_SYSTEM_PROMPT;
   const DEFAULTS = SELECT_TO_AI_DEFAULTS.AGENT_DEFAULTS;
 
-  // State Variables
+  // True while the engine's run is under way; set by engineControls().
   let isRunning = false;
-  let isStopping = false;
-  // Monotonically increasing run-generation token. Every deferred continuation
-  // (setTimeout, async callback, confirmation handler) captures the current
-  // value and bails if it no longer matches, so a stopped run's pending work
-  // can never resume, or leak into the next run.
-  let runId = 0;
-  let currentTask = "";
-  let subtasks = [];
-  let currentSubtaskIndex = 0;
-  let currentStep = 0;
-  let consecutiveFailures = 0;
-  let parseFailureCount = 0;
-  let agentMaxStepsLimit = DEFAULTS.maxSteps; // Loop safeguard loaded from storage
-  let targetTabId = null;
-  let targetTabUrl = "";
-  let currentAgentTabId = null;
-  let activeAbortController = null;
-  let actionHistory = [];
-  let sessionRecording = [];
-  let conversationHistory = [];
-  // Scratchpad memory: notes the executor saves via the `remember` action.
-  // Always included in the executor prompt so multi-page tasks keep early
-  // findings after navigation truncates the page context.
-  let sessionNotes = [];
-  // Validator bookkeeping: how many validator calls this run has spent, and
-  // whether the final answer passed (only validator-passed runs are written
-  // to cross-session memory).
-  let validatorCalls = 0;
-  let lastValidatorPassed = false;
-  // Set once a provider rejects response_format/stream_options with a 400;
-  // subsequent calls omit those OpenAI-compatible extras.
-  let compatParamsUnsupported = false;
-  // Set once a provider rejects native tools/tool_choice with a 400 (or a
-  // model persistently returns no tool call); subsequent calls use the
-  // legacy text-JSON protocol so nothing regresses.
-  let toolsUnsupported = false;
-  // Set once the provider rejects an image payload; subsequent steps stay
-  // text-only even for models flagged as vision-capable.
-  let visionUnsupported = false;
+  // What a run did, as facts: each action with what it acted on and what
+  // happened. The benchmark harness (tests/bench) judges runs from this.
+  globalThis.__selectToAiTrace = () => engineTrace;
 
-  // Token & Cost Tracking
+  // Token and cost totals of the run on screen, from the engine's trace.
   let totalPromptTokens = 0;
   let totalCompletionTokens = 0;
   let totalCostUSD = 0.0;
-  let costIsEstimated = false;
-
-  function accumulateUsage(usage, modelName, isEstimated = false) {
-    if (!usage) return;
-    // OpenAI-compatible payloads use prompt_tokens/completion_tokens;
-    // Anthropic payloads use input_tokens/output_tokens.
-    const promptTokens = usage.prompt_tokens ?? usage.input_tokens ?? 0;
-    const completionTokens =
-      usage.completion_tokens ?? usage.output_tokens ?? 0;
-
-    totalPromptTokens += promptTokens;
-    totalCompletionTokens += completionTokens;
-    if (isEstimated) costIsEstimated = true;
-
-    const rates = SELECT_TO_AI_DEFAULTS.findModelRates(modelName);
-
-    const cost =
-      (promptTokens / 1000) * rates[0] + (completionTokens / 1000) * rates[1];
-    totalCostUSD += cost;
-
-    updateCostDashboard();
-
-    // Enforce Cost Budget Ceiling (F7)
-    if (config.agentCostBudget > 0 && totalCostUSD >= config.agentCostBudget) {
-      const budgetRunId = runId;
-      setTimeout(() => {
-        if (budgetRunId !== runId) return; // run already ended/replaced
-        stopAgent(
-          `Cost budget exceeded: Spent $${totalCostUSD.toFixed(4)} of $${config.agentCostBudget.toFixed(4)} budget limit.`,
-          "error",
-        );
-      }, 50);
-    }
-  }
+  const costIsEstimated = false;
 
   function updateCostDashboard() {
     const costBadge = document.getElementById("costDashboardBadge");
-    if (costBadge) {
-      costBadge.style.display = "inline-flex";
-      // Two-decimal display with an explicit "est." qualifier whenever any
-      // usage was estimated; the tooltip carries the exact figure.
-      costBadge.textContent = `${costIsEstimated ? "est. " : ""}$${totalCostUSD.toFixed(2)}`;
-      costBadge.title =
-        `Exact: $${totalCostUSD.toFixed(6)} · tokens in: ${totalPromptTokens}, out: ${totalCompletionTokens}.` +
-        (costIsEstimated
-          ? " Includes estimated usage (the provider did not report token counts for every call)."
-          : " Based on provider-reported token usage.");
-    }
+    if (!costBadge) return;
+    // Free models cost nothing, and nothing is shown for them.
+    costBadge.hidden = !(totalCostUSD > 0);
+    costBadge.textContent = `${costIsEstimated ? "est. " : ""}${totalCostUSD < 0.005 ? "<$0.01" : `$${totalCostUSD.toFixed(2)}`}`;
+    costBadge.title =
+      `Exact: $${totalCostUSD.toFixed(6)} · tokens in: ${totalPromptTokens}, out: ${totalCompletionTokens}.` +
+      (costIsEstimated
+        ? " Includes estimated usage (the provider did not report token counts for every call)."
+        : " Based on provider-reported token usage.");
   }
 
   // Configuration cache
@@ -119,44 +54,10 @@
     agentTogetherKey: "",
     agentXaiKey: "",
     agentOpencodeKey: "",
+    agentCerebrasKey: "",
     agentCustomUrl: DEFAULTS.customUrl,
-
     agentModel: DEFAULTS.model,
-
-    agentSystemPrompt: "",
-    agentTimeout: DEFAULTS.timeoutMs,
-    agentMaxTokensPerCall: DEFAULTS.maxTokensPerCall,
-    agentTemperature: DEFAULTS.temperature,
-    agentCostBudget: DEFAULTS.costBudget,
-    agentDomainAllowlist: "",
-    agentRiskConfirmation: DEFAULTS.riskConfirmation,
-    agentElementLimit: DEFAULTS.elementLimit,
-    agentHistoryLimit: DEFAULTS.historyLimit,
-    agentFailureThreshold: DEFAULTS.failureThreshold,
-    agentPromptCaching: DEFAULTS.promptCaching,
   };
-
-  const promptCacheSessionId = `select-to-ai-agent-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  const browserCapabilityPrompt = `### Runtime Environment
-You are running inside a Chrome extension side panel. The user is chatting with you, and you can either answer normally or use extension browser capabilities when the request needs live tab/page context or browser control.
-
-### Available Extension Capabilities
-- Chat normally: respond conversationally without touching the browser.
-- Read current browser context: inspect the selected/active webpage tab metadata, including tab id, title, URL, active/current markers, and available tabs in the current Chrome window.
-- Inspect page state: scan the current webpage after content-script injection for visible text, page title, URL, and interactive DOM elements.
-- Capture screenshots: request a screenshot of the current agent tab for visual reasoning.
-- Control DOM elements: click, double-click, right-click, hover, type, clear inputs, select dropdown options, toggle checkboxes/radios, press keys, scroll, wait, go back, and go forward.
-- Control tabs: list tabs, switch the agent context to another tab, open a new tab, close a tab, and reload a tab.
-- Navigate: load an allowed URL in the current agent tab or a new tab.
-- Visual feedback: when browser actions run, the content script can show a cursor/scroll cue on the page so the user can see what is happening.
-
-### Important Limits And Safety
-- You cannot access Chrome system pages such as chrome:// or extension-internal pages.
-- You must respect the configured domain allowlist before navigating or opening tabs.
-- High-risk actions such as purchasing, submitting sensitive forms, payments, deletion, auth/security changes, account management, uploads, or sending messages require user confirmation.
-- Do not invent page contents. If live page details are needed, route to browser context/page inspection instead of guessing.
-- Do not use browser automation for ordinary conversation, opinions, explanations, brainstorming, or questions answerable from chat context.
-- Prefer the smallest sufficient capability: use context for tab/page identity questions, full browser automation only for tasks that require actions or deeper inspection.`;
 
   // DOM Elements
   const taskInput = document.getElementById("taskInput");
@@ -164,53 +65,168 @@ You are running inside a Chrome extension side panel. The user is chatting with 
   const chatViewport = document.getElementById("chatViewport");
   const chatContainer = document.getElementById("chatContainer");
   const welcomeScreen = document.getElementById("welcomeScreen");
+  const composer = document.getElementById("composer");
+  const composerHint = document.getElementById("composerHint");
+  const steerPending = document.getElementById("steerPending");
+  const liveHeader = document.getElementById("liveHeader");
+  const liveGoal = document.getElementById("liveGoal");
+  const liveSite = document.getElementById("liveSite");
+  const liveHost = document.getElementById("liveHost");
+  const liveFavicon = document.getElementById("liveFavicon");
+  const liveTime = document.getElementById("liveTime");
+  const liveStopBtn = document.getElementById("liveStopBtn");
+  const topbarTitle = document.getElementById("topbarTitle");
 
   const credentialsWarning = document.getElementById("credentialsWarning");
+  const openKeySettings = document.getElementById("openKeySettings");
+  if (openKeySettings) {
+    // Straight to the one-click setup, not a settings form.
+    openKeySettings.addEventListener("click", () => {
+      chrome.tabs.create({ url: chrome.runtime.getURL("welcome.html?step=connect") });
+    });
+  }
   const sidebar = document.getElementById("sidebar");
   const sidebarToggleBtn = document.getElementById("sidebarToggleBtn");
+  const sidebarCloseBtn = document.getElementById("sidebarCloseBtn");
   const sidebarBackdrop = document.getElementById("sidebarBackdrop");
   const newTaskBtn = document.getElementById("newTaskBtn");
-  const attachBtn = document.getElementById("attachBtn");
   const recentSessionsList = document.getElementById("recentSessionsList");
-  const scratchpadPanel = document.getElementById("scratchpadPanel");
-  const scratchpadItems = document.getElementById("scratchpadItems");
-  const memoryPanel = document.getElementById("memoryPanel");
-  const memoryItems = document.getElementById("memoryItems");
-  const steerRow = document.getElementById("steerRow");
-  const steerInput = document.getElementById("steerInput");
-  const steerSendBtn = document.getElementById("steerSendBtn");
-  const steerPending = document.getElementById("steerPending");
 
-  // One queued steer message, delivered as the feedback argument of the
-  // NEXT agentStep call, then cleared. Queuing again replaces it.
-  let pendingSteerMessage = "";
+  // ---------------------------------------------------------------- icons
+  // Static drawings only; nothing from a page or a model is ever drawn here.
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const ICON_PATHS = {
+    pointer: '<path d="m9 9 5 12 1.8-5.2L21 14Z"/><path d="M7.2 2.2 8 5.1"/><path d="m5.1 8-2.9-.8"/><path d="M14 4.1 12 6"/><path d="m6 12-1.9 2"/>',
+    hover: '<path d="M12.6 12.6 19 19"/><path d="M3.7 3a.5.5 0 0 0-.7.7l6.5 16a.5.5 0 0 0 .9-.1l1.6-6.1a2 2 0 0 1 1.4-1.5l6.1-1.6a.5.5 0 0 0 .1-.9z"/>',
+    move: '<path d="M12 2v20M2 12h20M5 9l-3 3 3 3M19 9l3 3-3 3M9 5l3-3 3 3M9 19l3 3 3-3"/>',
+    pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+    idcard: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M6.5 16a3 3 0 0 1 5 0M14 10h4M14 14h3"/>',
+    bookmark: '<path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>',
+    keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/>',
+    scroll: '<path d="M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4"/>',
+    globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+    back: '<path d="M19 12H5M12 19l-7-7 7-7"/>',
+    tabs: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M7 7V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v9"/>',
+    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+    doc: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h6"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+    message: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+    check: '<path d="M20 6 9 17l-5-5"/>',
+    x: '<path d="M18 6 6 18M6 6l12 12"/>',
+    alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/>',
+    shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+    shieldCheck: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',
+    lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+    human: '<circle cx="9" cy="8" r="4"/><path d="M2 21a7 7 0 0 1 14 0"/><path d="m16 11 2 2 4-4"/>',
+    key: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/>',
+    card: '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/>',
+    help: '<circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/>',
+    pause: '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>',
+    flag: '<path d="M4 22V4a1 1 0 0 1 1-1h11l-2 4 2 4H5"/>',
+    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+    stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
+    chevron: '<path d="m6 9 6 6 6-6"/>',
+    play: '<path d="M7 4v16l13-8z"/>',
+    download: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>',
+    thumbUp: '<path d="M7 10v11M15 5.9 14 10h5.8a2 2 0 0 1 2 2.3l-1.4 7A2 2 0 0 1 18.5 21H7V10l4-8a3 3 0 0 1 4 3.9z"/>',
+    thumbDown: '<path d="M17 14V3M9 18.1 10 14H4.2a2 2 0 0 1-2-2.3l1.4-7A2 2 0 0 1 5.5 3H17v11l-4 8a3 3 0 0 1-4-3.9z"/>',
+    sparkle: '<path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4z"/>',
+    external: '<path d="M14 3h7v7M21 3l-9 9"/><path d="M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/>',
+    up: '<path d="M12 19V5M5 12l7-7 7 7"/>',
+    split: '<path d="M6 3v6a3 3 0 0 0 3 3h6a3 3 0 0 1 3 3v6"/><path d="M6 21V12"/><path d="m15 18 3 3 3-3"/><path d="m3 18 3 3 3-3"/>',
+  };
 
-  // Dynamic message bubble references
-  let activeChecklistPanel = null;
-  let activeChecklistItems = null;
-  let activeProgressBar = null;
-  let activeProgressPercent = null;
+  function icon(name) {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("fill", name === "play" || name === "stop" ? "currentColor" : "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "2");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    svg.setAttribute("aria-hidden", "true");
+    svg.innerHTML = ICON_PATHS[name] || ICON_PATHS.info;
+    return svg;
+  }
+
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function dotEl(cls) {
+    return el("span", `dot${cls ? ` ${cls}` : ""}`);
+  }
+
+  // The icon for each kind of action the model can take.
+  const ACTION_ICON = {
+    click: "pointer", click_at: "pointer", hover: "hover", drag: "move", fill: "pencil", fill_details: "idcard",
+    recall: "bookmark", remember: "bookmark", press: "keyboard", scroll: "scroll", navigate: "globe", back: "back",
+    tabs: "tabs", wait: "clock", look: "eye", read: "doc", find: "search", ask_user: "message", done: "check", delegate: "split",
+  };
+  const ACTION_VERB = {
+    click: "Click", click_at: "Click a point on the page", hover: "Point at", drag: "Drag", fill: "Fill in", fill_details: "Fill in your details",
+    recall: "Look up your details", remember: "Remember", press: "Press", scroll: "Scroll", navigate: "Open", back: "Go back",
+    tabs: "Switch tabs", wait: "Wait for the page", look: "Look at the screen", read: "Read further", find: "Search the page", ask_user: "Ask you", done: "Answer",
+    delegate: "Hand out sub-tasks",
+  };
+
+  /** "click [4] "Search"" as plain words: Click "Search". */
+  function plainAction(text) {
+    const kind = String(text || "").split(" ")[0];
+    const verb = ACTION_VERB[kind] || "Act on the page";
+    if (kind === "navigate") { const host = hostOf((String(text).match(/https?:\/\/\S+/) || [])[0]); return host ? `Open ${host}` : verb; }
+    if (kind === "press") { const key = String(text).split(" ").slice(-1)[0]; return key && key !== "press" ? `Press ${key}` : verb; }
+    const quoted = (String(text).match(/"([^"]{1,60})"/) || [])[1];
+    return quoted && /^(click|hover|drag|fill|find)$/.test(kind) ? `${verb} "${quoted}"` : verb;
+  }
+
+  function hostOf(url) {
+    try {
+      const u = new URL(url);
+      return /^https?:$/.test(u.protocol) ? u.host.replace(/^www\./, "") : "";
+    } catch (_e) { return ""; }
+  }
+
+  function faviconFor(url) {
+    return chrome.runtime.getURL(`/_favicon/?pageUrl=${encodeURIComponent(url)}&size=32`);
+  }
+
+  function clockOf(ms) {
+    const s = Math.max(0, Math.floor((ms || 0) / 1000));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    return h ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
+  }
+
+  function durationWords(ms) {
+    const s = Math.round((ms || 0) / 1000);
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    return s % 60 ? `${m}m ${s % 60}s` : `${m}m`;
+  }
+
+  // Dynamic references into the run on screen.
   let activeLogsWrapper = null;
-  let activeBubbleStatus = null;
-  let activeRadar = null;
-  let activeThoughtStatus = null;
   let activeBubbleAnswer = null;
   let activeStreamPanel = null;
-  let activeStreamText = null;
-  let activeWave = null;
-  let activeAvatar = null;
+  let activeRunDetails = null;
+  let activeRun = null;
 
   // Initialize Settings
   loadSettings();
 
   // Event Binds
   actionBtn.addEventListener("click", () => {
-    if (isRunning) {
-      stopAgent("Stopped by user");
-    } else {
-      startAgent();
-    }
+    if (engineBusy()) enginePost({ type: "stop", text: "Stopped." });
+    else startAgent();
   });
+  if (liveStopBtn) liveStopBtn.addEventListener("click", () => enginePost({ type: "stop", text: "Stopped." }));
 
   // Auto-grow textarea helper
   function adjustTextareaHeight() {
@@ -227,13 +243,13 @@ You are running inside a Chrome extension side panel. The user is chatting with 
     });
   });
 
-  // Enter key to send prompt
+  // Enter sends. While the run works, what is typed goes to it as guidance
+  // for its next step, and never stops it.
   taskInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (!isRunning) {
-        startAgent();
-      }
+      if (engineStatus === "running") queueSteerMessage();
+      else if (!engineBusy()) startAgent();
     }
   });
 
@@ -242,136 +258,131 @@ You are running inside a Chrome extension side panel. The user is chatting with 
 
   // Escape key to stop agent execution
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && isRunning) {
-      stopAgent("Stopped by user (Escape key)");
-    }
+    if (e.key !== "Escape") return;
+    if (assistantsMenu && !assistantsMenu.hidden) { closeAssistants(); return; }
+    if (memoryModal && !memoryModal.hidden) return;
+    if (recipesModal && !recipesModal.hidden) return;
+    if (isNarrow() && sidebar && !sidebar.classList.contains("collapsed")) { setSidebar(false); return; }
+    if (engineBusy()) enginePost({ type: "stop", text: "Stopped." });
   });
 
-  // Sidebar Toggle
-  if (sidebarToggleBtn && sidebar) {
-    sidebarToggleBtn.addEventListener("click", () => {
-      sidebar.classList.toggle("collapsed");
-      const isCollapsed = sidebar.classList.contains("collapsed");
-      chrome.storage.sync.set({ sidebarCollapsed: isCollapsed });
-
-      if (sidebarBackdrop) {
-        if (!isCollapsed && window.innerWidth <= 768) {
-          sidebarBackdrop.classList.add("active");
-        } else {
-          sidebarBackdrop.classList.remove("active");
-        }
-      }
-    });
-  }
-
-  // The sidebar stays open until the user closes it. Only the mobile
-  // backdrop (which exists solely while the sidebar overlays content)
-  // dismisses it, ordinary clicks elsewhere never force-collapse it.
-  if (sidebarBackdrop) {
-    sidebarBackdrop.addEventListener("click", () => {
-      if (sidebar) sidebar.classList.add("collapsed");
-      chrome.storage.sync.set({ sidebarCollapsed: true });
-      sidebarBackdrop.classList.remove("active");
-    });
-  }
-
-  // --- Steer-while-running ---
-  // Queues ONE guidance message; agentStep() consumes it as feedback before
-  // the next model call. Never interrupts or stops the run.
-  function queueSteerMessage() {
-    const text = (steerInput.value || "").trim();
-    if (!text) return;
-    pendingSteerMessage = text;
-    steerInput.value = "";
-    if (steerPending) {
-      steerPending.textContent = `Queued for the next step: "${text.length > 80 ? text.slice(0, 77) + "..." : text}"`;
+  // In a narrow window (the side panel) the drawer overlays the run, so it
+  // always starts closed there; the remembered open or closed choice is for
+  // the full-size page only.
+  const isNarrow = () => window.innerWidth <= 768;
+  let sidebarRestored = false;
+  function setSidebar(open, remember) {
+    if (!sidebar) return;
+    sidebar.classList.toggle("collapsed", !open);
+    if (sidebarToggleBtn) {
+      sidebarToggleBtn.setAttribute("aria-expanded", String(open));
+      sidebarToggleBtn.setAttribute("aria-label", open ? "Hide tasks" : "Show tasks");
     }
-    addLogEntry(
-      "system",
-      "User Guidance Queued",
-      `Will be delivered to the agent before its next step: ${text}`,
-    );
+    if (sidebarBackdrop) sidebarBackdrop.classList.toggle("active", open && isNarrow());
+    if (remember && !isNarrow()) chrome.storage.sync.set({ sidebarCollapsed: !open });
+  }
+  if (sidebar && isNarrow()) setSidebar(false);
+  let wasNarrow = isNarrow();
+  window.addEventListener("resize", () => {
+    const narrow = isNarrow();
+    if (narrow && !wasNarrow) setSidebar(false);
+    wasNarrow = narrow;
+  });
+
+  if (sidebarToggleBtn && sidebar) {
+    sidebarToggleBtn.addEventListener("click", () => setSidebar(sidebar.classList.contains("collapsed"), true));
+  }
+  if (sidebarCloseBtn) sidebarCloseBtn.addEventListener("click", () => setSidebar(false, true));
+
+  // The drawer stays open until the user closes it. Only the backdrop
+  // (which exists solely while the drawer overlays the run) dismisses it.
+  if (sidebarBackdrop) sidebarBackdrop.addEventListener("click", () => setSidebar(false, true));
+
+  // --- Guidance while running ---
+  // A message typed while the run works goes to the engine, which gives it
+  // to the model before its next step. It never interrupts or stops the run.
+  let steerTimer = null;
+  function queueSteerMessage() {
+    const text = (taskInput.value || "").trim();
+    if (!text) return;
+    enginePost({ type: "send", text });
+    taskInput.value = "";
+    adjustTextareaHeight();
+    if (steerPending) {
+      steerPending.textContent = "Sent. It reads this before its next step.";
+      clearTimeout(steerTimer);
+      steerTimer = setTimeout(() => { steerPending.textContent = ""; }, 4000);
+    }
   }
 
-  if (steerSendBtn) steerSendBtn.addEventListener("click", queueSteerMessage);
-  if (steerInput) {
-    steerInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        queueSteerMessage();
-      }
-    });
-  }
-
-  function setSteerRowVisible(visible) {
-    if (!steerRow) return;
-    steerRow.classList.toggle("active", visible);
-    if (!visible && steerPending) steerPending.textContent = "";
-    if (!visible) pendingSteerMessage = "";
-  }
-
-  // --- Sidebar content: recent sessions + scratchpad/memory viewers ---
+  // --- History: recent tasks, with how each ended ---
 
   function formatSessionTime(timestamp) {
     if (!timestamp) return "";
     try {
       const d = new Date(timestamp);
+      const mins = Math.round((Date.now() - d.getTime()) / 60000);
+      if (mins < 1) return "now";
+      if (mins < 60) return `${mins}m`;
+      const hours = Math.round(mins / 60);
+      if (hours < 24 && d.getDate() === new Date().getDate()) return `${hours}h`;
+      const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+      if (days < 2) return "Yesterday";
+      if (days < 7) return d.toLocaleDateString([], { weekday: "short" });
       return d.toLocaleDateString([], { month: "short", day: "numeric" });
     } catch (e) {
       return "";
     }
   }
 
-  /** Renders validator-confirmed past runs from the cross-session store. */
+  const OUTCOME_WORDS = { success: "Done", unconfirmed: "Answered, not confirmed", error: "Stopped with a problem", limit: "Usage limit reached", idle: "Stopped" };
+
+  /** Renders recent runs from the run history the engine keeps. */
   function renderRecentSessions() {
     if (!recentSessionsList) return;
     chrome.storage.local.get("agentCrossSessionMemory", (res) => {
       const memory = res.agentCrossSessionMemory || [];
-      recentSessionsList.innerHTML = "";
+      recentSessionsList.textContent = "";
       if (memory.length === 0) {
-        const empty = document.createElement("div");
-        empty.className = "sidebar-empty-note";
-        empty.textContent =
-          "Completed (validated) tasks appear here. Click one to reuse it.";
-        recentSessionsList.appendChild(empty);
+        recentSessionsList.appendChild(el("div", "sidebar-empty-note", "Tasks you run show up here. Run one again in a click."));
         return;
       }
-      memory.slice(0, 12).forEach((item) => {
-        const row = document.createElement("div");
-        row.className = "sidebar-chat-item";
-        row.setAttribute("role", "button");
-        row.setAttribute("tabindex", "0");
-        row.title = item.task || "";
+      memory.slice(0, 20).forEach((item) => {
+        const row = el("div", "sidebar-chat-item");
+        row.setAttribute("role", "listitem");
+        row.tabIndex = 0;
+        const outcome = item.outcome || "success";
+        row.title = `${item.task || ""}\n${OUTCOME_WORDS[outcome] || ""}`.trim();
 
-        const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-        icon.setAttribute("width", "14");
-        icon.setAttribute("height", "14");
-        icon.setAttribute("viewBox", "0 0 24 24");
-        icon.setAttribute("fill", "none");
-        icon.setAttribute("stroke", "currentColor");
-        icon.setAttribute("stroke-width", "2");
-        icon.innerHTML =
-          '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>';
+        const dot = el("span", "outcome-dot");
+        dot.dataset.outcome = outcome;
+        dot.setAttribute("aria-label", OUTCOME_WORDS[outcome] || "");
+        const title = el("span", "session-title", item.task || "(untitled task)");
+        const end = el("span", "session-end");
+        const time = el("span", "session-time", formatSessionTime(item.timestamp));
+        const again = el("button", "icon-btn sm session-run");
+        again.type = "button";
+        again.title = "Run again";
+        again.setAttribute("aria-label", `Run again: ${item.task || ""}`);
+        again.appendChild(icon("play"));
+        end.append(time, again);
+        row.append(dot, title, end);
 
-        const title = document.createElement("span");
-        title.className = "session-title";
-        title.textContent = item.task || "(untitled task)";
-
-        const time = document.createElement("span");
-        time.className = "session-time";
-        time.textContent = formatSessionTime(item.timestamp);
-
-        row.appendChild(icon);
-        row.appendChild(title);
-        row.appendChild(time);
-
+        // Clicking the row puts the task in the composer; the play button runs it now.
         const reuse = () => {
           taskInput.value = item.task || "";
           adjustTextareaHeight();
           taskInput.focus();
+          if (isNarrow()) setSidebar(false);
         };
+        again.addEventListener("click", (e) => {
+          e.stopPropagation();
+          reuse();
+          if (!engineBusy() && engineStatus !== "waiting") startAgent();
+        });
         row.addEventListener("click", reuse);
         row.addEventListener("keydown", (e) => {
+          if (e.target !== row) return;
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             reuse();
@@ -382,110 +393,360 @@ You are running inside a Chrome extension side panel. The user is chatting with 
     });
   }
 
-  function renderScratchpadPanel() {
-    if (!scratchpadItems) return;
-    scratchpadItems.innerHTML = "";
-    if (sessionNotes.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "data-empty";
-      empty.textContent = "No notes yet; the agent saves findings here during a run.";
-      scratchpadItems.appendChild(empty);
-      return;
+  // ---------- Memory panel ----------
+  const memoryModal = document.getElementById("memoryModal");
+  let memoryOpener = null;
+  function openMemoryModal() {
+    if (!memoryModal) return;
+    memoryOpener = document.activeElement;
+    enginePost({ type: "memory_get" });
+    renderKnown();
+    memoryModal.hidden = false;
+    const close = document.getElementById("memoryClose");
+    if (close) close.focus();
+  }
+  function closeMemoryModal() {
+    if (!memoryModal) return;
+    memoryModal.hidden = true;
+    if (memoryOpener && memoryOpener.isConnected) memoryOpener.focus();
+  }
+  function memoryRow(text, sub, onDelete, onEdit) {
+    const li = document.createElement("li");
+    const body = document.createElement("div");
+    body.className = "memory-row-body";
+    const t = document.createElement("div");
+    t.className = "memory-row-text";
+    t.textContent = text;
+    body.appendChild(t);
+    if (sub) {
+      const d = document.createElement("div");
+      d.className = "memory-row-sub";
+      d.textContent = sub;
+      body.appendChild(d);
     }
-    sessionNotes.forEach((note) => {
-      const item = document.createElement("div");
-      item.className = "data-item";
-      item.textContent = note;
-      scratchpadItems.appendChild(item);
-    });
-  }
-
-  function renderMemoryPanel() {
-    if (!memoryItems) return;
-    chrome.storage.local.get("agentCrossSessionMemory", (res) => {
-      const memory = res.agentCrossSessionMemory || [];
-      memoryItems.innerHTML = "";
-      if (memory.length === 0) {
-        const empty = document.createElement("div");
-        empty.className = "data-empty";
-        empty.textContent =
-          "Empty. Only validator-confirmed task outlines are stored (never page contents).";
-        memoryItems.appendChild(empty);
-        return;
-      }
-      memory.forEach((entry) => {
-        const item = document.createElement("div");
-        item.className = "data-item";
-        const plan = (entry.subtasks || []).join("; ");
-        item.textContent = plan ? `${entry.task} · ${plan}` : entry.task;
-        memoryItems.appendChild(item);
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "memory-del";
+    del.setAttribute("aria-label", `Forget: ${text}`);
+    del.textContent = "Forget";
+    del.addEventListener("click", onDelete);
+    // A row the user may reword: the text becomes a box, Enter or leaving it saves.
+    if (onEdit) {
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "memory-del memory-edit";
+      edit.setAttribute("aria-label", `Edit: ${text}`);
+      edit.textContent = "Edit";
+      edit.addEventListener("click", () => {
+        const box = document.createElement("input");
+        box.className = "input memory-edit-input";
+        box.value = text;
+        box.maxLength = 240;
+        box.setAttribute("aria-label", "Edit this");
+        let done = false;
+        const save = () => { if (done) return; done = true; const v = box.value.trim(); if (v && v !== text) onEdit(v); else box.replaceWith(t); };
+        box.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); save(); } else if (e.key === "Escape") { e.stopPropagation(); done = true; box.replaceWith(t); } });
+        box.addEventListener("blur", save);
+        t.replaceWith(box);
+        box.focus();
       });
-    });
+      li.append(body, edit, del);
+      return li;
+    }
+    li.append(body, del);
+    return li;
+  }
+  const openMemoryBtn = document.getElementById("openMemoryBtn");
+  if (openMemoryBtn) openMemoryBtn.addEventListener("click", openMemoryModal);
+  if (memoryModal) {
+    document.getElementById("memoryClose").addEventListener("click", closeMemoryModal);
+    memoryModal.addEventListener("click", (e) => { if (e.target === memoryModal) closeMemoryModal(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !memoryModal.hidden) closeMemoryModal(); });
+    if (location.hash === "#memory") setTimeout(openMemoryModal, 0);
   }
 
-  function bindPanelToggle(button, panel, render) {
-    if (!button || !panel) return;
-    button.addEventListener("click", () => {
-      const open = panel.classList.toggle("open");
-      button.setAttribute("aria-expanded", String(open));
-      if (open) render();
-    });
-  }
-
-  bindPanelToggle(
-    document.getElementById("toggleScratchpadBtn"),
-    scratchpadPanel,
-    renderScratchpadPanel,
-  );
-  bindPanelToggle(
-    document.getElementById("toggleMemoryBtn"),
-    memoryPanel,
-    renderMemoryPanel,
-  );
-
-  const clearScratchpadBtn = document.getElementById("clearScratchpadBtn");
-  if (clearScratchpadBtn) {
-    clearScratchpadBtn.addEventListener("click", () => {
-      sessionNotes = [];
-      renderScratchpadPanel();
-    });
-  }
-
-  const clearMemoryBtn = document.getElementById("clearMemoryBtn");
-  if (clearMemoryBtn) {
-    clearMemoryBtn.addEventListener("click", () => {
-      if (!confirm("Delete all stored task memory? Future plans will no longer reuse these outlines.")) {
-        return;
-      }
-      chrome.storage.local.remove("agentCrossSessionMemory", () => {
-        renderMemoryPanel();
-        renderRecentSessions();
+  // ---------- Recipes (recipes/service.js in the worker) ----------
+  // A successful run can be saved as a recipe; saved recipes are listed,
+  // run with no model call, and each run's receipt says what was proved.
+  const recipesModal = document.getElementById("recipesModal");
+  const recipesList = document.getElementById("recipesList");
+  const recipeDetail = document.getElementById("recipeDetail");
+  let recipesPort = null;
+  let recipesRid = 0;
+  const recipesWaiting = new Map();
+  let recipesOpener = null;
+  function recipesAsk(message, onProgress) {
+    if (!recipesPort) {
+      try { recipesPort = chrome.runtime.connect({ name: "recipesView" }); } catch (_e) { return Promise.resolve({ ok: false, why: "The extension is restarting. Try again." }); }
+      recipesPort.onMessage.addListener((m) => {
+        const w = m && recipesWaiting.get(m.rid);
+        if (!w) return;
+        if (m.type === "progress") { if (w.onProgress) w.onProgress(m.what); return; }
+        recipesWaiting.delete(m.rid);
+        w.resolve(m);
       });
+      recipesPort.onDisconnect.addListener(() => {
+        recipesPort = null;
+        for (const w of recipesWaiting.values()) w.resolve({ ok: false, why: "The extension restarted." });
+        recipesWaiting.clear();
+      });
+    }
+    const rid = ++recipesRid;
+    return new Promise((resolve) => {
+      recipesWaiting.set(rid, { resolve, onProgress });
+      try { recipesPort.postMessage({ ...message, rid }); } catch (_e) { recipesWaiting.delete(rid); resolve({ ok: false, why: "The extension is restarting. Try again." }); }
     });
+  }
+
+  /** "Save as recipe" under a run that succeeded, when the run can be repeated. */
+  function drawSaveRecipe(runId) {
+    const host = activeBubbleAnswer ? activeBubbleAnswer.parentElement : null;
+    if (!host || !runId || host.querySelector(".recipe-save")) return;
+    const note = el("div", "memory-note recipe-save");
+    note.hidden = true;
+    host.appendChild(note);
+    recipesAsk({ type: "can_save", runId }).then((can) => {
+      if (!can || !can.ok) return;
+      const label = el("span", "", `Repeat this without the AI: ${can.steps} step${can.steps === 1 ? "" : "s"} on the page.`);
+      const save = el("button", "recipe-save-btn", "Save as recipe");
+      save.type = "button";
+      save.addEventListener("click", async () => {
+        save.disabled = true;
+        const r = await recipesAsk({ type: "save", runId });
+        note.textContent = "";
+        if (!r.ok) { note.append(el("span", "", `Not saved: ${r.why || "it could not be saved"}.`)); return; }
+        const view = el("button", "", "View");
+        view.type = "button";
+        view.addEventListener("click", openRecipesModal);
+        note.append(el("span", "", "Saved as a recipe."), view);
+      });
+      note.append(label, save);
+      note.hidden = false;
+    });
+  }
+
+  const RECEIPT_STATES = {
+    done_proven: ["Proved", "done"],
+    done_unproven: ["Done, not proved", "needs"],
+    needs_you: ["Stopped: needs you", "needs"],
+    stopped: ["Stopped", "failed"],
+    failed: ["Failed", "failed"],
+  };
+
+  function receiptView(receipt) {
+    const box = el("div", "recipe-receipt");
+    const [word, tone] = RECEIPT_STATES[receipt.end.state] || [receipt.end.state, "needs"];
+    const head = el("div", `recipe-receipt-head tone-${tone}`);
+    head.append(el("strong", "", word), el("span", "recipe-receipt-cost tabular", `${receipt.cost.modelCalls} model call${receipt.cost.modelCalls === 1 ? "" : "s"} · $${(receipt.cost.usd || 0).toFixed(4)}`));
+    box.appendChild(head);
+    if (receipt.end.why) box.appendChild(el("p", "recipe-receipt-why", receipt.end.why));
+    const steps = el("ol", "recipe-receipt-steps");
+    for (const s of receipt.steps || []) {
+      const how = s.resolution && s.resolution.method && s.resolution.method !== "none" ? ` · found by ${s.resolution.method}` : "";
+      const li = el("li", `step-${s.status}`);
+      li.append(el("span", "recipe-step-status", s.status === "ok" ? "ok" : s.status), el("span", "", `${s.intent}${how}`));
+      steps.appendChild(li);
+    }
+    box.appendChild(steps);
+    const repairs = (receipt.repairs || []).filter((x) => x.diffText);
+    if (repairs.length) {
+      const r = el("div", "recipe-receipt-repairs");
+      for (const x of repairs) r.appendChild(el("p", "", `Repair (${x.status.replace(/_/g, " ")}): ${x.diffText}${x.why ? `. ${x.why}` : ""}`));
+      box.appendChild(r);
+    }
+    if (receipt.healed) box.appendChild(el("p", "memory-hint", "The repair was checked to the end of the run and saved as a new version of the recipe."));
+    return box;
+  }
+
+  function recipeRunForm(r) {
+    recipeDetail.textContent = "";
+    recipeDetail.hidden = false;
+    recipeDetail.appendChild(el("h3", "", r.title));
+    const form = document.createElement("form");
+    form.className = "recipe-run-form";
+    form.autocomplete = "off";
+    const inputs = [];
+    for (const v of r.variables) {
+      const label = el("label", "recipe-var");
+      label.appendChild(el("span", "", v.name.replace(/_/g, " ")));
+      let input;
+      if (v.enum && v.enum.length) {
+        input = document.createElement("select");
+        for (const o of v.enum) { const opt = el("option", "", o); opt.value = o; input.appendChild(opt); }
+        input.value = v.example;
+      } else {
+        input = document.createElement("input");
+        input.className = "input";
+        input.type = v.type === "secret" ? "password" : "text";
+        input.value = v.example || "";
+      }
+      input.name = v.name;
+      inputs.push(input);
+      label.appendChild(input);
+      form.appendChild(label);
+    }
+    if (r.commits.length) form.appendChild(el("p", "memory-hint recipe-commits", `Running it will do what you saved, including: ${r.commits.join("; ")}.`));
+    const go = el("button", "btn btn-primary btn-sm", "Run");
+    go.type = "submit";
+    const status = el("span", "memory-hint recipe-status");
+    status.setAttribute("role", "status");
+    const row = el("div", "recipe-run-row");
+    row.append(go, status);
+    form.appendChild(row);
+    const out = el("div", "recipe-run-out");
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      go.disabled = true;
+      out.textContent = "";
+      const vars = Object.fromEntries(inputs.map((i) => [i.name, i.value]));
+      // The sites it opens, allowed by the user first if the agent was never let onto them.
+      const origins = (r.origins || []).map((o) => `${o}/*`);
+      if (origins.length) await new Promise((res) => chrome.permissions.request({ origins }, () => { void chrome.runtime.lastError; res(); }));
+      status.textContent = "Running…";
+      const [tab] = await new Promise((res) => chrome.tabs.query({ active: true, currentWindow: true }, (t) => { void chrome.runtime.lastError; res(t || []); }));
+      const res = await recipesAsk({ type: "run", id: r.id, vars, tabId: tab ? tab.id : undefined }, (what) => { status.textContent = what; });
+      go.disabled = false;
+      status.textContent = "";
+      if (!res.ok) { out.appendChild(el("p", "recipe-receipt-why", res.why || "It could not run.")); return; }
+      out.appendChild(receiptView(res.receipt));
+      renderRecipes(false);
+    });
+    recipeDetail.append(form, out);
+    if (r.receipts && r.receipts.length) {
+      const past = document.createElement("details");
+      past.className = "recipe-past";
+      past.appendChild(el("summary", "", `Earlier runs (${r.receipts.length})`));
+      for (const x of r.receipts) past.appendChild(receiptView(x));
+      recipeDetail.appendChild(past);
+    }
+  }
+
+  async function renderRecipes(clearDetail) {
+    if (!recipesList) return;
+    const res = await recipesAsk({ type: "list" });
+    const list = (res && res.recipes) || [];
+    recipesList.textContent = "";
+    if (clearDetail !== false) { recipeDetail.hidden = true; recipeDetail.textContent = ""; }
+    if (!list.length) { recipesList.appendChild(el("li", "memory-empty", "No recipes yet. After a task works, press \"Save as recipe\" under its answer.")); return; }
+    for (const r of list) {
+      const li = document.createElement("li");
+      li.className = "recipe-row";
+      const body = el("div", "memory-row-body");
+      body.appendChild(el("div", "memory-row-text", r.title));
+      const last = r.last ? `Last run: ${(RECEIPT_STATES[r.last.state] || [r.last.state])[0].toLowerCase()}` : "Not run yet";
+      body.appendChild(el("div", "memory-row-sub", `${(r.sites || []).join(", ")} · ${r.steps} steps · ${last}`));
+      const open = el("button", "memory-del memory-edit recipe-open", "Run");
+      open.type = "button";
+      open.setAttribute("aria-label", `Run: ${r.title}`);
+      open.addEventListener("click", () => recipeRunForm(r));
+      const del = el("button", "memory-del", "Delete");
+      del.type = "button";
+      del.setAttribute("aria-label", `Delete: ${r.title}`);
+      del.addEventListener("click", async () => { await recipesAsk({ type: "delete", id: r.id }); renderRecipes(); });
+      li.append(body, open, del);
+      recipesList.appendChild(li);
+    }
+  }
+
+  function openRecipesModal() {
+    if (!recipesModal) return;
+    recipesOpener = document.activeElement;
+    recipesModal.hidden = false;
+    renderRecipes();
+    const close = document.getElementById("recipesClose");
+    if (close) close.focus();
+  }
+  function closeRecipesModal() {
+    if (!recipesModal) return;
+    recipesModal.hidden = true;
+    if (recipesOpener && recipesOpener.isConnected) recipesOpener.focus();
+  }
+  const openRecipesBtn = document.getElementById("openRecipesBtn");
+  if (openRecipesBtn) openRecipesBtn.addEventListener("click", openRecipesModal);
+  if (recipesModal) {
+    document.getElementById("recipesClose").addEventListener("click", closeRecipesModal);
+    recipesModal.addEventListener("click", (e) => { if (e.target === recipesModal) closeRecipesModal(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !recipesModal.hidden) closeRecipesModal(); });
+    if (location.hash === "#recipes") setTimeout(openRecipesModal, 0);
   }
 
   renderRecentSessions();
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && changes.agentCrossSessionMemory) renderRecentSessions();
+  });
 
   // New Task Button (Reset session)
   if (newTaskBtn) {
     newTaskBtn.addEventListener("click", () => {
-      if (isRunning) {
-        stopAgent("Session reset by user");
-      }
-      // Clear message bubbles
-      const bubbles = chatContainer.querySelectorAll(".message-bubble");
-      bubbles.forEach((b) => b.remove());
+      enginePost({ type: "reset" });
+      // Clear the conversation
+      chatContainer.querySelectorAll(".message-bubble, .chat-note").forEach((b) => b.remove());
+      activeRun = null;
       welcomeScreen.style.display = "flex";
       taskInput.value = "";
       adjustTextareaHeight();
+      if (isNarrow()) setSidebar(false);
+      taskInput.focus();
     });
   }
 
-  // Attach Options Button (Shortcut to settings dashboard)
-  if (attachBtn) {
-    attachBtn.addEventListener("click", () => {
-      chrome.tabs.create({ url: "options.html" });
+  // ---------- Assistant sites, from the side panel ----------
+  // In the side panel the agent is the home view; the assistants that
+  // right-click sends to are one click away here.
+  const assistantsWrap = document.getElementById("assistantsWrap");
+  const assistantsBtn = document.getElementById("assistantsBtn");
+  const assistantsMenu = document.getElementById("assistantsMenu");
+  const inSidePanel = (() => {
+    try { return window.top !== window && /\/sidepanel\.html$/.test(window.parent.location.pathname); } catch (_e) { return false; }
+  })();
+  function closeAssistants() {
+    if (!assistantsMenu) return;
+    assistantsMenu.hidden = true;
+    assistantsBtn.setAttribute("aria-expanded", "false");
+  }
+  function openAssistant(baseUrl, host) {
+    const key = `sessionUrl_${host}`;
+    chrome.storage.local.get([key], (saved) => {
+      const url = saved[key] && saved[key].includes(host) ? saved[key] : baseUrl;
+      chrome.storage.local.set({ [CONFIG.STORAGE.SIDE_PANEL_STATE]: { url, selectedText: "", autoSend: false, timestamp: Date.now() } });
     });
+  }
+  if (inSidePanel && assistantsWrap) {
+    assistantsWrap.hidden = false;
+    assistantsBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!assistantsMenu.hidden) { closeAssistants(); return; }
+      chrome.storage.sync.get(["showChatGPT", "showGemini", "showClaude", "showPerplexity"], (s) => {
+        assistantsMenu.textContent = "";
+        assistantsMenu.appendChild(el("div", "menu-label", "Ask an assistant site"));
+        const { URLS, HOSTS } = CONFIG;
+        const sites = [
+          [s.showChatGPT !== false, "ChatGPT", URLS.CHATGPT, HOSTS.CHATGPT],
+          [s.showClaude !== false, "Claude", URLS.CLAUDE, HOSTS.CLAUDE],
+          [s.showGemini !== false, "Gemini", URLS.GEMINI, HOSTS.GEMINI],
+          [s.showPerplexity === true, "Perplexity", URLS.PERPLEXITY, HOSTS.PERPLEXITY_WWW],
+        ].filter((x) => x[0]);
+        for (const [, name, url, host] of sites) {
+          const item = el("button", "menu-item");
+          item.type = "button";
+          item.setAttribute("role", "menuitem");
+          const img = el("img");
+          img.alt = "";
+          img.width = 16;
+          img.height = 16;
+          img.src = faviconFor(url);
+          item.append(img, el("span", "grow", name), icon("external"));
+          item.addEventListener("click", () => { closeAssistants(); openAssistant(url, host); });
+          assistantsMenu.appendChild(item);
+        }
+        if (!sites.length) assistantsMenu.appendChild(el("div", "menu-label", "Turn assistants on in Settings."));
+        assistantsMenu.hidden = false;
+        assistantsBtn.setAttribute("aria-expanded", "true");
+        const first = assistantsMenu.querySelector(".menu-item");
+        if (first) first.focus();
+      });
+    });
+    document.addEventListener("click", (e) => { if (!assistantsWrap.contains(e.target)) closeAssistants(); });
   }
 
   // Helper to get key/url for the active provider (catalog shared with the
@@ -506,12 +767,81 @@ You are running inside a Chrome extension side panel. The user is chatting with 
     return catalog[provider] || catalog.openrouter;
   }
 
+  // ---- backup provider -------------------------------------------------
+  // When the main provider's usage limit runs out and the user has chosen a
+  // backup, the engine's calls go to the backup until the limit resets. The
+  // pause lives in storage; this page reads it to name the backup in the
+  // composer while it stands in.
+  let backupActive = null; // { from, to, until, mainModel }
+
+  function clockTime(ms) {
+    try { return new Date(ms).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); } catch (_e) { return "later"; }
+  }
+
+  function usableBackup(from) {
+    const to = config.agentBackupProvider;
+    return to && to !== from && hasProviderCredentials(to) ? to : "";
+  }
+
+  function applyProviderPause(pause) {
+    backupActive = null;
+    if (!pause || !pause.provider || !(pause.until > Date.now())) return;
+    if (pause.provider !== config.agentActiveProvider) return;
+    const to = usableBackup(pause.provider);
+    if (!to) return;
+    backupActive = { from: pause.provider, to, until: pause.until, mainModel: config.agentModel };
+    config.agentActiveProvider = to;
+    config.agentModel = SELECT_TO_AI_DEFAULTS.backupModelFor(to) || getProviderFallbackModels(to).lite;
+  }
+
+  /** A one-line note in the conversation, above the reply it concerns. */
+  function appendChatNote(text) {
+    const note = document.createElement("div");
+    note.className = "chat-note";
+    note.setAttribute("role", "status");
+    note.textContent = text;
+    const bubbles = chatContainer.querySelectorAll(".message-bubble.assistant");
+    const last = bubbles[bubbles.length - 1];
+    if (last) chatContainer.insertBefore(note, last);
+    else chatContainer.appendChild(note);
+  }
+
+  /** Under a limit notice with no backup chosen: offer to set one up. */
+  function addBackupOffer(box) {
+    if (!box || box.querySelector(".notice-actions")) return;
+    const onChatGPT = config.agentActiveProvider === "chatgpt";
+    const hasBackup = config.agentBackupProvider && hasProviderCredentials(config.agentBackupProvider);
+    if (hasBackup && !onChatGPT) return;
+    const row = document.createElement("div");
+    row.className = "notice-actions";
+    // On the user's ChatGPT plan, OpenAI's guidelines make Manage usage the first action.
+    if (onChatGPT) {
+      const manage = document.createElement("button");
+      manage.type = "button";
+      manage.className = "notice-btn btn btn-sm";
+      manage.textContent = "Manage usage";
+      manage.onclick = () => chrome.tabs.create({ url: SELECT_TO_AI_CHATGPT.USAGE_URL });
+      row.appendChild(manage);
+      if (hasBackup) { box.appendChild(row); return; }
+    }
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "notice-btn btn btn-sm";
+    btn.textContent = "Set up a free backup";
+    btn.onclick = () => chrome.tabs.create({ url: chrome.runtime.getURL("options.html#backup") });
+    const hint = document.createElement("span");
+    hint.textContent = "Google Gemini is free, and takes over until your requests come back.";
+    row.append(btn, hint);
+    box.appendChild(row);
+  }
+
   function isModelCompatibleWithProvider(provider, model) {
     if (!model) return false;
     if (
       provider === "custom" ||
       provider === "openrouter" ||
-      provider === "opencode"
+      provider === "opencode" ||
+      provider === "chatgpt"
     )
       return true;
 
@@ -534,56 +864,21 @@ You are running inside a Chrome extension side panel. The user is chatting with 
         ) || model.includes("/")
       );
     if (provider === "together") return model.includes("/");
+    if (provider === "cerebras") return /^(gpt-oss|qwen|llama|zai|glm)/.test(model);
     if (provider === "xai") return model.startsWith("grok-");
     if (provider === "opencode") return true;
     return true;
   }
 
-  function resolveModelForProvider(provider, requestedModel, tier) {
-    if (isModelCompatibleWithProvider(provider, requestedModel))
-      return requestedModel;
-    const fallbacks = getProviderFallbackModels(provider);
-    const fallback = tier === "pro" ? fallbacks.pro : fallbacks.lite;
-    addLogEntry(
-      "system",
-      "Model Compatibility Fallback",
-      `Model "${requestedModel || "(empty)"}" is not valid for ${provider}. Using "${fallback}" for ${tier}.`,
-    );
-    return fallback;
-  }
-
-  /**
-   * Model tiers: the strong configured model ("pro") drives the executor;
-   * the provider's cheap catalog model ("lite") handles routing, planning,
-   * reflection, and validation. Custom gateways only have the configured
-   * model, so both tiers use it there.
-   */
-  function resolveTierModel(provider, tier) {
-    if (tier === "lite" && provider !== "custom") {
-      const fallbacks = getProviderFallbackModels(provider);
-      if (fallbacks && fallbacks.lite) return fallbacks.lite;
-    }
-    return resolveModelForProvider(
-      provider,
-      config.agentModel,
-      tier === "pro" ? "pro" : "lite",
-    );
-  }
-
-  /** True when this run should auto-attach a marked screenshot each step. */
-  function executorVisionEnabled() {
-    if (visionUnsupported) return false;
-    // Silent resolve (no fallback log spam): mirror resolveModelForProvider.
-    const provider = config.agentActiveProvider;
-    const model = isModelCompatibleWithProvider(provider, config.agentModel)
-      ? config.agentModel
-      : getProviderFallbackModels(provider).pro;
-    return SELECT_TO_AI_DEFAULTS.isVisionModel(model);
-  }
-
   function getProviderKeyValidationError(provider, apiKey) {
     const key = (apiKey || "").trim();
     if (provider === "custom") return "";
+    // ChatGPT is signed in to, not keyed.
+    if (provider === "chatgpt") {
+      const a = config.chatgptAccount;
+      if (!a || !a.signedIn) return "The agent needs you to sign in with ChatGPT first.";
+      return a.planEnabled ? "" : "ChatGPT plan use is not turned on for this sign-in. Turn it on in Settings with Continue with ChatGPT.";
+    }
     if (!key) return `Missing API key for active provider "${provider}".`;
     if (
       key === "sk-or-v1-..." ||
@@ -601,14 +896,18 @@ You are running inside a Chrome extension side panel. The user is chatting with 
       return 'Anthropic keys usually start with "sk-ant-". Check that the active provider matches the key you saved.';
     if (provider === "openai" && !key.startsWith("sk-"))
       return 'OpenAI keys usually start with "sk-". Check that the active provider matches the key you saved.';
-    if (provider === "gemini" && !key.startsWith("AIza"))
-      return 'Gemini API keys usually start with "AIza". Check that the active provider matches the key you saved.';
+    // Google AI Studio issues "AIza..." keys and, since 2026, "AQ." keys.
+    if (provider === "gemini" && !/^(AIza|AQ\.)/.test(key))
+      return 'Gemini API keys start with "AIza" or "AQ.". Check that the active provider matches the key you saved.';
     if (provider === "groq" && !key.startsWith("gsk_"))
       return 'Groq keys usually start with "gsk_". Check that the active provider matches the key you saved.';
+    if (provider === "cerebras" && !key.startsWith("csk-"))
+      return 'Cerebras keys usually start with "csk-". Copy the key from cloud.cerebras.ai.';
     if (provider === "xai" && !key.startsWith("xai-"))
       return 'xAI keys usually start with "xai-". Check that the active provider matches the key you saved.';
-    if (provider === "opencode" && !key.startsWith("sk-"))
-      return 'OpenCode keys usually start with "sk-".';
+    // OpenCode console keys look like "oc_sk_..."; older ones used "sk-".
+    if (provider === "opencode" && !/^(oc_sk_|sk-)/.test(key))
+      return 'OpenCode keys start with "oc_sk_". Copy the key from opencode.ai/console.';
     return "";
   }
 
@@ -624,26 +923,26 @@ You are running inside a Chrome extension side panel. The user is chatting with 
       provider,
       details.apiKey,
     );
-    return `${validationError || `Missing API key for active provider "${provider}".`} Open Settings, add the correct ${provider} key, save, then run the agent again.`;
+    return `${validationError || `The agent needs an AI model connected first.`} Press "Connect" below, then run the task again.`;
   }
 
   // Load non-sensitive settings from sync storage and credentials locally.
-  // The legacy sync read migrates keys saved by versions before 3.1.
+  // Keys that versions before 3.1 saved in sync storage are moved to local storage.
   function loadSettings(callback = null) {
-    const legacyKeys = CONFIG.STORAGE.API_KEYS;
+    const syncedKeys = CONFIG.STORAGE.API_KEYS;
     chrome.storage.sync.get(
-      [...CONFIG.STORAGE.SETTINGS, ...legacyKeys],
+      [...CONFIG.STORAGE.SETTINGS, ...syncedKeys],
       (syncItems) => {
-        chrome.storage.local.get(legacyKeys, (localItems) => {
+        chrome.storage.local.get([...syncedKeys, "agentProviderPause", "chatgptAccount"], (localItems) => {
           const migratedKeys = {};
-          legacyKeys.forEach((key) => {
+          syncedKeys.forEach((key) => {
             if (!localItems[key] && syncItems[key]) migratedKeys[key] = syncItems[key];
           });
           const items = { ...syncItems, ...localItems, ...migratedKeys };
           if (Object.keys(migratedKeys).length > 0) {
             chrome.storage.local.set(migratedKeys);
           }
-          chrome.storage.sync.remove(legacyKeys);
+          chrome.storage.sync.remove(syncedKeys);
 
       config.agentActiveProvider =
         items.agentActiveProvider || DEFAULTS.activeProvider;
@@ -657,49 +956,18 @@ You are running inside a Chrome extension side panel. The user is chatting with 
       config.agentTogetherKey = items.agentTogetherKey || "";
       config.agentXaiKey = items.agentXaiKey || "";
       config.agentOpencodeKey = items.agentOpencodeKey || "";
+      config.agentCerebrasKey = items.agentCerebrasKey || "";
       config.agentCustomKey = items.agentCustomKey || "";
+      config.chatgptAccount = items.chatgptAccount || null;
       config.agentCustomUrl = items.agentCustomUrl || DEFAULTS.customUrl;
 
       config.agentModel = items.agentModel || DEFAULTS.model;
+      config.agentBackupProvider = items.agentBackupProvider || "";
+      applyProviderPause(items.agentProviderPause);
 
-      agentMaxStepsLimit = items.agentMaxSteps || DEFAULTS.maxSteps;
+      connectEngine();
 
-      config.agentSystemPrompt =
-        items.agentSystemPrompt || DEFAULT_SYSTEM_PROMPT;
-
-      config.agentTimeout =
-        items.agentTimeout !== undefined
-          ? items.agentTimeout
-          : DEFAULTS.timeoutMs;
-      config.agentMaxTokensPerCall =
-        items.agentMaxTokensPerCall !== undefined
-          ? items.agentMaxTokensPerCall
-          : DEFAULTS.maxTokensPerCall;
-      config.agentTemperature =
-        items.agentTemperature !== undefined
-          ? items.agentTemperature
-          : DEFAULTS.temperature;
-      config.agentCostBudget =
-        items.agentCostBudget !== undefined
-          ? parseFloat(items.agentCostBudget)
-          : DEFAULTS.costBudget;
-      config.agentDomainAllowlist = items.agentDomainAllowlist || "";
-      config.agentRiskConfirmation = items.agentRiskConfirmation !== false;
-      config.agentElementLimit =
-        items.agentElementLimit !== undefined
-          ? parseInt(items.agentElementLimit, 10)
-          : DEFAULTS.elementLimit;
-      config.agentHistoryLimit =
-        items.agentHistoryLimit !== undefined
-          ? parseInt(items.agentHistoryLimit, 10)
-          : DEFAULTS.historyLimit;
-      config.agentFailureThreshold =
-        items.agentFailureThreshold !== undefined
-          ? parseInt(items.agentFailureThreshold, 10)
-          : DEFAULTS.failureThreshold;
-      config.agentPromptCaching = items.agentPromptCaching !== false;
-
-      // Apply Theme
+      // Theme: the stored choice, or the system's.
       const theme =
         items.theme ||
         (window.matchMedia("(prefers-color-scheme: dark)").matches
@@ -707,43 +975,44 @@ You are running inside a Chrome extension side panel. The user is chatting with 
           : "light");
       document.documentElement.setAttribute("data-theme", theme);
 
-      // Header shows the ACTUAL provider and executor model in use
-      // (silently resolved, same fallback logic as the runtime, no log spam).
+      // The composer's pill shows the ACTUAL provider and model in use
+      // (silently resolved, same fallback logic as the runtime).
       const provider = config.agentActiveProvider;
+      const PROVIDER_NAMES = { chatgpt: "ChatGPT", openrouter: "OpenRouter", openai: "OpenAI", anthropic: "Anthropic", gemini: "Gemini", deepseek: "DeepSeek", mistral: "Mistral", groq: "Groq", together: "Together", xai: "xAI", opencode: "OpenCode", cerebras: "Cerebras", custom: "Your server" };
       const providerCapitalized =
-        provider.charAt(0).toUpperCase() + provider.slice(1);
-      const resolvedModel = isModelCompatibleWithProvider(
-        provider,
-        config.agentModel,
-      )
-        ? config.agentModel
-        : getProviderFallbackModels(provider).pro;
+        PROVIDER_NAMES[provider] || provider.charAt(0).toUpperCase() + provider.slice(1);
+      const chatgptModels = (config.chatgptAccount && config.chatgptAccount.models) || [];
+      const resolvedModel = provider === "chatgpt"
+        ? (chatgptModels.some((m) => m.slug === config.agentModel) ? config.agentModel : SELECT_TO_AI_CHATGPT.bestModel(chatgptModels) || getProviderFallbackModels(provider).pro)
+        : isModelCompatibleWithProvider(
+          provider,
+          config.agentModel,
+        )
+          ? config.agentModel
+          : getProviderFallbackModels(provider).pro;
+      // OpenAI's guidelines: say near the composer when the user's ChatGPT plan is in use.
+      const planNote = document.getElementById("chatgptPlanNote");
+      if (planNote) planNote.hidden = !(provider === "chatgpt" && !backupActive && !getProviderKeyValidationError("chatgpt", ""));
 
       const selectedModelName = document.getElementById("selectedModelName");
       if (selectedModelName) {
-        selectedModelName.textContent = `${providerCapitalized} · ${resolvedModel}`;
+        // While the backup stands in, say so rather than show a model id
+        // the narrow side panel would cut off before the word "backup".
+        selectedModelName.textContent = backupActive
+          ? `${providerCapitalized} · backup`
+          : resolvedModel === "openrouter/free"
+            ? "OpenRouter · free models"
+            : `${providerCapitalized} · ${resolvedModel}`;
       }
       const headerModel = document.getElementById("headerModel");
       if (headerModel) {
-        headerModel.title = `Provider: ${providerCapitalized}\nModel: ${resolvedModel}\nChange both in Settings → Models & API.`;
+        headerModel.title = backupActive
+          ? `Using your backup, ${providerCapitalized}, until ${clockTime(backupActive.until)}: ${friendlyProviderName(backupActive.from)}'s limit ran out.\nChange it in Settings.`
+          : `Provider: ${providerCapitalized}\nModel: ${resolvedModel}\nChange both in Settings.`;
       }
 
-      // Restore sidebar collapsed state
-      if (sidebar) {
-        if (items.sidebarCollapsed === true) {
-          sidebar.classList.add("collapsed");
-          if (sidebarBackdrop) sidebarBackdrop.classList.remove("active");
-        } else {
-          sidebar.classList.remove("collapsed");
-          if (sidebarBackdrop) {
-            if (window.innerWidth <= 768) {
-              sidebarBackdrop.classList.add("active");
-            } else {
-              sidebarBackdrop.classList.remove("active");
-            }
-          }
-        }
-      }
+      // Restore the drawer's open or closed state, once, when the page opens.
+      if (sidebar && !sidebarRestored) { sidebarRestored = true; setSidebar(!(items.sidebarCollapsed === true || isNarrow())); }
 
       // Validate API Key Availability
       const missingCredentials = !hasProviderCredentials(
@@ -766,3350 +1035,1546 @@ You are running inside a Chrome extension side panel. The user is chatting with 
   // Settings storage changed listener
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === "sync" || namespace === "local") {
+      if (namespace === "local" && Object.keys(changes).every((k) => k === "agentCrossSessionMemory" || k === CONFIG.STORAGE.SIDE_PANEL_STATE)) return;
       loadSettings();
     }
   });
 
-  // Background broadcasts 'tabClosed' whenever any tab closes. If it is the
-  // tab this run is driving, stop instead of silently retargeting.
-  chrome.runtime.onMessage.addListener((message) => {
-    if (!message || message.action !== "tabClosed") return;
-    if (isRunning && message.tabId === targetTabId) {
-      stopAgent(
-        "The tab the agent was working on was closed. Task stopped.",
-        "error",
-      );
-    }
-  });
-
-  // Helper to escape HTML text to prevent element injection
-  function escapeHtml(text) {
-    if (!text) return "";
-    return text
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
-  }
-
-  function appendSimpleUserBubble(text) {
+  function appendSimpleUserBubble(text, selection) {
     welcomeScreen.style.display = "none";
     const userBubble = document.createElement("div");
     userBubble.className = "message-bubble user";
-    userBubble.innerHTML = `<div class="bubble-content">${escapeHtml(text)}</div>`;
+    const content = document.createElement("div");
+    content.className = "bubble-content";
+    // The selection a request is about, above the words of the request.
+    if (selection && selection.text) content.appendChild(selectionQuote(selection, null));
+    content.appendChild(document.createTextNode(text));
+    userBubble.appendChild(content);
     chatContainer.appendChild(userBubble);
-    conversationHistory.push({ role: "user", text });
-    if (conversationHistory.length > 12)
-      conversationHistory = conversationHistory.slice(-12);
-    scrollToBottom();
+    scrollToBottom(true);
   }
 
-  /**
-   * Renders assistant text with the minimal safe markdown subset (bold,
-   * italics, bullet lists, noopener links). Everything is escaped first in
-   * SELECT_TO_AI_TOOLS.renderSafeMarkdown, so model text cannot inject HTML.
-   */
+  // ---------- the selection a request is about ----------
+  // "Ask the agent about this" keeps what was selected, with its place on
+  // the page, in session storage for this tab (background.js). It shows
+  // above the composer until the request is sent or the user removes it,
+  // and goes to the run as the selection.
+
+  const SELECTION_KEY = (tabId) => `agentSelection:${tabId}`;
+  // A selection kept longer than this was for an earlier visit to the panel.
+  const SELECTION_FRESH_MS = 30 * 60000;
+  let aboutSelection = null;
+  const selectionSlot = el("div", "selection-slot");
+  selectionSlot.hidden = true;
+  composer.insertBefore(selectionSlot, composer.firstChild);
+
+  /** The quoted selection with the page it came from; with `onRemove`, a way to take it off. */
+  function selectionQuote(sel, onRemove) {
+    const box = el("div", "selection-chip");
+    const head = el("div", "selection-head");
+    head.appendChild(el("span", "selection-label", "About this selection"));
+    const host = hostOf(sel.url);
+    if (host) {
+      const from = el("span", "selection-from");
+      from.title = sel.title ? `${sel.title}\n${sel.url}` : sel.url;
+      const img = el("img");
+      img.alt = "";
+      img.src = faviconFor(sel.url);
+      from.append(img, el("span", "", host));
+      head.appendChild(from);
+    }
+    if (onRemove) {
+      const x = el("button", "selection-remove");
+      x.type = "button";
+      x.title = "Remove the selection";
+      x.setAttribute("aria-label", "Remove the selection");
+      x.appendChild(icon("x"));
+      x.addEventListener("click", onRemove);
+      head.appendChild(x);
+    }
+    const text = String(sel.text || "");
+    const quote = el("blockquote", "selection-text", text.length > 280 ? `${text.slice(0, 279)}…` : text);
+    quote.title = text;
+    box.append(head, quote);
+    return box;
+  }
+
+  function showSelection(sel) {
+    aboutSelection = sel && sel.text ? sel : null;
+    selectionSlot.textContent = "";
+    selectionSlot.hidden = !aboutSelection;
+    if (aboutSelection) {
+      selectionSlot.appendChild(selectionQuote(aboutSelection, () => { dropSelection(); taskInput.focus(); }));
+      if (!taskInput.disabled) taskInput.focus();
+    }
+    updateComposerForSelection();
+  }
+
+  /** The selection is used or removed: it is not offered again. */
+  function dropSelection() {
+    const id = engineTabId();
+    showSelection(null);
+    if (id !== undefined && chrome.storage.session) chrome.storage.session.remove(SELECTION_KEY(id)).catch(() => {});
+  }
+
+  function updateComposerForSelection() {
+    if (aboutSelection && !engineBusy() && engineStatus !== "waiting") taskInput.placeholder = "Ask about the selected text";
+    else if (!aboutSelection && taskInput.placeholder === "Ask about the selected text") taskInput.placeholder = "Ask anything, or tell it what to do";
+  }
+
+  (function takeSelection() {
+    const id = engineTabId();
+    if (id === undefined || !chrome.storage || !chrome.storage.session) return;
+    const key = SELECTION_KEY(id);
+    const fresh = (v) => v && v.text && Date.now() - (v.at || 0) < SELECTION_FRESH_MS;
+    chrome.storage.session.get(key).then((r) => { if (fresh(r && r[key])) showSelection(r[key]); }).catch(() => {});
+    // The side panel may be open already when a new selection is chosen.
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== "session" || !changes[key]) return;
+      const v = changes[key].newValue;
+      if (fresh(v)) showSelection(v);
+    });
+  })();
+
+  // Answers render with answerFormat.js: headings, lists, tables, code and
+  // links, with everything escaped first, so model text cannot inject HTML.
   function renderAnswerHtml(text) {
-    return SELECT_TO_AI_TOOLS.renderSafeMarkdown(String(text ?? ""));
+    return SELECT_TO_AI_ANSWER.renderAnswerHtml(String(text ?? ""), [], { headingShift: 1 });
   }
 
-  function appendSimpleAssistantBubble(text, recordHistory = true) {
+  function appendSimpleAssistantBubble(text) {
     const assistantBubble = document.createElement("div");
     assistantBubble.className = "message-bubble assistant";
-    assistantBubble.innerHTML = `
-            <div class="bubble-avatar">A</div>
-            <div class="bubble-content">
-                <div class="final-answer-box" style="display: block;">${renderAnswerHtml(text)}</div>
-            </div>
-        `;
+    const content = document.createElement("div");
+    content.className = "bubble-content";
+    const box = document.createElement("div");
+    box.className = "final-answer-box";
+    box.style.display = "block";
+    box.innerHTML = renderAnswerHtml(text);
+    content.appendChild(box);
+    assistantBubble.appendChild(content);
     chatContainer.appendChild(assistantBubble);
-    if (recordHistory) {
-      conversationHistory.push({ role: "assistant", text });
-      if (conversationHistory.length > 12)
-        conversationHistory = conversationHistory.slice(-12);
-    }
-    scrollToBottom();
+    scrollToBottom(true);
     return assistantBubble;
   }
 
-  function setSimpleAssistantBubbleText(assistantBubble, text) {
-    const answerBox = assistantBubble?.querySelector(".final-answer-box");
-    if (answerBox) answerBox.innerHTML = renderAnswerHtml(text);
-    conversationHistory.push({ role: "assistant", text });
-    if (conversationHistory.length > 12)
-      conversationHistory = conversationHistory.slice(-12);
-    scrollToBottom();
+  // The view follows new work only while the user is at the bottom of it.
+  function scrollToBottom(force) {
+    const gap = chatViewport.scrollHeight - chatViewport.scrollTop - chatViewport.clientHeight;
+    if (force || gap < 160) chatViewport.scrollTop = chatViewport.scrollHeight;
   }
 
-  function formatConversationContext() {
-    return conversationHistory
-      .slice(-8)
-      .map((turn) => `${turn.role}: ${turn.text}`)
-      .join("\n");
+  // ==========================================
+  // THE TIMELINE
+  // ==========================================
+  // Every log entry from the engine is one .log-item, so the harnesses can
+  // read the whole log as text. Steps are grouped: the goal on one line with
+  // an icon for the kind of action, what it found underneath, and the raw
+  // actions and results behind a disclosure.
+
+  function logItem(cls, title, text) {
+    const item = el("div", `log-item ${cls}`);
+    const t = el("span", "log-title visually-hidden", `${title}. `);
+    item.appendChild(t);
+    return item;
   }
 
-  function formatBrowserCapabilityPrompt() {
-    return browserCapabilityPrompt;
+  function stamp() {
+    return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   }
 
-  // Scroll viewport to bottom
-  function scrollToBottom() {
-    chatViewport.scrollTop = chatViewport.scrollHeight;
+  function clearPending() {
+    if (activeRun && activeRun.pending) { activeRun.pending.remove(); activeRun.pending = null; }
   }
 
-  // Helper to print animated log cards. `collapsible: true` renders the
-  // description inside a collapsed-by-default expander (used for per-step
-  // model thoughts so the console stays scannable).
-  function addLogEntry(role, title, description, { collapsible = false } = {}) {
-    if (!activeLogsWrapper) return;
-    const timeString = new Date().toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-
-    const logItem = document.createElement("div");
-    logItem.className = `log-item ${role}-role${collapsible ? " log-thought" : ""}`;
-
-    const logHeader = document.createElement("div");
-    logHeader.className = "log-header";
-
-    const logTitle = document.createElement("span");
-    logTitle.innerHTML = `<strong>[${role.toUpperCase()}]</strong> ${escapeHtml(title)}`;
-
-    const logTime = document.createElement("span");
-    logTime.className = "log-time";
-    logTime.textContent = timeString;
-
-    logHeader.appendChild(logTitle);
-    logHeader.appendChild(logTime);
-    logItem.appendChild(logHeader);
-
-    if (collapsible) {
-      const details = document.createElement("details");
-      const summary = document.createElement("summary");
-      summary.textContent = "Show reasoning";
-      const logDesc = document.createElement("div");
-      logDesc.className = "log-content";
-      logDesc.textContent = description;
-      details.appendChild(summary);
-      details.appendChild(logDesc);
-      logItem.appendChild(details);
-    } else {
-      const logDesc = document.createElement("div");
-      logDesc.className = "log-content";
-      logDesc.textContent = description;
-      logItem.appendChild(logDesc);
+  /** The row that stands for work in progress before a step has a goal. */
+  function showPending(text) {
+    if (!activeRun || !activeLogsWrapper) return;
+    // While sub-tasks work, their rows and the header say what is going on.
+    if (!drawingSub) { const c = subCounts(); if (c.running || c.waiting) { clearPending(); updateLive(); return; } }
+    if (!activeRun.pending) {
+      const li = el("li", "tl-pending");
+      const ic = el("span", "tl-icon");
+      ic.appendChild(dotEl());
+      const body = el("div", "tl-body");
+      const words = el("div", "tl-pending-text");
+      const thought = el("div", "tl-thought");
+      body.append(words, thought);
+      li.append(ic, body);
+      activeRun.pending = li;
+      activeRun.pendingText = words;
+      activeRun.pendingThought = thought;
     }
+    activeRun.pendingText.textContent = text;
+    // The work in progress is the current step now, not the one before it.
+    if (activeRun.step) activeRun.step.li.classList.remove("is-current");
+    activeLogsWrapper.appendChild(activeRun.pending);
+    updateLive();
+  }
 
-    activeLogsWrapper.appendChild(logItem);
-    activeLogsWrapper.scrollTop = activeLogsWrapper.scrollHeight;
+  function setCurrentStep(step) {
+    if (!activeRun) return;
+    if (activeRun.step && activeRun.step !== step) activeRun.step.li.classList.remove("is-current");
+    activeRun.step = step;
+    if (step) step.li.classList.toggle("is-current", engineStatus === "running" && !activeRun.pending);
+  }
+
+  function newStep(n, goalText) {
+    clearPending();
+    clearDraft();
+    const li = el("li", "tl-step");
+    li.dataset.step = String(n);
+    const ic = el("span", "tl-icon");
+    ic.appendChild(icon("sparkle"));
+    const body = el("div", "tl-body");
+    const line = el("div", "tl-line");
+    const goal = logItem("tl-goal", `Step ${n}`);
+    const goalWords = el("span", "tl-goal-text", goalText);
+    goal.appendChild(goalWords);
+    const host = el("span", "tl-host");
+    host.hidden = true;
+    line.append(goal, host);
+    const summary = el("div", "tl-summary");
+    const more = el("details", "tl-more");
+    more.hidden = true;
+    const moreSummary = el("summary");
+    moreSummary.append(icon("chevron"), el("span", "", "Details"));
+    moreSummary.firstChild.classList.add("chev");
+    const moreBody = el("div", "tl-more-body");
+    more.append(moreSummary, moreBody);
+    body.append(line, summary, more);
+    li.append(ic, body);
+    activeLogsWrapper.appendChild(li);
+    const step = { li, ic, goalWords, host, summary, more, moreBody, n, kind: "" };
+    activeRun.steps.set(n, step);
+    activeRun.count = Math.max(activeRun.count, n);
+    setCurrentStep(step);
+    syncStepHosts();
+    updateRunSummary();
+    updateLive();
+    return step;
+  }
+
+  /** The step an action belongs to: the one under way, or a new one when the engine moved on. */
+  function stepForAction(text) {
+    const s = activeRun.step;
+    if (s && (!activeRun.statusStep || activeRun.statusStep === s.n)) return s;
+    return newStep(activeRun.statusStep || (s ? s.n + 1 : 1), plainAction(text));
+  }
+
+  function addAction(text) {
+    clearPending();
+    const s = stepForAction(text);
+    const kind = String(text || "").split(" ")[0];
+    if (!s.kind && ACTION_ICON[kind]) {
+      s.kind = kind;
+      s.ic.textContent = "";
+      s.ic.appendChild(icon(ACTION_ICON[kind]));
+    }
+    const item = logItem("tl-act", "Action");
+    item.append(el("span", "log-text", text), el("time", "log-time", stamp()));
+    s.moreBody.appendChild(item);
+    s.more.hidden = false;
+  }
+
+  function addResult(text, failed) {
+    clearPending();
+    const s = activeRun.step || newStep(activeRun.statusStep || 1, failed ? "Something did not work" : "Act on the page");
+    const item = logItem(`tl-res${failed ? " is-failed" : ""}`, failed ? "Action Failed" : "Result");
+    item.append(el("span", "log-text", text), el("time", "log-time", stamp()));
+    s.moreBody.appendChild(item);
+    s.more.hidden = false;
+    const first = String(text || "").replace(/\s+/g, " ").trim();
+    s.summary.textContent = first.length > 240 ? `${first.slice(0, 239)}…` : first;
+    s.li.classList.toggle("is-failed", !!failed);
+  }
+
+  // How the events around the steps look: an icon and a tone.
+  const EVENT_LOOK = {
+    "Check Passed": ["shieldCheck", "good"], "Check Failed": ["shield", "bad"], "Quote Not Found": ["shield", "bad"],
+    "Checking Answer": ["shield", ""], "Check Inconclusive": ["shield", "warn"], "Text Aimed at AI": ["alert", "warn"],
+    "Hidden Text": ["alert", "warn"], "Allowed": ["check", "good"], "Declined": ["x", "bad"], "You Added": ["user", "you"],
+    "Keep Going": ["user", "you"], "Answer Now": ["user", "you"], "Checking In": ["flag", ""], "Not Getting Anywhere": ["alert", "warn"],
+    "Provider Asked To Wait": ["pause", "warn"], "Carrying On": ["play", ""], "Step Not Usable": ["alert", "warn"],
+    "Second Check": ["shield", ""], "Not Held": ["info", ""], "Helper Model": ["sparkle", ""], "Main Model": ["sparkle", ""],
+  };
+
+  /** "Provider Asked To Wait" as "Provider asked to wait"; names such as AI stay as they are. */
+  function sentenceCase(title) {
+    return String(title || "").split(" ").map((w, i) => (i === 0 || /^[A-Z]{2,}$/.test(w) ? w : w.toLowerCase())).join(" ");
+  }
+
+  function addEvent(role, title, text, quiet) {
+    if (!quiet) clearPending();
+    const li = el("li", "tl-event");
+    if (quiet) li.classList.add("tl-quiet");
+    const look = EVENT_LOOK[title] || (role === "error" ? ["alert", "bad"] : role === "validator" ? ["shield", ""] : ["info", ""]);
+    if (look[1]) li.dataset.tone = look[1];
+    // The request is already shown above the run.
+    if (title === "Task Started") li.classList.add("tl-quiet");
+    const ic = el("span", "tl-icon");
+    ic.appendChild(icon(look[0]));
+    const item = el("div", "log-item tl-event-text");
+    // The engine's title stays in the text the harnesses read; the screen
+    // shows it in sentence case.
+    const shown = el("span", "log-title-shown");
+    shown.dataset.label = sentenceCase(title);
+    shown.setAttribute("aria-hidden", "true");
+    item.append(el("span", "log-title visually-hidden", `${title}. `), shown, el("span", "log-text", text));
+    const body = el("div", "tl-body");
+    body.appendChild(item);
+    li.append(ic, body);
+    activeLogsWrapper.appendChild(li);
+  }
+
+  // ---------- sub-tasks ----------
+  // A run that hands out sub-tasks shows them as a group under the step
+  // that did: one row each, with its live state, its site and a way to
+  // watch its tab, and its own steps behind the row, closed by default.
+  // A sub-task's entries are drawn by the same code as the run's, into the
+  // sub-task's own list.
+
+  const subs = new Map(); // sub-task id -> its view
+  let drawingSub = false;
+  const SUB_WORDS = { queued: "Waiting its turn", running: "Working", waiting: "Needs you", success: "Answered", unconfirmed: "Answered, not confirmed", error: "Did not finish", limit: "Did not finish", idle: "Stopped" };
+
+  function drawSubtasks(entry) {
+    if (!activeRun) return;
+    const host = activeRun.step ? activeRun.step.li.querySelector(".tl-body") : null;
+    const group = el("ol", "tl-subs");
+    group.setAttribute("aria-label", "Sub-tasks");
+    for (const t of entry.tasks || []) {
+      const li = el("li", "tl-sub");
+      li.dataset.state = "queued";
+      const box = el("details", "tl-sub-box");
+      const head = el("summary", "tl-sub-head");
+      const mark = el("span", "tl-sub-mark");
+      const task = el("span", "tl-sub-task", t.task);
+      task.title = t.task;
+      const site = el("span", "tl-host tl-sub-host");
+      site.hidden = true;
+      const state = el("span", "tl-sub-state", SUB_WORDS.queued);
+      const chev = icon("chevron");
+      chev.classList.add("chev");
+      head.append(mark, task, site, state, chev);
+      const list = el("ol", "logs-wrapper timeline tl-sub-steps");
+      box.append(head, list);
+      const watch = el("button", "tl-sub-watch");
+      watch.type = "button";
+      watch.title = "Show this sub-task's tab";
+      watch.append(icon("eye"), el("span", "", "Watch"));
+      watch.hidden = true;
+      watch.addEventListener("click", () => {
+        const v = subs.get(t.id);
+        if (!v || v.tabId === null || v.tabId === undefined) return;
+        chrome.tabs.update(v.tabId, { active: true }, (tab) => {
+          void chrome.runtime.lastError;
+          if (tab) chrome.windows.update(tab.windowId, { focused: true }, () => void chrome.runtime.lastError);
+        });
+      });
+      const answer = el("div", "tl-summary tl-sub-answer");
+      li.append(box, watch, answer);
+      group.appendChild(li);
+      const meta = el("span");
+      subs.set(t.id, {
+        id: t.id, task: t.task, li, list, mark, state, site, watch, answer, meta, tabId: null, phase: "queued",
+        // What the timeline code reads and writes on a run it draws.
+        steps: new Map(), step: null, count: 0, statusStep: 0, statusText: "", pending: null, draft: { hidden: true, textContent: "" }, ended: false, tookMs: 0,
+      });
+      setSubPhase(subs.get(t.id), "queued");
+    }
+    if (host) host.appendChild(group);
+    else if (activeLogsWrapper) { const li = el("li", "tl-event tl-subs-row"); li.append(el("span", "tl-icon"), group); activeLogsWrapper.appendChild(li); }
+    updateLive();
+  }
+
+  function setSubPhase(v, phase, outcome) {
+    v.phase = phase;
+    const shown = phase === "ended" ? outcome || "idle" : phase;
+    v.li.dataset.state = shown;
+    v.mark.textContent = "";
+    if (phase === "running") v.mark.appendChild(dotEl("live"));
+    else if (phase === "waiting") v.mark.appendChild(dotEl("warn"));
+    else if (phase === "queued") v.mark.appendChild(dotEl());
+    else v.mark.appendChild(icon({ success: "check", unconfirmed: "alert", error: "x", limit: "pause" }[shown] || "stop"));
+    v.state.textContent = SUB_WORDS[shown] || shown;
+    v.watch.hidden = !(phase === "running" || phase === "waiting") || v.tabId === null || v.tabId === undefined;
+  }
+
+  /** A sub-task started, or ended. */
+  function updateSub(entry) {
+    const v = subs.get(entry.id);
+    if (!v) return;
+    if (entry.state === "running") {
+      if (entry.tabId !== undefined) v.tabId = entry.tabId;
+      setSubPhase(v, "running");
+      // The rows say what is going on now; the run's own work-in-progress line goes.
+      if (!drawingSub) clearPending();
+    } else if (entry.state === "ended") {
+      withSub(entry.id, () => { clearPending(); setCurrentStep(null); });
+      v.ended = true;
+      setSubPhase(v, "ended", entry.outcome);
+      const first = String(entry.text || "").replace(/[*_`#>|]/g, "").replace(/\s+/g, " ").trim();
+      v.answer.textContent = first.length > 200 ? `${first.slice(0, 199)}…` : first;
+    }
+    updateLive();
+  }
+
+  /** Draws into a sub-task's own list with the run's timeline code. */
+  function withSub(id, draw) {
+    const v = subs.get(id);
+    if (!v) return;
+    const saved = [activeRun, activeLogsWrapper];
+    activeRun = v;
+    activeLogsWrapper = v.list;
+    drawingSub = true;
+    try { draw(); } finally {
+      [activeRun, activeLogsWrapper] = saved;
+      drawingSub = false;
+    }
+    if (v.phase === "running" && v.statusText) v.state.textContent = /^Step \d+/.test(v.statusText) ? `Step ${v.statusStep}` : v.statusText;
+  }
+
+  /** How many sub-tasks are at work, and how many need the user. */
+  function subCounts() {
+    let running = 0;
+    let waiting = 0;
+    for (const v of subs.values()) { if (v.phase === "running") running += 1; else if (v.phase === "waiting") waiting += 1; }
+    return { running, waiting };
+  }
+
+  /** Each sub-task's row shows the site its tab is on, from the trace. */
+  function syncSubHosts() {
+    if (!engineTrace || !engineTrace.history) return;
+    for (const v of subs.values()) {
+      const mine = engineTrace.history.filter((h) => h.sub === v.id && hostOf(h.url));
+      const url = mine.length ? mine[mine.length - 1].url : "";
+      const host = hostOf(url);
+      if (host && v.hostName !== host) {
+        v.hostName = host;
+        v.site.textContent = "";
+        const img = el("img");
+        img.alt = "";
+        img.src = faviconFor(url);
+        v.site.append(img, el("span", "", host));
+        v.site.title = url;
+        v.site.hidden = false;
+      }
+      for (const h of mine) {
+        const s = v.steps.get(h.step);
+        const sh = hostOf(h.url);
+        if (!s || s.hostName === sh) continue;
+        s.hostName = sh;
+        s.host.textContent = "";
+        const img = el("img");
+        img.alt = "";
+        img.src = faviconFor(h.url);
+        s.host.append(img, el("span", "", sh));
+        s.host.hidden = false;
+      }
+    }
+  }
+
+  // One log entry from the engine, placed in the timeline.
+  function addLogEntry(role, title, description, { collapsible = false, quiet = false } = {}) {
+    if (!activeLogsWrapper || !activeRun) return;
+    void collapsible;
+    // What the run did for itself is kept for the saved log, not drawn as a step.
+    if (quiet) { addEvent(role, title, description, true); return; }
+    const step = /^Step (\d+)$/.exec(title || "");
+    if (role === "executor" && step) newStep(Number(step[1]), description);
+    else if (role === "executor" && title === "Action") addAction(description);
+    else if (role === "executor" && title === "Result") addResult(description, false);
+    else if (role === "error" && title === "Action Failed") addResult(description, true);
+    else addEvent(role, title, description);
+    updateRunSummary();
     scrollToBottom();
   }
 
-  // Update status radar
+  // The engine's status line: what the run is doing between log entries.
   function setStatus(agentRole, message) {
-    if (activeRadar) {
-      activeRadar.className = `radar ${agentRole}-active`;
-    }
-    if (activeWave) {
-      if (
-        isRunning &&
-        (agentRole === "planner" ||
-          agentRole === "executor" ||
-          agentRole === "validator")
-      ) {
-        activeWave.style.display = "flex";
-        if (activeRadar) activeRadar.style.display = "none";
-        if (activeAvatar) activeAvatar.classList.add("thinking");
-      } else {
-        activeWave.style.display = "none";
-        if (activeRadar) activeRadar.style.display = "block";
-        if (activeAvatar) activeAvatar.classList.remove("thinking");
-      }
-    }
-    if (activeBubbleStatus) {
-      activeBubbleStatus.textContent = message;
-    }
+    if (!activeRun) return;
+    const text = String(message || "").replace(/…$/, "").trim();
+    const n = /^Step (\d+)/.exec(text);
+    if (n) activeRun.statusStep = Number(n[1]);
+    else if (/^Looking at the page/.test(text)) activeRun.statusStep = 1;
+    activeRun.statusText = text;
+    if (agentRole === "idle" || engineStatus !== "running") clearPending();
+    else showPending(n ? "Working out the next step" : text);
+    updateLive();
     scrollToBottom();
   }
 
-  // Resolves current active/target tab
-  function getActiveTab(callback) {
-    if (targetTabId !== null) {
-      chrome.tabs.get(targetTabId, (tab) => {
-        if (chrome.runtime.lastError || !tab) {
-          if (isRunning) {
-            // Mid-run the target tab is load-bearing: never silently
-            // retarget to some other tab, stop with a clear message.
-            stopAgent(
-              "The tab the agent was working on is no longer available. Task stopped.",
-              "error",
-            );
-            return;
-          }
-          // Reset and re-resolve (idle flows only)
-          targetTabId = null;
-          currentAgentTabId = null;
-          resolveTargetTab();
-        } else {
-          currentAgentTabId = targetTabId;
-          callback(targetTabId, tab);
-        }
-      });
-      return;
-    }
-
-    resolveTargetTab();
-
-    function resolveTargetTab() {
-      // 1. Try URL query parameter
-      const urlParams = new URLSearchParams(window.location.search);
-      const urlTabId = parseInt(urlParams.get("tabId"), 10);
-      if (!isNaN(urlTabId)) {
-        targetTabId = urlTabId;
-        chrome.tabs.get(targetTabId, (tab) => {
-          if (chrome.runtime.lastError || !tab) {
-            targetTabId = null;
-            currentAgentTabId = null;
-            fallbackQuery();
-          } else {
-            currentAgentTabId = targetTabId;
-            callback(targetTabId, tab);
-          }
-        });
-        return;
-      }
-
-      fallbackQuery();
-    }
-
-    function fallbackQuery() {
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (tabs && tabs.length > 0) {
-          const activeTab = tabs[0];
-          if (activeTab.url.startsWith(chrome.runtime.getURL(""))) {
-            // We are active (e.g. extension tab). Query other tabs in current window.
-            chrome.tabs.query({ currentWindow: true }, (allTabs) => {
-              const nonExtTabs = allTabs.filter(
-                (t) => !t.url.startsWith(chrome.runtime.getURL("")),
-              );
-              if (nonExtTabs.length > 0) {
-                targetTabId = nonExtTabs[0].id;
-                currentAgentTabId = targetTabId;
-                callback(targetTabId, nonExtTabs[0]);
-              } else {
-                stopAgent("No target webpage tab found to automate.", "error");
-              }
-            });
-          } else {
-            targetTabId = activeTab.id;
-            currentAgentTabId = targetTabId;
-            callback(targetTabId, activeTab);
-          }
-        } else {
-          stopAgent("No target webpage tab found to automate.", "error");
-        }
-      });
-    }
-  }
-
-  // Inject DOM scanner (agentTools.js first: shared pure helpers for stable
-  // ids and outcome deltas used by the content script).
-  // Protected browser pages (chrome://, the Web Store, blank tabs) cannot be
-  // read or clicked, but they are a perfectly fine STARTING POINT: instead of
-  // aborting, hand the model an empty scan that says so, and let it navigate.
-  function injectContentScript(tabId, callback) {
-    chrome.tabs.get(tabId, (tab) => {
-      const tabUrl = tab?.url || "";
-      let scannable = false;
-      try {
-        scannable = ["http:", "https:"].includes(new URL(tabUrl).protocol);
-      } catch (_error) {
-        scannable = false;
-      }
-      if (!scannable) {
-        callback({
-          url: tabUrl,
-          title: tab?.title || "Protected browser page",
-          elements: [],
-          innerText:
-            "[This tab is a protected browser page" +
-            (tabUrl ? ` (${tabUrl})` : "") +
-            ". Extensions cannot read or interact with it. Use the navigate action to go to the website this task needs, or open_tab to start one.]",
-          protectedPage: true,
-        });
-        return;
-      }
-      injectIntoWebTab(tabId, callback);
-    });
-  }
-
-  function injectIntoWebTab(tabId, callback) {
-    const scanRequest = {
-      action: "scan",
-      limit: config.agentElementLimit || DEFAULTS.elementLimit,
-    };
-    chrome.tabs.sendMessage(tabId, scanRequest, (response) => {
-      if (chrome.runtime.lastError || !response) {
-        chrome.scripting.executeScript(
-          {
-            target: { tabId: tabId },
-            files: ["agentTools.js", "agentContentScript.js"],
-          },
-          () => {
-            if (chrome.runtime.lastError) {
-              offerSiteAccess(tabId, () => injectContentScript(tabId, callback));
-              return;
-            }
-            // Event-driven readiness: wait for the DOM (body) via the
-            // content script's waitForElement handler instead of a fixed
-            // 200ms sleep, then scan.
-            chrome.tabs.sendMessage(
-              tabId,
-              { action: "waitForElement", selector: "body", timeout: 3000 },
-              () => {
-                void chrome.runtime.lastError;
-                chrome.tabs.sendMessage(
-                  tabId,
-                  scanRequest,
-                  (retryResponse) => {
-                    if (chrome.runtime.lastError || !retryResponse) {
-                      stopAgent(
-                        "Failed to communicate with tab content script.",
-                        "error",
-                      );
-                    } else {
-                      normalizeAndCallback(retryResponse);
-                    }
-                  },
-                );
-              },
-            );
-          },
-        );
-      } else {
-        normalizeAndCallback(response);
-      }
-    });
-
-    function normalizeAndCallback(res) {
-      if (!res) {
-        res = { url: "", title: "", elements: [] };
-      } else if (!Array.isArray(res.elements)) {
-        res.elements = [];
-      }
-      callback(res);
-    }
-  }
-
-  function offerSiteAccess(tabId, onGranted) {
-    chrome.tabs.get(tabId, (tab) => {
-      let parsed;
-      try {
-        parsed = new URL(tab?.url || "");
-      } catch (_error) {
-        stopAgent("Cannot access this protected browser page.", "error");
-        return;
-      }
-
-      if (!['http:', 'https:'].includes(parsed.protocol)) {
-        stopAgent("Chrome does not allow extensions to automate this protected page.", "error");
-        return;
-      }
-
-      const pattern = `${parsed.protocol}//${parsed.host}/*`;
-      const card = document.createElement("div");
-      card.className = "message-bubble assistant confirmation-bubble";
-
-      const content = document.createElement("div");
-      content.className = "bubble-content";
-      const title = document.createElement("p");
-      title.textContent = "Site access required";
-      title.style.fontWeight = "600";
-      const explanation = document.createElement("p");
-      explanation.textContent = `Allow Select to AI to operate on ${parsed.hostname} for this task?`;
-      const allowButton = document.createElement("button");
-      allowButton.className = "primary-btn";
-      allowButton.textContent = "Allow this site";
-      const abortButton = document.createElement("button");
-      abortButton.className = "secondary-btn";
-      abortButton.textContent = "Abort task";
-
-      const actions = document.createElement("div");
-      actions.style.cssText = "display:flex;gap:10px;margin-top:12px";
-      actions.append(allowButton, abortButton);
-      content.append(title, explanation, actions);
-      card.append(content);
-      chatContainer.appendChild(card);
-      scrollToBottom();
-
-      allowButton.addEventListener("click", () => {
-        chrome.permissions.request({ origins: [pattern] }, (granted) => {
-          if (granted) {
-            card.remove();
-            onGranted();
-          } else {
-            explanation.textContent = `Access to ${parsed.hostname} was not granted.`;
-          }
-        });
-      });
-      abortButton.addEventListener("click", () => {
-        card.remove();
-        stopAgent("Task stopped because site access was not granted.", "idle");
-      });
-    });
-  }
-
-  // Render / Update checklist UI nodes (the plan panel in the run bubble)
-  function updateChecklistUI() {
-    if (!activeChecklistItems) return;
-    activeChecklistItems.innerHTML = "";
-    if (subtasks.length === 0) {
-      if (activeChecklistPanel) activeChecklistPanel.style.display = "none";
-      return;
-    }
-    if (activeChecklistPanel) activeChecklistPanel.style.display = "flex";
-
-    subtasks.forEach((task, index) => {
-      const taskText =
-        typeof task === "string" ? task : task.task || JSON.stringify(task);
-      const postcondition =
-        typeof task === "object" && task && task.postcondition
-          ? task.postcondition
-          : "";
-      const item = document.createElement("div");
-      item.className = "checklist-item";
-      if (index === currentSubtaskIndex) item.className += " active";
-      if (index < currentSubtaskIndex) item.className += " completed";
-
-      const bullet = document.createElement("div");
-      bullet.className = "checklist-bullet";
-      if (index < currentSubtaskIndex) bullet.textContent = "✓";
-      else bullet.textContent = index + 1;
-
-      const textSpan = document.createElement("span");
-      textSpan.textContent = taskText;
-      if (postcondition) {
-        item.title = `Done when: ${postcondition}`;
-      }
-
-      item.appendChild(bullet);
-      item.appendChild(textSpan);
-      activeChecklistItems.appendChild(item);
-    });
-
-    // Compute percentage
-    const percent = Math.min(
-      100,
-      Math.round((currentSubtaskIndex / subtasks.length) * 100),
-    );
-    if (activeProgressBar) {
-      activeProgressBar.style.width = percent + "%";
-    }
-    if (activeThoughtStatus) {
-      activeThoughtStatus.textContent = `running plan (${percent}%)...`;
-    }
-
-    // Scroll active item into view
-    const activeNode = activeChecklistItems.querySelector(
-      ".checklist-item.active",
-    );
-    if (activeNode)
-      activeNode.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    scrollToBottom();
-  }
+  // ==========================================
+  // ENGINE VIEW (runs live in the service worker)
+  // ==========================================
+  // This page is a view. It sends what the user types,
+  // and draws the run from the entries the engine sends: the same entries
+  // whether they arrive live or all at once when the panel is reopened.
 
   // Start Loop
-  function startAgent() {
-    loadSettings(() => startAgentWithLoadedSettings());
+  function startAgent(handoff) {
+    loadSettings(() => startAgentWithLoadedSettings(handoff));
   }
 
-  function startAgentWithLoadedSettings() {
+  /**
+   * Starts the task in the box. `handoff` is true for a request typed in the
+   * address bar: it is always a new task, never an answer to a run in
+   * progress, and the engine asks here what to do when a run is live.
+   */
+  function startAgentWithLoadedSettings(handoff) {
     const task = taskInput.value.trim();
     if (!task) {
       taskInput.focus();
-      taskInput.placeholder = "Type a task or question first…";
+      taskInput.placeholder = "Type a task or question first";
       return;
     }
 
     if (!hasProviderCredentials(config.agentActiveProvider)) {
       const message = getMissingCredentialsMessage(config.agentActiveProvider);
       if (credentialsWarning) credentialsWarning.style.display = "flex";
-      addLogEntry("error", "Missing API Credentials", message);
-      setStatus("error", message);
       actionBtn.disabled = true;
+      // A task handed over from the palette arrives pre-filled and looks ready
+      // to go, so a thin strip above the composer reads as "it did nothing".
+      // Say it where the answer would have appeared, and keep the task.
+      try {
+        appendSimpleUserBubble(task);
+        appendSimpleAssistantBubble(
+          "I can't run this yet: " + message +
+            "\n\nPress \"Connect\" below (it takes about 20 seconds, free), " +
+            "then press Enter here to run the task again.",
+        );
+        taskInput.value = task;
+      } catch (_e) { /* the warning strip still stands */ }
       return;
     }
 
+    if (handoff) {
+      taskInput.value = "";
+      taskInput.style.height = "auto";
+      enginePost({ type: "handoff", text: task, tabId: engineTabId() });
+      return;
+    }
     routeUserTurn(task);
   }
 
+  /**
+   * An address-bar request reached this window while a run is live in it.
+   * The user chooses: stop that run and start this one, or start this one
+   * when that run ends. It never goes into the live run.
+   */
+  function askAboutHandoff(m) {
+    const bubble = appendSimpleAssistantBubble(`A task is still running in this window. What should happen to your new request, "${String(m.text).slice(0, 200).replace(/[*_`#>[\]]/g, "")}"?`);
+    bubble.classList.add("handoff-choice");
+    const row = el("div", "confirm-actions handoff-actions");
+    const choose = (choice) => {
+      row.remove();
+      enginePost({ type: "handoff", text: m.text, tabId: m.tabId, choice });
+    };
+    const stopBtn = el("button", "handoff-stop-btn btn btn-primary");
+    stopBtn.type = "button";
+    stopBtn.textContent = "Stop it and start this";
+    stopBtn.addEventListener("click", () => choose("replace"));
+    const queueBtn = el("button", "handoff-queue-btn btn btn-ghost");
+    queueBtn.type = "button";
+    queueBtn.textContent = "Start this after it";
+    queueBtn.addEventListener("click", () => choose("queue"));
+    row.append(stopBtn, queueBtn);
+    bubble.querySelector(".bubble-content").appendChild(row);
+    scrollToBottom(true);
+  }
+
   function routeUserTurn(task) {
-    appendSimpleUserBubble(task);
+    // A new request is drawn when its run starts (the engine may first send
+    // the conversation so far, which redraws the panel); a reply to a
+    // waiting or running run is drawn now.
+    if (engineStatus === "waiting" || engineStatus === "running") appendSimpleUserBubble(task);
     taskInput.value = "";
     taskInput.style.height = "auto";
-    const routingBubble = appendSimpleAssistantBubble("Thinking...", false);
+    // One loop decides for itself whether this is a question about the page,
+    // a task, or the answer to what it asked.
+    const keep = document.querySelector(".confirmation-bubble.needs-you .keep-answer-box");
+    // A new request carries the selection it is about; a word to a run in progress does not.
+    const fresh = !(engineStatus === "waiting" || engineStatus === "running");
+    const selection = fresh && aboutSelection ? aboutSelection : null;
+    enginePost({ type: "send", text: task, tabId: engineTabId(), keep: !!(keep && keep.checked), ...(selection ? { selection } : {}) });
+    if (selection) dropSelection();
+  }
 
-    const previousStreamPanel = activeStreamPanel;
-    const previousStreamText = activeStreamText;
-    activeStreamPanel = null;
-    activeStreamText = null;
-    const isShortCommand = task.trim().split(/\s+/).length <= 3;
-    const hasInterrogative =
-      /^(what|who|where|why|when|how|summarize|read|tell|can|is|are)\b/i.test(
-        task.trim(),
-      ) || task.includes("?");
-    const contextBlock =
-      isShortCommand && !hasInterrogative
-        ? ""
-        : `
-<current_context>
-Recent conversation:
-${formatConversationContext() || "[No prior conversation]"}
-</current_context>`;
+  let enginePort = null;
+  let engineRunId = "";
+  let engineStatus = "";
+  let engineWait = null;
+  let engineTrace = null;
+  // Every journal entry of the run in view, for the saved log.
+  let engineJournal = [];
+  let engineCards = new Map();
+  let engineAsked = "";
+  // When the trace was last received, for the live clock between updates.
+  let traceAt = 0;
 
-    const systemPrompt = `<instructions>
-You are the intent and capability router for a browser-capable assistant.
-Classify the user's latest message into exactly one route:
-- "chat": normal conversation, greetings, advice, explanation, brainstorming, or questions that do not require live browser state or actions.
-- "context": answer using current browser/tab/page state without creating a multi-step automation plan. Use this ONLY when the user EXPLICITLY asks about the current page, current tab, URL, title, site, open tabs, visible data, or visible errors/statuses (e.g., "what tab is this?", "summarize this page"). DO NOT use this route for single words, brand names, or search topics.
-- "quick_action": run exactly one direct browser command without planner/executor/validator. Use this for simple commands like opening a website, navigating to a URL, creating a tab, switching tabs, reloading the current tab, listing tabs, or closing a tab.
-- "browser": operate the browser or inspect the live page deeply. Use this for searching the web, comparing live results, filling forms, clicking, typing, scrolling, navigating, or completing a web workflow.
-- "clarify": the user intent is ambiguous and you need one short question before deciding.
+  // A run waiting on its provider is still under way: the button stops it.
+  const engineBusy = () => (engineStatus === "running" || (engineStatus === "waiting" && engineWait && (engineWait.kind === "approval" || engineWait.kind === "pause")));
 
-### Grounding & Action Capabilities:
-${formatBrowserCapabilityPrompt()}
+  function engineTabId() {
+    const id = parseInt(new URLSearchParams(window.location.search).get("tabId"), 10);
+    return Number.isNaN(id) ? undefined : id;
+  }
 
-### Crucial Constraints:
-- NEVER refuse a request by claiming you cannot browse or cannot open websites. You possess full browser control capabilities.
-- For requests asking to open a website, you MUST select "quick_action" or "browser". Do NOT classify these as "chat".
-- If the user types a single word or phrase, evaluate if it is a well-known web platform/brand (e.g., "youtube", "twitter", "netflix"). If yes, route as "quick_action", action "navigate", with the canonical URL. If it is a generic topic (e.g., "apples", "weather", "news"), route as "browser" to perform a web search.
-- For any factual lookup request (e.g. "what is the score of...", "top 10 imdb movies"), you MUST select "browser" to perform a live web search, not "chat".
-- Output ONLY a valid JSON object matching the schema below. Do NOT wrap the JSON in markdown code blocks (e.g. do not use \`\`\`json).
-
-### Response Schema:
-{
-  "thought_process": "Analyze the user's core intent: 1) Is this chat? 2) Do they want me to read the screen? 3) Is it a 1-step navigation command (if so, explicitly deduce the exact URL here)? 4) Or is this a complex request? Explain your deduction step-by-step.",
-  "route": "chat" | "context" | "quick_action" | "browser" | "clarify",
-  "reply": "A brief, positive acknowledgement or chat response. Do NOT claim you cannot perform the task.",
-  "action": "open_tab" | "navigate" | "list_tabs" | "switch_tab" | "reload_tab" | "close_tab" | null,
-  "url": "The fully qualified URL (e.g., 'https://www.google.com'). If the user types a brand name like 'youtube', you MUST synthesize the full canonical URL. REQUIRED if action is open_tab or navigate.",
-  "tabId": <tabId number or null>,
-  "browser_task": "The exact, comprehensive task description for the multi-step browser automation engine. Preserve all specifics, filters, and user constraints."
-}
-</instructions>
-${contextBlock}`;
-
-    callLLM(systemPrompt, `Latest user message: ${task}`, (intent) => {
-      activeStreamPanel = previousStreamPanel;
-      activeStreamText = previousStreamText;
-
-      const route = String(intent?.route || "clarify").toLowerCase();
-      const reply =
-        intent?.reply ||
-        "Do you want me to answer normally, or use the browser for a task?";
-
-      if (route === "browser") {
-        setSimpleAssistantBubbleText(
-          routingBubble,
-          reply || "I’ll use the browser for that.",
-        );
-        setTimeout(() => {
-          routingBubble.remove();
-          continueBrowserAutomation(intent?.browser_task || task, true);
-        }, 250);
-        return;
-      }
-
-      if (route === "context") {
-        answerFromBrowserContext(task, routingBubble);
-        return;
-      }
-
-      if (route === "quick_action") {
-        runQuickBrowserAction(task, intent, routingBubble, reply);
-        return;
-      }
-
-      setSimpleAssistantBubbleText(routingBubble, reply);
+  function connectEngine() {
+    if (enginePort) return;
+    try {
+      enginePort = chrome.runtime.connect({ name: "agentView" });
+    } catch (_e) { enginePort = null; return; }
+    enginePort.onMessage.addListener(onEngineMessage);
+    // The worker was restarted: connect again and be sent the run afresh.
+    enginePort.onDisconnect.addListener(() => { enginePort = null; setTimeout(connectEngine, 300); });
+    engineReady = false;
+    chrome.windows.getCurrent((w) => {
+      void chrome.runtime.lastError;
+      try { enginePort.postMessage({ type: "hello", windowId: w ? w.id : -1 }); } catch (_e) { return; }
+      engineReady = true;
+      // A page opened to start afresh (the benchmark) leaves no earlier conversation behind.
+      if (new URLSearchParams(window.location.search).get("fresh") === "1" && !engineFreshDone) { engineFreshDone = true; enginePort.postMessage({ type: "reset" }); }
+      for (const message of engineQueue.splice(0)) enginePort.postMessage(message);
     });
   }
 
-  function normalizeActionUrl(url) {
-    if (!url || typeof url !== "string") return "";
-    const trimmed = url.trim();
-    if (!trimmed) return "";
-    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return trimmed;
-    return `https://${trimmed}`;
+  // Nothing is sent before the engine knows which window this view is for.
+  let engineReady = false;
+  let engineFreshDone = false;
+  const engineQueue = [];
+  function enginePost(message) {
+    if (!enginePort) connectEngine();
+    if (!engineReady) { engineQueue.push(message); return; }
+    try { enginePort.postMessage(message); } catch (_e) { engineQueue.push(message); }
   }
 
-  function runQuickBrowserAction(task, actionObj, routingBubble, pendingReply) {
-    if (typeof actionObj === "string") {
-      try {
-        actionObj = JSON.parse(actionObj);
-      } catch (e) {
-        actionObj = null;
-      }
-    }
-
-    if (!actionObj || !actionObj.action) {
-      setSimpleAssistantBubbleText(
-        routingBubble,
-        "I could not decide the browser action cleanly. Try saying the site or tab action more directly.",
-      );
-      return;
-    }
-
-    currentTask = task;
-    currentStep += 1;
-    const action = { ...actionObj };
-
-    if (action.action === "open_tab" || action.action === "navigate") {
-      if (!action.url) {
-        setSimpleAssistantBubbleText(
-          routingBubble,
-          "I couldn't determine the exact URL. Please provide the full address or ask me to search the web.",
-        );
-        return;
-      }
-      action.url = normalizeActionUrl(action.url);
-      if (!isUrlAllowed(action.url)) {
-        setSimpleAssistantBubbleText(
-          routingBubble,
-          `Navigation blocked by domain allowlist: ${action.url}`,
-        );
-        return;
-      }
-    }
-
-    setSimpleAssistantBubbleText(
-      routingBubble,
-      pendingReply || "Working on that.",
-    );
-
-    const finishBubble = (message) => {
-      setSimpleAssistantBubbleText(routingBubble, message);
-    };
-
-    // Quick actions bypass the planner loop, but never the risk gate.
-    if (isHighRiskAction(action, { elements: [], url: action.url || "" })) {
-      requestRiskConfirmation(
-        action,
-        `Quick browser action: ${action.action}${action.url ? ` → ${action.url}` : ""}`,
-        () => executeQuickAction(),
-        () =>
-          finishBubble("Action cancelled by the safety confirmation prompt."),
-      );
-      return;
-    }
-
-    executeQuickAction();
-
-    function executeQuickAction() {
-    if (action.action === "navigate") {
-      getBrowserContext((browserContext, errorMessage) => {
-        if (!browserContext?.currentTab?.id) {
-          finishBubble(
-            errorMessage || "I can't find a webpage tab to navigate.",
-          );
-          return;
-        }
-
-        chrome.tabs.update(
-          browserContext.currentTab.id,
-          { url: action.url, active: true },
-          (tab) => {
-            if (chrome.runtime.lastError || !tab) {
-              finishBubble(
-                chrome.runtime.lastError?.message ||
-                  "Failed to navigate the current tab.",
-              );
-              return;
-            }
-            targetTabId = tab.id;
-            currentAgentTabId = tab.id;
-            waitForTabNavigation(tab.id, 300, 8000, () => {
-              finishBubble(`Opened ${action.url}`);
-            });
-          },
-        );
-      });
-      return;
-    }
-
-    if (
-      [
-        "open_tab",
-        "list_tabs",
-        "switch_tab",
-        "close_tab",
-        "reload_tab",
-      ].includes(action.action)
-    ) {
-      executeBrowserAction(action, task, null, (success, message) => {
-        finishBubble(success ? message : `Browser action failed: ${message}`);
-      });
-      return;
-    }
-
-    finishBubble(`Unsupported quick browser action: ${action.action}`);
-    }
-  }
-
-  function answerFromBrowserContext(task, routingBubble) {
-    getBrowserContext((browserContext, errorMessage) => {
-      if (!browserContext) {
-        setSimpleAssistantBubbleText(
-          routingBubble,
-          errorMessage || "I can't read the current browser context right now.",
-        );
-        return;
-      }
-
-      const currentTab = browserContext.currentTab;
-      let domRequested = false;
-      let screenshotRequested = false;
-      let currentPageState = null;
-      let currentScreenshotUrl = null;
-
-      const recursiveAnswer = () => {
-        const elementSnippet =
-          currentPageState?.elements
-            ?.slice(0, 60)
-            .map((el) => {
-              return `ID [${el.id}] ${el.type}: "${el.text || ""}"${el.value ? ` value="${el.value}"` : ""}${el.label ? ` label="${el.label}"` : ""}`;
-            })
-            .join("\n") || "[No interactive elements scanned]";
-
-        const systemPrompt = `You answer current-browser and visible-page questions for a Chrome extension assistant.
-
-${formatBrowserCapabilityPrompt()}
-
-Use only the provided browser/page context and screenshot (if requested). Do not answer from generic assumptions.
-You initially receive only the Tab Title and URL. If you need to read the full webpage text or elements to answer the user's question, output {"action": "request_dom"}. If you need to visually see the page (e.g. colors, layout), output {"action": "request_screenshot"}.
-If you have enough information to answer the question, output {"action": "answer", "reply": "your answer"}.
-
-Respond ONLY as a valid JSON object matching this schema:
-{
-  "thought_process": "Do I need more data (DOM or Screenshot) to answer this question?",
-  "action": "answer" | "request_dom" | "request_screenshot",
-  "reply": "The final answer to show the user (if action is 'answer')"
-}`;
-
-        const domStatus = currentPageState ? "Loaded" : "Not requested yet";
-        const screenshotStatus = currentScreenshotUrl
-          ? "Loaded"
-          : "Not requested yet";
-
-        const userMessage = `User question: ${task}
-
-Current browser context:
-Current tab: ${JSON.stringify(currentTab)}
-Available tabs:
-${formatTabsContext(browserContext.tabs)}
-
-DOM State: ${domStatus}
-Screenshot State: ${screenshotStatus}
-
-Visible page state:
-URL: ${currentPageState?.url || currentTab.url}
-Title: ${currentPageState?.title || currentTab.title}
-Visible text:
-${currentPageState?.innerText || "[No visible page text available]"}
-
-Interactive/structured element snippet:
-${elementSnippet}`;
-
-        callLLM(
-          systemPrompt,
-          userMessage,
-          (answer) => {
-            let actionObj = answer;
-            if (typeof answer === "string") {
-              try {
-                actionObj = JSON.parse(answer);
-              } catch (e) {
-                actionObj = { action: "answer", reply: answer };
-              }
-            }
-
-            if (actionObj?.action === "request_dom") {
-              if (domRequested) {
-                actionObj.action = "answer";
-                actionObj.reply =
-                  "I cannot read the DOM for this page (it might be a protected chrome:// page or empty).";
-              } else {
-                domRequested = true;
-                setSimpleAssistantBubbleText(
-                  routingBubble,
-                  "Scanning page content...",
-                );
-                if (
-                  !currentTab?.id ||
-                  !currentTab.url ||
-                  currentTab.url.startsWith("chrome://") ||
-                  currentTab.url.startsWith("chrome-extension://") ||
-                  currentTab.url.startsWith("edge://")
-                ) {
-                  currentPageState = {
-                    elements: [],
-                    innerText: "[Protected Page - Cannot read DOM]",
-                  };
-                  recursiveAnswer();
-                  return;
-                }
-                injectContentScript(currentTab.id, (scanResult) => {
-                  currentPageState = scanResult || {
-                    elements: [],
-                    innerText: "[Failed to scan DOM]",
-                  };
-                  recursiveAnswer();
-                });
-                return;
-              }
-            }
-
-            if (actionObj?.action === "request_screenshot") {
-              if (screenshotRequested) {
-                actionObj.action = "answer";
-                actionObj.reply =
-                  "I could not capture a screenshot for this page.";
-              } else {
-                screenshotRequested = true;
-                setSimpleAssistantBubbleText(
-                  routingBubble,
-                  "Capturing screenshot...",
-                );
-                chrome.runtime.sendMessage(
-                  { action: "captureScreenshot", tabId: currentTab?.id },
-                  (screenshotRes) => {
-                    currentScreenshotUrl =
-                      screenshotRes && screenshotRes.success
-                        ? screenshotRes.dataUrl
-                        : null;
-                    recursiveAnswer();
-                  },
-                );
-                return;
-              }
-            }
-
-            // Default to answer
-            const reply =
-              actionObj?.reply || formatCurrentTabAnswer(currentTab);
-            setSimpleAssistantBubbleText(routingBubble, reply);
-          },
-          currentScreenshotUrl,
-        );
-      };
-
-      recursiveAnswer();
-    });
-  }
-
-  function formatCurrentTabAnswer(tab) {
-    if (!tab)
-      return "I can't see a regular webpage tab in this window right now.";
-    const title = tab.title || "(Untitled)";
-    const url = tab.url || "";
-    return url ? `You're on "${title}".\n${url}` : `You're on "${title}".`;
-  }
-
-  function continueBrowserAutomation(task, userAlreadyRendered = false) {
-    runId++;
-    isRunning = true;
-    currentTask = task;
-    currentStep = 0;
-    currentSubtaskIndex = 0;
-    subtasks = [];
-    consecutiveFailures = 0;
-    parseFailureCount = 0;
-    actionHistory = [];
-    sessionNotes = [];
-    validatorCalls = 0;
-    lastValidatorPassed = false;
-    totalPromptTokens = 0;
-    totalCompletionTokens = 0;
-    totalCostUSD = 0.0;
-    costIsEstimated = false;
-    updateCostDashboard();
-
-    // Reset input button UI
-    actionBtn.classList.add("stop-btn");
-    actionBtn.title = "Stop Agent";
-    actionBtn.innerHTML = `
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                <rect x="4" y="4" width="16" height="16" />
-            </svg>
-        `;
-
-    // Disable input console
-    taskInput.value = "";
-    taskInput.style.height = "auto";
-    taskInput.disabled = true;
-
-    // Hide welcome recommendations grid
-    welcomeScreen.style.display = "none";
-
-    if (!userAlreadyRendered) {
-      appendSimpleUserBubble(currentTask);
-    }
-
-    // Append Assistant chat bubble
-    const assistantBubble = document.createElement("div");
-    assistantBubble.className = "message-bubble assistant";
-    assistantBubble.innerHTML = `
-            <div class="bubble-avatar">A</div>
-            <div class="bubble-content">
-                <div class="agent-run-status">
-                    <div class="radar activeRadar executor-active"></div>
-                    <span class="activeStatusText">Working...</span>
-                    <div class="status-wave activeWave">
-                        <span></span><span></span><span></span><span></span>
-                    </div>
-                </div>
-                <div class="checklist-panel" style="display: none;">
-                    <div class="checklist-title activeThoughtStatus">running plan (0%)...</div>
-                    <div class="progress-bar-container">
-                        <div class="progress-bar activeProgressBar" style="width: 0%;"></div>
-                    </div>
-                    <div class="checklist-items activeChecklistItems"></div>
-                </div>
-                <div class="logs-panel">
-                    <div class="logs-title-row">
-                        <div class="logs-title">Execution Console</div>
-                        <div class="logs-actions">
-                            <button type="button" class="export-logs-btn exportMdLogsBtn" title="Download this run's plan and action log as Markdown">Export log (.md)</button>
-                            <button type="button" class="export-logs-btn exportJsonSessionBtn" title="Download the full session recording (actions + outcomes) as JSON">Session (.json)</button>
-                        </div>
-                    </div>
-                    <div class="logs-wrapper activeLogsWrapper"></div>
-                </div>
-                <div class="stream-panel activeStreamPanel" style="display: none;">
-                    <div class="stream-text activeStreamText"></div>
-                </div>
-                <div class="final-answer-box activeFinalAnswer" style="display: none;"></div>
-            </div>
-        `;
-    chatContainer.appendChild(assistantBubble);
-
-    // Map active bubble elements
-    activeChecklistPanel = assistantBubble.querySelector(".checklist-panel");
-    activeChecklistItems = assistantBubble.querySelector(
-      ".activeChecklistItems",
-    );
-    activeProgressBar = assistantBubble.querySelector(".activeProgressBar");
-    activeLogsWrapper = assistantBubble.querySelector(".activeLogsWrapper");
-    activeBubbleStatus = assistantBubble.querySelector(".activeStatusText");
-    activeRadar = assistantBubble.querySelector(".activeRadar");
-    activeThoughtStatus = assistantBubble.querySelector(".activeThoughtStatus");
-    activeBubbleAnswer = assistantBubble.querySelector(".activeFinalAnswer");
-    activeStreamPanel = assistantBubble.querySelector(".activeStreamPanel");
-    activeStreamText = assistantBubble.querySelector(".activeStreamText");
-    activeWave = assistantBubble.querySelector(".activeWave");
-    activeAvatar = assistantBubble.querySelector(".bubble-avatar");
-
-    // Wire the export actions for THIS run's bubble.
-    const mdExportBtn = assistantBubble.querySelector(".exportMdLogsBtn");
-    if (mdExportBtn) mdExportBtn.addEventListener("click", exportMarkdownLogs);
-    const jsonExportBtn = assistantBubble.querySelector(".exportJsonSessionBtn");
-    if (jsonExportBtn)
-      jsonExportBtn.addEventListener("click", exportSessionRecording);
-
-    // Steer-while-running input becomes available for this run.
-    setSteerRowVisible(true);
-
-    // Align page height
-    scrollToBottom();
-
-    // Print initial log
-    addLogEntry(
-      "system",
-      "Task Initialized",
-      `Starting task: "${currentTask}"`,
-    );
-
-    // Plan first (cheap lite-tier call), then start the execution loop.
-    generatePlan(() => agentStep());
-  }
-
-  // ==========================================
-  // PLANNER (lite tier, one call at task start)
-  // ==========================================
-
-  function generatePlan(done) {
-    const planRunId = runId;
-    setStatus("planner", "Planning the task...");
-    addLogEntry("planner", "Planning", "Breaking the task into subtasks...");
-
-    chrome.storage.local.get("agentCrossSessionMemory", (res) => {
-      if (!isRunning || planRunId !== runId) return;
-      const memoryContext = formatMemoryContext(res.agentCrossSessionMemory);
-
-      const planSystemPrompt = `<instructions>
-You are the planning module of a browser automation agent. Break the user's task into 2-6 ordered subtasks. Each subtask needs a "postcondition": an observable page condition proving it is done (e.g. "search results for X are visible", "the confirmation message appears").
-Rules:
-- Keep subtasks concrete and executable with browser actions (navigate, click, type, scroll, read).
-- Do not invent requirements the user did not state.
-- A simple task may be a single subtask.
-Call the submit_plan tool with the subtasks. If tool calling is unavailable, output ONLY a raw JSON object: {"subtasks": [{"task": "...", "postcondition": "..."}]}.
-</instructions>`;
-
-      const planUserMessage = `Task: ${currentTask}${memoryContext ? `\n${memoryContext}` : ""}`;
-
-      callLLM(
-        planSystemPrompt,
-        planUserMessage,
-        (planObj) => {
-          if (!isRunning || planRunId !== runId) return;
-          const parsed = SELECT_TO_AI_TOOLS.parsePlanResponse(planObj);
-          subtasks =
-            parsed && parsed.length > 0
-              ? parsed
-              : [
-                  {
-                    task: currentTask,
-                    postcondition: "The user's request is fully satisfied.",
-                  },
-                ];
-          currentSubtaskIndex = 0;
-          updateChecklistUI();
-          addLogEntry(
-            "planner",
-            "Plan Created",
-            subtasks.map((s, i) => `${i + 1}. ${s.task}`).join("  |  "),
-          );
-          done();
-        },
-        null,
-        0,
-        { tier: "lite", tool: SELECT_TO_AI_TOOLS.TOOL_DEFS.submit_plan },
-      );
-    });
-  }
-
-  /** Advances the checklist to the next subtask (never past the end). */
-  function advanceSubtask(reasonNote) {
-    if (currentSubtaskIndex < subtasks.length) {
-      currentSubtaskIndex++;
-      consecutiveFailures = 0;
-      updateChecklistUI();
-      if (reasonNote) {
-        addLogEntry("planner", "Subtask Advanced", reasonNote);
-      }
-    }
-  }
-
-  // ==========================================
-  // REFLECT GATE (after repeated failures)
-  // ==========================================
-
-  /**
-   * Central failure bookkeeping for the executor loop. After 2 consecutive
-   * failures a dedicated reflection call replaces blind retry; after the
-   * abandon threshold the current subtask is skipped (or the run gives up
-   * when it was the last one).
-   */
-  function registerStepFailure(feedbackMessage, keepScreenshot = false) {
-    consecutiveFailures++;
-    const abandonAt = Math.max(
-      4,
-      (config.agentFailureThreshold || DEFAULTS.failureThreshold) + 1,
-    );
-
-    if (consecutiveFailures >= abandonAt) {
-      if (currentSubtaskIndex < subtasks.length - 1) {
-        const abandoned = subtasks[currentSubtaskIndex];
-        advanceSubtask(
-          `Abandoned subtask "${abandoned ? abandoned.task : ""}" after ${consecutiveFailures} consecutive failures.`,
-        );
-        scheduleStep(
-          800,
-          `The previous subtask was abandoned after repeated failures. Move on to the new current subtask. Last problem: ${feedbackMessage}`,
-          keepScreenshot,
-        );
-      } else {
-        stopAgent(
-          `Giving up after ${consecutiveFailures} consecutive failures. Last problem: ${feedbackMessage}`,
-          "error",
-        );
-      }
-      return;
-    }
-
-    if (consecutiveFailures === 2) {
-      runReflection(feedbackMessage, keepScreenshot);
-      return;
-    }
-
-    scheduleStep(1200, feedbackMessage, keepScreenshot);
-  }
-
-  /**
-   * Dedicated reflection call (lite tier): name the wrong assumption and
-   * pick a different strategy, then feed that back into the next step.
-   */
-  function runReflection(feedbackMessage, keepScreenshot = false) {
-    const reflectRunId = runId;
-    setStatus("planner", "Reflecting on repeated failures...");
-    addLogEntry(
-      "planner",
-      "Reflection",
-      "Two consecutive failures; analyzing which assumption was wrong...",
-    );
-
-    const historySummary = actionHistory
-      .slice(-6)
-      .map(
-        (h) =>
-          `${h.success ? "OK" : "FAIL"} ${JSON.stringify(h.action)} -> ${h.message}`,
-      )
-      .join("\n");
-
-    const reflectSystemPrompt = `<instructions>
-You are the reflection module of a browser agent that has failed the same subtask twice in a row.
-Identify the single wrong assumption behind the failures and propose ONE genuinely different strategy (different element, different interaction, scrolling, direct navigation, or ask_user/give_up when appropriate).
-Output ONLY a raw JSON object: {"assumption": "the wrong assumption", "strategy": "the new approach to take next"}.
-</instructions>`;
-
-    const reflectUserMessage = `Task: ${currentTask}
-Current subtask: ${(subtasks[currentSubtaskIndex] && subtasks[currentSubtaskIndex].task) || currentTask}
-Recent attempts:
-${historySummary || "(none recorded)"}
-Latest failure feedback: ${feedbackMessage}`;
-
-    callLLM(
-      reflectSystemPrompt,
-      reflectUserMessage,
-      (obj) => {
-        if (!isRunning || reflectRunId !== runId) return;
-        const assumption =
-          obj && typeof obj.assumption === "string" && obj.assumption.trim()
-            ? obj.assumption.trim()
-            : "unknown";
-        const strategy =
-          obj && typeof obj.strategy === "string" && obj.strategy.trim()
-            ? obj.strategy.trim()
-            : "try a different element or interaction";
-        addLogEntry(
-          "planner",
-          "Reflection Result",
-          `Wrong assumption: ${assumption}. New strategy: ${strategy}`,
-        );
-        scheduleStep(
-          400,
-          `Reflection after repeated failures: the assumption "${assumption}" was wrong. Follow this new strategy now: ${strategy}. Do NOT repeat the failed action. (Original failure: ${feedbackMessage})`,
-          keepScreenshot,
-        );
-      },
-      null,
-      0,
-      { tier: "lite" },
-    );
-  }
-
-  // ==========================================
-  // VALIDATOR (lite tier, on finish)
-  // ==========================================
-
-  /**
-   * Verification-before-finish: a cheap validator call receives the final
-   * page scan and the claimed answer, and must confirm the answer is
-   * supported by on-page evidence. Reject -> feed back -> continue (bounded
-   * by remaining steps and a per-run validator budget). Only validator-passed
-   * runs are saved to cross-session memory.
-   */
-  function runValidatorOnFinish(finishAction, scanResult) {
-    const validateRunId = runId;
-    const answer = String(finishAction.answer || "").trim();
-
-    if (validatorCalls >= 3) {
-      addLogEntry(
-        "validator",
-        "Validation Budget Exhausted",
-        "Accepting the answer without confirmation (this run will not be saved to memory).",
-      );
-      lastValidatorPassed = false;
-      stopAgent(answer, "success");
-      return;
-    }
-    validatorCalls++;
-
-    setStatus("validator", "Validating the answer against the page...");
-    addLogEntry(
-      "validator",
-      "Validating Answer",
-      "Checking the claimed answer against the final page state...",
-    );
-
-    const validatorSystemPrompt = `<instructions>
-You are the validator module of a browser agent. The agent claims it completed the user's task. Decide whether the claimed answer is actually supported by the final page state provided (URL, title, page text).
-- pass: the page evidence supports the answer (the answer may paraphrase, but the facts must appear in or clearly follow from the page content or the URL/title).
-- fail: the answer is unsupported, contradicted, fabricated, or the task is visibly incomplete.
-Call the submit_validation tool with your verdict. If tool calling is unavailable, output ONLY a raw JSON object: {"verdict": "pass" | "fail", "reason": "..."}.
-</instructions>`;
-
-    const pageText = (() => {
-      const text = scanResult.innerText || "";
-      return text.length > 2500 ? `${text.substring(0, 2500)}...` : text;
-    })();
-
-    const validatorUserMessage = `User task: ${currentTask}
-Plan: ${subtasks.map((s) => (typeof s === "string" ? s : s.task)).join("; ") || "(none)"}
-Claimed answer: ${answer}
-Claimed evidence: ${finishAction.evidence || "(none provided)"}
-
-Final page URL: ${scanResult.url}
-Final page title: ${scanResult.title}
-Final page text (truncated):
-${pageText || "[No page text available]"}`;
-
-    callLLM(
-      validatorSystemPrompt,
-      validatorUserMessage,
-      (obj) => {
-        if (!isRunning || validateRunId !== runId) return;
-        const verdict = SELECT_TO_AI_TOOLS.parseValidatorResponse(obj);
-
-        if (!verdict) {
-          addLogEntry(
-            "validator",
-            "Validation Inconclusive",
-            "The validator response was unparseable; accepting the answer (not saved to memory).",
-          );
-          lastValidatorPassed = false;
-          stopAgent(answer, "success");
-          return;
-        }
-
-        if (verdict.pass) {
-          lastValidatorPassed = true;
-          addLogEntry(
-            "validator",
-            "Validation Passed",
-            verdict.reason || "The answer is supported by the page evidence.",
-          );
-          stopAgent(answer, "success");
-          return;
-        }
-
-        addLogEntry(
-          "validator",
-          "Validation Failed",
-          verdict.reason || "The answer is not supported by the page.",
-        );
-        consecutiveFailures = 0;
-        scheduleStep(
-          600,
-          `Validator rejected your answer: ${verdict.reason || "it is not supported by the page evidence"}. Gather the missing evidence on the page (navigate/read further) before finishing again.`,
-        );
-      },
-      null,
-      0,
-      { tier: "lite", tool: SELECT_TO_AI_TOOLS.TOOL_DEFS.submit_validation },
-    );
-  }
-
-  // Helper to check if a URL is allowed by the domain allowlist (F10)
-  function isUrlAllowed(url) {
-    if (typeof SELECT_TO_AI_SECURITY !== "undefined") {
-      return SELECT_TO_AI_SECURITY.isUrlAllowedByDomains(
-        url,
-        config.agentDomainAllowlist,
-      );
-    }
-    return false;
-  }
-
-  // Helper to determine if an action is high risk (F11)
-  function isHighRiskAction(actionObj, scanResult) {
-    if (!config.agentRiskConfirmation) return false;
-
-    const actionType = actionObj.action;
-    const id = actionObj.id;
-    const el = scanResult.elements.find((e) => e.id === id);
-
-    const riskKeywords = [
-      "delete",
-      "remove",
-      "pay",
-      "purchase",
-      "buy",
-      "subscribe",
-      "cancel",
-      "terminate",
-      "checkout",
-      "order",
-      "charge",
-    ];
-
-    if (actionType === "click" && el) {
-      const textLower = (el.text || "").toLowerCase();
-      const labelLower = (el.label || "").toLowerCase();
-      const nameLower = (el.name || "").toLowerCase();
-
-      const hasKeyword = riskKeywords.some(
-        (kw) =>
-          textLower.includes(kw) ||
-          labelLower.includes(kw) ||
-          nameLower.includes(kw),
-      );
-      if (hasKeyword) return true;
-    }
-
-    if (actionType === "type" && el) {
-      const typeLower = (el.type || "").toLowerCase();
-      const nameLower = (el.name || "").toLowerCase();
-      const labelLower = (el.label || "").toLowerCase();
-
-      if (
-        typeLower.includes("password") ||
-        nameLower.includes("card") ||
-        nameLower.includes("cvv") ||
-        nameLower.includes("pay") ||
-        labelLower.includes("card") ||
-        labelLower.includes("cvv") ||
-        labelLower.includes("payment")
-      ) {
-        return true;
-      }
-    }
-
-    // Pressing Enter can submit a form, apply the same gates as a click on
-    // the target element, plus a page-context check.
-    if (actionType === "keypress") {
-      const key = String(actionObj.text || actionObj.key || "").toLowerCase();
-      if (key === "enter") {
-        if (el) {
-          const textLower = (el.text || "").toLowerCase();
-          const labelLower = (el.label || "").toLowerCase();
-          const nameLower = (el.name || "").toLowerCase();
-          const typeLower = (el.type || "").toLowerCase();
-          const hasKeyword = riskKeywords.some(
-            (kw) =>
-              textLower.includes(kw) ||
-              labelLower.includes(kw) ||
-              nameLower.includes(kw),
-          );
-          if (hasKeyword) return true;
-          if (
-            typeLower.includes("password") ||
-            nameLower.includes("card") ||
-            nameLower.includes("cvv") ||
-            labelLower.includes("card") ||
-            labelLower.includes("cvv")
-          ) {
-            return true;
-          }
-        }
-        const pageUrlLower = (scanResult.url || "").toLowerCase();
-        if (
-          pageUrlLower.includes("checkout") ||
-          pageUrlLower.includes("payment")
-        ) {
-          return true;
-        }
-      }
-    }
-
-    if (
-      (actionType === "navigate" || actionType === "open_tab") &&
-      actionObj.url
-    ) {
-      const urlLower = actionObj.url.toLowerCase();
-      if (
-        urlLower.includes("checkout") ||
-        urlLower.includes("payment") ||
-        urlLower.includes("pay")
-      ) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  // Helper to prompt user for risk confirmation (F11)
-  function requestRiskConfirmation(actionObj, explanation, onConfirm, onAbort) {
-    addLogEntry("system", "Risk Confirmation Required", explanation);
-
-    const confirmationRunId = runId;
-    const bubble = document.createElement("div");
-    bubble.className = "message-bubble assistant confirmation-bubble";
-    bubble.style.border = "1px solid var(--danger)";
-    bubble.style.background = "rgba(239, 68, 68, 0.05)";
-    // Action and explanation include LLM-generated text, always escape it.
-    bubble.innerHTML = `
-            <div class="bubble-avatar" style="background: var(--danger); color: white;">⚠</div>
-            <div class="bubble-content">
-                <p style="font-weight: 600; color: var(--danger); margin-bottom: 8px;">Security Confirmation Required</p>
-                <p>The agent is requesting to perform a potentially high-risk action:</p>
-                <blockquote style="background: rgba(255,255,255,0.05); border-left: 3px solid var(--danger); padding: 8px; margin: 8px 0; border-radius: 4px; font-family: monospace; font-size: 12px;">
-                    <strong>Action:</strong> ${escapeHtml(String(actionObj.action || "").toUpperCase())}<br/>
-                    <strong>Details:</strong> ${escapeHtml(explanation)}
-                </blockquote>
-                <p>Do you authorize this action?</p>
-                <div style="display: flex; gap: 10px; margin-top: 12px;">
-                    <button class="confirm-risk-btn primary-btn" style="background: var(--danger); border-color: var(--danger); color: white; padding: 6px 12px; border-radius: 6px; cursor: pointer;">Authorize Action</button>
-                    <button class="abort-risk-btn secondary-btn" style="padding: 6px 12px; border-radius: 6px; cursor: pointer; border: 1px solid var(--border-card); background: transparent; color: var(--text-main);">Abort Task</button>
-                </div>
-            </div>
-        `;
+  /** The run's bubble: its summary line and steps, the answer, and what follows. */
+  function openRunBubble() {
+    if (activeRun) { clearPending(); setCurrentStep(null); }
+    const bubble = el("div", "message-bubble assistant run");
+    const content = el("div", "bubble-content");
+    const details = el("details", "run-details");
+    details.open = true;
+    const summary = el("summary", "run-details-summary agent-run-status");
+    summary.dataset.state = "running";
+    const stateIcon = el("span", "run-state-icon");
+    const label = el("span", "run-state-label activeStatusText", "Working");
+    const meta = el("span", "run-meta");
+    const chev = icon("chevron");
+    chev.classList.add("chev");
+    summary.append(stateIcon, label, meta, chev);
+    const panel = el("div", "logs-panel");
+    const list = el("ol", "logs-wrapper timeline activeLogsWrapper");
+    const actions = el("div", "logs-actions");
+    const save = el("button", "export-logs-btn exportMdLogsBtn");
+    save.type = "button";
+    save.title = "Download this run's steps as Markdown";
+    save.append(icon("download"), el("span", "", "Save log"));
+    save.addEventListener("click", exportEngineLog);
+    actions.appendChild(save);
+    panel.append(list, actions);
+    details.append(summary, panel);
+    const stream = el("div", "stream-panel activeStreamPanel");
+    const draft = el("div", "answer-draft");
+    draft.hidden = true;
+    // The answer while it is checked: shown at once, marked, and replaced
+    // by the final answer (or marked as sent back) when the check is done.
+    const provisional = el("div", "provisional-answer");
+    provisional.hidden = true;
+    const answer = el("div", "final-answer-box activeFinalAnswer");
+    answer.style.display = "none";
+    content.append(details, stream, draft, provisional, answer);
+    bubble.appendChild(content);
     chatContainer.appendChild(bubble);
-    scrollToBottom();
 
-    const confirmBtn = bubble.querySelector(".confirm-risk-btn");
-    const abortBtn = bubble.querySelector(".abort-risk-btn");
-
-    confirmBtn.addEventListener("click", () => {
-      bubble.remove();
-      // A stale Authorize (run stopped or a new run started) must never
-      // execute the deferred action.
-      if (confirmationRunId !== runId) {
-        addLogEntry(
-          "system",
-          "Stale Confirmation Ignored",
-          "The task this confirmation belonged to is no longer active.",
-        );
-        return;
-      }
-      onConfirm();
-    });
-
-    abortBtn.addEventListener("click", () => {
-      bubble.remove();
-      if (confirmationRunId !== runId) return;
-      onAbort();
-    });
+    activeLogsWrapper = list;
+    activeBubbleAnswer = answer;
+    activeStreamPanel = stream;
+    activeRunDetails = details;
+    activeRun = { bubble, summary, stateIcon, label, meta, draft, provisional, steps: new Map(), step: null, count: 0, statusStep: 0, statusText: "", pending: null, ended: false };
+    setRunState("running", "Working");
+    scrollToBottom(true);
   }
 
-  // Helper to monitor tab loading/navigation (F6)
-  function waitForTabNavigation(tabId, delayMs, maxWaitMs, callback) {
-    chrome.tabs.get(tabId, (tab) => {
-      if (chrome.runtime.lastError || !tab) {
-        callback();
-        return;
-      }
+  /** The summary line: an icon for how the run stands, a word, and the count. */
+  function setRunState(state, words) {
+    if (!activeRun) return;
+    activeRun.summary.dataset.state = state;
+    activeRun.bubble.dataset.state = state;
+    activeRun.label.textContent = words;
+    const ic = activeRun.stateIcon;
+    ic.textContent = "";
+    if (state === "running") ic.appendChild(dotEl("live"));
+    else if (state === "waiting") ic.appendChild(dotEl("warn"));
+    else ic.appendChild(icon({ success: "check", unconfirmed: "alert", error: "x", limit: "pause", asked: "message" }[state] || "stop"));
+    updateRunSummary();
+  }
 
-      if (tab.status === "loading") {
-        waitForComplete();
-      } else {
-        let startedLoading = false;
+  function updateRunSummary() {
+    if (!activeRun) return;
+    const n = activeRun.count;
+    const parts = [];
+    if (n) parts.push(`${n} step${n === 1 ? "" : "s"}`);
+    if (!drawingSub && subs.size) parts.push(`${subs.size} sub-task${subs.size === 1 ? "" : "s"}`);
+    if (activeRun.ended && activeRun.tookMs >= 1000) parts.push(durationWords(activeRun.tookMs));
+    activeRun.meta.textContent = parts.length ? `· ${parts.join(" · ")}` : "";
+  }
 
-        const loadListener = (updatedTabId, changeInfo) => {
-          if (updatedTabId === tabId && changeInfo.status === "loading") {
-            startedLoading = true;
-            chrome.tabs.onUpdated.removeListener(loadListener);
-            waitForComplete();
-          }
-        };
-        chrome.tabs.onUpdated.addListener(loadListener);
+  // ---------- the live header ----------
 
-        setTimeout(() => {
-          if (!startedLoading) {
-            chrome.tabs.onUpdated.removeListener(loadListener);
-            callback();
-          }
-        }, delayMs);
-      }
-    });
+  const WAIT_WORDS = { approval: "Waiting for your go-ahead", sign_in: "Waiting for you to sign in", human_check: "Waiting for you to pass a check", code: "Waiting for a code from you", payment: "Waiting for you to pay", site_access: "Waiting for access to this site", question: "Waiting for your answer", check_in: "Waiting for you: keep going?", pause: "Paused by the provider" };
+  let liveUrl = "";
+  let liveTimer = null;
+  let workedMs = 0;
 
-    function waitForComplete() {
-      let completed = false;
-      const completeListener = (updatedTabId, changeInfo) => {
-        if (updatedTabId === tabId && changeInfo.status === "complete") {
-          completed = true;
-          chrome.tabs.onUpdated.removeListener(completeListener);
-          clearTimeout(timeoutId);
-          setTimeout(callback, 500);
-        }
-      };
-      chrome.tabs.onUpdated.addListener(completeListener);
+  function updateLive() {
+    // A sub-task being drawn does not speak for the run.
+    if (drawingSub) return;
+    const live = engineStatus === "running" || engineStatus === "waiting";
+    liveHeader.hidden = !live;
+    topbarTitle.hidden = live;
+    liveStopBtn.hidden = !live;
+    if (!live) { clearInterval(liveTimer); liveTimer = null; return; }
+    const counts = subCounts();
+    const waiting = engineStatus === "waiting" || (engineStatus === "running" && counts.waiting > 0 && !counts.running);
+    liveHeader.dataset.state = waiting || counts.waiting ? "needs" : "working";
+    let words;
+    if (engineStatus === "waiting") words = WAIT_WORDS[engineWait && engineWait.kind] || "Waiting for you";
+    else if (counts.running || counts.waiting) {
+      // While sub-tasks work, the header counts them.
+      const parts = [];
+      if (counts.running) parts.push(`${counts.running} sub-task${counts.running === 1 ? "" : "s"} running`);
+      if (counts.waiting) parts.push(`${counts.waiting} need${counts.waiting === 1 ? "s" : ""} you`);
+      words = parts.join(", ");
+    }
+    else if (activeRun && !activeRun.draft.hidden) words = "Writing the answer";
+    else if (activeRun && activeRun.pending) words = activeRun.pendingText.textContent;
+    else if (activeRun && activeRun.step) words = activeRun.step.goalWords.textContent;
+    else words = "Starting";
+    liveGoal.textContent = words;
+    tickLive();
+    if (!liveTimer) liveTimer = setInterval(tickLive, 1000);
+  }
 
-      const timeoutId = setTimeout(() => {
-        if (!completed) {
-          chrome.tabs.onUpdated.removeListener(completeListener);
-          callback();
-        }
-      }, maxWaitMs);
+  function tickLive() {
+    const base = (engineTrace && engineTrace.activeMs) || 0;
+    const now = base + (engineStatus === "running" && traceAt ? Date.now() - traceAt : 0);
+    workedMs = Math.max(workedMs, now);
+    liveTime.textContent = clockOf(workedMs);
+  }
+
+  /** The site the run is on: the tab's address, or the last page a step was on. */
+  function updateLiveSite() {
+    const history = (engineTrace && engineTrace.history) || [];
+    const lastUrl = [...history].reverse().map((h) => h.url).find((u) => hostOf(u)) || "";
+    const show = (url) => {
+      const host = hostOf(url);
+      liveSite.hidden = !host;
+      if (!host || url === liveUrl) return;
+      liveUrl = url;
+      liveHost.textContent = host;
+      liveSite.title = url;
+      liveFavicon.src = faviconFor(url);
+    };
+    const tabId = engineTrace && engineTrace.tabId;
+    if (tabId !== null && tabId !== undefined && chrome.tabs && chrome.tabs.get) {
+      chrome.tabs.get(tabId, (tab) => {
+        void chrome.runtime.lastError;
+        show((tab && (tab.url || tab.pendingUrl)) || lastUrl);
+      });
+    } else show(lastUrl);
+  }
+
+  /** Each step shows the site it was on, once the trace says which. */
+  function syncStepHosts() {
+    if (drawingSub || !activeRun || !engineTrace || !engineTrace.history) return;
+    syncSubHosts();
+    for (const h of engineTrace.history) {
+      if (h.sub) continue;
+      const s = activeRun.steps.get(h.step);
+      const host = hostOf(h.url);
+      if (!s || !host || s.hostName === host) continue;
+      s.hostName = host;
+      s.host.textContent = "";
+      const img = el("img");
+      img.alt = "";
+      img.src = faviconFor(h.url);
+      s.host.append(img, el("span", "", host));
+      s.host.title = h.url;
+      s.host.hidden = false;
     }
   }
 
-  function getTabsContext(callback) {
-    chrome.tabs.query({ currentWindow: true }, (tabs) => {
-      const extensionOrigin = chrome.runtime.getURL("");
-      const usableTabs = (tabs || [])
-        .filter(
-          (tab) => tab.id && tab.url && !tab.url.startsWith(extensionOrigin),
-        )
-        .map((tab) => ({
-          id: tab.id,
-          active: !!tab.active,
-          current: tab.id === currentAgentTabId,
-          title: tab.title || "(Untitled)",
-          url: tab.url || "",
+  // ---------- the answer as it is written ----------
+
+  /** A string field of a JSON object that is still being written. */
+  function partialField(text, key) {
+    const m = new RegExp(`"${key}"\\s*:\\s*"`).exec(text);
+    if (!m) return null;
+    let out = "";
+    for (let i = m.index + m[0].length; i < text.length; i++) {
+      const c = text[i];
+      if (c === '"') return out;
+      if (c === "\\") {
+        const n = text[i + 1];
+        if (n === undefined) break;
+        if (n === "n") out += "\n";
+        else if (n === "t") out += "\t";
+        else if (n === "u") {
+          const hex = text.slice(i + 2, i + 6);
+          if (hex.length < 4) break;
+          out += String.fromCharCode(parseInt(hex, 16));
+          i += 4;
+        } else out += n;
+        i++;
+        continue;
+      }
+      out += c;
+    }
+    return out;
+  }
+
+  /** A table still being written is held back until its header and rule are both in. */
+  function tidyDraft(text) {
+    const lines = String(text).split("\n");
+    let start = lines.length;
+    while (start > 0 && /^\s*\|/.test(lines[start - 1])) start--;
+    const rows = lines.slice(start);
+    if (!rows.length) return text;
+    // A row is shown once it is closed; the table once its rule is complete.
+    if (!/\|\s*$/.test(rows[rows.length - 1])) rows.pop();
+    const ruled = rows.length >= 2 && /^\s*\|?(\s*:?-{3,}:?\s*\|)+\s*$/.test(rows[1]);
+    return [...lines.slice(0, start), ...(ruled ? rows : [])].join("\n");
+  }
+
+  function clearDraft() {
+    if (!activeRun || !activeRun.draft) return;
+    activeRun.draft.hidden = true;
+    activeRun.draft.textContent = "";
+  }
+
+  function onStream(text) {
+    if (!activeRun) return;
+    const raw = String(text || "");
+    if (!raw) { if (activeRun.pendingThought) activeRun.pendingThought.textContent = ""; return; }
+    const answer = /"do"\s*:\s*"done"/.test(raw) || /"answer"\s*:/.test(raw) ? partialField(raw, "answer") : null;
+    if (answer && answer.trim()) {
+      clearPending();
+      const draft = activeRun.draft;
+      draft.innerHTML = renderAnswerHtml(tidyDraft(answer));
+      const blocks = draft.querySelectorAll("p, li, h2, h3, h4, h5, td");
+      (blocks.length ? blocks[blocks.length - 1] : draft).appendChild(el("span", "caret"));
+      draft.hidden = false;
+      updateLive();
+      scrollToBottom();
+      return;
+    }
+    const goal = partialField(raw, "goal");
+    if (goal && goal.trim() && engineStatus === "running") {
+      showPending(goal.trim());
+      return;
+    }
+    // Plain words from a model that thinks out loud: one quiet line.
+    if (activeRun.pendingThought && !/^\s*[{[]/.test(raw)) {
+      const line = raw.replace(/\s+/g, " ").trim();
+      activeRun.pendingThought.textContent = line.length > 160 ? `…${line.slice(-159)}` : line;
+    }
+  }
+
+  /** The composer and buttons, for where the run is. */
+  function engineControls() {
+    const working = engineBusy();
+    isRunning = working;
+    actionBtn.classList.toggle("stop-btn", working);
+    actionBtn.title = working ? "Stop" : "Run";
+    actionBtn.setAttribute("aria-label", working ? "Stop" : "Run");
+    actionBtn.textContent = "";
+    if (working) {
+      const sq = icon("stop");
+      sq.setAttribute("width", "14");
+      sq.setAttribute("height", "14");
+      actionBtn.appendChild(sq);
+    } else {
+      const up = icon("up");
+      up.setAttribute("width", "16");
+      up.setAttribute("height", "16");
+      up.setAttribute("stroke-width", "2.5");
+      actionBtn.appendChild(up);
+    }
+    // While the run works, the composer takes guidance for its next step.
+    // A sub-task waiting on a question takes the next message as its answer.
+    const subAsks = engineStatus === "running" && engineWait && engineWait.sub && !["approval", "pause"].includes(engineWait.kind);
+    const steering = engineStatus === "running" && !subAsks;
+    const asking = (engineStatus === "waiting" || subAsks) && engineWait && engineWait.kind !== "approval";
+    taskInput.disabled = working && !steering && !subAsks;
+    composer.dataset.mode = steering ? "steer" : "";
+    const kind = (engineStatus === "waiting" || subAsks) && engineWait ? engineWait.kind : "";
+    taskInput.placeholder = steering
+      ? "Add guidance for its next step"
+      : kind === "approval" ? "Decide on the step above, or stop the task"
+        : kind === "pause" ? "It carries on by itself when the wait is over"
+          : kind === "check_in" ? "Add something and keep going"
+            : kind === "question" ? "Type your answer"
+              : asking ? "Reply here, or do it on the page" : aboutSelection ? "Ask about the selected text" : "Ask anything, or tell it what to do";
+    composerHint.textContent = "";
+    composerHint.append(el("kbd", "", "Enter"), document.createTextNode(steering ? " to add" : " to send"));
+    composerHint.hidden = taskInput.disabled;
+    if (activeRun && activeRun.step) activeRun.step.li.classList.toggle("is-current", engineStatus === "running" && !activeRun.pending);
+    if (engineStatus !== "running") clearPending();
+    if (engineStatus === "waiting" && activeRun && !activeRun.ended) setRunState("waiting", "Waiting for you");
+    else if (engineStatus === "running" && activeRun && !activeRun.ended) setRunState("running", "Working");
+    updateLive();
+  }
+
+  // ---------- moments that need the user ----------
+
+  const CARD_LOOK = {
+    approval: ["shield", "needs"], share: ["idcard", "accent"], sign_in: ["lock", "needs"], human_check: ["human", "needs"],
+    code: ["key", "needs"], payment: ["card", "needs"], site_access: ["globe", "needs"], question: ["help", "accent"],
+    check_in: ["flag", "accent"], pause: ["pause", "needs"],
+  };
+
+  function cardHead(content, iconName, titleEl) {
+    const head = document.createElement("div");
+    head.className = "card-head";
+    const ic = document.createElement("span");
+    ic.className = "card-icon";
+    ic.appendChild(icon(iconName));
+    head.append(ic, titleEl);
+    content.appendChild(head);
+  }
+
+  function cardButton(actions, label, cls, onClick) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = cls;
+    b.textContent = label;
+    b.addEventListener("click", onClick);
+    actions.appendChild(b);
+    return b;
+  }
+
+  /** A card for something the run is waiting on the user for. */
+  function drawWait(wait) {
+    const card = document.createElement("div");
+    const approval = wait.kind === "approval";
+    card.className = `message-bubble assistant confirmation-bubble ${approval && wait.risk !== "share" ? "risk" : approval ? "share" : "needs-you"}`;
+    if (approval) card.dataset.riskKind = wait.risk || "unknown";
+    card.dataset.waitKind = wait.kind;
+    const look = CARD_LOOK[approval && wait.risk === "share" ? "share" : wait.kind] || ["help", "needs"];
+    card.dataset.tone = look[1];
+    card.setAttribute("role", "region");
+    const titles = { approval: "Allow this step?", sign_in: "Sign in to carry on", human_check: "The site wants a human check", code: "The site needs a code from you", payment: "Payment is yours to make", site_access: "Let the agent use this site?", question: "A question for you", check_in: "Keep going?", pause: "The provider asked it to wait" };
+    const content = document.createElement("div");
+    content.className = "bubble-content";
+    const title = document.createElement("p");
+    title.className = "confirm-title";
+    title.textContent = titles[wait.kind] || "Needs you";
+    // A sub-task asks in its own name, so it is clear which part of the errand this is.
+    if (wait.sub) {
+      const from = el("p", "card-from");
+      from.append(icon("split"), el("span", "", `Sub-task: ${wait.subTask || ""}`));
+      content.appendChild(from);
+      card.dataset.sub = wait.sub;
+    }
+    cardHead(content, look[0], title);
+    card.setAttribute("aria-label", wait.sub ? `${title.textContent} (sub-task: ${wait.subTask || ""})` : title.textContent);
+    const text = document.createElement("p");
+    text.className = "confirm-text";
+    text.textContent = wait.question || "";
+    content.appendChild(text);
+    if ((wait.detail || []).length) {
+      const detail = document.createElement("div");
+      detail.className = "confirm-detail";
+      for (const line of wait.detail) { const row = document.createElement("div"); row.textContent = line; detail.appendChild(row); }
+      content.appendChild(detail);
+    }
+    const actions = document.createElement("div");
+    actions.className = "confirm-actions";
+    const button = (label, cls, onClick) => cardButton(actions, label, cls, onClick);
+    if (approval && wait.risk === "share") {
+      title.textContent = "Use your details here?";
+      button("Fill them in", "confirm-risk-btn primary-btn btn btn-primary", () => enginePost({ type: "approve", id: wait.id }));
+      button("Always on this site", "confirm-always-btn secondary-btn btn", () => enginePost({ type: "approve", id: wait.id, always: true }));
+      button("Don't", "abort-risk-btn secondary-btn btn btn-ghost", () => enginePost({ type: "decline", id: wait.id }));
+    } else if (approval) {
+      button("Allow this step", "confirm-risk-btn primary-btn btn btn-primary", () => enginePost({ type: "approve", id: wait.id }));
+      button("Don't do this", "abort-risk-btn secondary-btn btn", () => enginePost({ type: "decline", id: wait.id }));
+      // A sub-task works in a tab behind the user's: they can look before they decide.
+      if (wait.sub && wait.tabId !== null && wait.tabId !== undefined) {
+        button("Show the tab", "wait-goto-btn secondary-btn btn btn-ghost", () => chrome.tabs.update(wait.tabId, { active: true }, (tab) => {
+          void chrome.runtime.lastError;
+          if (tab) chrome.windows.update(tab.windowId, { focused: true }, () => void chrome.runtime.lastError);
         }));
-      callback(usableTabs);
-    });
-  }
-
-  function formatTabsContext(tabs) {
-    if (!tabs || tabs.length === 0) return "[No browser tabs available]";
-    return tabs
-      .map((tab) => {
-        const markers = [
-          tab.current ? "agent-current" : "",
-          tab.active ? "window-active" : "",
-        ]
-          .filter(Boolean)
-          .join(", ");
-        return `Tab ${tab.id}${markers ? ` (${markers})` : ""}: "${tab.title}" | ${tab.url}`;
-      })
-      .join("\n");
-  }
-
-  function getBrowserContext(callback) {
-    const finish = (tabId, tab) => {
-      currentAgentTabId = tabId;
-      targetTabId = tabId;
-      getTabsContext((tabs) => {
-        callback({
-          currentTab: {
-            id: tabId,
-            title: tab?.title || "(Untitled)",
-            url: tab?.url || "",
-            status: tab?.status || "",
-            active: !!tab?.active,
-          },
-          tabs,
-        });
-      });
-    };
-
-    const queryFallback = () => {
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        const extensionOrigin = chrome.runtime.getURL("");
-        const activeTab = tabs && tabs[0];
-
-        if (
-          activeTab &&
-          activeTab.id &&
-          activeTab.url &&
-          !activeTab.url.startsWith(extensionOrigin)
-        ) {
-          finish(activeTab.id, activeTab);
-          return;
-        }
-
-        chrome.tabs.query({ currentWindow: true }, (allTabs) => {
-          const usableTabs = (allTabs || []).filter(
-            (tab) => tab.id && tab.url && !tab.url.startsWith(extensionOrigin),
-          );
-          if (usableTabs.length === 0) {
-            callback(
-              null,
-              "I can't see a regular webpage tab in this window right now.",
-            );
-            return;
-          }
-          finish(usableTabs[0].id, usableTabs[0]);
-        });
-      });
-    };
-
-    if (targetTabId !== null) {
-      chrome.tabs.get(targetTabId, (tab) => {
-        if (!chrome.runtime.lastError && tab && tab.id) {
-          finish(tab.id, tab);
-          return;
-        }
-        targetTabId = null;
-        currentAgentTabId = null;
-        queryFallback();
-      });
-      return;
-    }
-
-    const urlParams = new URLSearchParams(window.location.search);
-    const urlTabId = parseInt(urlParams.get("tabId"), 10);
-    if (!Number.isNaN(urlTabId)) {
-      chrome.tabs.get(urlTabId, (tab) => {
-        if (!chrome.runtime.lastError && tab && tab.id) {
-          finish(tab.id, tab);
-          return;
-        }
-        queryFallback();
-      });
-      return;
-    }
-
-    queryFallback();
-  }
-
-  function activateAgentTab(tabId, callback) {
-    chrome.tabs.get(tabId, (tab) => {
-      if (chrome.runtime.lastError || !tab) {
-        callback(
-          false,
-          chrome.runtime.lastError?.message || `Tab ${tabId} not found.`,
-        );
-        return;
       }
-      chrome.tabs.update(tabId, { active: true }, () => {
-        if (chrome.runtime.lastError) {
-          callback(false, chrome.runtime.lastError.message);
-          return;
-        }
-        const finish = () => {
-          targetTabId = tabId;
-          currentAgentTabId = tabId;
-          callback(true, `Switched agent context to tab ${tabId}.`);
-        };
-        if (tab.windowId) {
-          chrome.windows.update(tab.windowId, { focused: true }, finish);
-        } else {
-          finish();
-        }
+    } else if (wait.kind === "site_access") {
+      const url = (wait.detail || [])[0] || "";
+      let host = "";
+      try { host = new URL(url).host; } catch (_e) { /* no address */ }
+      const grant = (origins) => chrome.permissions.request({ origins }, (granted) => {
+        void chrome.runtime.lastError;
+        if (granted) enginePost({ type: "done", id: wait.id });
+        else text.textContent = "Access was not granted.";
       });
-    });
+      if (host) button(`Only ${host}`, "primary-btn btn btn-primary", () => grant([`${new URL(url).protocol}//${host}/*`]));
+      button("Allow on all sites", host ? "secondary-btn btn" : "primary-btn btn btn-primary", () => grant(["https://*/*", "http://*/*"]));
+      button("Skip", "wait-skip-btn secondary-btn btn btn-ghost", () => enginePost({ type: "skip", id: wait.id }));
+    } else if (wait.kind === "check_in") {
+      // How long it has worked, what it has so far, and the two ways on.
+      const notes = document.createElement("div");
+      notes.className = "confirm-detail checkin-notes";
+      notes.textContent = wait.notes ? `What I have found so far:\n${wait.notes}` : "I have not written anything down yet.";
+      content.appendChild(notes);
+      const minutes = Math.round((wait.period || 0) / 60000);
+      button(minutes > 0 && wait.reason !== "calls" ? `Keep going (${minutes} more minute${minutes === 1 ? "" : "s"})` : "Keep going", "checkin-keep-btn primary-btn btn btn-primary", () => enginePost({ type: "keep_going", id: wait.id }));
+      button("Stop and answer with what you have", "checkin-stop-btn secondary-btn btn", () => enginePost({ type: "wrap_up", id: wait.id }));
+    } else if (wait.kind === "pause") {
+      // A countdown to when the run carries on by itself.
+      const left = document.createElement("p");
+      left.className = "confirm-text hint pause-countdown";
+      const tick = (first) => {
+        const ms = Math.max(0, (wait.until || 0) - Date.now());
+        const m = Math.floor(ms / 60000);
+        const sec = Math.floor((ms % 60000) / 1000);
+        left.textContent = ms > 0 ? `Carrying on by itself in ${m}:${String(sec).padStart(2, "0")}` : "Carrying on";
+        // The card is taken away when the wait ends.
+        if (!first && (ms <= 0 || !card.isConnected)) clearInterval(timer);
+      };
+      const timer = setInterval(tick, 1000);
+      tick(true);
+      content.appendChild(left);
+      button("Stop instead", "pause-stop-btn secondary-btn btn", () => enginePost({ type: "stop" }));
+    } else if (wait.kind === "question") {
+      const hint = document.createElement("p");
+      hint.className = "confirm-text hint";
+      hint.textContent = "Reply below and I'll carry on from here.";
+      content.appendChild(hint);
+      const keep = document.createElement("label");
+      keep.className = "keep-answer";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.className = "keep-answer-box";
+      keep.append(box, document.createTextNode("Remember my answer for next time"));
+      content.appendChild(keep);
+    } else {
+      const hint = document.createElement("p");
+      hint.className = "confirm-text hint";
+      hint.textContent = "I don't read the page while you do this, and I'll carry on by myself once it's done.";
+      content.appendChild(hint);
+      if (wait.tabId !== null && wait.tabId !== undefined) {
+        button("Go to the tab", "wait-goto-btn primary-btn btn btn-primary", () => chrome.tabs.update(wait.tabId, { active: true }, (tab) => {
+          void chrome.runtime.lastError;
+          if (tab) chrome.windows.update(tab.windowId, { focused: true }, () => void chrome.runtime.lastError);
+        }));
+      }
+      button("I'm done", `wait-done-btn secondary-btn btn${wait.tabId === null || wait.tabId === undefined ? " btn-primary" : ""}`, () => enginePost({ type: "done", id: wait.id }));
+      button("Skip this", "wait-skip-btn secondary-btn btn btn-ghost", () => enginePost({ type: "skip", id: wait.id }));
+    }
+    if (actions.children.length) content.appendChild(actions);
+    card.appendChild(content);
+    chatContainer.appendChild(card);
+    engineCards.set(wait.id, card);
+    scrollToBottom(true);
   }
 
-  function isBrowserAction(actionObj) {
-    return [
-      "list_tabs",
-      "switch_tab",
-      "open_tab",
-      "close_tab",
-      "reload_tab",
-    ].includes(actionObj.action);
+  /** An answered card leaves quickly; it stops counting as a card at once. */
+  function removeCard(card) {
+    if (!card) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce || !card.isConnected) { card.remove(); return; }
+    card.className = "card-leaving";
+    card.removeAttribute("data-wait-kind");
+    card.removeAttribute("data-risk-kind");
+    setTimeout(() => card.remove(), 130);
   }
 
-  function executeBrowserAction(
-    actionObj,
-    activeSubtask,
-    screenshotDataUrl,
-    callback,
-  ) {
-    const recordEntry = {
-      timestamp: Date.now(),
-      step: currentStep,
-      subtask: activeSubtask,
-      action: actionObj,
-      screenshot: screenshotDataUrl
-        ? screenshotDataUrl.substring(0, 100) + "..."
-        : null,
-      success: false,
-      outcome: "",
-    };
-    sessionRecording.push(recordEntry);
-
-    const finish = (success, message) => {
-      recordEntry.success = success;
-      recordEntry.outcome = message;
-      actionHistory.push({
-        step: currentStep,
-        subtask: activeSubtask,
-        action: actionObj,
-        success,
-        message,
-      });
-      callback(success, message);
-    };
-
-    if (actionObj.action === "list_tabs") {
-      getTabsContext((tabs) =>
-        finish(true, `Available tabs:\n${formatTabsContext(tabs)}`),
-      );
-      return;
+  /**
+   * The pages the answer drew on, as chips under it: the engine names them
+   * (pages holding its evidence, and pages the run read that the answer
+   * refers to). An answer that drew on no page has no chips.
+   */
+  function drawSources(host, sources) {
+    const pages = (sources || []).filter((x) => x && hostOf(x.url));
+    if (!pages.length) return;
+    const row = el("div", "answer-meta answer-sources");
+    row.appendChild(el("span", "meta-label", "Pages used"));
+    for (const p of pages.slice(0, 6)) {
+      const a = el("a", "pill");
+      a.href = p.url;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.title = p.title ? `${p.title}\n${p.url}` : p.url;
+      const img = el("img");
+      img.alt = "";
+      img.src = faviconFor(p.url);
+      a.append(img, el("span", "", hostOf(p.url)));
+      row.appendChild(a);
     }
-
-    if (actionObj.action === "switch_tab") {
-      const tabId = parseInt(actionObj.tabId, 10);
-      if (Number.isNaN(tabId)) {
-        finish(false, "Missing or invalid tabId for switch_tab.");
-        return;
-      }
-      activateAgentTab(tabId, (success, message) => finish(success, message));
-      return;
-    }
-
-    if (actionObj.action === "open_tab") {
-      if (!actionObj.url) {
-        finish(false, "Missing url for open_tab.");
-        return;
-      }
-      const url = normalizeActionUrl(actionObj.url);
-      chrome.tabs.create({ url, active: true }, (tab) => {
-        if (chrome.runtime.lastError || !tab) {
-          finish(
-            false,
-            chrome.runtime.lastError?.message || "Failed to create tab.",
-          );
-          return;
-        }
-        targetTabId = tab.id;
-        currentAgentTabId = tab.id;
-        waitForTabNavigation(tab.id, 300, 8000, () => {
-          finish(true, `Opened new tab ${tab.id}: ${url}`);
-        });
-      });
-      return;
-    }
-
-    if (actionObj.action === "close_tab") {
-      const tabId = parseInt(actionObj.tabId || currentAgentTabId, 10);
-      if (Number.isNaN(tabId)) {
-        finish(false, "Missing or invalid tabId for close_tab.");
-        return;
-      }
-      chrome.tabs.remove(tabId, () => {
-        if (chrome.runtime.lastError) {
-          finish(false, chrome.runtime.lastError.message);
-          return;
-        }
-        if (tabId === currentAgentTabId) {
-          targetTabId = null;
-          currentAgentTabId = null;
-        }
-        finish(true, `Closed tab ${tabId}.`);
-      });
-      return;
-    }
-
-    if (actionObj.action === "reload_tab") {
-      const tabId = parseInt(actionObj.tabId || currentAgentTabId, 10);
-      if (Number.isNaN(tabId)) {
-        finish(false, "Missing or invalid tabId for reload_tab.");
-        return;
-      }
-      chrome.tabs.reload(tabId, {}, () => {
-        if (chrome.runtime.lastError) {
-          finish(false, chrome.runtime.lastError.message);
-          return;
-        }
-        waitForTabNavigation(tabId, 300, 8000, () =>
-          finish(true, `Reloaded tab ${tabId}.`),
-        );
-      });
-      return;
-    }
-
-    finish(false, `Unknown browser action: ${actionObj.action}`);
+    host.appendChild(row);
   }
 
-  // Export Session Recording (F14)
-  function exportSessionRecording() {
-    const recordingData = {
-      task: currentTask,
-      startTime: sessionRecording[0]?.timestamp || Date.now(),
-      endTime: Date.now(),
-      steps: sessionRecording,
-    };
-    const blob = new Blob([JSON.stringify(recordingData, null, 2)], {
-      type: "application/json;charset=utf-8;",
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.setAttribute("download", `session_recording_${Date.now()}.json`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  // ---------- the answer while it is checked ----------
+
+  /** The mark beside an answer shown while it is checked: a word and an icon or dot. */
+  function setProvisionalMark(box, state, words) {
+    box.dataset.state = state;
+    let mark = box.querySelector(".provisional-mark");
+    if (!mark) { mark = el("div", "provisional-mark"); mark.setAttribute("role", "status"); box.prepend(mark); }
+    mark.textContent = "";
+    mark.append(state === "checking" ? dotEl("live") : icon("alert"), el("span", "provisional-words", words));
   }
 
-  // Duplicate action loop detection helper (F9)
-  function isDuplicateFailedAction(actionObj) {
-    if (actionHistory.length === 0) return false;
-    const last = actionHistory[actionHistory.length - 1];
-    if (!last.success) {
-      const a1 = last.action;
-      const a2 = actionObj;
-      if (
-        a1.action === a2.action &&
-        a1.id === a2.id &&
-        a1.text === a2.text &&
-        a1.scrollDirection === a2.scrollDirection &&
-        a1.url === a2.url
-      ) {
-        return true;
-      }
+  /** The model answered: the answer is shown now, marked as being checked. */
+  function drawProvisional(entry) {
+    if (!activeRun || !activeRun.provisional) return;
+    clearPending();
+    clearDraft();
+    const box = activeRun.provisional;
+    box.textContent = "";
+    const body = el("div", "provisional-body");
+    body.innerHTML = renderAnswerHtml(entry.text);
+    box.appendChild(body);
+    setProvisionalMark(box, "checking", "Checking…");
+    box.hidden = false;
+    activeRun.provisionalText = entry.text;
+    scrollToBottom();
+  }
+
+  /** The check sent the answer back: it stays in view, marked as replaced, while the run works on. */
+  function provisionalSentBack(entry) {
+    if (!activeRun || !activeRun.provisional || activeRun.provisional.hidden) return;
+    const why = String(entry.why || "").replace(/\s+/g, " ").trim().replace(/[.\s]+$/, "");
+    const short = why.length > 200 ? `${why.slice(0, 199)}…` : why;
+    setProvisionalMark(activeRun.provisional, "replaced", `Checking found a problem${short ? `: ${short}` : ""}; still working`);
+    activeRun.provisionalText = "";
+  }
+
+  /**
+   * The run ended. The answer shown while checked gives way to the final
+   * one; one the run ended without confirming stays, marked as such.
+   */
+  function settleProvisional(entry) {
+    const box = activeRun && activeRun.provisional;
+    if (!box || box.hidden) return false;
+    const answered = entry.state === "success" || entry.state === "unconfirmed";
+    if (answered) {
+      const same = box.dataset.state === "checking" && activeRun.provisionalText === entry.text;
+      box.hidden = true;
+      box.textContent = "";
+      return same;
     }
+    if (entry.provisionalUnchecked) setProvisionalMark(box, "unchecked", "Not checked: the run stopped before the check finished");
     return false;
   }
 
-  // Stop Loop
-  function stopAgent(reason, statusState = "idle") {
-    // Never re-enter: a stop in progress must not trigger another stop
-    // (e.g. via a callback that notices the run ended).
-    if (isStopping) return;
-    isStopping = true;
-
-    // Remember which tabs may carry overlays before clearing targeting state.
-    const cleanupTabIds = new Set();
-    if (targetTabId !== null) cleanupTabIds.add(targetTabId);
-    if (currentAgentTabId !== null) cleanupTabIds.add(currentAgentTabId);
-
-    // Invalidate every pending continuation of this run.
-    runId++;
-    isRunning = false;
-    targetTabId = null;
-    if (activeAbortController) {
-      activeAbortController.abort();
-      activeAbortController = null;
-    }
-
-    if (activeWave) {
-      activeWave.style.display = "none";
-    }
-    if (activeAvatar) {
-      activeAvatar.classList.remove("thinking");
-    }
-
-    // Reset action button style to Send
-    actionBtn.classList.remove("stop-btn");
-    actionBtn.title = "Run Agent";
-    actionBtn.innerHTML = `
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                <line x1="22" y1="2" x2="11" y2="13" />
-                <polygon points="22 2 15 22 11 13 2 9 22 2" />
-            </svg>
-        `;
-
-    // Enable prompt input textarea
-    taskInput.disabled = false;
-    taskInput.focus();
-
-    // The steer input only exists while a run is active.
-    setSteerRowVisible(false);
-
-    // Cross-session memory save (F13): only validator-confirmed successes
-    // are written, unvalidated finishes never seed future plans.
-    if (statusState === "success" && lastValidatorPassed) {
-      const memoryItem = {
-        task: currentTask,
-        subtasks: subtasks.map((s) => (typeof s === "string" ? s : s.task)),
-        timestamp: Date.now(),
-      };
-      chrome.storage.local.get("agentCrossSessionMemory", (res) => {
-        let memory = res.agentCrossSessionMemory || [];
-        memory.unshift(memoryItem);
-        if (memory.length > 20) {
-          memory = memory.slice(0, 20);
-        }
-        chrome.storage.local.set({ agentCrossSessionMemory: memory }, () => {
-          renderRecentSessions();
-        });
-      });
-    }
-
-    // Trigger notifications (F16)
-    if (statusState === "success") {
-      chrome.runtime.sendMessage({
-        action: "showNotification",
-        title: "Select to AI Browser Agent",
-        message: `✔ Task Completed Successfully:\n${reason}`,
-      });
-    } else if (statusState === "error") {
-      chrome.runtime.sendMessage({
-        action: "showNotification",
-        title: "Select to AI Browser Agent",
-        message: `❌ Task Aborted/Failed:\n${reason}`,
-      });
-    }
-
-    // Render outcomes in the active assistant bubble
-    if (activeBubbleAnswer) {
-      activeBubbleAnswer.style.display = "block";
-
-      // Collapse thinking details on success to clean up viewport
-      const details = activeBubbleAnswer.parentElement.querySelector("details");
-      if (details && statusState === "success") {
-        details.removeAttribute("open");
+  /** The end of a run, drawn in its bubble. */
+  function drawOutcome(entry) {
+    if (!activeBubbleAnswer || !activeRun) return;
+    clearPending();
+    clearDraft();
+    setCurrentStep(null);
+    activeRun.ended = true;
+    activeRun.tookMs = (engineTrace && engineTrace.activeMs) || 0;
+    // The same text as the answer shown while checked appears in place, without fading in again.
+    const inPlace = settleProvisional(entry);
+    activeBubbleAnswer.classList.toggle("in-place", inPlace);
+    activeBubbleAnswer.style.display = "block";
+    if (activeRunDetails && (entry.state === "success" || entry.state === "unconfirmed" || entry.state === "limit")) activeRunDetails.removeAttribute("open");
+    // A run that ended before its first step has no steps to show.
+    if (activeRunDetails && !activeRun.count && !activeLogsWrapper.querySelector(".tl-event:not(.tl-quiet)")) activeRunDetails.hidden = true;
+    const unconfirmed = entry.state === "unconfirmed";
+    if (entry.state === "error") {
+      activeBubbleAnswer.textContent = "";
+      const box = el("div", "answer-error");
+      box.append(icon("alert"), el("span", "", entry.text));
+      activeBubbleAnswer.appendChild(box);
+      setRunState("error", "Stopped with a problem");
+    } else {
+      activeBubbleAnswer.innerHTML = renderAnswerHtml(entry.text);
+      // What the second look thought, under the answer and apart from it.
+      // What it could not confirm is marked as such.
+      if (entry.note && activeBubbleAnswer.parentElement) {
+        const note = el("div", unconfirmed ? "answer-note unconfirmed" : "answer-note");
+        note.append(icon(unconfirmed ? "alert" : "info"), el("span", "", entry.note));
+        activeBubbleAnswer.insertAdjacentElement("afterend", note);
       }
-
-      if (statusState === "success") {
-        // Final answers render the minimal safe markdown subset instead of
-        // raw asterisks (renderAnswerHtml escapes everything first).
-        activeBubbleAnswer.innerHTML = renderAnswerHtml(reason);
-        if (activeThoughtStatus) activeThoughtStatus.textContent = "completed";
-        // Mark the whole plan complete in the checklist panel.
-        if (subtasks.length > 0) {
-          currentSubtaskIndex = subtasks.length;
-          updateChecklistUI();
-        }
-        setStatus("validator", "Task Completed");
-        if (activeRadar) activeRadar.className = "radar success";
-      } else if (statusState === "error") {
-        activeBubbleAnswer.innerHTML = `<span style="color: var(--danger);">${escapeHtml(reason)}</span>`;
-        if (activeThoughtStatus) activeThoughtStatus.textContent = "failed";
-        setStatus("error", "Task Aborted");
-        if (activeRadar) activeRadar.className = "radar error";
-      } else {
-        activeBubbleAnswer.innerHTML = renderAnswerHtml(reason);
-        if (activeThoughtStatus) activeThoughtStatus.textContent = "stopped";
-        setStatus("idle", "Stopped");
-        if (activeRadar) activeRadar.className = "radar idle";
-      }
+      if (entry.state === "limit") { activeBubbleAnswer.classList.add("notice"); addBackupOffer(activeBubbleAnswer); }
+      else if (entry.state === "success" || unconfirmed) drawSources(activeBubbleAnswer.parentElement, entry.sources);
+      setRunState(entry.state === "success" ? "success" : unconfirmed ? "unconfirmed" : entry.state === "limit" ? "limit" : "idle",
+        entry.state === "success" ? "Done" : unconfirmed ? "Answered, not confirmed" : entry.state === "limit" ? "Usage limit reached" : "Stopped");
     }
+    updateRunSummary();
+  }
 
+  function drawEntry(entry, live) {
+    if (entry.k === "subtasks") { drawSubtasks(entry); return; }
+    if (entry.k === "sub") { updateSub(entry); return; }
+    // A sub-task's own steps and status go in its row.
+    if (entry.sub && (entry.k === "log" || entry.k === "status")) { withSub(entry.sub, () => drawEntry({ ...entry, sub: undefined }, live)); return; }
+    if (entry.k === "ask" && entry.wait && entry.wait.sub && subs.get(entry.wait.sub)) setSubPhase(subs.get(entry.wait.sub), "waiting");
+    if (entry.k === "ask_done" && entry.sub && subs.get(entry.sub) && subs.get(entry.sub).phase === "waiting") setSubPhase(subs.get(entry.sub), "running");
+    if (entry.k === "log") addLogEntry(entry.role, entry.title, entry.text, { collapsible: entry.fold, quiet: !!entry.quiet });
+    else if (entry.k === "provisional") drawProvisional(entry);
+    else if (entry.k === "provisional_replaced") provisionalSentBack(entry);
+    else if (entry.k === "status") setStatus(entry.role, entry.text);
+    else if (entry.k === "ask") { engineWait = entry.wait; engineAsked = entry.wait.kind === "question" ? entry.wait.question : ""; drawWait(entry.wait); }
+    else if (entry.k === "ask_done") { const card = engineCards.get(entry.id); if (live) removeCard(card); else if (card) card.remove(); engineCards.delete(entry.id); if (!engineWait || engineWait.id === entry.id) engineWait = null; }
+    // What the user typed is already on screen when it arrives live. The
+    // run carries on underneath it, so the conversation reads in order.
+    else if (entry.k === "user") {
+      if (!live) appendSimpleUserBubble(entry.text);
+      // The question stays where it was asked, above the reply to it.
+      if (engineAsked && activeBubbleAnswer) { activeBubbleAnswer.style.display = "block"; activeBubbleAnswer.innerHTML = renderAnswerHtml(engineAsked); }
+      engineAsked = "";
+      if (activeRun) { activeRun.ended = true; activeRun.tookMs = 0; setRunState("asked", "Asked you"); clearPending(); setCurrentStep(null); }
+      if (activeRunDetails) activeRunDetails.removeAttribute("open");
+      openRunBubble();
+    }
+    else if (entry.k === "note") appendChatNote(entry.text);
+    else if (entry.k === "memory") drawRemembered(entry.text);
+    else if (entry.k === "offer") drawOffer(entry);
+    else if (entry.k === "answer") { drawOutcome(entry); drawUsed(entry.used); if (entry.state === "success" || entry.state === "unconfirmed") drawFeedback(engineRunId); if (entry.state === "success") drawSaveRecipe(engineRunId); }
+  }
+
+  // ---- what the assistant knows (core/memory.js), as the engine holds it
+  const KNOWN = globalThis.SELECT_TO_AI_KNOWN;
+  let engineMemory = null;
+
+  /** "Remembered: ..." under the run, with a way to take it back. */
+  function drawRemembered(text) {
+    const host = activeBubbleAnswer ? activeBubbleAnswer.parentElement : null;
+    if (!host) return;
+    const note = document.createElement("div");
+    note.className = "memory-note";
+    const label = document.createElement("span");
+    label.textContent = `Remembered: ${text.length > 70 ? `${text.slice(0, 69)}…` : text}`;
+    const undo = document.createElement("button");
+    undo.type = "button";
+    undo.textContent = "Undo";
+    undo.addEventListener("click", () => {
+      const entry = engineMemory && engineMemory.entries.find((e) => e.text === text);
+      if (entry) enginePost({ type: "memory_change", change: { op: "remove", id: entry.id } });
+      note.textContent = "Forgotten.";
+    });
+    const view = document.createElement("button");
+    view.type = "button";
+    view.textContent = "View";
+    view.addEventListener("click", openMemoryModal);
+    note.append(label, view, undo);
+    host.appendChild(note);
+  }
+
+  /** Two small buttons under an answer: the user's word on whether it was right. */
+  function drawFeedback(runId) {
+    const host = activeBubbleAnswer ? activeBubbleAnswer.parentElement : null;
+    if (!host || host.querySelector(".answer-feedback")) return;
+    const row = document.createElement("div");
+    row.className = "answer-feedback";
+    const send = (up, reason) => {
+      enginePost({ type: "feedback", runId, up, reason: reason || "" });
+      row.textContent = up ? "Thanks." : "Thanks. I'll take that into account.";
+    };
+    const say = (up) => {
+      if (up) { send(true); return; }
+      // What was wrong, in the user's words, is what teaches something.
+      row.textContent = "";
+      const why = document.createElement("input");
+      why.className = "feedback-why input";
+      why.placeholder = "What was wrong? (optional)";
+      why.maxLength = 300;
+      const go = document.createElement("button");
+      go.type = "button";
+      go.className = "feedback-send";
+      go.textContent = "Send";
+      go.addEventListener("click", () => send(false, why.value.trim()));
+      why.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); send(false, why.value.trim()); } });
+      row.append(why, go);
+      why.focus();
+    };
+    const label = el("span", "feedback-label", "Was this right?");
+    const good = document.createElement("button");
+    good.type = "button";
+    good.className = "feedback-up";
+    good.append(icon("thumbUp"), el("span", "", "This was right"));
+    good.addEventListener("click", () => say(true));
+    const bad = document.createElement("button");
+    bad.type = "button";
+    bad.className = "feedback-down";
+    bad.append(icon("thumbDown"), el("span", "", "Not right"));
+    bad.addEventListener("click", () => say(false));
+    row.append(label, good, bad);
+    host.appendChild(row);
+  }
+
+  /** "Learned: ..." under the run that taught it. */
+  function drawLearned(changes) {
+    const host = activeBubbleAnswer ? activeBubbleAnswer.parentElement : null;
+    if (!host || !changes || !changes.length) return;
+    const note = document.createElement("div");
+    note.className = "memory-note";
+    const label = document.createElement("span");
+    const text = changes.slice(0, 2).join("; ");
+    label.textContent = `Learned ${text.length > 90 ? `${text.slice(0, 89)}…` : text}${changes.length > 2 ? ` and ${changes.length - 2} more` : ""}`;
+    label.title = changes.join("\n");
+    const view = document.createElement("button");
+    view.type = "button";
+    view.textContent = "View";
+    view.addEventListener("click", openMemoryModal);
+    note.append(label, view);
+    host.appendChild(note);
+  }
+
+  /** Which of the user's details and notes this run used, under its answer. */
+  function drawUsed(used) {
+    const host = activeBubbleAnswer ? activeBubbleAnswer.parentElement : null;
+    if (!host || !used || (!(used.details || []).length && !used.notes)) return;
+    const row = document.createElement("div");
+    row.className = "used-chips";
+    const label = document.createElement("span");
+    label.textContent = "Used";
+    row.appendChild(label);
+    const chip = (text) => { const b = document.createElement("button"); b.type = "button"; b.textContent = text; b.addEventListener("click", openMemoryModal); row.appendChild(b); };
+    for (const d of used.details || []) chip(`your ${String(d).toLowerCase()}`);
+    // By kind, so the user can see why this run went as it did: a way of
+    // doing it learned before, notes about the site, their own preferences.
+    const k = used.kinds || {};
+    const n = (x, one, many) => `${x} ${x === 1 ? one : many}`;
+    if (Object.keys(k).length) {
+      if (k.routine) chip(k.routine === 1 ? "how it did a request like this before" : `how it did ${k.routine} requests like this before`);
+      if (k.site_note) chip(n(k.site_note, "note about this site", "notes about this site"));
+      if (k.lesson) chip(n(k.lesson, "correction you made here", "corrections you made here"));
+      if (k.preference) chip(n(k.preference, "of your preferences", "of your preferences"));
+      if (k.context) chip(n(k.context, "thing it knows about you", "things it knows about you"));
+    } else if (used.notes) chip(`${used.notes} thing${used.notes === 1 ? "" : "s"} it knows about you`);
+    host.appendChild(row);
+  }
+
+  /** After a run: what the user may want kept, each item theirs to tick. */
+  function drawOffer(entry) {
+    const items = (entry.items || []).filter((i) => i.type === "field" || i.type === "entry");
+    if (!items.length) return;
+    const card = document.createElement("div");
+    card.className = "message-bubble assistant confirmation-bubble save-offer";
+    card.dataset.tone = "accent";
+    const content = document.createElement("div");
+    content.className = "bubble-content";
+    const title = document.createElement("p");
+    title.className = "confirm-title";
+    title.textContent = "Keep these for next time?";
+    cardHead(content, "bookmark", title);
+    const list = document.createElement("div");
+    list.className = "offer-items";
+    const boxes = items.map((item) => {
+      const row = document.createElement("label");
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = item.type === "field";
+      const text = document.createElement("span");
+      text.textContent = item.type === "field" ? `${item.label}: ${item.value}${item.had ? ` (replaces ${item.had})` : ""}` : item.text;
+      row.append(box, text);
+      list.appendChild(row);
+      return box;
+    });
+    const actions = document.createElement("div");
+    actions.className = "confirm-actions";
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "offer-save-btn primary-btn btn btn-primary";
+    save.textContent = "Save";
+    save.addEventListener("click", () => {
+      const chosen = items.filter((_, i) => boxes[i].checked);
+      if (chosen.length) enginePost({ type: "memory_apply", items: chosen });
+      title.textContent = chosen.length ? "Saved. You can change it under Memory." : "Nothing saved.";
+      list.remove();
+      actions.remove();
+    });
+    const skip = document.createElement("button");
+    skip.type = "button";
+    skip.className = "offer-skip-btn secondary-btn btn btn-ghost";
+    skip.textContent = "Not now";
+    skip.addEventListener("click", () => removeCard(card));
+    actions.append(save, skip);
+    content.append(list, actions);
+    card.appendChild(content);
+    chatContainer.appendChild(card);
     scrollToBottom();
-
-    // Best-effort overlay cleanup on the tabs this run touched. Never
-    // re-resolve tabs here (getActiveTab could recurse back into stopAgent
-    // when no webpage tab exists), just try the known ids and ignore errors.
-    cleanupTabIds.forEach((tabId) => {
-      chrome.tabs.sendMessage(tabId, { action: "clear" }, () => {
-        void chrome.runtime.lastError;
-      });
-    });
-
-    isStopping = false;
   }
 
-  // ==========================================
-  // MULTI-AGENT PIPELINE
-  // ==========================================
-
-  // Formats validator-confirmed past runs for the planner prompt.
-  function formatMemoryContext(memory) {
-    if (!memory || memory.length === 0) return "";
-    let context =
-      "\n### Cross-session memory (plans that previously completed similar tasks):\n";
-    memory.slice(0, 5).forEach((item) => {
-      const plan = (item.subtasks || [])
-        .map((s) => (typeof s === "string" ? s : s && s.task))
-        .filter(Boolean)
-        .join("; ");
-      context += `- Goal: "${item.task}"${plan ? ` -> Plan: ${plan}` : ""}\n`;
-    });
-    return context;
-  }
-
-  // ==========================================
-  // UNIFIED BROWSER AGENT EXECUTION LOOP
-  // ==========================================
-
-  // Schedules the next agent step, bound to the current run generation.
-  // If the run is stopped (or a new run starts) before the timer fires,
-  // the continuation is dropped instead of resuming inside the wrong run.
-  function scheduleStep(delayMs, feedback = "", needsScreenshot = false) {
-    const stepRunId = runId;
-    setTimeout(() => {
-      if (!isRunning || stepRunId !== runId) return;
-      agentStep(feedback, needsScreenshot);
-    }, delayMs);
-  }
-
-  function agentStep(feedback = "", needsScreenshot = false) {
-    if (!isRunning) return;
-    const stepRunId = runId;
-    const isCurrentRun = () => isRunning && stepRunId === runId;
-
-    // Deliver a queued steer message as feedback for THIS step, then clear
-    // it (one message, delivered once).
-    if (pendingSteerMessage) {
-      const guidance = `User guidance received mid-run (follow it): ${pendingSteerMessage}`;
-      feedback = feedback ? `${feedback}\n${guidance}` : guidance;
-      addLogEntry(
-        "system",
-        "User Guidance Delivered",
-        pendingSteerMessage,
-      );
-      pendingSteerMessage = "";
-      if (steerPending) steerPending.textContent = "";
+  /** The Memory panel, drawn from the engine's store. */
+  function renderKnown() {
+    const store = engineMemory;
+    const fieldsBox = document.getElementById("knownFields");
+    if (!store || !fieldsBox || !KNOWN) return;
+    const change = (c) => enginePost({ type: "memory_change", change: c });
+    document.getElementById("knownPaused").checked = !!store.paused;
+    // Do not redraw a field the user is typing in.
+    if (!fieldsBox.contains(document.activeElement)) {
+      fieldsBox.textContent = "";
+      const fields = KNOWN.profileOf(store).fields;
+      for (const [key, label] of KNOWN.FIELDS) {
+        const wrap = document.createElement("label");
+        wrap.textContent = label;
+        const input = document.createElement("input");
+        input.value = (fields[key] && fields[key].value) || "";
+        input.dataset.key = key;
+        input.addEventListener("change", () => change({ op: "field", key, value: input.value, source: "you_said" }));
+        wrap.appendChild(input);
+        fieldsBox.appendChild(wrap);
+      }
     }
+    const sourceText = { you_said: "You told it", you_confirmed: "You confirmed it", you_filled: "You typed it into a page", you_mentioned: "You mentioned it in a task", run: "Learned from a task that worked", correction: "Learned from your correction" };
+    const fill = (id, entries, emptyText, sub, editable) => {
+      const list = document.getElementById(id);
+      list.textContent = "";
+      if (!entries.length) { const e = document.createElement("li"); e.className = "memory-empty"; e.textContent = emptyText; list.appendChild(e); }
+      for (const entry of entries) list.appendChild(memoryRow(entry.text, sub(entry), () => change({ op: "remove", id: entry.id }), editable && entry.status !== "retired" ? (text) => change({ op: "update", id: entry.id, text }) : null));
+    };
+    fill("knownPrefs", store.entries.filter((e) => e.kind === "preference" && e.status !== "retired"), "None yet. Tell it once, in any task: “I'm vegetarian”, “always show prices in SGD”.", (e) => `${e.scope === "global" ? "" : `${e.scope} · `}${sourceText[e.source] || ""}`, true);
+    // About you: lasting facts from what the user said, newest first; one a
+    // later fact replaced is shown as no longer true until it is let go.
+    const day = (t) => (t ? new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "");
+    const facts = store.entries.filter((e) => e.kind === "context").sort((a, b) => (a.status === "retired") - (b.status === "retired") || (b.lastSeen || b.created) - (a.lastSeen || a.created));
+    fill("knownContext", facts, "Nothing yet. When you tell it where things are (“my team chat is on Slack”), it keeps what lasts.", (e) => e.status === "retired"
+      ? `No longer true since ${day(e.validTo)}`
+      : `${sourceText[e.source] || ""}${e.times > 1 ? ` · said in ${e.times} tasks` : ""}${e.lastSeen ? ` · last ${day(e.lastSeen)}` : ""}${e.quote ? ` · you said “${e.quote.length > 60 ? `${e.quote.slice(0, 59)}…` : e.quote}”` : ""}`, true);
+    fill("knownSites", store.entries.filter((e) => e.kind !== "preference" && e.kind !== "context"), "Nothing yet. It writes these after tasks that worked.", (e) => `${e.scope} · ${sourceText[e.source] || ""}${e.helped || e.hurt ? ` · helped ${e.helped || 0}, misled ${e.hurt || 0}` : ""}`, true);
+    const consents = document.getElementById("knownConsents");
+    consents.textContent = "";
+    const sites = Object.keys((store.consents && store.consents.fill) || {}).filter((site) => store.consents.fill[site]);
+    if (!sites.length) { const e = document.createElement("li"); e.className = "memory-empty"; e.textContent = "None. It asks the first time it would fill your details on a site."; consents.appendChild(e); }
+    for (const site of sites) consents.appendChild(memoryRow(site, "Fills your details without asking", () => change({ op: "consent", site, value: false })));
+  }
 
-    currentStep++;
-    if (currentStep > agentMaxStepsLimit) {
-      stopAgent(
-        `Aborted to prevent infinite loops (Max ${agentMaxStepsLimit} steps reached).`,
-        "error",
-      );
+  (function wireKnown() {
+    const paused = document.getElementById("knownPaused");
+    if (!paused) return;
+    const change = (c) => enginePost({ type: "memory_change", change: c });
+    paused.addEventListener("change", () => change({ op: "pause", value: paused.checked }));
+    document.getElementById("knownAddForm").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const input = document.getElementById("knownAddInput");
+      const text = input.value.trim();
+      if (!text) return;
+      if (KNOWN && !KNOWN.isStorable(text)) { input.value = ""; input.placeholder = "That can't be kept (passwords, codes, card numbers)"; return; }
+      change({ op: "add", entry: { kind: "preference", text, scope: "global", source: "you_said" } });
+      input.value = "";
+    });
+    const contextForm = document.getElementById("knownContextForm");
+    if (contextForm) contextForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const input = document.getElementById("knownContextInput");
+      const text = input.value.trim();
+      if (!text) return;
+      if (KNOWN && !KNOWN.isStorable(text)) { input.value = ""; input.placeholder = "That can't be kept (passwords, codes, card numbers)"; return; }
+      change({ op: "add", entry: { kind: "context", text, scope: "global", source: "you_said" } });
+      input.value = "";
+    });
+    document.getElementById("knownWipe").addEventListener("click", () => { if (confirm("Forget everything the assistant knows about you and your sites?")) change({ op: "wipe" }); });
+    document.getElementById("knownExport").addEventListener("click", () => {
+      if (!engineMemory) return;
+      const url = URL.createObjectURL(new Blob([JSON.stringify(engineMemory, null, 2)], { type: "application/json" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "select-to-ai-memory.json";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    });
+    const file = document.getElementById("knownImportFile");
+    document.getElementById("knownImport").addEventListener("click", () => file.click());
+    file.addEventListener("change", () => {
+      const f = file.files && file.files[0];
+      if (!f) return;
+      f.text().then((text) => { try { const store = JSON.parse(text); if (store && store.v === 2) change({ op: "replace", store }); } catch (_e) { /* not a memory file */ } file.value = ""; });
+    });
+  })();
+
+  function engineUsage() {
+    if (!engineTrace) return;
+    totalPromptTokens = engineTrace.tokens.prompt;
+    totalCompletionTokens = engineTrace.tokens.completion;
+    totalCostUSD = engineTrace.costUSD;
+    updateCostDashboard();
+  }
+
+  /** What follows every update from the engine: the trace's facts on screen. */
+  function afterTrace() {
+    traceAt = Date.now();
+    engineUsage();
+    syncStepHosts();
+    updateLiveSite();
+    engineControls();
+  }
+
+  function onEngineMessage(m) {
+    if (!m) return;
+    if (m.type === "memory") {
+      engineMemory = m.store;
+      if (memoryModal && !memoryModal.hidden) renderKnown();
       return;
     }
-
-    setStatus("executor", "Analyzing page...");
-    addLogEntry(
-      "executor",
-      `Running Step ${currentStep}`,
-      `Analyzing current browser state...`,
-    );
-
-    getActiveTab((tabId, tab) => {
-      if (!isCurrentRun()) return;
-      if (!isUrlAllowed(tab.url)) {
-        stopAgent(`URL blocked by allowlist: ${tab.url}`, "error");
-        return;
+    if (m.type === "snapshot") {
+      // The whole conversation, as the engine holds it.
+      chatContainer.querySelectorAll(".message-bubble, .chat-note, .card-leaving").forEach((b) => b.remove());
+      activeRun = null;
+      engineCards = new Map();
+      engineWait = null;
+      subs.clear();
+      workedMs = 0;
+      const turns = m.turns || [];
+      welcomeScreen.style.display = turns.length || m.run ? "none" : "flex";
+      for (const t of turns) { if (t.role === "user") appendSimpleUserBubble(t.text); else appendSimpleAssistantBubble(t.text); }
+      engineRunId = m.run ? m.run.id : "";
+      engineStatus = m.run ? m.run.status : "";
+      engineTrace = m.run ? m.run.trace : null;
+      engineJournal = m.run ? m.run.journal.slice() : [];
+      if (m.run) {
+        appendSimpleUserBubble(m.run.task, m.run.selection);
+        openRunBubble();
+        for (const entry of m.run.journal) drawEntry(entry, false);
+        if (m.run.status === "waiting") engineWait = m.run.wait;
+        else if (!(engineWait && engineWait.sub)) engineWait = null;
       }
-
-      injectContentScript(tabId, (scanResult) => {
-        if (!isCurrentRun()) return;
-        getTabsContext((browserTabs) => {
-          if (!isCurrentRun()) return;
-
-          const elementLimit = config.agentElementLimit || 60;
-          const visibleElements = (scanResult.elements || []).slice(
-            0,
-            Math.max(elementLimit, 10),
-          );
-          const validElementIds = new Set(visibleElements.map((el) => el.id));
-          const elementsDescription = visibleElements
-            .map((el) => {
-              let attrs = `id="${el.id}"`;
-              if (el.type) attrs += ` type="${el.type}"`;
-              if (el.placeholder) attrs += ` placeholder="${el.placeholder}"`;
-              if (el.label) attrs += ` aria-label="${el.label}"`;
-              if (el.role) attrs += ` role="${el.role}"`;
-              if (el.value) attrs += ` value="${el.value}"`;
-              if (el.checked) attrs += ` checked="true"`;
-              if (el.disabled) attrs += ` disabled="true"`;
-              if (el.rect)
-                attrs += ` at="(${el.rect.x},${el.rect.y}) ${el.rect.w}x${el.rect.h}"`;
-              if (el.position) attrs += ` position="${el.position}"`;
-
-              const tag = el.tagName ? el.tagName.toLowerCase() : "element";
-              return `<${tag} ${attrs}>${el.text || ""}</${tag}>`;
-            })
-            .join("\n");
-
-          // Scroll / viewport signal so the model knows whether to scroll.
-          let scrollLine = "";
-          if (typeof scanResult.pageHeight === "number" && scanResult.pageHeight > 0) {
-            const viewportH = scanResult.viewportHeight || 0;
-            const scrollY = scanResult.scrollY || 0;
-            const belowFold = scanResult.pageHeight - (scrollY + viewportH);
-            const hints = [];
-            if (scrollY > 4) hints.push("content above the fold (scroll up to see it)");
-            if (belowFold > 4) hints.push("content below the fold (scroll down to see it)");
-            scrollLine = `Scroll position: ${scrollY}px of ${scanResult.pageHeight}px total page height (viewport ${viewportH}px). ${
-              hints.length > 0 ? `There is ${hints.join(" and ")}.` : "The full page fits in the viewport."
-            }`;
-          }
-
-          // Action history (messages already carry measured outcome deltas)
-          const historyLimit = config.agentHistoryLimit || 12;
-          const prunedHistory = actionHistory.slice(-historyLimit);
-          let historyStr = "<history>\n";
-          if (prunedHistory.length > 0) {
-            historyStr += prunedHistory
-              .map(
-                (h) =>
-                  `  <step number="${h.step}" status="${h.success ? "Success" : "Failed"}" message="${h.message}">\n    <action_taken>${JSON.stringify(h.action)}</action_taken>\n  </step>`,
-              )
-              .join("\n");
-          } else {
-            historyStr += '  <step status="Info">No actions taken yet.</step>';
-          }
-          historyStr += "\n</history>";
-
-          // Plan block: the checklist with the current subtask highlighted.
-          let planBlock = "";
-          if (subtasks.length > 0) {
-            const planLines = subtasks
-              .map((s, i) => {
-                const marker =
-                  i < currentSubtaskIndex
-                    ? "[done]"
-                    : i === currentSubtaskIndex
-                      ? "[current]"
-                      : "[pending]";
-                const post = s.postcondition
-                  ? ` (done when: ${s.postcondition})`
-                  : "";
-                return `${marker} ${i + 1}. ${s.task}${post}`;
-              })
-              .join("\n");
-            planBlock = `Plan:\n${planLines}\nSet "completedSubtask": true on the action that fulfills the current subtask's postcondition. Use "revise_plan" if the plan no longer fits what you see.`;
-          }
-
-          // Scratchpad notes saved via the `remember` action.
-          const notesBlock =
-            sessionNotes.length > 0
-              ? `Your scratchpad notes (persist across pages):\n${sessionNotes
-                  .map((n, i) => `${i + 1}. ${n}`)
-                  .join("\n")}`
-              : "";
-
-          // ONE prompt: the static instructions (config.agentSystemPrompt,
-          // defaulting to CONFIG.DEFAULT_SYSTEM_PROMPT) are the cacheable
-          // half; the per-step context below is the dynamic half.
-          const staticPrompt =
-            config.agentSystemPrompt || DEFAULT_SYSTEM_PROMPT;
-
-          const dynamicContext = `<current_context>
-High-level Goal: "${currentTask}"
-Current Tab URL: ${scanResult.url}
-Current Tab Page Title: ${scanResult.title}
-
-${planBlock ? `${planBlock}\n` : ""}${notesBlock ? `${notesBlock}\n` : ""}
-Available Browser Tabs:
-${formatTabsContext(browserTabs)}
-
-Action History:
-${historyStr}
-
-${feedback ? `Feedback from last attempt (IMPORTANT): "${feedback}"\n` : ""}
-
-Interactive Elements (DOM/reading order; ids are stable on this page):
-${elementsDescription || "[No interactive elements found on this section]"}
-${scrollLine ? `\n${scrollLine}\n` : ""}
-Page Text content (truncated):
-${(function () {
-  if (!scanResult.innerText) return "[No text content found]";
-  let text = scanResult.innerText;
-  if (text.length <= 3000) return text;
-  const slice = text.substring(0, 3000);
-  const lastSpace = slice.lastIndexOf(" ");
-  const lastNewline = slice.lastIndexOf("\n");
-  const cutPoint = Math.max(lastSpace, lastNewline);
-  return cutPoint > 0 ? slice.substring(0, cutPoint) + "..." : slice + "...";
-})()}
-</current_context>`;
-
-          const systemPrompt = [
-            { text: staticPrompt, cacheable: true },
-            { text: `\n\n${dynamicContext}`, cacheable: false },
-          ];
-
-          const activeSubtaskLabel = () =>
-            (subtasks[currentSubtaskIndex] && subtasks[currentSubtaskIndex].task) ||
-            "Complete task";
-
-          const executeLLM = (screenshotDataUrl) => {
-            callLLM(
-              systemPrompt,
-              `Goal: "${currentTask}". Call the browser_action tool with your next action.`,
-              (rawActionObj) => {
-                if (!isCurrentRun()) return;
-
-                // Validate the tool call against the schema BEFORE dispatch.
-                // Unknown actions, missing params, and out-of-range ids feed
-                // a structured correction back instead of executing garbage.
-                const validation = SELECT_TO_AI_TOOLS.validateToolCall(
-                  rawActionObj,
-                  { validIds: validElementIds },
-                );
-                if (!validation.ok) {
-                  addLogEntry("error", "Invalid Tool Call", validation.error);
-                  registerStepFailure(
-                    `Invalid tool call: ${validation.error}`,
-                    needsScreenshot,
-                  );
-                  return;
-                }
-                const actionObj = validation.action;
-
-                // Stream the model's thought into the status line.
-                if (actionObj.thought) {
-                  const thought = String(actionObj.thought);
-                  setStatus(
-                    "executor",
-                    thought.length > 140 ? `${thought.slice(0, 137)}...` : thought,
-                  );
-                  // Collapsed-by-default expander keeps the console scannable.
-                  addLogEntry("executor", "Thought", thought, {
-                    collapsible: true,
-                  });
-                }
-
-                // The model asserts the current subtask's postcondition was
-                // just met, advance the plan when the action succeeds.
-                const shouldAdvanceSubtask = actionObj.completedSubtask === true;
-
-                // ---- Agent-level verbs (no page dispatch) ----
-
-                if (actionObj.action === "remember") {
-                  sessionNotes.push(String(actionObj.note).slice(0, 500));
-                  if (sessionNotes.length > 20)
-                    sessionNotes = sessionNotes.slice(-20);
-                  addLogEntry("executor", "Note Saved", actionObj.note);
-                  if (scratchpadPanel && scratchpadPanel.classList.contains("open"))
-                    renderScratchpadPanel();
-                  actionHistory.push({
-                    step: currentStep,
-                    subtask: activeSubtaskLabel(),
-                    action: actionObj,
-                    success: true,
-                    message: `Saved note to scratchpad.`,
-                  });
-                  if (shouldAdvanceSubtask)
-                    advanceSubtask("Subtask postcondition reported met.");
-                  scheduleStep(
-                    200,
-                    "Note saved to your scratchpad. Continue with the task.",
-                  );
-                  return;
-                }
-
-                if (actionObj.action === "ask_user") {
-                  addLogEntry("executor", "User Input Needed", actionObj.question);
-                  actionHistory.push({
-                    step: currentStep,
-                    subtask: activeSubtaskLabel(),
-                    action: actionObj,
-                    success: true,
-                    message: "Paused to ask the user for input.",
-                  });
-                  conversationHistory.push({
-                    role: "assistant",
-                    text: actionObj.question,
-                  });
-                  if (conversationHistory.length > 12)
-                    conversationHistory = conversationHistory.slice(-12);
-                  stopAgent(
-                    `I need your input to continue: ${actionObj.question}`,
-                    "idle",
-                  );
-                  return;
-                }
-
-                if (actionObj.action === "give_up") {
-                  actionHistory.push({
-                    step: currentStep,
-                    subtask: activeSubtaskLabel(),
-                    action: actionObj,
-                    success: true,
-                    message: "Agent gave up on the task.",
-                  });
-                  stopAgent(`Task abandoned: ${actionObj.reason}`, "error");
-                  return;
-                }
-
-                if (actionObj.action === "revise_plan") {
-                  subtasks = actionObj.subtasks;
-                  currentSubtaskIndex = 0;
-                  consecutiveFailures = 0;
-                  updateChecklistUI();
-                  addLogEntry(
-                    "planner",
-                    "Plan Revised",
-                    subtasks.map((s, i) => `${i + 1}. ${s.task}`).join("  |  "),
-                  );
-                  actionHistory.push({
-                    step: currentStep,
-                    subtask: activeSubtaskLabel(),
-                    action: actionObj,
-                    success: true,
-                    message: "Plan revised mid-run.",
-                  });
-                  scheduleStep(
-                    200,
-                    "Plan revised. Continue with the first remaining subtask.",
-                  );
-                  return;
-                }
-
-                // Duplicate action detection (stable ids make this reliable)
-                if (isDuplicateFailedAction(actionObj)) {
-                  addLogEntry(
-                    "system",
-                    "Duplicate Loop Detected",
-                    `Action ${actionObj.action} on ID ${actionObj.id} already failed. Retrying with feedback...`,
-                  );
-                  registerStepFailure(
-                    `Your action choice (${actionObj.action} on element [${actionObj.id}]) was identified as a duplicate of a previously failed action. Please select a different element or action.`,
-                    needsScreenshot,
-                  );
-                  return;
-                }
-
-                if (actionObj.action === "request_screenshot") {
-                  addLogEntry(
-                    "executor",
-                    "Vision Requested",
-                    "Capturing visual snapshot of the page...",
-                  );
-                  actionHistory.push({
-                    step: currentStep,
-                    subtask: activeSubtaskLabel(),
-                    action: actionObj,
-                    success: true,
-                    message: "Screenshot requested successfully.",
-                  });
-                  scheduleStep(
-                    500,
-                    "Here is the requested screenshot of the current viewport. Analyze it to find your target.",
-                    true,
-                  );
-                  return;
-                }
-
-                // Allowlist navigation check
-                if (
-                  (actionObj.action === "navigate" ||
-                    actionObj.action === "open_tab") &&
-                  actionObj.url
-                ) {
-                  if (!isUrlAllowed(actionObj.url)) {
-                    addLogEntry(
-                      "error",
-                      "URL Blocked",
-                      `Navigation to ${actionObj.url} is blocked by domain allowlist.`,
-                    );
-                    stopAgent(
-                      `Navigation blocked by domain allowlist: ${actionObj.url}`,
-                      "error",
-                    );
-                    return;
-                  }
-                }
-
-                if (actionObj.action === "finish") {
-                  // Verification-before-finish: the schema validator already
-                  // rejected empty answers; now a cheap validator call checks
-                  // the claim against the final page state.
-                  addLogEntry(
-                    "executor",
-                    "Finish Requested",
-                    "Answer submitted; validating against the page...",
-                  );
-                  actionHistory.push({
-                    step: currentStep,
-                    subtask: activeSubtaskLabel(),
-                    action: actionObj,
-                    success: true,
-                    message: "Finish requested; answer sent to the validator.",
-                  });
-                  if (shouldAdvanceSubtask)
-                    advanceSubtask("Final subtask reported complete.");
-                  runValidatorOnFinish(actionObj, scanResult);
-                  return;
-                }
-
-                if (isBrowserAction(actionObj)) {
-                  const runBrowserAction = () => {
-                    // Guard the deferred entry point: Stop (or a new run)
-                    // between decision and execution must cancel this.
-                    if (!isCurrentRun()) return;
-                    addLogEntry(
-                      "executor",
-                      "Browser Action Decided",
-                      `${actionObj.reason || actionObj.action}`,
-                    );
-                    executeBrowserAction(
-                      actionObj,
-                      activeSubtaskLabel(),
-                      screenshotDataUrl,
-                      (success, message) => {
-                        if (!isCurrentRun()) return;
-                        if (!success) {
-                          addLogEntry(
-                            "error",
-                            "Browser Action Failed",
-                            message,
-                          );
-                          registerStepFailure(
-                            "Your last browser action failed: " + message,
-                          );
-                          return;
-                        }
-                        addLogEntry(
-                          "executor",
-                          "Browser Action Executed",
-                          message,
-                        );
-                        consecutiveFailures = 0;
-                        if (shouldAdvanceSubtask)
-                          advanceSubtask("Subtask postcondition reported met.");
-                        if (actionObj.action === "list_tabs") {
-                          scheduleStep(500, message);
-                        } else {
-                          scheduleStep(300);
-                        }
-                      },
-                    );
-                  };
-
-                  if (isHighRiskAction(actionObj, scanResult)) {
-                    const explanation = `${actionObj.reason || "High risk browser action triggered"}`;
-                    requestRiskConfirmation(
-                      actionObj,
-                      explanation,
-                      runBrowserAction,
-                      () => {
-                        stopAgent(
-                          "Task execution aborted by user safety confirmation.",
-                          "idle",
-                        );
-                      },
-                    );
-                  } else {
-                    runBrowserAction();
-                  }
-                  return;
-                }
-
-                // DOM Action Execution
-                const runDomAction = () => {
-                  // Guard the deferred entry point (risk confirmation may
-                  // resolve long after Stop) before sending the interact
-                  // message to the page.
-                  if (!isCurrentRun()) return;
-                  const recordEntry = {
-                    timestamp: Date.now(),
-                    step: currentStep,
-                    subtask: activeSubtaskLabel(),
-                    action: actionObj,
-                    screenshot: screenshotDataUrl
-                      ? screenshotDataUrl.substring(0, 100) + "..."
-                      : null,
-                    success: false,
-                    outcome: "",
-                  };
-                  sessionRecording.push(recordEntry);
-
-                  addLogEntry(
-                    "executor",
-                    "Action Decided",
-                    `${actionObj.reason || actionObj.action}`,
-                  );
-
-                  chrome.tabs.sendMessage(
-                    tabId,
-                    {
-                      action: "interact",
-                      data: actionObj,
-                    },
-                    (response) => {
-                      if (!isCurrentRun()) {
-                        void chrome.runtime.lastError;
-                        return;
-                      }
-                      if (
-                        chrome.runtime.lastError ||
-                        !response ||
-                        !response.success
-                      ) {
-                        const err = response
-                          ? response.error
-                          : chrome.runtime.lastError
-                            ? chrome.runtime.lastError.message
-                            : "interaction failed";
-
-                        // A click/keypress that unloads the page closes the
-                        // message channel before the content script can
-                        // respond. That is a SUCCESS (navigation), not a
-                        // failure, verify by watching the tab's URL.
-                        const channelLost =
-                          !response &&
-                          /message|port|channel|receiving end|context invalidated/i.test(
-                            err || "",
-                          );
-                        const navCapable = ["click", "keypress", "double_click"].includes(
-                          actionObj.action,
-                        );
-                        if (channelLost && navCapable) {
-                          waitForTabNavigation(tabId, 400, 8000, () => {
-                            if (!isCurrentRun()) return;
-                            chrome.tabs.get(tabId, (updatedTab) => {
-                              if (!isCurrentRun()) return;
-                              if (
-                                !chrome.runtime.lastError &&
-                                updatedTab &&
-                                updatedTab.url &&
-                                updatedTab.url !== scanResult.url
-                              ) {
-                                const navMessage = `${actionObj.action} on [${actionObj.id ?? "page"}] caused a navigation to ${updatedTab.url}. Outcome: URL changed.`;
-                                addLogEntry(
-                                  "executor",
-                                  "DOM Action Caused Navigation",
-                                  navMessage,
-                                );
-                                recordEntry.success = true;
-                                recordEntry.outcome = navMessage;
-                                actionHistory.push({
-                                  step: currentStep,
-                                  subtask: activeSubtaskLabel(),
-                                  action: actionObj,
-                                  success: true,
-                                  message: navMessage,
-                                });
-                                consecutiveFailures = 0;
-                                if (shouldAdvanceSubtask)
-                                  advanceSubtask(
-                                    "Subtask postcondition reported met.",
-                                  );
-                                scheduleStep(200);
-                                return;
-                              }
-                              recordEntry.success = false;
-                              recordEntry.outcome = err;
-                              actionHistory.push({
-                                step: currentStep,
-                                subtask: activeSubtaskLabel(),
-                                action: actionObj,
-                                success: false,
-                                message: err,
-                              });
-                              addLogEntry("error", "DOM Action Failed", err);
-                              registerStepFailure(
-                                "Your last action failed: " + err,
-                              );
-                            });
-                          });
-                          return;
-                        }
-
-                        addLogEntry("error", "DOM Action Failed", err);
-
-                        recordEntry.success = false;
-                        recordEntry.outcome = err;
-
-                        actionHistory.push({
-                          step: currentStep,
-                          subtask: activeSubtaskLabel(),
-                          action: actionObj,
-                          success: false,
-                          message: err,
-                        });
-                        registerStepFailure("Your last action failed: " + err);
-                      } else {
-                        // Outcome verification: replace the optimistic
-                        // "clicked successfully" with what actually changed.
-                        const outcomeText = response.outcome
-                          ? SELECT_TO_AI_TOOLS.formatOutcomeDelta(
-                              response.outcome,
-                            )
-                          : "";
-                        const fullMessage = outcomeText
-                          ? `${response.message} ${outcomeText}`
-                          : response.message;
-
-                        addLogEntry(
-                          "executor",
-                          "DOM Action Executed",
-                          fullMessage,
-                        );
-
-                        recordEntry.success = true;
-                        recordEntry.outcome = fullMessage;
-
-                        actionHistory.push({
-                          step: currentStep,
-                          subtask: activeSubtaskLabel(),
-                          action: actionObj,
-                          success: true,
-                          message: fullMessage,
-                        });
-
-                        // Silent no-ops count toward the reflection gate;
-                        // effective actions reset it.
-                        if (response.outcome && response.outcome.noEffect) {
-                          consecutiveFailures++;
-                        } else {
-                          consecutiveFailures = 0;
-                        }
-                        if (shouldAdvanceSubtask)
-                          advanceSubtask("Subtask postcondition reported met.");
-
-                        // The content script already waited for the DOM to
-                        // settle (event-driven); only cover a possible full
-                        // navigation before the next scan.
-                        waitForTabNavigation(tabId, 250, 8000, () => {
-                          scheduleStep(150);
-                        });
-                      }
-                    },
-                  );
-                };
-
-                if (isHighRiskAction(actionObj, scanResult)) {
-                  const explanation = `${actionObj.reason || "High risk action triggered"}`;
-                  requestRiskConfirmation(
-                    actionObj,
-                    explanation,
-                    runDomAction,
-                    () => {
-                      stopAgent(
-                        "Task execution aborted by user safety confirmation.",
-                        "idle",
-                      );
-                    },
-                  );
-                } else {
-                  runDomAction();
-                }
-              },
-              screenshotDataUrl,
-              0,
-              // Strong ("pro") tier drives the executor with the native
-              // browser_action tool; text-JSON fallback engages automatically
-              // if the provider rejects tools.
-              { tier: "pro", tool: SELECT_TO_AI_TOOLS.TOOL_DEFS.browser_action },
-            );
-          };
-
-          // Vision-capable executors get the marked screenshot every step
-          // (badges are already drawn); others stay text-only unless the
-          // model explicitly asked via request_screenshot.
-          const wantScreenshot = needsScreenshot || executorVisionEnabled();
-          if (wantScreenshot) {
-            chrome.runtime.sendMessage(
-              { action: "captureScreenshot", tabId },
-              (screenshotRes) => {
-                if (!isCurrentRun()) return;
-                executeLLM(
-                  screenshotRes && screenshotRes.success
-                    ? screenshotRes.dataUrl
-                    : null,
-                );
-              },
-            );
-          } else {
-            executeLLM(null);
-          }
-        });
-      });
-    });
-  }
-
-  // ==========================================
-  // API CALLS HARNESS
-  // ==========================================
-
-  function parseDataUrl(dataUrl) {
-    if (!dataUrl) return null;
-    const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-    if (match) {
-      return {
-        mediaType: match[1],
-        base64Data: match[2],
-      };
-    }
-    return null;
-  }
-
-  function supportsExplicitPromptCaching(provider, model) {
-    if (config.agentPromptCaching === false) return false;
-    const modelId = String(model || "").toLowerCase();
-    if (provider === "anthropic") return true;
-    if (provider !== "openrouter") return false;
-    return (
-      modelId.includes("anthropic/") ||
-      modelId.includes("claude") ||
-      modelId.includes("qwen/") ||
-      modelId.includes("qwen")
-    );
-  }
-
-  /** Joins a string-or-parts system prompt into one plain string. */
-  function systemPromptToText(systemPrompt) {
-    if (Array.isArray(systemPrompt)) {
-      return systemPrompt.map((part) => part.text || "").join("");
-    }
-    return String(systemPrompt || "");
-  }
-
-  /**
-   * Splits a system prompt into [static | dynamic] parts for caching.
-   * Callers that already know the split (the executor: static instructions
-   * first, per-step context second) pass an array of {text, cacheable}
-   * parts directly, that IS the real static block, so it is used verbatim.
-   * String prompts fall back to marking the embedded browser-capability
-   * block (the only stable region of the legacy prompts) as cacheable.
-   */
-  function splitSystemPromptForCaching(systemPrompt) {
-    if (Array.isArray(systemPrompt)) {
-      return systemPrompt.filter(
-        (part) => part && part.text && part.text.trim().length > 0,
-      );
-    }
-    const text = String(systemPrompt || "");
-    const stableBlock = formatBrowserCapabilityPrompt();
-    const idx = text.indexOf(stableBlock);
-    if (idx === -1) {
-      return [{ text, cacheable: false }];
-    }
-
-    return [
-      { text: text.slice(0, idx), cacheable: false },
-      { text: stableBlock, cacheable: true },
-      { text: text.slice(idx + stableBlock.length), cacheable: false },
-    ].filter((part) => part.text && part.text.trim().length > 0);
-  }
-
-  function buildAnthropicSystemContent(systemPrompt, provider, model) {
-    if (!supportsExplicitPromptCaching(provider, model)) {
-      // Static-first ordering still helps providers with automatic
-      // prefix caching even when explicit cache_control is unsupported.
-      return systemPromptToText(systemPrompt);
-    }
-    return splitSystemPromptForCaching(systemPrompt).map((part) => {
-      const block = { type: "text", text: part.text };
-      if (part.cacheable) {
-        block.cache_control = { type: "ephemeral" };
-      }
-      return block;
-    });
-  }
-
-  function buildOpenAICompatibleSystemMessage(systemPrompt, provider, model) {
-    if (!supportsExplicitPromptCaching(provider, model)) {
-      // Plain string, static half first: automatic-prefix-caching friendly
-      // (OpenAI, DeepSeek, Groq, and most gateways cache shared prefixes).
-      return { role: "system", content: systemPromptToText(systemPrompt) };
-    }
-
-    return {
-      role: "system",
-      content: splitSystemPromptForCaching(systemPrompt).map((part) => {
-        const block = { type: "text", text: part.text };
-        if (part.cacheable) {
-          block.cache_control = { type: "ephemeral" };
-        }
-        return block;
-      }),
-    };
-  }
-
-  function applyPromptCachingOptions(body, headers, provider, model) {
-    if (config.agentPromptCaching === false) return;
-
-    if (provider === "openrouter") {
-      body.session_id = promptCacheSessionId;
-      headers["x-session-id"] = promptCacheSessionId;
-    }
-  }
-
-  // Clean up API error messages (handling raw JSON objects/arrays or long stacks) (B9)
-  function cleanErrorMessage(rawErrorText, status) {
-    if (!rawErrorText) return `API error (HTTP ${status || "unknown"})`;
-
-    let trimmed = rawErrorText.trim();
-    try {
-      // Un-wrap array if it's wrapped in square brackets (e.g. Google APIs or custom endpoints)
-      if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-        const arr = JSON.parse(trimmed);
-        if (arr && arr[0]) {
-          trimmed =
-            typeof arr[0] === "object"
-              ? JSON.stringify(arr[0])
-              : String(arr[0]);
-        }
-      }
-
-      const obj = JSON.parse(trimmed);
-
-      // Check nested error messages
-      if (obj.error) {
-        if (typeof obj.error === "object") {
-          if (obj.error.message) {
-            return obj.error.message;
-          }
-        } else if (typeof obj.error === "string") {
-          return obj.error;
-        }
-      }
-      if (obj.message) {
-        return obj.message;
-      }
-    } catch (e) {
-      // Not a JSON, fallback to plain text processing
-    }
-
-    // If it's plain text but too long, truncate it
-    if (rawErrorText.length > 200) {
-      return rawErrorText.substring(0, 200) + "...";
-    }
-    return rawErrorText;
-  }
-
-  /**
-   * @param {string|Array<{text: string, cacheable: boolean}>} systemPrompt -
-   *   Plain prompt, or [static | dynamic] parts for prompt caching.
-   * @param {Object} [options]
-   * @param {"lite"|"pro"} [options.tier] - Model tier ("pro" = configured
-   *   executor model, "lite" = the provider's cheap catalog model).
-   * @param {{name, description, parameters}} [options.tool] - Native tool to
-   *   force-call (OpenAI `tools`/`tool_choice` or Anthropic `tools`/`tool_use`).
-   *   Falls back to the text-JSON protocol when the provider rejects tools.
-   */
-  function callLLM(
-    systemPrompt,
-    userMessage,
-    callback,
-    screenshotDataUrl = null,
-    attempt = 0,
-    options = {},
-  ) {
-    // Bind this call (and any retry it schedules) to the current run
-    // generation so retries never resume after Stop / into a new run.
-    const callRunId = runId;
-    const provider = config.agentActiveProvider;
-    const { apiKey, baseUrl } = getProviderDetails(provider);
-
-    if (provider !== "custom" && !apiKey) {
-      const message = getMissingCredentialsMessage(provider);
-      addLogEntry("error", `LLM Missing Credentials`, message);
-      stopAgent(message, "error");
+      afterTrace();
       return;
     }
-
-    const tier = options.tier === "pro" ? "pro" : "lite";
-    // Per-session guard: once a provider rejects tools, every later call
-    // uses the text-JSON fallback protocol instead.
-    const activeTool = options.tool && !toolsUnsupported ? options.tool : null;
-    const model = resolveTierModel(provider, tier);
-    const systemPromptText = systemPromptToText(systemPrompt);
-
-    let endpoint = baseUrl;
-    if (
-      !endpoint.endsWith("/chat/completions") &&
-      !endpoint.includes("/messages")
-    ) {
-      endpoint = endpoint.replace(/\/$/, "") + "/chat/completions";
+    if (m.type === "handoff_live") { askAboutHandoff(m); return; }
+    if (m.type === "handoff_queued") { appendSimpleAssistantBubble(`Queued: "${String(m.text).slice(0, 200).replace(/[*_`#>[\]]/g, "")}" starts when the task in progress ends.`); return; }
+    if (m.type === "started") {
+      engineRunId = m.runId;
+      engineStatus = "running";
+      engineTrace = null;
+      engineJournal = [];
+      engineWait = null;
+      subs.clear();
+      workedMs = 0;
+      liveUrl = "";
+      welcomeScreen.style.display = "none";
+      appendSimpleUserBubble(m.task, m.selection);
+      openRunBubble();
+      afterTrace();
+      return;
     }
-
-    const headers = {
-      "Content-Type": "application/json",
-    };
-
-    let body = {};
-    let usageProvided = false;
-
-    if (provider === "anthropic") {
-      headers["x-api-key"] = apiKey;
-      headers["anthropic-version"] = "2023-06-01";
-      headers["anthropic-dangerous-direct-browser-access"] = "true";
-
-      let userContent = [{ type: "text", text: userMessage }];
-      if (screenshotDataUrl) {
-        const parsedUrl = parseDataUrl(screenshotDataUrl);
-        if (parsedUrl) {
-          userContent.push({
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: parsedUrl.mediaType,
-              data: parsedUrl.base64Data,
-            },
-          });
-        }
-      }
-
-      body = {
-        model: model,
-        max_tokens: config.agentMaxTokensPerCall || 2000,
-        system: buildAnthropicSystemContent(systemPrompt, provider, model),
-        messages: [{ role: "user", content: userContent }],
-        temperature:
-          config.agentTemperature !== undefined ? config.agentTemperature : 0.1,
-        stream: true,
-      };
-      if (activeTool) {
-        // Anthropic shape: tools + forced tool_choice; the reply arrives as
-        // a tool_use content block streamed via input_json_delta events.
-        body.tools = [
-          SELECT_TO_AI_TOOLS.buildAnthropicTool(
-            activeTool.name,
-            activeTool.description,
-            activeTool.parameters,
-          ),
-        ];
-        body.tool_choice = { type: "tool", name: activeTool.name };
-      }
-      applyPromptCachingOptions(body, headers, provider, model);
-    } else {
-      if (apiKey) {
-        headers["Authorization"] = `Bearer ${apiKey}`;
-      }
-      if (provider === "openrouter") {
-        headers["HTTP-Referer"] = "https://selecttoai.github.io";
-        headers["X-Title"] = "Select to AI Browser Agent";
-      }
-
-      let userContent = userMessage;
-      if (screenshotDataUrl) {
-        userContent = [
-          { type: "text", text: userMessage },
-          { type: "image_url", image_url: { url: screenshotDataUrl } },
-        ];
-      }
-
-      const messages = [
-        buildOpenAICompatibleSystemMessage(systemPrompt, provider, model),
-        { role: "user", content: userContent },
-      ];
-
-      body = {
-        model: model,
-        messages: messages,
-        temperature:
-          config.agentTemperature !== undefined ? config.agentTemperature : 0.1,
-        max_tokens: config.agentMaxTokensPerCall || 2000,
-        stream: true,
-      };
-      if (activeTool) {
-        // OpenAI-compatible shape (OpenRouter, OpenAI, DeepSeek, Groq,
-        // Together, Mistral, xAI, custom gateways): tools + forced
-        // tool_choice; the reply streams as delta.tool_calls fragments.
-        body.tools = [
-          SELECT_TO_AI_TOOLS.buildOpenAITool(
-            activeTool.name,
-            activeTool.description,
-            activeTool.parameters,
-          ),
-        ];
-        body.tool_choice = {
-          type: "function",
-          function: { name: activeTool.name },
-        };
-      }
-      if (!compatParamsUnsupported) {
-        // response_format and tools are mutually exclusive here: some
-        // gateways reject json_object mode when tools are attached, and the
-        // tool schema already constrains the output.
-        if (!activeTool) {
-          body.response_format = { type: "json_object" };
-        }
-        // Ask OpenAI-compatible providers to attach real token usage to the
-        // final stream chunk instead of forcing a character-count estimate.
-        body.stream_options = { include_usage: true };
-      }
-      applyPromptCachingOptions(body, headers, provider, model);
-    }
-
-    if (activeAbortController && attempt === 0) {
-      try {
-        activeAbortController.abort();
-      } catch (e) {}
-    }
-
-    const port = chrome.runtime.connect({ name: "streamFetch" });
-
-    const timeoutId = setTimeout(() => {
-      // Route the timeout through the real error path so the run actually
-      // ends or retries (handleError disconnects the port, which aborts the
-      // background fetch) and the panel sees the timeout error.
-      handleError(
-        new Error(
-          `Model request timed out after ${(config.agentTimeout || DEFAULTS.timeoutMs) / 1000} seconds.`,
-        ),
-        408,
-      );
-    }, config.agentTimeout || DEFAULTS.timeoutMs);
-
-    activeAbortController = {
-      abort: () => {
-        clearTimeout(timeoutId);
-        try {
-          // The background worker aborts the in-flight fetch onDisconnect.
-          port.disconnect();
-        } catch (e) {}
-      },
-    };
-
-    if (activeStreamPanel && activeStreamText) {
-      activeStreamPanel.style.display = "flex";
-      activeStreamText.textContent = "Connecting to model...";
-      activeStreamText.scrollTop = activeStreamText.scrollHeight;
-    }
-
-    let replyText = "";
-    let buffer = "";
-    let finished = false;
-    // Accumulates native tool-call fragments from either provider shape.
-    const toolState = SELECT_TO_AI_TOOLS.createToolCallAccumulator();
-    let toolArgsStreamed = "";
-
-    function handleError(err, status = 0, respHeaders = {}) {
-      // Idempotent: the timeout and a late port event must not both settle
-      // this call.
-      if (finished) return;
-      finished = true;
-      clearTimeout(timeoutId);
-      try {
-        port.disconnect();
-      } catch (e) {}
-
-      if (activeStreamPanel) {
-        activeStreamPanel.style.display = "none";
-      }
-
-      console.error(`Error in LLM model call (HTTP ${status}):`, err);
-
-      if (status === 401 || status === 403) {
-        const providerMessage = cleanErrorMessage(err.message || "", status);
-        const authDetails = [
-          `Provider: ${provider}`,
-          `Model: ${model}`,
-          `Endpoint: ${endpoint}`,
-          `Provider message: ${providerMessage}`,
-        ].join("\n");
-        addLogEntry("error", `LLM Auth Error`, authDetails);
-        stopAgent(
-          `Authorization failed (HTTP ${status}) for ${provider} using ${model}. ${providerMessage}`,
-          "error",
-        );
-        return;
-      }
-
-      if (
-        (status === 404 || status === 400) &&
-        err.message.match(/image|vision/i)
-      ) {
-        if (screenshotDataUrl) {
-          // Remember for the rest of the session so auto-screenshots stop.
-          visionUnsupported = true;
-          addLogEntry(
-            "system",
-            "Vision Unavailable",
-            "The selected model does not support vision capabilities. Re-routing pure text payload...",
-          );
-          const fallbackMessage = `${userMessage}\n\n[SYSTEM WARNING: You previously requested a screenshot, but your current model does not support Computer Vision. The screenshot payload was rejected by the provider. Please proceed using purely the text-based DOM context. Do NOT use the "request_screenshot" action again.]`;
-          setTimeout(() => {
-            if (callRunId !== runId) return;
-            callLLM(systemPrompt, fallbackMessage, callback, null, 0, options);
-          }, 500);
-          return;
-        }
-      }
-
-      // Some models/gateways reject native tools or tool_choice with a 400.
-      // Flip to the text-JSON protocol for the rest of the session and retry
-      // once, so nothing regresses versus the pre-tool-calling behavior.
-      if (
-        status === 400 &&
-        activeTool &&
-        !toolsUnsupported &&
-        /tool|function/i.test(err.message || "")
-      ) {
-        toolsUnsupported = true;
-        addLogEntry(
-          "system",
-          "Tool Calling Unsupported",
-          "Provider rejected native tools. Falling back to the text-JSON protocol for this session.",
-        );
-        setTimeout(() => {
-          if (callRunId !== runId) return;
-          callLLM(
-            systemPrompt,
-            userMessage,
-            callback,
-            screenshotDataUrl,
-            attempt,
-            options,
-          );
-        }, 250);
-        return;
-      }
-
-      // Some OpenAI-compatible providers reject response_format /
-      // stream_options with a 400. Drop the extras once and retry.
-      if (
-        status === 400 &&
-        provider !== "anthropic" &&
-        !compatParamsUnsupported &&
-        /response_format|json_object|json_mode|stream_options|unsupported|unrecognized|unknown (?:field|parameter|argument)/i.test(
-          err.message || "",
-        )
-      ) {
-        compatParamsUnsupported = true;
-        addLogEntry(
-          "system",
-          "Compatibility Retry",
-          "Provider rejected response_format/stream_options. Retrying once without them.",
-        );
-        setTimeout(() => {
-          if (callRunId !== runId) return;
-          callLLM(
-            systemPrompt,
-            userMessage,
-            callback,
-            screenshotDataUrl,
-            attempt,
-            options,
-          );
-        }, 250);
-        return;
-      }
-
-      const maxRetries = 3;
-      if (
-        attempt < maxRetries &&
-        (status === 429 || status >= 500 || status === 408 || status === 0)
-      ) {
-        let backoffMs = 2000 * Math.pow(2, attempt) + Math.random() * 1000;
-
-        if (status === 429) {
-          const retryAfterHeader = respHeaders
-            ? respHeaders["retry-after"] || respHeaders["Retry-After"]
-            : null;
-          if (retryAfterHeader) {
-            const seconds = parseInt(retryAfterHeader, 10);
-            if (!isNaN(seconds)) {
-              backoffMs = seconds * 1000 + Math.random() * 500;
-              addLogEntry(
-                "system",
-                "Rate Limited (429)",
-                `Retry-After header suggests waiting ${seconds}s. Waiting...`,
-              );
-            } else {
-              const dateMs = Date.parse(retryAfterHeader);
-              if (!isNaN(dateMs)) {
-                const diff = dateMs - Date.now();
-                if (diff > 0) {
-                  backoffMs = diff + Math.random() * 500;
-                  addLogEntry(
-                    "system",
-                    "Rate Limited (429)",
-                    `Retry-After date suggests waiting ${Math.round(diff / 1000)}s. Waiting...`,
-                  );
-                }
-              }
-            }
-          } else {
-            addLogEntry(
-              "system",
-              "Rate Limited (429)",
-              `No Retry-After header. Waiting ${Math.round(backoffMs / 1000)}s before retry ${attempt + 1}...`,
-            );
-          }
-        } else {
-          addLogEntry(
-            "system",
-            "Network/Server Error",
-            `HTTP ${status || "Network"}. Waiting ${Math.round(backoffMs / 1000)}s before retry ${attempt + 1}...`,
-          );
-        }
-
-        setTimeout(() => {
-          // A retry scheduled before Stop (or before a new run started)
-          // must never fire into the wrong run.
-          if (callRunId !== runId) return;
-          callLLM(
-            systemPrompt,
-            userMessage,
-            callback,
-            screenshotDataUrl,
-            attempt + 1,
-            options,
-          );
-        }, backoffMs);
-        return;
-      }
-
-      addLogEntry(
-        "error",
-        `LLM Model Call Error`,
-        `${err.message || "Failed."} (HTTP ${status})`,
-      );
-
-      stopAgent(
-        err.message || "API connection failure after retries.",
-        "error",
-      );
-    }
-
-    port.onMessage.addListener((msg) => {
-      if (msg.type === "error") {
-        const cleaned = cleanErrorMessage(msg.error, msg.status);
-        handleError(
-          new Error(`API Error (HTTP ${msg.status || "unknown"}): ${cleaned}`),
-          msg.status,
-          msg.headers,
-        );
-      } else if (msg.type === "connected") {
-        if (activeStreamText) {
-          activeStreamText.textContent = "";
-        }
-      } else if (msg.type === "chunk") {
-        const chunk = msg.chunk;
-        buffer += chunk;
-        const lines = buffer.split("\n");
-        buffer = lines.pop();
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-
-          if (trimmed.startsWith("data: ")) {
-            const dataStr = trimmed.slice(6);
-            if (dataStr === "[DONE]") continue;
-
-            try {
-              const parsed = JSON.parse(dataStr);
-              let contentToken = parsed.choices?.[0]?.delta?.content || "";
-              let reasoningToken = parsed.choices?.[0]?.delta?.reasoning || "";
-
-              if (!contentToken && parsed.delta?.text) {
-                contentToken = parsed.delta.text;
-              }
-              if (
-                !contentToken &&
-                parsed.type === "content_block_delta" &&
-                parsed.delta?.text
-              ) {
-                contentToken = parsed.delta.text;
-              }
-
-              // Native tool-call fragments, OpenAI-compatible shape:
-              // choices[0].delta.tool_calls[{index, function:{name, arguments}}]
-              const deltaToolCalls = parsed.choices?.[0]?.delta?.tool_calls;
-              if (deltaToolCalls) {
-                SELECT_TO_AI_TOOLS.accumulateOpenAIToolCallDelta(
-                  toolState,
-                  deltaToolCalls,
-                );
-                for (const fragment of deltaToolCalls) {
-                  if (fragment?.function?.arguments) {
-                    toolArgsStreamed += fragment.function.arguments;
-                  }
-                }
-              }
-              // Native tool-use events, Anthropic shape:
-              // content_block_start (tool_use) + input_json_delta chunks.
-              SELECT_TO_AI_TOOLS.accumulateAnthropicEvent(toolState, parsed);
-              if (
-                parsed.type === "content_block_delta" &&
-                parsed.delta?.type === "input_json_delta" &&
-                parsed.delta.partial_json
-              ) {
-                toolArgsStreamed += parsed.delta.partial_json;
-              }
-
-              const combinedToken = reasoningToken + contentToken;
-
-              if (combinedToken) {
-                replyText += combinedToken;
-              }
-              if ((combinedToken || toolArgsStreamed) && activeStreamText) {
-                activeStreamText.textContent = replyText + toolArgsStreamed;
-                activeStreamText.scrollTop = activeStreamText.scrollHeight;
-              }
-
-              // OpenAI-compatible: usage on the final chunk (needs
-              // stream_options.include_usage). Anthropic: input tokens on
-              // message_start (nested under message), output tokens on
-              // message_delta (top-level usage).
-              const usagePayload =
-                parsed.usage || (parsed.message && parsed.message.usage);
-              if (usagePayload) {
-                usageProvided = true;
-                accumulateUsage(usagePayload, model);
-              }
-            } catch (e) {
-              // Substring mismatch/partial chunk JSON
-            }
-          }
-        }
-      } else if (msg.type === "done") {
-        if (finished) return;
-        clearTimeout(timeoutId);
-        try {
-          port.disconnect();
-        } catch (e) {}
-
-        setTimeout(() => {
-          if (activeStreamPanel) {
-            activeStreamPanel.style.display = "none";
-          }
-        }, 1000);
-
-        if (!usageProvided) {
-          const promptTokensEst = Math.ceil(
-            (systemPromptText.length + userMessage.length) / 4,
-          );
-          const completionTokensEst = Math.ceil(
-            (replyText.length + toolArgsStreamed.length) / 4,
-          );
-          accumulateUsage(
-            {
-              prompt_tokens: promptTokensEst,
-              completion_tokens: completionTokensEst,
-            },
-            model,
-            true, // estimated, cost badge shows an "est." qualifier
-          );
-        }
-
-        // Primary path: the structured tool call. Its schema-validated
-        // arguments ARE the action object, no prose parsing involved.
-        if (activeTool) {
-          const toolCalls = SELECT_TO_AI_TOOLS.finalizeToolCalls(toolState);
-          const usableCall = toolCalls.find(
-            (call) => call.args && typeof call.args === "object",
-          );
-          if (usableCall) {
-            parseFailureCount = 0;
-            callback(usableCall.args);
-            return;
-          }
-          // The model returned no (parseable) tool call, fall through to
-          // the text protocol so prose-answering models still work.
-        }
-
-        const parsedText = SELECT_TO_AI_TOOLS.parseTextAction(replyText);
-        if (parsedText) {
-          parseFailureCount = 0;
-          callback(parsedText);
-          return;
-        }
-
-        console.error("No structured output in reply:", replyText);
-        parseFailureCount++;
-        const maxParseFailures = config.agentFailureThreshold || 3;
-        if (parseFailureCount >= maxParseFailures) {
-          stopAgent(
-            `Too many consecutive JSON parsing failures (${parseFailureCount}). Aborting.`,
-            "error",
-          );
-        } else {
-          handleError(
-            new Error(
-              `API response did not contain a valid tool call or JSON object. (Failure ${parseFailureCount}/${maxParseFailures})`,
-            ),
-          );
-        }
-      }
-    });
-
-    try {
-      port.postMessage({
-        url: endpoint,
-        options: {
-          method: "POST",
-          headers: headers,
-          body: JSON.stringify(body),
-        },
-      });
-    } catch (postErr) {
-      handleError(postErr);
+    if (m.runId !== engineRunId) return;
+    if (m.type === "learned") { drawLearned(m.changes); return; }
+    if (m.type === "stream") { onStream(m.text); return; }
+    if (m.type === "entries") {
+      engineStatus = m.status;
+      engineTrace = m.trace;
+      engineJournal.push(...m.entries);
+      for (const entry of m.entries) drawEntry(entry, true);
+      if (engineStatus !== "waiting" && !(engineWait && engineWait.sub)) engineWait = null;
+      afterTrace();
+      if (engineStatus !== "running") taskInput.focus();
     }
   }
 
-  // Export task execution logs to Markdown file
-  function exportMarkdownLogs() {
-    let md = `# Select to AI - Task Execution Log\n\n`;
-    md += `**Goal**: ${currentTask}\n`;
-    md += `**Status**: ${isRunning ? "In Progress" : "Completed"}\n`;
-    md += `**Steps Taken**: ${currentStep} / ${agentMaxStepsLimit}\n\n`;
-
-    md += `## Checklist Plan\n`;
-    subtasks.forEach((s, idx) => {
-      const taskText = typeof s === "string" ? s : s.task;
-      const isDone = idx < currentSubtaskIndex ? "[x]" : "[ ]";
-      md += `- ${isDone} ${taskText}\n`;
-    });
-    md += `\n`;
-
-    md += `## Execution History\n`;
-    if (actionHistory.length === 0) {
-      md += `*No actions recorded yet.*\n`;
-    } else {
-      actionHistory.forEach((h) => {
-        md += `### Step ${h.step}\n`;
-        md += `- **Subtask**: ${h.subtask}\n`;
-        md += `- **Action**: \`${JSON.stringify(h.action)}\`\n`;
-        md += `- **Result**: ${h.success ? "Success" : "Failed"}\n`;
-        md += `- **Details**: ${h.message}\n\n`;
-      });
-    }
-
-    const blob = new Blob([md], { type: "text/markdown;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
+  function exportEngineLog() {
+    if (!engineTrace) return;
+    const md = globalThis.SELECT_TO_AI_RUNLOG.toMarkdown({ trace: engineTrace, journal: engineJournal });
+    const url = URL.createObjectURL(new Blob([md], { type: "text/markdown;charset=utf-8;" }));
     const link = document.createElement("a");
     link.href = url;
     link.setAttribute("download", `task_log_${Date.now()}.md`);
@@ -4118,13 +2583,53 @@ ${(function () {
     document.body.removeChild(link);
   }
 
-  // Omnibox handoff: agent.html?task=...&autostart=1 pre-fills the task and,
-  // when asked, starts planning immediately. Risky actions still stop at the
+
+  /** The provider's name as the user knows it. */
+  function friendlyProviderName(provider) {
+    return {
+      openrouter: "OpenRouter", openai: "OpenAI", anthropic: "Anthropic", gemini: "Google Gemini",
+      groq: "Groq", deepseek: "DeepSeek", mistral: "Mistral", xai: "xAI", together: "Together AI",
+      opencode: "OpenCode", cerebras: "Cerebras", chatgpt: "ChatGPT", custom: "Your server",
+    }[provider] || "The AI provider";
+  }
+
+  // agent.html?task=...&autostart=1 (the quick box, the benchmarks) pre-fills
+  // the task and, when asked, starts it at once. Risky actions still stop at the
   // in-conversation authorization gate, so autostart never skips a decision.
-  (function consumeOmniboxTask() {
+  // Address bar handoff: agent.html?handoff=<id> names a request kept once
+  // in session storage (omnibox.js). It is taken and removed, so the same
+  // panel opened again later starts nothing.
+  // A task handed in the address is taken once: the address loses it at
+  // once, so reloading the page or reopening it from history starts nothing.
+  function forgetHandedTask() {
+    try {
+      const url = new URL(window.location.href);
+      let changed = false;
+      for (const k of ["task", "autostart", "handoff"]) if (url.searchParams.has(k)) { url.searchParams.delete(k); changed = true; }
+      if (changed) history.replaceState(history.state, "", url.pathname + (url.search || "") + url.hash);
+    } catch (_) { /* the address stays as it was */ }
+  }
+
+  (function consumeHandoff() {
+    const id = new URLSearchParams(window.location.search).get("handoff");
+    const OMNI = window.SELECT_TO_AI_OMNIBOX;
+    if (!id || !OMNI || !chrome.storage || !chrome.storage.session) return;
+    forgetHandedTask();
+    OMNI.takeHandoff(chrome.storage.session, id).then((task) => {
+      if (!task) return;
+      taskInput.value = task.slice(0, 2000);
+      taskInput.style.height = "auto";
+      taskInput.style.height = taskInput.scrollHeight + "px";
+      // A new task, whatever the window is doing: the engine decides with the user.
+      startAgent(true);
+    }).catch((e) => console.warn("Address bar handoff failed:", e));
+  })();
+
+  (function consumeHandedTask() {
     try {
       const params = new URLSearchParams(window.location.search);
       const handedTask = (params.get("task") || "").trim();
+      forgetHandedTask();
       if (!handedTask) return;
       taskInput.value = handedTask.slice(0, 2000);
       taskInput.style.height = "auto";
@@ -4135,7 +2640,7 @@ ${(function () {
         taskInput.focus();
       }
     } catch (e) {
-      console.warn("Omnibox task ingest failed:", e);
+      console.warn("Handed task failed:", e);
     }
   })();
 })();

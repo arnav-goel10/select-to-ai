@@ -1,0 +1,72 @@
+PASS  search
+PASS  form
+PASS  booking
+PASS  hijack
+PASS  hijackQuiet
+PASS  article
+  first answer shown 773 ms after the request; final 3310 ms (trace: 616 ms and 3126 ms)
+PASS  decade
+PASS  decadeSentBack
+PASS  aboutSelection
+  page brought to front once, drawn after 44 ms; bar told 10 times
+PASS  followBar
+PASS  followTouched
+PASS  followPanel
+PASS  followRead
+PASS  signin
+PASS  signinPushy
+PASS  signinAuto
+PASS  signinAsleep
+PASS  humanCheck
+PASS  framed
+PASS  findQuote
+PASS  newTab
+PASS  fromNothingBlank
+PASS  fromNothingBrowserPage
+PASS  omniboxHandoff
+FAIL  listened
+      the tile was not pressed (Nothing pressed): "There is no tile to press."
+FAIL  slowResults
+      the press's result did not say what appeared: "Clicked element [1]. Nothing on the page changed."
+PASS  stillLoading
+PASS  busyPage
+PASS  slowResultsNoDebugger
+PASS  hoverMenu
+FAIL  pointerHover
+      Pricing was not chosen (Nothing chosen): Task Started. Choose Pricing from the Products menu. Step 1. Open the Products menu Action. hover [1]02:36:48 AM Result. Moved the pointer over [1] without pressing it. Nothing on the page changed.02:36:48 AM Step 2. Open the Products menu Action. hover [1]02:36:48 AM Result. Moved the pointer over [1] without pressing it. Nothing on the page changed.02:36:49 AM Step 3. Open the Products menu Action. hover [1]02:36:49 AM Result. Moved the pointer over [1] without pressing it. Nothing on the page changed.02:36:49 AM Step 4. Open the Products menu Action. hover [1]02:36:49 AM Result. Moved the p
+FAIL  pointerFrame
+      the press in the other site's frame did not land as a real one on its button: {"seat":"12A","trusted":false,"inside":true} Task Started. Pick seat 12A. Step 1. Pick the seat Action. click [100001]02:36:54 AM Result. Clicked element [100001]. The page scrolled.02:36:55 AM Step 2. Answer Checking Answer. Checking the answer against what was read. Check Passed. The quotes support the answer.
+FAIL  pointerDrag
+      the slider is at 5: Task Started. Turn the volume up, move Apples to the end of the list, and attach the invoice. Step 1. Turn the volume up Action. drag [1] right 150px02:36:57 AM Result. Dragged [1] right 150 px. [1] is now showing "5". The page updated.02:36:58 AM Step 2. Move Apples down the list Action. drag [2] onto [4]02:36:58 AM Result. Dragged [2] onto [4]. [2] is now 2nd of 3 in its list (it was 1st). [2] moved 34 px down. The page updated.02:37:00 AM Step 3. Attach the invoice Action. drag [5] onto [6]02:37:00 AM Result. Dragged [5] onto [6]. [5] is now in [6] "AttachmentsInvoice.pdf Attachments". [5] 
+PASS  pointerNoDebugger
+FAIL  pointerCanvas
+      the drawing was not pressed at 190,55 by a real press: [190,55,false] Task Started. Press the drawing a little right of its middle, then press the hidden button. Step 1. Press the drawing right of its middle Action. click_at 223,113202:37:05 AM Result. Clicked at 223,1132, on [2] "". The page updated.02:37:06 AM Step 2. Press the button Action. click [1]02:37:06 AM Action Failed. [1] is covered: a div with no words is drawn over it where it is on screen, so the press would reach that instead. Nothing was pressed.02:37:06 AM Step 3. Answer Checking Answer. Checking the answer against what was read. Check Passed. The quotes support the answer.
+PASS  pointerRisk
+FAIL  realKeys
+      the key was a scripted event, not a real one ({"focus":"first","trusted":false})
+PASS  humanAuto
+PASS  humanPushy
+PASS  code
+PASS  calcAsks
+PASS  commentSends
+PASS  payPress
+PASS  profileForm
+PASS  rememberSaid
+PASS  rememberPoison
+PASS  userFilled
+PASS  question
+PASS  compare
+PASS  learnNote
+PASS  keepAnswer
+PASS  lesson
+PASS  contextLearned
+PASS  reopen
+PASS  helper
+PASS  longRun
+PASS  checkIn
+PASS  delegate
+PASS  delegateDecline
+
+wait after the press: Search for flights and tell me the cheap: 468 ms; Show the note.: 474 ms; Search for flights and tell me the cheap: 3517 ms
+
+52/59 v4 scenarios passed

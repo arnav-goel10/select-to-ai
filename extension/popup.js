@@ -1,9 +1,8 @@
 /**
  * Select to AI - Popup Logic
  *
- * The popup is a launcher: open the sidebar, open the browser agent, open
- * settings, and pick the opening mode. Per-service toggles and behavioral
- * defaults live in Options only (their single home).
+ * The popup is a task box for the agent plus three launchers (side panel,
+ * agent tab, quick box). Every preference lives in Settings.
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -15,68 +14,90 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const { STORAGE, URLS, HOSTS } = CONFIG;
 
-    // DOM Elements
-    const openingModeSelect = document.getElementById('openingMode');
-    const openSidebarBtn = document.getElementById('openSidebarBtn');
-    const openAgentBtn = document.getElementById('openAgentBtn');
-    const openAgentLabel = document.getElementById('openAgentLabel');
-    const agentDisabledHint = document.getElementById('agentDisabledHint');
-    const openOptionsBtn = document.getElementById('openOptionsBtn');
-    const themeToggleBtn = document.getElementById('theme-toggle');
+    const $ = (id) => document.getElementById(id);
+    const openSidebarBtn = $('openSidebarBtn');
+    const openAgentBtn = $('openAgentBtn');
+    const taskForm = $('taskForm');
+    const taskInput = $('taskInput');
+    const taskGo = $('taskGo');
 
     let agentEnabled = false;
 
-    // --- Initialization ---
+    // Shortcut hints show the real bindings, which the user may have changed.
+    const isMac = /Mac/i.test(navigator.platform);
+    const pretty = (k) => (isMac ? k.replace(/Command|⌘/g, '⌘').replace(/Alt|Option/g, '⌥').replace(/Shift/g, '⇧').replace(/MacCtrl|Ctrl/g, '⌃').replace(/\+/g, '') : k.replace(/\+/g, ' '));
+    if (chrome.commands && chrome.commands.getAll) {
+        chrome.commands.getAll((cmds) => {
+            const find = (n) => ((cmds || []).find((c) => c.name === n) || {}).shortcut;
+            const palette = find('open-palette');
+            const sidebar = find('open-sidebar');
+            $('kbdPalette').hidden = !palette;
+            $('kbdSidebar').hidden = !sidebar;
+            if (palette) $('kbdPalette').textContent = pretty(palette);
+            if (sidebar) $('kbdSidebar').textContent = pretty(sidebar);
+        });
+    }
 
     chrome.storage.sync.get(STORAGE.SETTINGS, (items) => {
-        // Theme: stored preference with system fallback (shared mechanism).
-        const theme = items.theme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        document.documentElement.setAttribute('data-theme', theme);
-        updateThemeToggleLabel(theme);
+        const dark = items.theme ? items.theme === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
 
-        // Opening mode with validation fallback.
-        let mode = items.openingMode;
-        if (!['tab', 'sidePanel'].includes(mode)) {
-            mode = 'sidePanel';
-            chrome.storage.sync.set({ openingMode: mode });
-        }
-        openingModeSelect.value = mode;
+        // The agent is ready when it is switched on AND its provider has a key
+        // (a custom local server needs none). Otherwise offer the setup.
+        const D = globalThis.SELECT_TO_AI_DEFAULTS;
+        const provider = items.agentActiveProvider || D.AGENT_DEFAULTS.activeProvider;
+        const keyName = provider === 'custom' || provider === 'chatgpt' ? null : (D.PROVIDER_ENDPOINTS[provider] || {}).keyName;
+        chrome.storage.local.get(keyName ? [keyName] : ['chatgptAccount'], (local) => {
+            // ChatGPT is ready once signed in with plan use on.
+            const chatgpt = local.chatgptAccount;
+            const ready = provider === 'chatgpt' ? !!(chatgpt && chatgpt.signedIn && chatgpt.planEnabled) : (!keyName || !!local[keyName]);
+            agentEnabled = items.showAgent === true && ready;
+            taskForm.hidden = !agentEnabled;
+            $('ideas').hidden = !agentEnabled;
+            openAgentBtn.hidden = !agentEnabled;
+            $('setupCard').hidden = agentEnabled;
+            if (agentEnabled) taskInput.focus();
+        });
+    });
 
-        // Agent gate: the "Enable AI Browser Agent" setting in Options is the
-        // one master switch for every agent entry point (popup, Alt+A,
-        // address bar, side panel dropdown, context menu).
-        agentEnabled = items.showAgent === true;
+    $('setupBtn').addEventListener('click', () => {
+        chrome.tabs.create({ url: chrome.runtime.getURL('welcome.html?step=connect') });
+        window.close();
+    });
+
+    taskInput.addEventListener('input', () => { taskGo.disabled = !taskInput.value.trim(); });
+    taskInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); taskForm.requestSubmit(); }
+    });
+    taskForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const task = taskInput.value.trim();
+        if (task) openAgent(task);
+    });
+    document.querySelectorAll('.idea').forEach((b) => b.addEventListener('click', () => openAgent(b.dataset.task)));
+
+    $('openOptionsBtn').addEventListener('click', () => chrome.runtime.openOptionsPage());
+    openAgentBtn.addEventListener('click', () => openAgent('', true));
+    $('openPaletteBtn').addEventListener('click', () => {
+        chrome.runtime.sendMessage({ action: 'openPaletteFromPopup' });
+        window.close();
+    });
+
+    function openAgent(task, inTab) {
         if (!agentEnabled) {
-            openAgentLabel.textContent = 'Browser Agent (off) · Settings';
-            agentDisabledHint.classList.remove('u-hidden');
-        }
-    });
-
-    // --- Event Listeners ---
-
-    openingModeSelect.addEventListener('change', () => {
-        chrome.storage.sync.set({ openingMode: openingModeSelect.value });
-    });
-
-    openOptionsBtn.addEventListener('click', () => {
-        chrome.runtime.openOptionsPage();
-    });
-
-    openAgentBtn.addEventListener('click', () => {
-        if (!agentEnabled) {
-            // Same gate as every other entry point: point the user at the
-            // Options switch instead of silently opening a disabled surface.
-            chrome.runtime.openOptionsPage();
+            chrome.tabs.create({ url: chrome.runtime.getURL('welcome.html?step=connect') });
             return;
         }
 
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
             const activeTab = tabs && tabs[0];
-            const agentUrl = chrome.runtime.getURL('agent.html') +
-                (activeTab && activeTab.id ? `?tabId=${activeTab.id}` : '');
+            const params = new URLSearchParams();
+            if (activeTab && activeTab.id) params.set('tabId', String(activeTab.id));
+            if (task) { params.set('task', task); params.set('autostart', '1'); }
+            const agentUrl = chrome.runtime.getURL('agent.html') + (params.toString() ? `?${params}` : '');
 
             chrome.storage.sync.get(['openingMode'], (settings) => {
-                if (settings.openingMode === 'tab') {
+                if (inTab || settings.openingMode === 'tab') {
                     chrome.tabs.create({ url: agentUrl });
                     return;
                 }
@@ -94,9 +115,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             });
         });
-    });
+    }
 
-    // openSidebarBtn: open the last-used (or first enabled) assistant.
+    // openSidebarBtn: open the agent when it is on, else the last-used (or first enabled) assistant.
     openSidebarBtn.addEventListener('click', () => {
         chrome.storage.local.get([STORAGE.SIDE_PANEL_STATE], (localState) => {
             chrome.storage.sync.get(STORAGE.SETTINGS, (settings) => {
@@ -108,8 +129,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 const showClaude = settings.showClaude !== false;
                 const showAgent = settings.showAgent === true;
 
-                // 1. Check Last Used
-                if (localState[STORAGE.SIDE_PANEL_STATE] && localState[STORAGE.SIDE_PANEL_STATE].url) {
+                // 1. With the agent on, the side panel opens on the agent; the
+                // assistant sites are a click away inside it.
+                if (showAgent) {
+                    targetBaseUrl = chrome.runtime.getURL('agent.html');
+                } else if (localState[STORAGE.SIDE_PANEL_STATE] && localState[STORAGE.SIDE_PANEL_STATE].url) {
                     targetBaseUrl = localState[STORAGE.SIDE_PANEL_STATE].url;
 
                     // Verify if that service is still enabled
@@ -171,25 +195,6 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
     });
-
-    // Theme toggle: shared stored-preference mechanism.
-    if (themeToggleBtn) {
-        themeToggleBtn.addEventListener('click', () => {
-            const currentTheme = document.documentElement.getAttribute('data-theme');
-            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-            document.documentElement.setAttribute('data-theme', newTheme);
-            updateThemeToggleLabel(newTheme);
-            chrome.storage.sync.set({ theme: newTheme });
-        });
-    }
-
-    function updateThemeToggleLabel(theme) {
-        if (!themeToggleBtn) return;
-        themeToggleBtn.setAttribute(
-            'aria-label',
-            theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
-        );
-    }
 
     function getFallbackUrl(settings) {
         if (settings.showChatGPT !== false) return URLS.CHATGPT;

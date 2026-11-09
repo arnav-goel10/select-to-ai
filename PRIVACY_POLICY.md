@@ -1,39 +1,73 @@
 # Privacy Policy for Select to AI
 
-Last updated: August 15, 2026
+Last updated: November 10, 2026 (version 4.0.0)
 
-Select to AI does not operate an application server and does not sell personal data. The extension processes information in your browser and sends content only to the AI service or custom gateway you choose.
+Select to AI has no server of its own. It does not use analytics, advertising, error reporting or telemetry, and it does not sell or share data with anyone. What it reads from your pages goes to one place: the AI service you chose in Settings (or your own gateway), so that service can answer you or do the task you gave it. That service's own terms and privacy policy apply to what it receives.
 
-## Data the extension handles
+A full list of every request the extension makes and every item it stores, with the code that does it, is in [docs/privacy-disclosure.md](docs/privacy-disclosure.md).
 
-- **API keys** are stored in `chrome.storage.local` in your browser profile. They are not placed in Chrome Sync and are excluded from settings exports. Version 3.1 migrates keys that older builds may have stored in sync and removes the synced copies.
-- **Preferences** such as enabled services, theme, model, and safety limits are stored in `chrome.storage.sync` and may sync through your browser account.
-- **Selected text, page context, DOM summaries, prompts, and optional screenshots** are sent directly to the selected AI provider when required for a request. Select to AI does not receive a copy on its own server.
-- **Agent history** stores up to 20 validator-confirmed task outlines (the task goal and its subtask list, never page contents) in `chrome.storage.local`. It is read back locally into the planning step of new agent tasks, which means those stored goals and subtask lists are included in the planning prompt sent to your selected AI provider. It is never sent anywhere else, and unvalidated or failed runs are never stored. The agent page's sidebar shows exactly what is stored ("Recent Sessions" and the "Stored Memory" viewer) and provides a one-click **Clear stored memory** control that deletes all of it.
-- **Scratchpad notes** are short facts the agent saves during a single run (for example a price it read on one page while comparing it with another). They live in the agent page's memory for that session only, are visible in the sidebar's "Scratchpad Notes" viewer, can be cleared there at any time, and are discarded when the run's session ends. Like all page-derived context, notes are included in the prompts sent to your selected AI provider during the run.
+## What is sent, and to whom
 
-Local extension storage is protected by the browser profile and extension permission model, but it is not an encrypted secrets vault. Users with access to your unlocked browser profile or a compromised device may be able to access it.
+**To the AI service you chose** (OpenRouter, OpenAI, Anthropic, Google Gemini, DeepSeek, Mistral, Groq, Together AI, xAI, OpenCode, Cerebras, or a custom gateway you set up), only while you use the agent:
 
-## External services
+- The task you typed, and any text you had selected when you asked.
+- The text of the page the agent is working on and a list of its buttons, links and fields, at every step. Password, card and one-time-code fields are never read: the agent is told such a field exists and whether it is filled, not what is in it.
+- Short excerpts (about 600 characters each) of pages it read earlier in the same task.
+- The titles and addresses of the tabs open in the same window, at every step.
+- Short excerpts (about 900 characters each, at most four) of other open tabs, only when the task is about them, judged from their titles and addresses.
+- A screenshot of the page, only when the agent asks to look at it and only if your model can read images.
+- What the agent knows about you (see Memory below): your preferences and notes in your own words, and which of your saved details exist. A saved detail's value (for example your email) goes to the AI service only when the agent asks to read it, and the conversation shows that it did. Otherwise your details go straight from your browser into the form.
+- After a task that could teach it something, one more request with a summary of the task and your existing memory, to decide what to keep. Turn learning off under Settings > Memory to stop this.
+- When a saved recipe meets a page that has changed, a short description of that step and of the page's controls, to check or repair the step.
+- Your API key for that service, in the request header.
 
-Depending on your selection, requests may be sent to OpenAI, Anthropic, OpenRouter, Google Gemini, DeepSeek, Mistral, Groq, Together AI, xAI, OpenCode, or a custom gateway you configure. Their own terms, retention rules, and privacy policies apply.
+If you set a **backup provider** (Settings > Browser agent > Backup when limits run out), the same requests go to that provider while your main one is out of quota. Each switch is shown in the conversation. Some free tiers, such as Google Gemini's outside the EU and UK, may use prompts to improve their products.
 
-The extension does not use analytics, advertising SDKs, or third-party telemetry.
+**To ChatGPT, Claude, Gemini or Perplexity**, when you right-click selected text and send it there: the selected text, and the page address if "Include the page link" is on. For ChatGPT and Perplexity the text is put in the address that opens their page (`?q=`), so it can appear in that site's history.
 
-## Retention and deletion
+**To OpenRouter**, when you click "Continue with OpenRouter" on the welcome page: OpenRouter's own sign-in runs in a Chrome window (OAuth with PKCE) and returns an API key. The extension never sees your OpenRouter password.
 
-Preferences and local data remain until you reset the extension, remove individual settings, clear extension storage, or uninstall it. Use **Options → Reset all settings** to remove preferences and API keys. Browser Sync may retain non-sensitive preferences according to your browser-account settings.
+**To the websites the agent opens for you**: whatever the task needs, for example search words typed into a search box. This is the agent using the site the way you would.
 
-## Security controls
+## What is stored in your browser
 
-- Requests are restricted to documented provider origins or the exact configured custom-gateway origin.
-- Remote custom gateways require HTTPS; HTTP is accepted only for loopback development.
-- Arbitrary website access is optional and requested per origin.
-- High-risk browser actions require confirmation by default.
-- Settings backups exclude API keys.
+Nothing below leaves your browser except as listed above.
 
-See [SECURITY.md](SECURITY.md) for the threat model and vulnerability-reporting process.
+| What | Where | How long |
+|---|---|---|
+| API keys | `chrome.storage.local` (not synced, left out of settings exports) | Until Settings > Reset or uninstall |
+| Settings and preferences | `chrome.storage.sync` (may sync with your Chrome account) | Until Reset |
+| Memory: your details for forms (name, email, phone, address, company and the like, each saved only after you typed or confirmed it), preferences, notes about how sites work, lessons from your corrections, opening steps of tasks that worked | `chrome.storage.local`, encrypted with a key that never leaves this browser profile | Until you delete an entry, use Forget everything, or Reset |
+| Your last 20 tasks: the words you typed (including any text you selected for the quick box) and whether each worked | `chrome.storage.local` | Until Reset |
+| Recipes you saved: addresses, the names of the controls used and the words near them, the example values you typed, the last five results | `chrome.storage.local` | Until you delete the recipe, or Reset |
+| The task in progress: its steps, what it read and the excerpts of other tabs it used, so it can carry on if Chrome pauses the extension | `chrome.storage.session`, which Chrome keeps in memory and clears when the browser closes. The text of the pages it read is dropped as soon as the task ends. The excerpts of other tabs and your selection stay until the browser closes | Until the browser closes |
+| The last conversation address on ChatGPT, Claude, Gemini and Perplexity, so the side panel reopens it | `chrome.storage.local` | Until Reset |
+
+Memory refuses anything that looks like a password, one-time code, card number (any run of 13 to 19 digits), social security number, passport or ID number, or API key. Recipes never keep passwords, codes or card numbers: a recipe asks for them each time it runs. A task that used your saved details cannot be saved as a recipe.
+
+Storage in your browser profile is protected by Chrome, but apart from Memory it is not encrypted. Someone with access to your unlocked computer could read it.
+
+## Permissions that touch your data
+
+- **Access to websites** is optional. Chrome asks before the agent works on a site, for that site or for all sites, your choice.
+- **Debugger** lets the agent press, type and take screenshots in a tab the way a person would, including tabs behind the one you are looking at. Chrome shows a bar saying the extension is debugging the browser while it is attached.
+- **Tabs** lets the agent see the titles and addresses of your tabs, and open and switch tabs for a task.
+- **Notifications** shows the outcome of a task you left running. The text stays on your device.
+
+## Deleting your data
+
+- **Settings > Reset** removes your settings, API keys, Memory, task history, recipes and saved chat addresses.
+- **Forget everything** in the Memory panel deletes Memory only.
+- Uninstalling the extension removes everything it stored.
+
+## Security
+
+- Requests go only to the listed AI services, or to the exact address of a gateway you set up. A remote gateway must use HTTPS; plain HTTP is allowed only for your own computer.
+- Actions that pay, send or delete stop and ask you first, by default.
+- Settings exports leave out API keys.
+
+See [SECURITY.md](SECURITY.md) for the threat model and how to report a vulnerability.
 
 ## Contact
 
-For privacy questions, open a repository discussion or contact the maintainer through [arnav-goel10/select-to-ai](https://github.com/arnav-goel10/select-to-ai). For suspected vulnerabilities, follow the private process in [SECURITY.md](SECURITY.md).
+For privacy questions, open an issue on [arnav-goel10/select-to-ai](https://github.com/arnav-goel10/select-to-ai). For suspected vulnerabilities, follow the private process in [SECURITY.md](SECURITY.md).

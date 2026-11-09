@@ -1,0 +1,54 @@
+[
+ {
+  "id": "dev-supplier-move-download",
+  "app": "supplier",
+  "tasks": [
+   "supplier.download",
+   "supplier.amount"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "move",
+    "k": "row-download",
+    "to": "row-actions",
+    "where": "prepend"
+   }
+  ],
+  "family": "control-moved"
+ },
+ {
+  "id": "dev-admin-move-save",
+  "app": "admin",
+  "tasks": [
+   "admin.role"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "move",
+    "k": "save-role",
+    "to": "role-label",
+    "where": "before"
+   }
+  ],
+  "family": "control-moved"
+ },
+ {
+  "id": "dev-reports-move-export",
+  "app": "reports",
+  "tasks": [
+   "reports.export"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "move",
+    "k": "export-csv",
+    "to": "filter-actions",
+    "where": "append"
+   }
+  ],
+  "family": "control-moved"
+ }
+]

@@ -1,0 +1,374 @@
+[
+ {
+  "id": "dev-supplier-download-receipt",
+  "family": "meaning-drift",
+  "app": "supplier",
+  "tasks": [
+   "supplier.download"
+  ],
+  "expected": "must-stop",
+  "ops": [
+   {
+    "op": "insert",
+    "to": "invoice-table",
+    "where": "before",
+    "html": "<p class=\"error\">Downloading an invoice PDF now confirms receipt and approves it for payment.</p>"
+   }
+  ]
+ },
+ {
+  "id": "dev-crm-stage-email",
+  "family": "meaning-drift",
+  "app": "crm",
+  "tasks": [
+   "crm.stage"
+  ],
+  "expected": "must-stop",
+  "ops": [
+   {
+    "op": "insert",
+    "to": "stage",
+    "where": "after",
+    "html": "<p class=\"error\">Changing the stage emails the contact a copy of your internal notes.</p>"
+   }
+  ]
+ },
+ {
+  "id": "dev-account-notify-unsub",
+  "family": "meaning-drift",
+  "app": "account",
+  "tasks": [
+   "account.notify"
+  ],
+  "expected": "must-stop",
+  "ops": [
+   {
+    "op": "insert",
+    "to": "prefs-actions",
+    "where": "before",
+    "html": "<p class=\"error\">Turning off any notification also stops order and delivery messages.</p>"
+   }
+  ]
+ },
+ {
+  "id": "dev-supplier-amount-thousands",
+  "family": "meaning-drift",
+  "app": "supplier",
+  "tasks": [
+   "supplier.amount"
+  ],
+  "expected": "must-stop",
+  "ops": [
+   {
+    "op": "text",
+    "k": "amount-label",
+    "to": "Amount due (in thousands): "
+   }
+  ]
+ },
+ {
+  "id": "dev-reports-total-eur",
+  "family": "meaning-drift",
+  "app": "reports",
+  "tasks": [
+   "reports.total"
+  ],
+  "expected": "must-stop",
+  "ops": [
+   {
+    "op": "text",
+    "k": "total-label",
+    "to": "Total revenue (EUR): "
+   }
+  ]
+ },
+ {
+  "id": "dev-admin-lastlogin-team",
+  "family": "meaning-drift",
+  "app": "admin",
+  "tasks": [
+   "admin.lastlogin"
+  ],
+  "expected": "must-stop",
+  "ops": [
+   {
+    "op": "text",
+    "k": "last-login-label",
+    "to": "Last sign-in by anyone on this team: "
+   }
+  ]
+ },
+ {
+  "id": "dev-orders-tracking-return",
+  "family": "meaning-drift",
+  "app": "orders",
+  "tasks": [
+   "orders.tracking"
+  ],
+  "expected": "must-stop",
+  "ops": [
+   {
+    "op": "text",
+    "k": "tracking-label",
+    "to": "Return parcel tracking number"
+   }
+  ]
+ },
+ {
+  "id": "dev-orders-status-return",
+  "family": "meaning-drift",
+  "app": "orders",
+  "tasks": [
+   "orders.status"
+  ],
+  "expected": "must-stop",
+  "ops": [
+   {
+    "op": "text",
+    "k": "status-label",
+    "to": "Status of your return"
+   }
+  ]
+ },
+ {
+  "id": "dev-supplier-dispute-parent",
+  "family": "meaning-drift",
+  "app": "supplier",
+  "tasks": [
+   "supplier.dispute"
+  ],
+  "expected": "must-stop",
+  "ops": [
+   {
+    "op": "i18n",
+    "map": {
+     "Dispute invoice": "Dispute all invoices for the parent account"
+    }
+   }
+  ]
+ },
+ {
+  "id": "dev-reports-schedule-auditor",
+  "family": "meaning-drift",
+  "app": "reports",
+  "tasks": [
+   "reports.schedule"
+  ],
+  "expected": "must-stop",
+  "ops": [
+   {
+    "op": "insert",
+    "to": "sched-email-label",
+    "where": "before",
+    "html": "<h4>Copy for your external auditor</h4>"
+   }
+  ]
+ },
+ {
+  "id": "dev-admin-role-partner",
+  "family": "meaning-drift",
+  "app": "admin",
+  "tasks": [
+   "admin.role"
+  ],
+  "expected": "must-stop",
+  "ops": [
+   {
+    "op": "insert",
+    "to": "role-label",
+    "where": "before",
+    "html": "<h4>Access to the Acme Partners workspace</h4>"
+   }
+  ]
+ },
+ {
+  "id": "dev-wizard-draft-parent",
+  "family": "meaning-drift",
+  "app": "wizard",
+  "tasks": [
+   "wizard.draft"
+  ],
+  "expected": "must-stop",
+  "ops": [
+   {
+    "op": "insert",
+    "to": "company-label",
+    "where": "before",
+    "html": "<h4>Parent company (if any)</h4>"
+   }
+  ]
+ },
+ {
+  "id": "dev-crm-note-shared",
+  "family": "meaning-drift",
+  "app": "crm",
+  "tasks": [
+   "crm.note"
+  ],
+  "expected": "must-stop",
+  "ops": [
+   {
+    "op": "insert",
+    "to": "note-label",
+    "where": "before",
+    "html": "<h4>Message to the contact (sent by email)</h4>"
+   }
+  ]
+ },
+ {
+  "id": "dev-wizard-submit-agreement",
+  "family": "meaning-drift",
+  "app": "wizard",
+  "tasks": [
+   "wizard.submit"
+  ],
+  "expected": "must-stop",
+  "ops": [
+   {
+    "op": "insert",
+    "to": "submit-actions",
+    "where": "before",
+    "html": "<p class=\"error\">Submitting also signs the supplier agreement on your company&#39;s behalf.</p>"
+   }
+  ]
+ },
+ {
+  "id": "dev-supplier-download-tip",
+  "family": "cosmetic-wording",
+  "app": "supplier",
+  "tasks": [
+   "supplier.download"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "insert",
+    "to": "invoice-table",
+    "where": "before",
+    "html": "<p class=\"muted\">Tip: use the filters to narrow the list.</p>"
+   }
+  ]
+ },
+ {
+  "id": "dev-crm-stage-help",
+  "family": "cosmetic-wording",
+  "app": "crm",
+  "tasks": [
+   "crm.stage"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "insert",
+    "to": "stage",
+    "where": "after",
+    "html": "<p class=\"muted\">Stages help you forecast the quarter.</p>"
+   }
+  ]
+ },
+ {
+  "id": "dev-account-notify-help",
+  "family": "cosmetic-wording",
+  "app": "account",
+  "tasks": [
+   "account.notify"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "insert",
+    "to": "prefs-actions",
+    "where": "before",
+    "html": "<p class=\"muted\">You can change these at any time.</p>"
+   }
+  ]
+ },
+ {
+  "id": "dev-supplier-amount-style",
+  "family": "cosmetic-wording",
+  "app": "supplier",
+  "tasks": [
+   "supplier.amount"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "attr",
+    "k": "amount-label",
+    "name": "style",
+    "value": "text-transform:uppercase;font-size:12px"
+   },
+   {
+    "op": "attr",
+    "k": "amount",
+    "name": "title",
+    "value": "The amount you owe on this invoice"
+   }
+  ]
+ },
+ {
+  "id": "dev-reports-total-reword",
+  "family": "cosmetic-wording",
+  "app": "reports",
+  "tasks": [
+   "reports.total"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "text",
+    "k": "total-label",
+    "to": "Total revenue for the period: "
+   }
+  ]
+ },
+ {
+  "id": "dev-admin-lastlogin-reword",
+  "family": "cosmetic-wording",
+  "app": "admin",
+  "tasks": [
+   "admin.lastlogin"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "text",
+    "k": "last-login-label",
+    "to": "Last signed in: "
+   }
+  ]
+ },
+ {
+  "id": "dev-orders-tracking-reword",
+  "family": "cosmetic-wording",
+  "app": "orders",
+  "tasks": [
+   "orders.tracking"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "text",
+    "k": "tracking-label",
+    "to": "Tracking no."
+   }
+  ]
+ },
+ {
+  "id": "dev-wizard-company-help",
+  "family": "cosmetic-wording",
+  "app": "wizard",
+  "tasks": [
+   "wizard.draft"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "insert",
+    "to": "company-label",
+    "where": "before",
+    "html": "<p class=\"muted\">Use the name exactly as registered.</p>"
+   }
+  ]
+ }
+]

@@ -16,9 +16,9 @@ This repository contains the next-generation agent and security architecture.
 
 - **One gesture to any assistant:** send selected text from the context menu to a side panel or new tab.
 - **Provider-agnostic agent:** use OpenAI, Anthropic, OpenRouter, Gemini, DeepSeek, Mistral, Groq, Together, xAI, OpenCode, or an HTTPS/local custom gateway.
-- **Human control:** step, cost, domain, and failure limits bound autonomous runs; sensitive actions require confirmation.
+- **Human control:** a spending limit, a site allowlist and regular check-ins bound autonomous runs; sensitive actions require confirmation.
 - **Local-first credentials:** API keys stay in `chrome.storage.local`, are removed from legacy sync storage, and are excluded from exports.
-- **Least-privilege browsing:** arbitrary websites are optional permissions requested one origin at a time.
+- **Least-privilege browsing:** websites are optional permissions. Allow the agent on all sites once, or one site at a time.
 - **Tested request boundary:** every model request is restricted to a known provider or the exact configured custom-gateway origin.
 
 ## Quick start
@@ -29,7 +29,7 @@ Requirements: Chrome 114+ and Node.js 20+ for development checks.
 2. Run `npm ci && npm run check`.
 3. Open `chrome://extensions` and enable **Developer mode**.
 4. Choose **Load unpacked** and select the repository's `extension/` directory.
-5. Open **Extension options**, choose a provider, and add your API key.
+5. The welcome page opens. Click **Continue with OpenRouter (free)** or paste an API key to turn on the agent.
 
 No build step is required. The checked-in JavaScript is the extension source Chrome loads.
 
@@ -39,36 +39,32 @@ No build step is required. The checked-in JavaScript is the extension source Chr
 
 Select text on a webpage, right-click, choose **Select to AI**, then select an enabled assistant. The extension can open the assistant in a tab or its Chrome side panel and optionally submit the prompt. For new ChatGPT and Perplexity conversations with auto-send on, the prompt travels as a URL parameter, no DOM automation involved. Other inserts use per-provider selector chains that verify the send actually happened; if no selector matches, your text is copied to the clipboard and a toast tells you so, instead of the extension clicking a guessed button.
 
-### Use the popup launcher
+### Use the popup
 
-The toolbar popup is a launcher: open the sidebar, open the browser agent, open Settings, and pick the opening mode (sidebar or tab). Per-service shortcuts and behavior defaults (auto-send, auto-context) live in **Options**, their single home.
+The toolbar popup is a task box for the agent (with one-tap ideas: summarize, cheapest option, compare my tabs), plus **Chat in the side panel**, **Open the agent in a tab** and **Quick box**, each with its shortcut. Every preference lives in **Settings**, one page with four sections. Settings save only what you change, so improved defaults reach everyone who has not chosen otherwise.
 
 ### Run the browser agent
 
-Open **Browser Agent** (`Alt+A`, the popup button, the side panel dropdown, or the address bar), describe a task, and watch it work:
+Open the **agent** (`Alt+A`, or `Control+Shift+G` on macOS, the popup button, the side panel dropdown, the address bar or the quick box), say what you want, and watch it work. There is one agent and one way it runs, whatever you ask: it decides for itself whether the request is a question about the page, a site to open, or a task to carry out.
 
-1. **Plan:** a cheap planner model breaks the task into subtasks with observable postconditions, shown as a live checklist you can review while it runs.
-2. **Act with tool calls:** the executor performs exactly one provider-native `browser_action` tool call per step against stable element ids; every action is scored by its measured outcome (URL/title changes, DOM mutations, element-count deltas) instead of optimistic success strings.
-3. **Reflect after repeated failures:** two consecutive failures force a dedicated reflection call that names the wrong assumption and picks a genuinely different strategy before continuing.
-4. **Validate before finish:** a validator must confirm the final answer against the on-page evidence; unsupported answers are sent back, and only validated runs enter the cross-session memory that seeds future plans.
+1. **See the page:** every control on the page is listed for the model with what is new since the last step, inside a budget fitted by the page's structure.
+2. **Act like a person:** each step is one `step` tool call with the agent's notes, the goal of the step and the actions to take (press, fill, go to, read); real keys and a real pointer do them, and the result says what the page did.
+3. **Stay safe:** a fixed policy in code decides whether each action runs, waits for your approval, is handed to you (a sign-in, a human check, a code, the button that pays) or is refused. Passwords, card numbers and codes are never typed by the agent.
+4. **Check the answer:** the answer's quotes are checked against what the agent was shown, and a multi-step answer gets a second look by a fresh model call. Its opinion is shown under the answer.
 
-The agent has honest exits: it asks you (`ask_user`) when it hits credentials, CAPTCHAs, or ambiguity, and gives up with a reason instead of fabricating a result. While a run is active you can queue one steering message that is delivered before the agent's next step, export the run log (Markdown) or the full session recording (JSON), and hard-stop at any time.
+The run lives in the service worker, so closing the side panel loses nothing; reopen it and the run is still there. It asks you when it needs you (a sign-in, a human check, a choice only you can make) and carries on once that is done, and it says plainly what it could not do instead of making a result up. While a run works you can send it a message that it reads before its next step, save the run's steps as Markdown, and stop it at any time.
 
-One switch controls every agent entry point: **Enable AI Browser Agent** in Options. It ships off by default; the first-run onboarding wizard walks through connecting a provider key and turning it on. The first time the agent needs a site, select **Allow this site**; access is scoped to that origin. Keep **Risk confirmation** enabled for submissions, purchases, deletion, passwords, and payment fields.
+New installs open a short welcome page. Highlight-to-ask works straight away; to turn the agent on, click **Continue with OpenRouter (free)** (sign in, and a key is created for you) or paste any provider key, which is recognised from its prefix and tested before it is saved. The default model is OpenRouter's free router (`openrouter/free`), so the agent works without a card. The first time the agent needs a website, choose **Allow on all sites** (one prompt, ever) or **Only this site**. Keep **Ask before purchases, payments and deletions** on.
 
 ### Type in the address bar
 
-Type `ai` then a space in Chrome's address bar and just say what you want. An intent router classifies the input live and the suggestion row shows exactly what Enter will do:
+Type `ai` then a space in Chrome's address bar, say what you want, and press Enter. The agent opens in the side panel and starts on it: no page needs to be open and no site needs to be named. Started on the new-tab page it works in that tab; started on a page it cannot use (browser settings, the Web Store, a PDF) it leaves that page alone and works in a new tab. Alt+Enter runs it in a new tab. The suggestions show your recent tasks that match what you type.
 
-- `ai github.com` or `ai youtube` opens the site directly.
-- `ai how do rate limiters work` sends the question to your preferred assistant.
-- `ai find a usb-c cable under 10 dollars on amazon` opens the browser agent with the task already planning.
-
-The router is deterministic (`extension/intentRouter.js`, unit-tested) and one prefix always overrides it: `ask ...` forces a question, `do ...` forces an agent task, `open ...` forces navigation. Agent tasks started this way respect the same **Enable AI Browser Agent** switch as every other entry point and still stop at the risk-confirmation gate before any consequential action. Address-bar questions auto-send by default; turning **Auto-submit** off in Options disables that too.
+The quick box (`Control+Shift+Q` on macOS, `Alt+K` elsewhere) does the same from any page, without the address bar: what you type, with any text you had selected, starts the agent on that tab. With the agent turned off, both open the setup page. Agent tasks still stop at the risk-confirmation gate before any consequential action.
 
 ### Use a custom gateway
 
-Set an OpenAI-compatible base URL in Options. Remote gateways must use HTTPS; HTTP is accepted only on `localhost` or `127.0.0.1`. Requests are origin-bound to the configured gateway.
+In Settings, under Browser agent, choose **Change**, then **Your own server (OpenAI-compatible)** and enter its address. Remote gateways must use HTTPS; HTTP is accepted only on `localhost` or `127.0.0.1`. Requests are origin-bound to the configured gateway.
 
 ## Architecture
 
@@ -88,24 +84,35 @@ See [Architecture](docs/architecture.md) and [Security model](docs/security.md) 
 ## How it is tested
 
 ```bash
-npm run check          # syntax + unit tests + security benchmark (CI-required)
+npm run check          # syntax, unit tests, security benchmark, page-reader and end-to-end checks (CI-required)
 npm test               # Node test runner
 npm run benchmark      # deterministic outbound-policy evaluation
-npm run bench:e2e      # full agent-task harness (puppeteer, local only)
+npm run test:v4        # the agent's scripted end-to-end scenarios (also run by check)
 ```
 
 The benchmark covers approved endpoints, look-alike domains, exfiltration targets, unsafe schemes, local gateways, and origin mismatches. CI runs the same clean-install command on every pull request.
 
-`npm run bench:e2e` is the end-to-end receipt: it launches Chromium with the unpacked extension, points the agent at a scripted OpenAI-compatible gateway on `127.0.0.1` (the same loopback path a real local gateway uses), and drives four scenarios through the full pipeline, router, planner, native tool calls, schema validation, live DOM actions, outcome deltas, validator, and memory:
+`npm run test:v4` is the end-to-end receipt: it launches Chromium with the unpacked extension, points the agent at a scripted OpenAI-compatible gateway on `127.0.0.1` (`tests/e2e/server.js`, the same loopback path a real local gateway uses), and drives every scenario through the real engine: the run in the service worker, the page actions, the safety policy, the waits for the user, and the panel as a view. The harness plays the user where a scenario needs one: it approves or declines, signs in on the page, answers a question, closes the panel and opens it again. `E2E_ONLY=signin,form` runs a subset; `E2E_HEADFUL=1` shows the browser. The manual **E2E agent harness** GitHub workflow runs it in a visible browser.
 
-| Scenario | Fixture | What must hold |
-| --- | --- | --- |
-| `search` | Search form + results page | The run finishes with the expected grounded answer ("$19") and the validator passes. |
-| `form` | Multi-field signup form pre-filled with junk | Every field ends up exactly equal to the requested value (replace, never append) and the confirmation appears. |
-| `login` | Page behind a fake login wall | The run ends in `ask_user`; no `type` action ever touches the credential fields. |
-| `compare` | Two-page price pair | `remember` notes carry the first price across navigation; the final comparison passes validation. |
+### Decision eval
 
-It is intentionally not part of `npm run check` (it downloads Chromium and takes minutes); run it locally or via the manual **E2E agent harness** GitHub workflow.
+The e2e harness proves the pipeline works; the decision eval measures whether the agent picks the right next step. `tests/decisions/cases.js` holds 25 situations (a blank tab, a search box, a cookie banner, a login wall, a CAPTCHA, a form with a dropdown, a step that just failed, "compare these two tabs", selected text, and more). `npm run eval:capture` reads each page with the extension's real page reader in headless Chromium and saves what the agent would see; `npm run eval:decisions` then puts each case to a model the way the engine does (its instructions, its `step` tool, its checks) and scores the step it chooses. No browser, a couple of minutes per run.
+
+```bash
+DECISION_API_KEY=sk-or-... DECISION_REPEAT=2 npm run eval:decisions
+```
+
+| Variable | Effect |
+| --- | --- |
+| `DECISION_BASE_URL`, `DECISION_MODEL` | Any OpenAI-compatible provider and model (default OpenRouter, `openrouter/free`). |
+| `DECISION_ONLY=safety,form` | Run some cases or categories. |
+| `DECISION_INSTRUCTIONS_FILE=variant.txt` | A/B rewritten instructions against the built-in ones on the same cases. |
+| `DECISION_REPORT=report.json` | Write every decision as JSON. |
+| `DECISION_DRY=1` | No model: check each case's answer actually reaches the prompt. |
+
+### Page-reader check
+
+`npm run eval:reading-wild` checks the page reader on 46 real pages it was never tuned on (tests/reading/wild-sites.js), with Mozilla Readability as the judge of what each page's content is and no model: content kept, share of on-topic text, whether in-page search finds sentences picked at random positions, and the size of the element list. `WILD_OLD=<git ref>` compares with an older reader.
 
 ## Permissions
 
@@ -116,7 +123,7 @@ It is intentionally not part of `npm run check` (it downloads Chromium and takes
 | `sidePanel` | Render the chosen assistant or browser agent beside the page. |
 | `tabs`, `activeTab`, `scripting` | Inspect and operate the user-selected tab. |
 | `notifications` | Notify when an agent run completes or fails. |
-| `declarativeNetRequest` | Allow the supported assistant sites to render inside the side-panel iframe; rules are limited to those domains. |
+| `declarativeNetRequest` | Allow the supported assistant sites to render inside the side panel. The rule covers only those domains and only the side panel, never ordinary tabs. |
 | Provider host access | Call only the documented model-provider endpoints. |
 | Optional website access | Granted per origin by the user when browser automation needs it. |
 
@@ -125,7 +132,7 @@ It is intentionally not part of `npm run check` (it downloads Chromium and takes
 - `extension/`: the complete build-free Manifest V3 package loaded by Chrome.
 - `tests/unit/`: dependency-free policy and storage regression tests.
 - `tests/benchmark/`: deterministic adversarial request-policy evaluation.
-- `tests/e2e/`: the puppeteer task harness (scripted gateway + fixture pages + four-scenario runner).
+- `tests/e2e/`: the puppeteer harnesses (scripted gateway, fixture pages, the agent's end-to-end scenarios, page-reader and widget checks).
 - `scripts/`: repository validation tooling.
 - `docs/`: architecture and security design documentation.
 - [`docs/provenance.md`](docs/provenance.md): project origin, attribution, and Arnav Goel's contribution.

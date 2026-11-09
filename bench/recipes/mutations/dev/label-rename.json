@@ -1,0 +1,102 @@
+[
+ {
+  "id": "dev-supplier-label",
+  "app": "supplier",
+  "tasks": [
+   "supplier.download",
+   "supplier.dispute"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "text",
+    "k": "row-download",
+    "to": "Get PDF"
+   },
+   {
+    "op": "text",
+    "k": "detail-download",
+    "to": "Get PDF"
+   },
+   {
+    "op": "text",
+    "k": "signin",
+    "to": "Log in"
+   },
+   {
+    "op": "text",
+    "k": "dispute-submit",
+    "to": "Send dispute"
+   }
+  ],
+  "family": "label-rename"
+ },
+ {
+  "id": "dev-account-label",
+  "app": "account",
+  "tasks": [
+   "account.notify"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "text",
+    "k": "pref-label-productNews",
+    "to": " News and product updates"
+   },
+   {
+    "op": "text",
+    "k": "save-prefs",
+    "to": "Update preferences"
+   }
+  ],
+  "family": "label-rename"
+ },
+ {
+  "id": "dev-admin-label",
+  "app": "admin",
+  "tasks": [
+   "admin.role",
+   "admin.deactivate"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "text",
+    "k": "save-role",
+    "to": "Apply role"
+   },
+   {
+    "op": "text",
+    "k": "role-confirm",
+    "to": "Yes, change it"
+   },
+   {
+    "op": "text",
+    "k": "deactivate",
+    "to": "Suspend access"
+   }
+  ],
+  "family": "label-rename"
+ },
+ {
+  "id": "dev-reports-region-label",
+  "app": "reports",
+  "tasks": [
+   "reports.export",
+   "reports.schedule"
+  ],
+  "expected": "repairable",
+  "family": "label-rename",
+  "flags": {
+   "regionMap": {
+    "South": [
+     "South Region"
+    ],
+    "North": [
+     "North Region"
+    ]
+   }
+  }
+ }
+]

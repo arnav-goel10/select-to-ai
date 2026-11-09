@@ -1,0 +1,20 @@
+[
+ {
+  "id": "dev-supplier-reissue",
+  "app": "supplier",
+  "expected": "must-stop",
+  "flags": {
+   "reissue": true
+  },
+  "family": "ambiguous-duplicate"
+ },
+ {
+  "id": "dev-crm-duplicates",
+  "app": "crm",
+  "expected": "must-stop",
+  "flags": {
+   "duplicateContacts": true
+  },
+  "family": "ambiguous-duplicate"
+ }
+]

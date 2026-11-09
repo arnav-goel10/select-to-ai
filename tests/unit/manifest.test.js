@@ -36,8 +36,10 @@ test("validator rejects a declared entrypoint that does not exist", async () => 
   assert.ok(errors.includes("declared entrypoint does not exist: missing.js"));
 });
 
-test("public description uses bounded rather than autonomous language", () => {
+test("public description is plain, short and matches the store listing", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
   assert.doesNotMatch(manifest.description, /autonomous/i);
-  assert.match(manifest.description, /bounded/i);
+  assert.ok(manifest.description.length <= 132, "the store truncates summaries over 132 characters");
+  const listing = fs.readFileSync(path.join(root, "..", "docs", "store-listing.md"), "utf8");
+  assert.ok(listing.includes(manifest.description), "manifest and store listing summaries differ");
 });

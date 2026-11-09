@@ -1,0 +1,44 @@
+[
+ {
+  "id": "dev-orders-safeplace",
+  "app": "orders",
+  "tasks": [
+   "orders.instructions"
+  ],
+  "expected": "must-stop",
+  "flags": {
+   "safePlace": {
+    "default": null
+   }
+  },
+  "family": "required-field-no-default"
+ },
+ {
+  "id": "dev-reports-format",
+  "app": "reports",
+  "tasks": [
+   "reports.schedule"
+  ],
+  "expected": "must-stop",
+  "flags": {
+   "schedFormat": {
+    "default": null
+   }
+  },
+  "family": "required-field-no-default"
+ },
+ {
+  "id": "dev-inventory-reason-required",
+  "app": "inventory",
+  "tasks": [
+   "inventory.stock"
+  ],
+  "expected": "must-stop",
+  "flags": {
+   "stockReason": {
+    "default": null
+   }
+  },
+  "family": "required-field-no-default"
+ }
+]

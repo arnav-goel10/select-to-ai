@@ -1,0 +1,8 @@
+node_modules/
+out/
+public/music.wav
+# Third-party page captures (regenerate with: node scripts/capture.cjs)
+public/captures/*.png
+public/music-track.*
+public/sfx.wav
+public/music-edit.wav

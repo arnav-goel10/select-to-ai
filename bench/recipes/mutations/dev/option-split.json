@@ -1,0 +1,68 @@
+[
+ {
+  "id": "dev-admin-rolesplit",
+  "app": "admin",
+  "tasks": [
+   "admin.role"
+  ],
+  "expected": "must-stop",
+  "flags": {
+   "roles": [
+    "Viewer",
+    "Content editor",
+    "Billing editor",
+    "Billing admin",
+    "Workspace owner",
+    "Billing owner"
+   ]
+  },
+  "family": "option-split"
+ },
+ {
+  "id": "dev-crm-stagesplit",
+  "app": "crm",
+  "tasks": [
+   "crm.stage"
+  ],
+  "expected": "must-stop",
+  "flags": {
+   "stages": [
+    "Lead",
+    "Qualified",
+    "Proposal drafted",
+    "Proposal sent",
+    "Negotiation",
+    "Won - pending signature",
+    "Won - signed",
+    "Lost"
+   ]
+  },
+  "family": "option-split"
+ },
+ {
+  "id": "dev-reports-regionsplit",
+  "app": "reports",
+  "expected": "must-stop",
+  "family": "option-split",
+  "flags": {
+   "regionMap": {
+    "North": [
+     "North - Urban",
+     "North - Rural"
+    ],
+    "Northeast": [
+     "Northeast - Coastal",
+     "Northeast - Inland"
+    ],
+    "South": [
+     "South - Urban",
+     "South - Rural"
+    ],
+    "East": [
+     "East - Urban",
+     "East - Rural"
+    ]
+   }
+  }
+ }
+]

@@ -64,3 +64,34 @@ test("packager excludes symbolic links that could escape the extension tree", as
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 });
+
+test("packager leaves out Chrome's _metadata folder, which the Web Store refuses", async () => {
+  const { packageExtension } = await loadPackager();
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "select-to-ai-package-meta-"));
+  const fixtureRoot = path.join(tempRoot, "extension");
+  const outputPath = path.join(tempRoot, "select-to-ai-extension.zip");
+  fs.mkdirSync(path.join(fixtureRoot, "_metadata", "generated_indexed_rulesets"), { recursive: true });
+  fs.writeFileSync(path.join(fixtureRoot, "manifest.json"), "{}");
+  fs.writeFileSync(path.join(fixtureRoot, "_metadata", "generated_indexed_rulesets", "_ruleset1"), "x");
+  try {
+    packageExtension({ extensionRoot: fixtureRoot, outputPath });
+    const entries = execFileSync("unzip", ["-Z1", outputPath], { encoding: "utf8" }).trim().split("\n");
+    assert.deepEqual(entries, ["manifest.json"]);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("the repository and the store package carry no internal planning or application material", () => {
+  // Drafts, strategy research and planning notes lived on private
+  // branches; the public tree and the zip must not carry them again.
+  const internal = /(^|\/)(yc[-_]|morning-brief|launch-posts|design-partners|NAMING\.md$|research\/)|(^|\/)docs\/(site|research)\//i;
+  const walk = (dir, base) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "dist") return [];
+    const absolute = path.join(dir, entry.name);
+    return entry.isDirectory() ? walk(absolute, base) : [path.relative(base, absolute).split(path.sep).join("/")];
+  });
+  assert.deepEqual(walk(projectRoot, projectRoot).filter((name) => internal.test(name)), []);
+  // Only what Chrome runs goes in the zip: no notes, no docs.
+  assert.deepEqual(walk(extensionRoot, extensionRoot).filter((name) => !/\.(js|json|html|css|png|svg)$/.test(name)), []);
+});

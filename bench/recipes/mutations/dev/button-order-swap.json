@@ -1,0 +1,66 @@
+[
+ {
+  "id": "dev-admin-swap",
+  "app": "admin",
+  "tasks": [
+   "admin.role",
+   "admin.deactivate"
+  ],
+  "expected": "repairable",
+  "ops": [
+   {
+    "op": "swap",
+    "a": "role-cancel",
+    "b": "role-confirm"
+   },
+   {
+    "op": "swap",
+    "a": "deactivate-cancel",
+    "b": "deactivate-confirm"
+   }
+  ],
+  "family": "button-order-swap"
+ },
+ {
+  "id": "dev-inventory-swap-churn",
+  "app": "inventory",
+  "tasks": [
+   "inventory.archive"
+  ],
+  "expected": "repairable",
+  "seed": 21,
+  "ops": [
+   {
+    "op": "swap",
+    "a": "archive-cancel",
+    "b": "archive-confirm"
+   },
+   {
+    "op": "stripAttr",
+    "name": "data-testid"
+   }
+  ],
+  "family": "button-order-swap"
+ },
+ {
+  "id": "dev-orders-swap-churn",
+  "app": "orders",
+  "tasks": [
+   "orders.instructions"
+  ],
+  "expected": "repairable",
+  "seed": 22,
+  "ops": [
+   {
+    "op": "swap",
+    "a": "cancel-order",
+    "b": "save-instructions"
+   },
+   {
+    "op": "churn",
+    "salt": "s"
+   }
+  ],
+  "family": "button-order-swap"
+ }
+]

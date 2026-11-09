@@ -1,0 +1,291 @@
+"use strict";
+// Which actions wait for the user's go-ahead, how the element list is
+// grouped, and the guards that stand behind the model's choices.
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const T = require("../../extension/agentTools.js");
+
+const btn = (text, extra) => ({ id: 1, tagName: "button", text, ...extra });
+const clickOn = (el, forms) => T.actionRisk({ action: "click", id: el.id }, { elements: [el], forms: forms || [] });
+
+test("buttons that spend, send or delete are confirmed, by what they say", () => {
+  const risky = {
+    pay: ["Pay now", "Buy now", "Place order", "Place your order", "Complete purchase", "Confirm and pay", "Book now", "Subscribe", "Donate", "Proceed to checkout", "Start free trial"],
+    send: ["Send", "Send message", "Submit", "Post", "Publish", "Transfer", "Withdraw", "Confirm", "Sign up", "Create account", "Submit application"],
+    delete: ["Delete", "Delete account", "Remove", "Cancel subscription", "Cancel my order", "Unsubscribe", "Empty trash", "Deactivate"],
+  };
+  for (const [kind, labels] of Object.entries(risky)) {
+    for (const label of labels) {
+      const r = clickOn(btn(label));
+      assert.ok(r, `${label} should be confirmed`);
+      assert.equal(r.kind, kind, label);
+      assert.equal(r.target, label);
+    }
+  }
+});
+
+test("a booking button is confirmed; a link about books is not", () => {
+  for (const label of ["Book seat", "Book", "Reserve a table", "Book this room"]) assert.equal(clickOn(btn(label)).kind, "pay", label);
+  for (const label of ["Book reviews", "Book details", "Reserve list"]) assert.equal(clickOn({ id: 1, tagName: "a", text: label, href: "/x" }), null, label);
+});
+
+test("everyday buttons are not confirmed", () => {
+  const fine = ["Cancel", "Close", "Search", "Next", "Continue", "Add to cart", "Remove filter", "Clear filters", "Sort order", "Posts", "Posted by Ada", "Display options", "Apply filters", "Show more", "Reply", "Share", "Accept all", "Back", "Paypal help", "Border style", "Reorder columns"];
+  for (const label of fine) assert.equal(clickOn(btn(label)), null, `${label} should not be confirmed`);
+});
+
+test("a form that sends what was typed is confirmed whatever its button says", () => {
+  const forms = [{ id: 0, search: false, fields: 3 }];
+  for (const label of ["Continue", "Weiter", "Enviar", "送信", "OK", ""]) {
+    const r = clickOn(btn(label, { formId: 0, submits: true }), forms);
+    assert.ok(r, `a submit button labelled "${label}"`);
+    assert.equal(r.kind, "send");
+  }
+  // A button in the same form that does not submit it is left alone.
+  assert.equal(clickOn(btn("Show password", { formId: 0 }), forms), null);
+});
+
+test("a search or lookup form is never confirmed for sending", () => {
+  const forms = [{ id: 0, search: true, fields: 1 }];
+  for (const label of ["Search", "Go", "Submit", "Find", "Suchen"]) {
+    assert.equal(clickOn(btn(label, { formId: 0, submits: true }), forms), null, label);
+  }
+  const box = { id: 2, tagName: "input", inputType: "search", accName: "Search", formId: 0 };
+  assert.equal(T.actionRisk({ action: "type", id: 2, text: "kettle", submit: true }, { elements: [box], forms }), null);
+  assert.equal(T.actionRisk({ action: "keypress", id: 2, text: "Enter" }, { elements: [box], forms }), null);
+});
+
+test("a form of one box is held as an unsure send, in any language, carrying what a page-blind check needs", () => {
+  const forms = [{ id: 0, search: false, oneBox: true, fields: 1, action: "https://calc.example/input" }];
+  const box = { id: 2, tagName: "textarea", accName: "Enter what you want to calculate", formId: 0, value: "integrate x^2" };
+  const page = (button) => ({ url: "https://calc.example/", elements: [box, button], forms });
+  // No word list decides it: English, German, Spanish and Japanese buttons all come out unsure, never allowed.
+  for (const label of ["Compute", "Berechnen", "Kommentar senden", "Calcular", "Publicar", "計算する", "投稿する", "=", ""]) {
+    const r = T.actionRisk({ action: "click", id: 5 }, page(btn(label, { id: 5, formId: 0, submits: true })));
+    assert.ok(r, `a submit button labelled "${label}" is held`);
+    assert.equal(r.kind, "send", label);
+    assert.ok(r.unsure, `"${label}" is unsure`);
+    assert.equal(r.unsure.box, "Enter what you want to calculate");
+    assert.equal(r.unsure.button, label === "" ? "" : label);
+    assert.equal(r.unsure.text, "integrate x^2");
+    assert.equal(r.unsure.host, "calc.example");
+    assert.equal(r.unsure.to, "", "the form stays on its own site");
+    assert.equal(r.unsure.key, "calc.example|https://calc.example/input|Enter what you want to calculate");
+  }
+  // Word rules that raise a risk stay as they are, and stay certain.
+  const pay = T.actionRisk({ action: "click", id: 5 }, page(btn("Pay now", { id: 5, formId: 0, submits: true })));
+  assert.equal(pay.kind, "pay");
+  assert.equal(pay.unsure, undefined);
+  const post = T.actionRisk({ action: "click", id: 5 }, page(btn("Post comment", { id: 5, formId: 0, submits: true })));
+  assert.equal(post.kind, "send");
+  assert.equal(post.unsure, undefined);
+  // Enter in the box: unsure, named for the form's button; certain when that button's words say it sends.
+  const enter = (label) => T.actionRisk({ action: "keypress", id: 2, text: "Enter" }, page(btn(label, { id: 5, formId: 0, submits: true })));
+  assert.equal(enter("Berechnen").unsure.button, "Berechnen");
+  assert.equal(enter("Berechnen").target, "Enter what you want to calculate");
+  assert.equal(enter("Send").unsure, undefined);
+  // A form posted to another site says where.
+  const away = T.actionRisk({ action: "click", id: 5 }, { url: "https://calc.example/", elements: [box, btn("Go", { id: 5, formId: 0, submits: true })], forms: [{ ...forms[0], crossOrigin: true, action: "https://other.example/q" }] });
+  assert.equal(away.unsure.to, "other.example");
+  // The same button on a form that carries more is a certain send, as before.
+  const more = clickOn(btn("Compute", { formId: 0, submits: true }), [{ id: 0, search: false, oneBox: false, fields: 2 }]);
+  assert.equal(more.kind, "send");
+  assert.equal(more.unsure, undefined);
+});
+
+test("an unsure send on a page that hides text written to an AI is held as a send without asking", () => {
+  const POLICY = require("../../extension/core/policy.js");
+  const forms = [{ id: 0, search: false, oneBox: true, fields: 1, action: "https://calc.example/input" }];
+  const page = (injection) => ({ url: "https://calc.example/", innerText: "Enter a sum.", injection, elements: [{ id: 2, tagName: "input", inputType: "text", formId: 0 }, btn("Compute", { id: 5, formId: 0, submits: true })], forms });
+  const run = { task: "x", trust: { sites: ["calc.example"], urls: [] }, openedTabs: [] };
+  // On an ordinary page the one-box form is put to a second opinion first.
+  const asked = POLICY.decide({ do: "click", ref: 5 }, page(false), run, {});
+  assert.equal(asked.verdict, "confirm");
+  assert.ok(asked.check, "asked about");
+  // Where the page hides text that speaks to an AI, the opinion is not asked and the send is held.
+  const held = POLICY.decide({ do: "click", ref: 5 }, page(true), run, {});
+  assert.equal(held.verdict, "confirm");
+  assert.equal(held.kind, "send");
+  assert.equal(held.check, undefined);
+  // Even an opinion that it only asks does not let it through there.
+  assert.equal(POLICY.decide({ do: "click", ref: 5 }, page(true), { ...run, opinions: { "form|calc.example|https://calc.example/input|": { sends: false } } }, {}).verdict, "confirm");
+});
+
+test("which button words the rules read with confidence: other languages and acting words are asked about", () => {
+  for (const label of ["Jetzt kaufen", "Bestellen", "購入する", "Supprimer", "Eliminar cuenta", "Sign in", "Join", "Vote", "Proceed"]) assert.equal(T.readsPlainly(label), false, label);
+  for (const label of ["Next month", "More options", "Reject all", "Show more", "Close", "15", "→", ""]) assert.equal(T.readsPlainly(label), true, label);
+});
+
+test("a press check is asked for an unreadable button or a form's send button, never for a link", () => {
+  const page = (el, forms) => ({ url: "https://www.shop.de/p/1", elements: [el, { id: 9, tagName: "input", inputType: "text", accName: "Menge", formId: 0 }], forms: forms || [] });
+  const check = T.pressCheckOf({ action: "click", id: 1 }, page(btn("Jetzt kaufen")));
+  assert.equal(check.kind, "press");
+  assert.equal(check.key, "press|shop.de|/p/1||Jetzt kaufen");
+  assert.equal(check.host, "www.shop.de");
+  assert.equal(check.fields, null);
+  assert.equal(T.pressCheckOf({ action: "click", id: 1 }, page(btn("Next month"))), null);
+  assert.equal(T.pressCheckOf({ action: "click", id: 1 }, page({ id: 1, tagName: "a", text: "Jetzt kaufen", url: "https://www.shop.de/kaufen" })), null, "a link is judged by where it goes");
+  assert.ok(T.pressCheckOf({ action: "click", id: 1 }, page({ id: 1, tagName: "a", text: "Jetzt kaufen", url: "#" })), "a link that only runs script is a button");
+  // A plain-English button that sends a form is asked about too, with the form's boxes.
+  const send = T.pressCheckOf({ action: "click", id: 1 }, page(btn("Continue", { formId: 0, submits: true }), [{ id: 0, search: false, fields: 0 }]));
+  assert.deepEqual(send.fields, ["Menge"]);
+  assert.equal(T.pressCheckOf({ action: "click", id: 1 }, page(btn("Go", { formId: 0, submits: true }), [{ id: 0, search: true, fields: 1 }])), null, "a search form's button reads");
+});
+
+test("a choice's words name the choice: a radio, box, option, tab or switch is not held for them, and is asked about instead", () => {
+  const page = (el) => ({ url: "https://www.shop.example/buy", elements: [el], forms: [] });
+  const choices = [
+    { id: 1, tagName: "input", inputType: "radio", accName: "13-inch model Buy from $1499" },
+    { id: 1, tagName: "input", inputType: "checkbox", accName: "Subscribe and save 10%" },
+    { id: 1, tagName: "div", role: "radio", text: "Pay monthly" },
+    { id: 1, tagName: "div", role: "option", text: "Buy with trade-in" },
+    { id: 1, tagName: "button", role: "tab", text: "Buy" },
+    { id: 1, tagName: "button", role: "switch", text: "Delete after reading" },
+  ];
+  for (const el of choices) {
+    assert.ok(T.choiceOf(el), JSON.stringify(el));
+    assert.equal(T.actionRisk({ action: "click", id: 1 }, page(el)), null, `${el.accName || el.text}: not held for its words`);
+    const check = T.pressCheckOf({ action: "click", id: 1 }, page(el));
+    assert.ok(check && check.choice, `${el.accName || el.text}: put to the second opinion as a choice`);
+  }
+  // A choice with no such words is moving about: nothing to ask.
+  assert.equal(T.pressCheckOf({ action: "click", id: 1 }, page({ id: 1, tagName: "input", inputType: "radio", accName: "256GB storage" })), null);
+  // A button, or a control that submits, is no choice: its words hold it as before.
+  assert.equal(T.choiceOf(btn("Buy now")), null);
+  assert.equal(T.actionRisk({ action: "click", id: 1 }, page(btn("Buy now"))).kind, "pay");
+  assert.equal(T.choiceOf({ id: 1, tagName: "input", inputType: "radio", submits: true }), null);
+  const press = T.opinionMessages({ kind: "press", task: "prices", host: "shop.example", label: "13-inch model Buy from $1499", fields: null, choice: T.choiceOf(choices[0]) });
+  assert.match(press.user, /What kind of control it is, from the page's structure: a radio button, one of a set of choices\./);
+});
+
+test("a second opinion is given only names and text, and its reply is read strictly", () => {
+  const form = T.opinionMessages({ kind: "form", task: "what is 2+2", host: "calc.example", box: "Query", button: "Compute", text: "2+2" });
+  assert.equal(form.tool.name, "form_check");
+  assert.match(form.user, /The box, as the site names it: "Query"/);
+  assert.match(form.user, /The text about to be submitted: "2\+2"/);
+  assert.match(form.user, /ask the site for a result shown to the user \(a search, a calculation, a translation, a lookup, a prompt to a tool\), or does it send words to other people or onto a public page \(a message, a comment, a post, a review, a signup\)\?/);
+  const press = T.opinionMessages({ kind: "press", task: "buy it", host: "shop.de", label: "Jetzt kaufen", fields: null });
+  assert.equal(press.tool.name, "press_check");
+  assert.match(press.user, /The control: "Jetzt kaufen"/);
+  assert.deepEqual(T.readOpinion({ kind: "form" }, { sends: false, why: "a sum" }), { sends: false, why: "a sum" });
+  assert.deepEqual(T.readOpinion({ kind: "form" }, { sends: true, why: "" }), { sends: true, why: "" });
+  for (const bad of [null, "asks", {}, { sends: "maybe" }, { sends: 0 }]) assert.equal(T.readOpinion({ kind: "form" }, bad), null, JSON.stringify(bad));
+  assert.equal(T.readOpinion({ kind: "press" }, { does: "pays" }).does, "pay");
+  assert.equal(T.readOpinion({ kind: "press" }, { does: "Nothing" }).does, "none");
+  assert.equal(T.readOpinion({ kind: "press" }, { does: "unclear" }), null);
+});
+
+test("Enter in a form that sends is confirmed; Enter in a lone box is not", () => {
+  const forms = [{ id: 0, search: false, fields: 2 }];
+  const field = { id: 2, tagName: "input", inputType: "email", accName: "Email", formId: 0 };
+  assert.equal(T.actionRisk({ action: "keypress", id: 2, text: "Enter" }, { elements: [field], forms }).kind, "send");
+  const lone = { id: 3, tagName: "input", inputType: "text", accName: "Filter results" };
+  assert.equal(T.actionRisk({ action: "keypress", id: 3, text: "Enter" }, { elements: [lone], forms: [] }), null);
+  assert.equal(T.actionRisk({ action: "keypress", id: 3, text: "Enter" }, { elements: [lone], forms: [], url: "https://shop.example/checkout/review" }).kind, "pay");
+});
+
+test("typing into a secret field is confirmed and its label is all that is shown", () => {
+  for (const sensitive of ["password", "payment", "code", "id"]) {
+    const el = { id: 1, tagName: "input", inputType: "text", accName: "Field", sensitive };
+    assert.equal(T.actionRisk({ action: "type", id: 1, text: "x" }, { elements: [el] }).kind, "secret");
+  }
+});
+
+test("only payment addresses are confirmed on navigation", () => {
+  const nav = (url) => T.actionRisk({ action: "navigate", url }, { elements: [] });
+  for (const url of ["https://shop.example/checkout", "https://shop.example/cart/payment?step=2", "https://x.example/pay/123", "https://x.example/billing"]) assert.ok(nav(url), url);
+  for (const url of ["https://www.paypal.com/help", "https://example.com/display", "https://example.com/blog/how-to-repay-loans", "https://news.example/spayed-pets", "https://example.com/"]) assert.equal(nav(url), null, url);
+});
+
+test("the element list groups controls under the card, form or dialog they share", () => {
+  const els = [
+    { id: 1, tagName: "a", text: "Home", href: "/" },
+    { id: 14, tagName: "a", text: "Sony WH-1000XM5", href: "/p/1", groupKey: 7, groupKind: "item", group: 'item "Sony WH-1000XM5 $348"' },
+    { id: 15, tagName: "button", text: "Add to cart", groupKey: 7, groupKind: "item", group: 'item "Sony WH-1000XM5 $348"' },
+    { id: 16, tagName: "a", text: "Bose QC45", href: "/p/2", groupKey: 8, groupKind: "item", group: 'item "Bose QC45 $279"' },
+    { id: 17, tagName: "button", text: "Add to cart", groupKey: 8, groupKind: "item", group: 'item "Bose QC45 $279"' },
+    { id: 20, tagName: "button", text: "Accept", groupKey: 9, groupKind: "dialog", group: 'dialog "Cookies"' },
+    { id: 21, tagName: "a", text: "Privacy", href: "/privacy", groupKey: 10, groupKind: "footer", group: "footer" },
+  ];
+  assert.equal(T.formatElementList(els), [
+    '[1] a "Home" → /',
+    'item "Sony WH-1000XM5 $348":',
+    '  [14] a "Sony WH-1000XM5" → /p/1',
+    '  [15] button "Add to cart"',
+    'item "Bose QC45 $279":',
+    '  [16] a "Bose QC45" → /p/2',
+    '  [17] button "Add to cart"',
+    '[20] button "Accept" (in dialog "Cookies")',
+    '[21] a "Privacy" → /privacy',
+  ].join("\n"));
+});
+
+test("element lines carry the state a person would see", () => {
+  assert.equal(T.formatElementLine({ id: 1, tagName: "div", role: "switch", accName: "Dark mode", ariaChecked: "true" }), '[1] div "Dark mode" role=switch checked=true');
+  assert.equal(T.formatElementLine({ id: 2, tagName: "div", role: "tab", text: "Reviews", ariaSelected: "true" }), '[2] div "Reviews" role=tab selected');
+  assert.equal(T.formatElementLine({ id: 3, tagName: "button", text: "Account", ariaHaspopup: "true" }), '[3] button "Account" opens=menu');
+  assert.equal(T.formatElementLine({ id: 4, tagName: "input", inputType: "date", accName: "Check-in", format: "YYYY-MM-DD", min: "2026-10-01" }), '[4] input(date) "Check-in" format=YYYY-MM-DD min=2026-10-01');
+  assert.equal(T.formatElementLine({ id: 5, tagName: "input", inputType: "password", accName: "Password", sensitive: "password", filled: true, value: "" }), '[5] input(password) "Password" secret(password) filled');
+  assert.equal(T.formatElementLine({ id: 6, tagName: "button", text: "Continue", disabled: true }), '[6] button "Continue" disabled');
+});
+
+test("task keywords work in any script", () => {
+  assert.deepEqual(T.taskKeywords("the café's opening hours"), ["café", "opening", "hours"]);
+  assert.ok(T.taskKeywords("Wie viel kostet die Lieferung nach Österreich?").includes("österreich"));
+  assert.ok(T.taskKeywords("这个页面的退款政策是什么").includes("退款"));
+  assert.ok(T.taskKeywords("返品ポリシーを教えて").includes("返品"));
+  assert.ok(T.taskKeywords("стоимость доставки").includes("доставки"));
+  assert.deepEqual(T.taskKeywords("what is the price of the $249 plan"), ["price", "$249", "plan"]);
+});
+
+test("a request to leave the sending to the user is recognised however it is put", () => {
+  for (const t of [
+    "fill in the form but don't submit it",
+    "fill in the form but don’t submit it",
+    "fill the form without sending",
+    "just fill it in",
+    "fill it in, I'll submit it myself",
+    "draft the reply and let me review it first",
+    "add my details and leave the rest to me",
+    "fill it out and stop before paying",
+    "do not place the order yet",
+  ]) assert.ok(T.saysNotToSubmit(t), t);
+  for (const t of [
+    "fill in the form and submit it",
+    "send the email to Dana",
+    "post this comment",
+    "book a table for two",
+    "what is the refund policy",
+  ]) assert.ok(!T.saysNotToSubmit(t), t);
+});
+
+test("only a page that is a challenge counts as a human check", () => {
+  const click = { action: "click", id: 1 };
+  const article = { title: "How CAPTCHA works", innerText: `CAPTCHA is a test to tell humans and bots apart. ${"It has a long history. ".repeat(120)}`, elements: Array.from({ length: 30 }, (_, i) => ({ id: i + 1, text: `Link ${i}` })) };
+  assert.equal(T.guardHumanCheck(click, article), null, "an article about CAPTCHAs is an ordinary page");
+  const login = { title: "Sign in", innerText: `Sign in to your account. Email. Password. This site is protected by reCAPTCHA. ${"Help and terms. ".repeat(100)}`, elements: Array.from({ length: 20 }, (_, i) => ({ id: i + 1, text: `Item ${i}` })) };
+  assert.equal(T.guardHumanCheck(click, login), null, "a sign-in page that mentions reCAPTCHA");
+  const challenge = { title: "Just a moment...", innerText: "Checking your browser before accessing the site. Verify you are human.", elements: [{ id: 1, text: "Verify" }] };
+  assert.equal(T.guardHumanCheck(click, challenge).action, "ask_user");
+  const tick = { title: "Sign in", innerText: "x".repeat(3000), elements: [{ id: 1, accName: "I'm not a robot" }] };
+  assert.equal(T.guardHumanCheck(click, tick).action, "ask_user", "the box itself is never ticked");
+});
+
+test("a challenge page is recognised by its look, not by a page that mentions one", () => {
+  const short = (title, text, url) => ({ title, innerText: text, url: url || "https://www.allrecipes.com/search?q=x", elements: [{ id: 1 }] });
+  assert.ok(T.isChallengePage(short("Just a moment...", "Verification successful. Waiting for www.allrecipes.com to respond")));
+  assert.ok(T.isChallengePage(short("Attention Required! | Cloudflare", "Please enable cookies.")));
+  assert.ok(T.isChallengePage(short("https://www.google.com/search?q=x", "Our systems have detected unusual traffic from your computer network.", "https://www.google.com/sorry/index?continue=x")));
+  assert.ok(!T.isChallengePage(short("Lasagna recipes", "Just a moment while we load more recipes. ".repeat(60))), "a long ordinary page");
+  assert.ok(!T.isChallengePage({ title: "Sign in", innerText: "Email. Password. Protected by reCAPTCHA.", elements: Array.from({ length: 20 }, (_, i) => ({ id: i })) }));
+});
+
+test("a link is judged by where it goes, a script link by what it says", () => {
+  const link = (text, href, extra) => ({ id: 1, tagName: "a", text, href, ...extra });
+  const page = (el) => ({ url: "https://arxiv.org/help", elements: [el], forms: [] });
+  assert.equal(T.actionRisk({ action: "click", id: 1 }, page(link("Subscribe to E-Mail Listings", "/help/subscribe"))), null);
+  assert.equal(T.actionRisk({ action: "click", id: 1 }, page(link("Delete my data: how it works", "/help/privacy"))), null);
+  assert.equal(T.actionRisk({ action: "click", id: 1 }, page(link("Proceed", "/checkout/review"))).kind, "pay");
+  assert.equal(T.actionRisk({ action: "click", id: 1 }, page(link("Delete account", "#"))).kind, "delete", "a script link acts like a button");
+  assert.equal(T.actionRisk({ action: "click", id: 1 }, page(link("Pay now", "/orders/12", { role: "button" }))).kind, "pay");
+});
