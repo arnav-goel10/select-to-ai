@@ -4,13 +4,32 @@
 [![Chrome MV3](https://img.shields.io/badge/Chrome-Manifest%20V3-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A privacy-first Chrome extension for moving selected text into ChatGPT, Gemini, Claude, or Perplexity, and for running bounded browser-agent workflows with your own model provider.
+Select to AI is a Chrome extension that sends selected text to ChatGPT, Gemini, Claude or Perplexity, and runs a browser agent on your own model provider that can save a run that worked as a recipe and replay it.
 
-![Select to AI context-menu action for sending selected text to ChatGPT](assets/select-to-ai-overview.png)
+![The Select to AI agent page after finishing a task on GitHub Trending](assets/store/3-agent-result.png)
 
 The published extension has served approximately 1,000 users. The count is intentionally approximate because it changes over time.
 
-This repository contains the next-generation agent and security architecture.
+## Results
+
+A recipe replays a saved run without calling a model while the pages look as recorded. It repairs a step whose control only moved or was restyled, and it stops before a press whose meaning changed. The table below is the third held-out benchmark, run once on 7 Nov 2026: 42 mutations of fixture pages, 192 runs per system, success judged only by what the fixture server recorded. It is copied from [docs/results-heldout-v3.md](docs/results-heldout-v3.md).
+
+| System | Success, repairable | Repair coverage | Correct stop | False "done" | Wrong action | False heals | $/run | s/run |
+|---|---|---|---|---|---|---|---|---|
+| **Recipes (repair on Haiku 5.5)** | **77.2%** [69–84] | **55.6%** [42–68] | **100%** (30/30) | **0%** (0/192) | **0%** (0/192) | **0/20** | $0.00014 | 4.7 |
+| Recipes, replay only | 36.8% | 14.8% | 100% | 0% | 0% | n/a | 0 | 3.4 |
+| healwright (default) | 70.2% | 37.0% | 6.7% | 18.8% | 13.5% | 0/25 | $0.00014 | 2.5 |
+| healwright (minConfidence 0.8) | 62.3% | 20.4% | 6.7% | 18.8% | 13.5% | 0/18 | $0.00011 | 2.2 |
+| Plain replay (fixed selectors) | 52.6% | 0% | 6.7% | 18.8% | 13.5% | n/a | 0 | 2.1 |
+
+healwright is a selector-healing tool used as the baseline. Limits stated in the same doc:
+
+- The pages are fixture apps written by a separate benchmark author, not real sites.
+- Repair runs on Haiku 5.5 only. Other models are untested.
+- There are 54 breaking cells, so the coverage interval is wide (42–68%).
+- Commit buttons whose wording changed still stop for the user's approval, by design.
+
+The earlier held-out sets are in [docs/results-heldout-v1.md](docs/results-heldout-v1.md) and [docs/results-heldout-v2.md](docs/results-heldout-v2.md). Each set was run once, then retired.
 
 ## Why it is different
 
@@ -96,7 +115,7 @@ The benchmark covers approved endpoints, look-alike domains, exfiltration target
 
 ### Decision eval
 
-The e2e harness proves the pipeline works; the decision eval measures whether the agent picks the right next step. `tests/decisions/cases.js` holds 25 situations (a blank tab, a search box, a cookie banner, a login wall, a CAPTCHA, a form with a dropdown, a step that just failed, "compare these two tabs", selected text, and more). `npm run eval:capture` reads each page with the extension's real page reader in headless Chromium and saves what the agent would see; `npm run eval:decisions` then puts each case to a model the way the engine does (its instructions, its `step` tool, its checks) and scores the step it chooses. No browser, a couple of minutes per run.
+The e2e harness proves the pipeline works; the decision eval measures whether the agent picks the right next step. `tests/decisions/cases.js` holds 55 situations (a blank tab, a search box, a cookie banner, a login wall, a CAPTCHA, a form with a dropdown, a step that just failed, "compare these two tabs", selected text, and more). `npm run eval:capture` reads each page with the extension's real page reader in headless Chromium and saves what the agent would see; `npm run eval:decisions` then puts each case to a model the way the engine does (its instructions, its `step` tool, its checks) and scores the step it chooses. No browser, a couple of minutes per run.
 
 ```bash
 DECISION_API_KEY=sk-or-... DECISION_REPEAT=2 npm run eval:decisions
@@ -124,6 +143,11 @@ DECISION_API_KEY=sk-or-... DECISION_REPEAT=2 npm run eval:decisions
 | `tabs`, `activeTab`, `scripting` | Inspect and operate the user-selected tab. |
 | `notifications` | Notify when an agent run completes or fails. |
 | `declarativeNetRequest` | Allow the supported assistant sites to render inside the side panel. The rule covers only those domains and only the side panel, never ordinary tabs. |
+| `debugger` | Real key presses and pointer input, pictures of a tab behind another, and knowing when a press has finished loading. It attaches only to a tab a run is acting on and detaches when the run ends, and Chrome shows a bar while it is attached. Recipe replays use it too. See [docs/debugger-permission.md](docs/debugger-permission.md) for every use and what breaks without it. |
+| `identity` | Run the OpenRouter sign-in from the welcome page, which creates a key for you. |
+| `alarms` | Resume a paused run on time, send one reminder when a run waits for you, and keep the service worker awake while a run is busy. |
+| `idle` | Notify you only when you are away from the browser while a run waits for you. |
+| `favicon` | Show each assistant's site icon in the agent page's menu. |
 | Provider host access | Call only the documented model-provider endpoints. |
 | Optional website access | Granted per origin by the user when browser automation needs it. |
 
