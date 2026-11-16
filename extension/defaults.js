@@ -262,13 +262,25 @@
     return { ...base, temperature: sampling.temperature, maxTokens: thinks ? 6000 : 4000, thinks, adaptive: CLAUDE_ADAPTIVE.test(id) };
   }
 
+  // Who is calling, for OpenRouter's app attribution. HTTP-Referer is the
+  // app's URL and X-Title its name (openrouter.ai/docs/app-attribution,
+  // checked 16 Nov 2026: X-Title is still accepted). The URL is the
+  // project's own repository, the same one the manifest's homepage_url
+  // names. welcome.js sends the same two values on its key test.
+  const OPENROUTER_ATTRIBUTION = Object.freeze({
+    "HTTP-Referer": "https://github.com/arnav-goel10/select-to-ai",
+    "X-Title": "Select to AI",
+  });
+
   /**
    * Extra request fields for OpenRouter: the free chain in place of the
-   * bare free router, and one tool call per reply.
+   * bare free router, and one tool call per reply. `bare` sends
+   * "openrouter/free" as it is, for a connection that refused the chain
+   * (a free model in it retired or renamed).
    */
-  function openRouterOptions(model, hasTool) {
+  function openRouterOptions(model, hasTool, bare) {
     const out = {};
-    if (model === "openrouter/free") {
+    if (model === "openrouter/free" && !bare) {
       out.model = OPENROUTER_FREE_CHAIN[0];
       out.models = OPENROUTER_FREE_CHAIN.slice(1);
     }
@@ -419,6 +431,7 @@
     FREE_BACKUPS,
     backupModelFor,
     OPENROUTER_FREE_CHAIN,
+    OPENROUTER_ATTRIBUTION,
     openRouterOptions,
     MODEL_SIBLINGS,
     siblingModel,

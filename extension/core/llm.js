@@ -234,10 +234,7 @@
       }
     } else {
       if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
-      if (cfg.provider === "openrouter") {
-        headers["HTTP-Referer"] = "https://selecttoai.github.io";
-        headers["X-Title"] = "Select to AI Browser Agent";
-      }
+      if (cfg.provider === "openrouter") Object.assign(headers, DEFAULTS.OPENROUTER_ATTRIBUTION);
       const sys = explicitCaching(cfg, model) ? [{ type: "text", text: system, cache_control: { type: "ephemeral" } }] : system;
       body = {
         model,
@@ -254,10 +251,17 @@
         if (!tool) body.response_format = { type: "json_object" };
         body.stream_options = { include_usage: true };
       }
-      if (cfg.provider === "openrouter") Object.assign(body, DEFAULTS.openRouterOptions(model, !!tool));
+      if (cfg.provider === "openrouter") Object.assign(body, DEFAULTS.openRouterOptions(model, !!tool, !!mode.bareFree));
       if (!mode.noEffort) Object.assign(body, effortFields(cfg, model, req.effort));
     }
     return { endpoint, headers, body };
+  }
+
+  /** True when an error message is about the model id itself: unknown, retired, or with nothing serving it. */
+  function namesModel(message) {
+    const m = String(message || "");
+    if (/not a valid model|invalid model|unknown model|no endpoints|no allowed providers|model[^.]{0,80}(not found|does not exist|not exist|not available|unavailable|deprecated|retired|no longer)/i.test(m)) return true;
+    return (DEFAULTS.OPENROUTER_FREE_CHAIN || []).some((id) => id !== "openrouter/free" && m.includes(id));
   }
 
   /** The provider's own words from an error reply, without the JSON around them. */
@@ -508,6 +512,16 @@
 
         const status = res.status;
         const message = errorText(res.raw, status);
+        // "openrouter/free" goes out as a list of named free models
+        // (defaults.js OPENROUTER_FREE_CHAIN). A free model is retired or
+        // renamed without notice, and a refusal that names a model means the
+        // list itself is the problem: the bare router is asked once instead,
+        // and this connection keeps asking it from then on.
+        if (provider === "openrouter" && model === "openrouter/free" && !mode.bareFree && (status === 400 || status === 404) && namesModel(message)) {
+          mode.bareFree = true;
+          log("Compatibility", `OpenRouter refused a free model by name (${clip(message, 120)}). Asking its free router directly on this connection.`, { quiet: true });
+          continue;
+        }
         // A provider that does not take a say in the model's effort, or not
         // together with tools (an earlier project found one that rejected
         // reasoning_effort whenever tools were sent): it is left out on this
