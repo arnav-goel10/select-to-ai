@@ -273,6 +273,16 @@
   });
 
   /**
+   * The model id a request really carries. "openrouter/free" goes out as
+   * the first model of the free chain, so its sampling has to be that
+   * model's, not the router's: asked as "openrouter/free" at 0.1, Qwen was
+   * being sent the greedy decoding its own card warns against.
+   */
+  function outgoingModel(provider, model, bare) {
+    return provider === "openrouter" && model === "openrouter/free" && !bare ? OPENROUTER_FREE_CHAIN[0] : model;
+  }
+
+  /**
    * Extra request fields for OpenRouter: the free chain in place of the
    * bare free router, and one tool call per reply. `bare` sends
    * "openrouter/free" as it is, for a connection that refused the chain
@@ -280,8 +290,9 @@
    */
   function openRouterOptions(model, hasTool, bare) {
     const out = {};
-    if (model === "openrouter/free" && !bare) {
-      out.model = OPENROUTER_FREE_CHAIN[0];
+    const sent = outgoingModel("openrouter", model, bare);
+    if (sent !== model) {
+      out.model = sent;
       out.models = OPENROUTER_FREE_CHAIN.slice(1);
     }
     if (hasTool) out.parallel_tool_calls = false;
@@ -433,6 +444,7 @@
     OPENROUTER_FREE_CHAIN,
     OPENROUTER_ATTRIBUTION,
     openRouterOptions,
+    outgoingModel,
     MODEL_SIBLINGS,
     siblingModel,
     modelProfile,

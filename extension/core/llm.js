@@ -205,8 +205,9 @@
     // Without tools the model writes the same fields as a JSON object.
     const user = tool || !req.tool ? req.user : `${req.user}\n\nTools are not available on this connection. Reply with one JSON object holding the fields of the ${req.tool.name} tool, and nothing else.`;
     const system = req.tool && !tool ? `${req.system}\n\nThe ${req.tool.name} tool takes these fields:\n${JSON.stringify(req.tool.parameters)}` : req.system;
-    // The model's own sampling (defaults.js); null means it takes none.
-    const profile = DEFAULTS.modelProfile(model);
+    // The sampling of the model the request really carries (defaults.js);
+    // null means it takes none.
+    const profile = DEFAULTS.modelProfile(DEFAULTS.outgoingModel(cfg.provider, model, !!mode.bareFree));
     const temperature = req.temperature !== undefined ? req.temperature : profile.temperature;
     let body;
     if (cfg.provider === "anthropic") {
@@ -287,8 +288,8 @@
    * streaming has begun, and is given the HTTP status it would have had, so
    * it is handled like the same error before the stream.
    */
-  function endOfResponses(out, rs) {
-    out.calls = TOOLS.finalizeToolCalls({ calls: rs.calls }).filter((c) => c.args && typeof c.args === "object");
+  function endOfResponses(out, rs, tool) {
+    Object.assign(out, readCalls(TOOLS.finalizeToolCalls({ calls: rs.calls }), tool));
     if (rs.usage) out.usage = rs.usage;
     if (rs.model) out.served = rs.model;
     if (rs.status === "failed") {
@@ -303,6 +304,200 @@
       out.ok = false;
       out.status = 0;
       out.raw = "The reply stopped before ChatGPT finished it.";
+    }
+    return out;
+  }
+
+  // ------------------------------------------------------- reading the call
+
+  /**
+   * Reads JSON the way a small model sometimes writes it: single quotes,
+   * bare keys, trailing or missing commas, True/False/None, a line break
+   * inside a string, words before or after it. A reply that stops in the
+   * middle is read as far as it is sure: an array keeps its complete
+   * elements, the outermost object keeps its complete members, and anything
+   * that was still being written (a string, a number, an inner object) is
+   * left out, never guessed at. Returns {value, cut}; throws when the text
+   * is not JSON even read this way.
+   */
+  function readLoose(text) {
+    let s = String(text == null ? "" : text).trim().replace(/^```[a-z]*\s*/i, "");
+    if (!/^[{["']/.test(s)) {
+      const at = s.indexOf("{");
+      if (at < 0) throw new SyntaxError("no JSON object in it");
+      s = s.slice(at);
+    }
+    let i = 0;
+    let cut = false;
+    class Cut { constructor(partial) { this.partial = partial; } }
+    const ws = () => { while (i < s.length && /\s/.test(s[i])) i += 1; };
+    const more = () => { ws(); if (i >= s.length) throw new Cut(); return s[i]; };
+    const LITERALS = { true: true, false: false, null: null, True: true, False: false, None: null };
+    function string(q) {
+      i += 1;
+      let out = "";
+      for (;;) {
+        if (i >= s.length) throw new Cut();
+        const c = s[i++];
+        if (c === q) return out;
+        if (c !== "\\") { out += c; continue; }
+        if (i >= s.length) throw new Cut();
+        const e = s[i++];
+        if (e === "u") {
+          const hex = s.slice(i, i + 4);
+          if (hex.length < 4) throw new Cut();
+          if (!/^[0-9a-f]{4}$/i.test(hex)) throw new SyntaxError("a bad \\u escape");
+          out += String.fromCharCode(parseInt(hex, 16));
+          i += 4;
+        } else out += ({ n: "\n", t: "\t", r: "\r", b: "\b", f: "\f" })[e] || e;
+      }
+    }
+    function value(depth) {
+      const c = more();
+      if (c === "{") return object(depth);
+      if (c === "[") return array(depth);
+      if (c === '"' || c === "'") return string(c);
+      const rest = s.slice(i, i + 48);
+      const word = (/^-?\d+(?:\.\d+)?(?:e[+-]?\d+)?/i.exec(rest) || /^[A-Za-z]+/.exec(rest) || /^-/.exec(rest) || [""])[0];
+      // A number or a word that runs to the end may have had more to come.
+      if (word && i + word.length >= s.length) throw new Cut();
+      if (/^-?\d/.test(word)) { i += word.length; return Number(word); }
+      if (Object.prototype.hasOwnProperty.call(LITERALS, word)) { i += word.length; return LITERALS[word]; }
+      throw new SyntaxError(`an unexpected ${JSON.stringify(c)} at character ${i + 1}`);
+    }
+    function object(depth) {
+      i += 1;
+      const out = {};
+      for (;;) {
+        let key = null;
+        let open = false;
+        try {
+          let c = more();
+          if (c === "}") { i += 1; return out; }
+          if (c === ",") { i += 1; continue; }
+          if (c === '"' || c === "'") key = string(c);
+          else {
+            const bare = (/^[A-Za-z_$][\w$-]*/.exec(s.slice(i, i + 80)) || [""])[0];
+            if (!bare) throw new SyntaxError(`an unexpected ${JSON.stringify(c)} at character ${i + 1}`);
+            if (i + bare.length >= s.length) throw new Cut();
+            key = bare;
+            i += bare.length;
+          }
+          if (more() !== ":") throw new SyntaxError(`no ":" after ${JSON.stringify(key)}`);
+          i += 1;
+          open = true;
+          out[key] = value(depth + 1);
+          open = false;
+          c = more();
+          if (c === ",") i += 1;
+          else if (c !== "}" && !/["'A-Za-z_$]/.test(c)) throw new SyntaxError(`an unexpected ${JSON.stringify(c)} at character ${i + 1}`);
+        } catch (e) {
+          if (!(e instanceof Cut)) throw e;
+          if (open && Array.isArray(e.partial)) out[key] = e.partial;
+          // Only the outermost object is kept when it was cut short.
+          if (depth > 0) throw new Cut();
+          cut = true;
+          return out;
+        }
+      }
+    }
+    function array(depth) {
+      i += 1;
+      const out = [];
+      for (;;) {
+        try {
+          let c = more();
+          if (c === "]") { i += 1; return out; }
+          if (c === ",") { i += 1; continue; }
+          out.push(value(depth + 1));
+          c = more();
+          if (c === ",") i += 1;
+          else if (c !== "]") throw new SyntaxError(`an unexpected ${JSON.stringify(c)} at character ${i + 1}`);
+        } catch (e) {
+          if (!(e instanceof Cut)) throw e;
+          if (Array.isArray(e.partial)) out.push(e.partial);
+          if (depth > 0) throw new Cut(out);
+          cut = true;
+          return out;
+        }
+      }
+    }
+    try {
+      return { value: value(0), cut };
+    } catch (e) {
+      if (e instanceof Cut) throw new SyntaxError("it stopped before anything in it was complete");
+      throw e;
+    }
+  }
+
+  /**
+   * The arguments of a tool call, mended here where they can be instead of
+   * spending a request on asking again: JSON that is cut short or slightly
+   * off (readLoose), the arguments written as a string of JSON, and the
+   * fields wrapped in something else ({"name": .., "arguments": {..}}, a
+   * one-item list, an object under the tool's name). What counts as the
+   * fields is the tool's own schema: its required fields, all present.
+   *
+   * @param given the arguments as the model wrote them (text), or as parsed
+   * @returns {args, how} with `how` saying what was mended ("" for nothing),
+   *   or {args: null, error} when the model has to be asked again
+   */
+  function repairArguments(given, tool) {
+    const params = (tool && tool.parameters) || {};
+    const props = Object.keys(params.properties || {});
+    const required = Array.isArray(params.required) ? params.required : [];
+    const plain = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+    const fits = (v) => plain(v) && required.every((k) => k in v) && (required.length > 0 || !props.length || Object.keys(v).some((k) => props.includes(k)));
+    let cut = false;
+    let loose = false;
+    let why = "";
+    const read = (text) => {
+      try { return JSON.parse(text); } catch (e) { why = why || e.message; }
+      const got = readLoose(text);
+      loose = true;
+      cut = cut || got.cut;
+      return got.value;
+    };
+    // The object that has the tool's fields: the value itself, or the first one inside it.
+    const find = (v, depth) => {
+      if (depth > 3) return null;
+      if (typeof v === "string") {
+        if (!/[{[]/.test(v)) return null;
+        try { return find(read(v), depth + 1); } catch (_e) { return null; }
+      }
+      if (fits(v)) return v;
+      if (!v || typeof v !== "object") return null;
+      for (const inner of Object.values(v)) {
+        const got = find(inner, depth + 1);
+        if (got) return got;
+      }
+      return null;
+    };
+    let top;
+    try {
+      top = typeof given === "string" ? read(given) : given;
+    } catch (e) {
+      return { args: null, error: `its arguments were not valid JSON (${clip(why || e.message, 120)})` };
+    }
+    if (!loose && fits(top)) return { args: top, how: "" };
+    const got = find(top, 0);
+    if (got) return { args: got, how: cut ? "cut short" : loose ? "not valid JSON" : "wrapped in something else" };
+    // Valid JSON without every required field is for the caller to judge, as before.
+    if (!loose && plain(top)) return { args: top, how: "" };
+    const missing = plain(top) ? required.filter((k) => !(k in top)) : [];
+    if (cut) return { args: null, error: `its arguments were cut off${missing.length ? ` before ${missing.join(", ")}` : ""}` };
+    if (missing.length) return { args: null, error: `its arguments were not valid JSON and had no ${missing.join(", ")}` };
+    return { args: null, error: `its arguments were not one JSON object with the tool's fields${why ? ` (${clip(why, 120)})` : ""}` };
+  }
+
+  /** The calls of a reply that can be used, what was mended in them, and the first that could not be. */
+  function readCalls(list, tool) {
+    const out = { calls: [], bad: null, mended: "" };
+    for (const c of list || []) {
+      // Arguments that parsed to a string are a string of JSON: read as written.
+      const r = repairArguments(c.raw !== undefined ? c.raw : typeof c.args === "string" ? JSON.stringify(c.args) : c.args, tool);
+      if (r.args) { out.calls.push({ name: c.name, args: r.args }); out.mended = out.mended || r.how; }
+      else if (!out.bad) out.bad = r.error;
     }
     return out;
   }
@@ -404,8 +599,8 @@
           }
         }
         out.argChars = args.length;
-        if (rs) return endOfResponses(out, rs);
-        out.calls = TOOLS.finalizeToolCalls(state).filter((c) => c.args && typeof c.args === "object");
+        if (rs) return endOfResponses(out, rs, req.tool);
+        Object.assign(out, readCalls(TOOLS.finalizeToolCalls(state), req.tool));
         return out;
       } catch (e) {
         if (signal && signal.aborted) throw new ModelError("aborted", "Stopped.");
@@ -439,7 +634,11 @@
     }
 
     /**
-     * @param req {system, user, tool, tier: "pro" | "lite" | "helper", effort: "low" | "default", image, signal, onText, maxTokens}
+     * @param req {system, user, tool, tier: "pro" | "lite" | "helper", effort: "low" | "default", image, signal, onText, maxTokens, reasks}
+     *   `reasks` is how many times a reply without a usable call may be asked
+     *   for again inside this call (2 when not given). A caller that asks
+     *   again itself passes 0 the next time, so the asks of one step are
+     *   counted once, not once in each layer.
      * @param cfg settingsFrom(...)
      */
     async function call(req, cfg0) {
@@ -455,6 +654,7 @@
       // back and forth.
       const providersTried = [cfg.provider];
       let reasks = 0;
+      const reaskBudget = Number.isInteger(req.reasks) ? Math.max(0, req.reasks) : 2;
       let asText = false;
       let maxTokens = Math.max(req.maxTokens || DEFAULTS.modelProfile(model).maxTokens, (req.tool && roomNeeded.get(model)) || 0);
       let user = req.user;
@@ -486,7 +686,14 @@
 
         if (res.ok) {
           add(usageOf(res, { ...req, user }, model, cfg.provider));
-          const reply = (res.calls[0] && res.calls[0].args) || (req.tool ? TOOLS.parseTextAction(res.text) || TOOLS.parseTextAction(res.reasoning) : null);
+          let reply = (res.calls[0] && res.calls[0].args) || (req.tool ? TOOLS.parseTextAction(res.text) || TOOLS.parseTextAction(res.reasoning) : null);
+          let mended = res.calls[0] ? res.mended : "";
+          // The call written out as text, and not quite JSON: read the same way.
+          if (!reply && req.tool && !res.bad && String(res.text).includes("{")) {
+            const r = repairArguments(res.text, req.tool);
+            if (r.args && r.how) { reply = r.args; mended = r.how; }
+          }
+          if (reply && mended) log("Call Mended", `The model's ${req.tool.name} call was ${mended}. It was read as it stood, without asking again.`, { quiet: true });
           if (reply || !req.tool) return { reply: reply || null, text: res.text, usage: spent, model: res.served || model, ms: res.ms, firstByteMs: res.firstByteMs };
           // No tool call. Cut off while thinking: give it room. Otherwise say
           // plainly what is wanted and ask again.
@@ -497,14 +704,20 @@
             continue;
           }
           const got = clip(res.text || res.reasoning, 200);
-          if (reasks < 2) {
+          if (reasks < reaskBudget) {
             reasks += 1;
-            log("Reply Without Action", `The model answered without calling ${req.tool.name}${res.finish ? ` (${res.finish})` : ""}${got ? `: ${got}` : ", with nothing"}. Asking again (${reasks}/2).`, { quiet: true });
+            // The model is told what was wrong with what it sent, not that it sent nothing.
+            if (res.bad) {
+              log("Call Not Readable", `The model called ${req.tool.name}, but ${res.bad}. Asking again (${reasks}/${reaskBudget}).`, { quiet: true });
+              user = `${req.user}\n\nYour last reply called the ${req.tool.name} tool, but ${res.bad}. Call it again with its arguments as one complete JSON object: double quotes, no trailing commas, every required field.`;
+              continue;
+            }
+            log("Reply Without Action", `The model answered without calling ${req.tool.name}${res.finish ? ` (${res.finish})` : ""}${got ? `: ${got}` : ", with nothing"}. Asking again (${reasks}/${reaskBudget}).`, { quiet: true });
             user = `${req.user}\n\nYour last reply did not call the ${req.tool.name} tool. Reply only by calling it${mode.noTools || asText ? " (one JSON object with its fields)" : ""}.`;
             continue;
           }
           // Asked twice and still no tool call: this once, take the same fields as written JSON.
-          if (!mode.noTools && !asText) {
+          if (reaskBudget > 0 && !mode.noTools && !asText) {
             asText = true;
             user = req.user;
             log("Reply Without Action", `Asking for the fields of ${req.tool.name} as JSON instead.`, { quiet: true });
@@ -681,7 +894,7 @@
     return { call };
   }
 
-  const api = Object.freeze({ createClient, settingsFrom, keyProblem, modelFits, providerName, buildRequest, effortFields, errorText, ModelError });
+  const api = Object.freeze({ createClient, repairArguments, readLoose, settingsFrom, keyProblem, modelFits, providerName, buildRequest, effortFields, errorText, ModelError });
   root.SELECT_TO_AI_LLM = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
