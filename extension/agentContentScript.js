@@ -4069,14 +4069,36 @@
     // Outcome measurement (cheap validator signal)
     // =========================================================================
 
+    /**
+     * The open shadow roots on the page, those inside others too, up to a
+     * bound. What a component shows inside its own root is part of the
+     * page, and a look at the document alone misses it.
+     */
+    function openRoots() {
+        const out = [];
+        const into = (root) => {
+            let all = [];
+            try { all = root.querySelectorAll('*'); } catch (_) { return; }
+            for (const el of all) {
+                if (out.length >= 60) return;
+                const inner = el.shadowRoot;
+                if (!inner || agentDrawn(el)) continue;
+                out.push(inner);
+                into(inner);
+            }
+        };
+        into(document);
+        return out;
+    }
+
     /** Captures the page facts an action can change. */
     function captureOutcomeSnapshot() {
         let elementCount = 0;
         try {
-            elementCount = document.querySelectorAll(
-                'a,button,input,select,textarea,[role="button"],[role="link"],[tabindex]'
-            ).length;
-        } catch (_) { /* keep 0 */ }
+            const controls = 'a,button,input,select,textarea,[role="button"],[role="link"],[tabindex]';
+            elementCount = document.querySelectorAll(controls).length;
+            for (const root of openRoots()) elementCount += root.querySelectorAll(controls).length;
+        } catch (_) { /* keep what was counted */ }
         return {
             url: window.location.href,
             title: document.title,
@@ -4117,12 +4139,10 @@
                     count++;
                 }
             });
-            observer.observe(document.body, {
-                childList: true,
-                subtree: true,
-                attributes: true,
-                characterData: true,
-            });
+            const what = { childList: true, subtree: true, attributes: true, characterData: true };
+            observer.observe(document.body, what);
+            // A change inside a component's own root does not reach the body's observer.
+            for (const root of openRoots()) { try { observer.observe(root, what); } catch (_) { /* that root is left out */ } }
         } catch (_) { /* observation unavailable; count stays 0 */ }
 
         return {
@@ -4159,11 +4179,17 @@
     // call begins and ends. They are counted here the way the engine counts
     // the debugger's, so what a page asks for by itself is told from what
     // an action made it ask for.
-    const NET_EVENT = 'select-to-ai:net';
+    // The name is made anew for each page, and only the engine is told it
+    // (with the listing), so a page cannot speak under it by knowing it.
+    const NET_EVENT = (() => {
+        try { return `n${Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('')}`; } catch (_) { return `n${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`; }
+    })();
     const pageNet = SETTLE_TOOLS && SETTLE_TOOLS.createNetworkTracker ? SETTLE_TOOLS.createNetworkTracker() : null;
     // True once that function has said it is there.
     let pageNetAlive = false;
     const pageNetOpen = new Set();
+    // When the page last began a request of any kind, its background ones too.
+    let pageNetLastStart = 0;
 
     /** One thing the page's world said about its requests. Anything else a page sends under that name is left alone. */
     function onPageNet(e) {
@@ -4177,7 +4203,8 @@
             let url = String(said.url || '').slice(0, 300);
             try { url = new URL(url, location.href).href; } catch (_) { /* counted under what it was given as */ }
             pageNetOpen.add(id);
-            pageNet.started(id, url, said.kind, Date.now());
+            pageNetLastStart = Date.now();
+            pageNet.started(id, url, said.kind, pageNetLastStart);
         } else if (said.t === 'end' && pageNetOpen.delete(id)) {
             pageNet.ended(id, Date.now());
         }
@@ -4387,12 +4414,16 @@
     // A press made by script is not a person's press, and a page can ignore
     // it. When a press changed nothing, and nothing says the page took it,
     // it is made the next way before the result is given: with the keyboard
-    // (the focus on the control, then Enter, then Space), then by the
-    // control's own click(). The result says which way the page answered,
-    // or that it answered none. A way is tried only while nothing at all
-    // says the page took the one before, so a press that worked out of
-    // sight (a request sent, a form sent, another page on its way) is never
-    // made twice.
+    // (the focus on the control, then Enter, then Space). The result says
+    // which way the page answered, or that no change was seen after any.
+    // A way is tried only while nothing at all says the page took the one
+    // before, so a press that worked out of sight (a request sent, a form
+    // sent, a field's value changed, a box scrolled, something changed
+    // inside a component) is not made twice. The control's own click() is
+    // never called on top: it runs the very listeners the pointer's click
+    // already ran, so a control that took the first would act twice. Where
+    // what a press does cannot be seen at all (a drawing on the page), no
+    // other way is tried.
 
     /**
      * Watches for a press taking effect where the page itself shows no
@@ -4429,6 +4460,76 @@
         };
     }
 
+    /** The value every field on the page holds, in open shadow roots too, as one string to compare. */
+    function fieldsNow() {
+        const out = [];
+        try {
+            for (const root of [document, ...openRoots()]) {
+                for (const f of root.querySelectorAll('input, select, textarea')) {
+                    if (out.length >= 400) break;
+                    out.push(`${f.type === 'password' ? String(f.value || '').length : f.value}\u0001${f.checked ? 1 : 0}`);
+                }
+            }
+        } catch (_) { /* what could be read is compared */ }
+        return out.join('\u0002');
+    }
+
+    /** The element holding the focus, followed into shadow roots. */
+    function focusNow() {
+        let a = document.activeElement;
+        while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement;
+        return a || null;
+    }
+
+    /**
+     * Watches for what a press can do that neither the page's elements nor
+     * its counted requests show: a field given a new value by the page's
+     * code, a box inside the page scrolled, the focus moved, anything at
+     * all fetched (a request the page makes by itself at other times, or
+     * through a function it kept from before the count began, is still in
+     * the browser's own record). A drawing on the page is 'canvas' from
+     * the start: what a press redraws in it cannot be seen. stop() ends
+     * the watch and returns what was seen. Any of it means the press is
+     * not made another way.
+     */
+    function watchUnseen() {
+        const seen = new Set();
+        const fields = fieldsNow();
+        const focus = focusNow();
+        const since = Date.now();
+        try {
+            for (const c of document.querySelectorAll('canvas')) {
+                const r = c.getBoundingClientRect();
+                if (r.width * r.height >= 10000 && shownNow(c)) { seen.add('canvas'); break; }
+            }
+        } catch (_) { /* none found */ }
+        const scrolled = (e) => { if (!agentDrawn(e.target)) seen.add('scroll'); };
+        const roots = [document, ...openRoots()];
+        for (const root of roots) root.addEventListener('scroll', scrolled, true);
+        // What the extension itself loads into the page (its own pictures) is not the page fetching.
+        const theirs = (list) => list.some((e) => !/^(chrome-extension|data):/.test(String((e && e.name) || '')));
+        let loads = null;
+        try {
+            if (typeof PerformanceObserver === 'function') {
+                loads = new PerformanceObserver((list) => { if (theirs(list.getEntries())) seen.add('request'); });
+                loads.observe({ type: 'resource' });
+            }
+        } catch (_) { loads = null; }
+        let stopped = false;
+        return {
+            stop() {
+                if (stopped) return [...seen];
+                stopped = true;
+                for (const root of roots) root.removeEventListener('scroll', scrolled, true);
+                try { if (loads) { if (theirs(loads.takeRecords())) seen.add('request'); loads.disconnect(); } } catch (_) { /* nothing more to read */ }
+                if (pageNetLastStart >= since) seen.add('request');
+                if (fieldsNow() !== fields) seen.add('value');
+                if (focusNow() !== focus) seen.add('focus');
+                return [...seen];
+            },
+        };
+    }
+
     /** One key sent to a control by script: down, pressed and up. False when the page cancelled it. */
     function scriptKey(el, key) {
         const meta = resolveKeyMeta(key);
@@ -4442,42 +4543,48 @@
     /**
      * True for a control a press does something to, so that a press which
      * changed nothing may be made another way: it is on the page and
-     * switched on, it is not a box that only takes the cursor, and it is
-     * not a surface that draws its own inside, where a press means a point.
+     * switched on, it is not a box that only takes the cursor, it is not
+     * a surface that draws its own inside, where a press means a point,
+     * and it is not marked as the one already chosen (the open tab, the
+     * current page's link), where a press rightly does nothing.
      */
     function takesPress(el) {
         if (!el || !el.isConnected || el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
         if (el.isContentEditable || /^(TEXTAREA|SELECT|CANVAS|VIDEO|AUDIO|IFRAME|OBJECT|EMBED)$/.test(el.tagName)) return false;
         if (el.tagName === 'INPUT' && !/^(button|submit|reset|image|checkbox|radio|file)$/.test((el.type || 'text').toLowerCase())) return false;
+        const current = el.getAttribute('aria-current');
+        if (el.getAttribute('aria-selected') === 'true' || (current && current !== 'false')) return false;
         return true;
     }
 
     /**
      * True when nothing at all says the page took a press. `m` is what was
-     * measured after it: { changed, cancelled, taken, network, asked,
-     * loading }. A page whose requests cannot be seen is never judged to
-     * have ignored a press: it may be waiting for an answer to it.
+     * measured after it: { changed, cancelled, taken, unseen, network,
+     * asked, loading }. A page whose requests cannot be seen is never
+     * judged to have ignored a press: it may be waiting for an answer to it.
      */
     function unanswered(m) {
-        return !!m && !m.changed && !m.cancelled && !(m.taken || []).length && !!m.network && !m.asked && !m.loading;
+        return !!m && !m.changed && !m.cancelled && !(m.taken || []).length && !(m.unseen || []).length && !!m.network && !m.asked && !m.loading;
     }
 
     /**
      * Makes a press the page did not answer the next way, and the next.
      * `first` is what was measured after the press by pointer events;
      * `pressBy(way)` presses that way and resolves what was measured after
-     * it. Returns null when the first press was answered or cannot be
-     * judged; else { tried, by, seen, last }: the ways tried in order, the
-     * way the page took (null when it took none), and whether a change was
-     * seen after it.
+     * it, or null when that way cannot be used here. Returns null when the
+     * first press was answered or cannot be judged; else { tried, by, seen,
+     * last }: the ways tried in order, the way the page took (null when it
+     * took none), and whether a change was seen after it.
      */
     async function otherPressWays(first, pressBy) {
         const tried = ['pointer'];
         let last = first;
-        for (const way of ['Enter', 'Space', 'direct']) {
+        for (const way of ['Enter', 'Space']) {
             if (!unanswered(last) || cancelRequested) break;
+            const m = await pressBy(way);
+            if (!m) continue;
             tried.push(way);
-            last = await pressBy(way);
+            last = m;
             if (last.changed) return { tried, by: way, seen: true, last };
         }
         if (tried.length === 1) return null;
@@ -4486,27 +4593,27 @@
 
     /**
      * Presses a control one way and measures what the page did: 'Enter' or
-     * 'Space' with the focus on it, 'direct' by its own click(), 'focus'
-     * only puts the focus on it (for a hover that brought nothing up).
+     * 'Space' with the focus on it; 'focus' only puts the focus on it (for
+     * a hover that brought nothing up). Null for a key when the control
+     * did not take the focus: a key sent to a control that does not hold
+     * the focus is not what a person at the keyboard can do.
      */
     async function pressBy(el, way, busyBefore, compute) {
         // The focus goes on first for a key, so that what is measured is
         // what the key did, not what taking the focus did.
-        if (way === 'Enter' || way === 'Space') focusField(el);
+        if (way === 'Enter' || way === 'Space') {
+            focusField(el);
+            if (focusNow() !== el) return null;
+        }
         const before = captureOutcomeSnapshot();
         const counter = createMutationCounter();
         const state = stateOf(el);
         const watch = watchTaken();
+        const unseen = way === 'focus' ? null : watchUnseen();
         const since = Date.now();
         let cancelled = false;
         try {
-            if (way === 'direct') {
-                let click = null;
-                const note = (e) => { click = e; };
-                window.addEventListener('click', note, true);
-                try { el.click(); } finally { window.removeEventListener('click', note, true); }
-                cancelled = !!(click && click.defaultPrevented);
-            } else if (way === 'focus') {
+            if (way === 'focus') {
                 focusField(el);
             } else {
                 cancelled = !scriptKey(el, way === 'Space' ? ' ' : 'Enter');
@@ -4517,7 +4624,7 @@
         // Taking the focus can scroll the control into view, which brings nothing up.
         const onlyScrolled = way === 'focus' && outcome.scrollChanged && !outcome.urlChanged && !outcome.titleChanged && !outcome.domMutationCount && !outcome.newElementCount;
         const changed = (!outcome.noEffect && !onlyScrolled) || !el.isConnected || stateOf(el) !== state;
-        return { changed, cancelled, taken: watch.stop(), outcome, settle, network: !!settle.network, asked: !!settle.asked, loading: !!settle.loading };
+        return { changed, cancelled, taken: watch.stop(), unseen: unseen ? unseen.stop() : [], outcome, settle, network: !!settle.network, asked: !!settle.asked, loading: !!settle.loading };
     }
 
     /** Actions whose real page effect should be measured. */
@@ -4670,6 +4777,8 @@
                     blockers: detectBlockers(),
                     // Whether the page's own world is counting its requests yet (the engine starts that).
                     netView: pageNetAlive,
+                    // The name the page's world is to say them under.
+                    netEvent: pageNet ? NET_EVENT : '',
                     whole: !!request.whole,
                     // A tab behind another is not drawn: its animations stand still.
                     inBackground: document.visibilityState === 'hidden',
@@ -4748,6 +4857,8 @@
                     const kind = request.data.action;
                     const again = !!SETTLE_TOOLS && !request.data.once && (kind === 'click' || kind === 'hover');
                     const watch = again && kind === 'click' ? watchTaken() : null;
+                    // What a press does out of sight is watched for every click, so the result can say it.
+                    const unseenWatch = kind === 'click' && SETTLE_TOOLS ? watchUnseen() : null;
                     let result;
                     try {
                         result = await performAction(request.data);
@@ -4759,10 +4870,13 @@
                             }
                             result.outcome = compute(before, captureOutcomeSnapshot(), counter.stop());
                             const taken = watch ? watch.stop() : [];
+                            const unseen = unseenWatch ? unseenWatch.stop() : [];
+                            // A field's new value is the press's doing, and is said (the focus the press itself moves is not).
+                            if (unseen.includes('value') && result.outcome.noEffect) taken.push('value');
                             if (taken.length) result.taken = taken;
                             const scripted = again && result.pointer === 'synthetic' && !result.opensTab && acted && acted.isConnected;
                             if (scripted && kind === 'click' && takesPress(acted)) {
-                                const first = { changed: !result.outcome.noEffect || stateOf(acted) !== stateBefore, cancelled: !!result.cancelled, taken, ...result.settle };
+                                const first = { changed: !result.outcome.noEffect || stateOf(acted) !== stateBefore, cancelled: !!result.cancelled, taken, unseen: unseen.filter((u) => u !== 'focus'), ...result.settle };
                                 let waited = 0;
                                 const ways = await otherPressWays(first, async (way) => { const m = await pressBy(acted, way, busyBefore, compute); waited += m.settle.ms; return m; });
                                 if (ways) {
@@ -4783,6 +4897,7 @@
                         if (pageNet) pageNet.end();
                         counter.stop();
                         if (watch) watch.stop();
+                        if (unseenWatch) unseenWatch.stop();
                     }
                     if (result && result.success) {
                         if (acted && acted.isConnected && typeof result.message === 'string') {

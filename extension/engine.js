@@ -543,7 +543,7 @@
   }
 
   /** Starts the count of a page's own requests, in the page's world. It runs at once: there is nothing in the page it waits for. */
-  const countRequests = (tabId) => INJECT.injectNow(chrome, { tabId }, { world: "MAIN", func: INJECT.netShim, args: [INJECT.NET_EVENT] });
+  const countRequests = (tabId, name) => (INJECT.NET_EVENT.test(String(name || "")) ? INJECT.injectNow(chrome, { tabId }, { world: "MAIN", func: INJECT.netShim, args: [name] }) : Promise.resolve(null));
 
   /** A page that cannot be read still has an address and a title, and can be left. */
   const unreadable = (tab, why) => ({ url: tab.url || "", title: tab.title || "", elements: [], innerText: `[${why}]`, visibleText: "", protectedPage: true });
@@ -591,7 +591,7 @@
     // With no debugger connection to show the tab's requests, the page's own
     // world is asked to count them (core/inject.js), so the wait after an
     // action can tell a page still waiting for an answer from a finished one.
-    if (!res.netView && !nets.has(tab.id)) countRequests(tab.id);
+    if (!res.netView && !nets.has(tab.id)) countRequests(tab.id, res.netEvent);
     session.frames = [];
     if (!near && res.frames) { try { await readFrames(session, tab, res); } catch (_e) { session.frames = []; } }
     return res;
@@ -687,7 +687,8 @@
     if (page.inBackground) page.behind = session.parent ? "subtask" : (await followed(session, tab)) ? "follow" : "user";
     session.page = page;
     // Whether the pointer and keys are made by script here: said to the model once (core/context.js).
-    session.extras.scripted = !chrome.debugger || debuggerDisabled;
+    // With a debugger that a tab refused, the last pointer action says how it was made.
+    session.extras.scripted = !chrome.debugger || debuggerDisabled || !!(session.pointerWas && session.pointerWas.run === run.id && session.pointerWas.how === "synthetic");
     // A picture the browser refused on this tab, in this run (act, look).
     session.extras.noPictures = session.noPictures && session.noPictures.run === run.id && session.noPictures.tabId === tab.id ? session.noPictures.why : "";
     session.extras.tabs = await tabList(tab.windowId, tab.id, session.parent ? run.openedTabs : null);
@@ -898,6 +899,7 @@
     if (res && res.success && res.opensTab && !opened) opened = created.find((t) => (t.pendingUrl || t.url) === res.opensTab) || null;
     // Whether the pointer was the real one, said with every result.
     const pointer = res && (res.pointer === "real" || res.pointer === "synthetic") ? { pointer: res.pointer } : {};
+    if (pointer.pointer) session.pointerWas = { run: run.id, how: pointer.pointer };
     // A link made to open in a new tab: open it, as the click would have for a person.
     if (res && res.success && res.opensTab && !opened) {
       let why = "";
@@ -943,11 +945,13 @@
     const still = loaded && loaded.loading ? loadingNote(loaded, Date.now() - started).trim() : res.settle && res.settle.loading ? TOOLS.stillLoadingNote(res.settle.ms, res.settle.signs) : "";
     // Which way of pressing the page answered, when the first was not it (core/context.js).
     const ways = moved ? "" : CONTEXT.waysNote(res.ways, data.id, res.taken);
-    const message = [String(res.message || "Done.").replace(/\s*Outcome:.*$/s, ""), ways, moved ? `The page changed: now at ${after.url}` : numbers(shown) || effectOf(o, res.settle), still].filter(Boolean).join(" ");
+    // A field given a new value is a change, though no element changed: it is not then said that nothing did.
+    const valued = !moved && Array.isArray(res.taken) && res.taken.includes("value");
+    const message = [String(res.message || "Done.").replace(/\s*Outcome:.*$/s, ""), ways, moved ? `The page changed: now at ${after.url}` : numbers(shown) || (valued && o.noEffect ? "" : effectOf(o, res.settle)), still].filter(Boolean).join(" ");
     const pageChanged = moved || !!o.urlChanged || !!o.titleChanged || (o.newElementCount || 0) !== 0 || (navigates && (o.domMutationCount || 0) > 0) || !!(res.choices && res.choices.length);
     // Changed where it stands: same address, same title, nothing left to choose.
     const soft = pageChanged && !moved && !o.urlChanged && !o.titleChanged && !(res.choices && res.choices.length);
-    return { ok: true, message, pageChanged, soft, noEffect: !!o.noEffect && !moved, ...pointer };
+    return { ok: true, message, pageChanged, soft, noEffect: !!o.noEffect && !moved && !valued, ...pointer };
   }
 
   /**
@@ -1118,14 +1122,20 @@
       }
       case "look": {
         const shot = await capture(tabId);
-        if (shot.image) return { ok: true, pageChanged: true, image: shot.image, message: "A picture of the page is attached to your next step." };
+        if (shot.image) {
+          // A picture was taken after all (the user opened the extension on this tab): the refusal is no longer a fact here.
+          if (session.noPictures && session.noPictures.tabId === tabId) session.noPictures = { run: session.noPictures.run, tabId: -1, why: "" };
+          return { ok: true, pageChanged: true, image: shot.image, message: "A picture of the page is attached to your next step." };
+        }
         // A refusal that will come again is a fact of this run from here on
         // (core/context.js), and the user is told once that the agent works
         // without pictures: a run that cannot see is not left to look as if it can.
         const told = session.noPictures && session.noPictures.run === run.id && session.noPictures.tabId === tabId;
+        // The user is told once in a run, whatever tab it is then on.
+        const noted = !!(session.noPictures && session.noPictures.run === run.id);
         if (shot.lasting && !told) {
           session.noPictures = { run: run.id, tabId, why: shot.why };
-          run.journal.push({ k: "note", text: "Chrome did not let the agent take a picture of this page, so it is working from the page's text and controls only. Maps, charts and images may be read less well." });
+          if (!noted) run.journal.push({ k: "note", text: "Chrome did not let the agent take a picture of this page, so it is working from the page's text and controls only. Maps, charts and images may be read less well." });
         }
         return { ok: false, message: `A picture of this tab could not be taken.${shot.why ? ` ${shot.why}` : ""}` };
       }
@@ -1218,13 +1228,15 @@
     code: "Select to AI is waiting for you to enter the code.",
     payment: "Select to AI is waiting for you to enter the payment details.",
     press: "Select to AI is waiting for you to check this and press the highlighted button.",
+    // A control inside a frame cannot be marked from the page around it.
+    pressFramed: "Select to AI is waiting for you to press the button it asked you about, in the framed part of this page. Choose I'm done here once you have.",
   });
 
   /** Puts the banner on the page and starts the watch for the blocker to go. */
   async function watchPage(wait) {
     const tabId = wait.tabId;
     await quiet(inject({ tabId }, { files: ["agentTools.js", "agentContentScript.js"] }));
-    await send(tabId, { action: "needsYou", kind: wait.kind, text: wait.press ? BANNER.press : BANNER[wait.kind], press: wait.press });
+    await send(tabId, { action: "needsYou", kind: wait.kind, text: wait.press >= FRAME_BASE ? BANNER.pressFramed : wait.press ? BANNER.press : BANNER[wait.kind], press: wait.press });
   }
 
   // A run paused for its provider is woken by an alarm, which outlives the

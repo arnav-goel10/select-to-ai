@@ -23,7 +23,7 @@ const quiet = (o) => ({ changed: false, cancelled: false, taken: [], network: tr
 function ladder(results) {
   const pressed = [];
   const { otherPressWays } = build(["unanswered", "otherPressWays"], { cancelRequested: false });
-  const run = (first) => otherPressWays(first, async (way) => { pressed.push(way); return results[way] || quiet(); });
+  const run = (first) => otherPressWays(first, async (way) => { pressed.push(way); return way in results ? results[way] : quiet(); });
   return { pressed, run };
 }
 
@@ -49,18 +49,48 @@ test("an unanswered press is made with the keyboard, and the way that worked is 
   assert.deepEqual([got.tried, got.by, got.seen], [["pointer", "Enter"], "Enter", true]);
 });
 
-test("the ways are tried in order: pointer, Enter, Space, then the control's own click", async () => {
-  const l = ladder({ direct: quiet({ changed: true }) });
+test("the ways are tried in order: pointer, Enter, then Space", async () => {
+  const l = ladder({ Space: quiet({ changed: true }) });
   const got = await l.run(quiet());
-  assert.deepEqual(l.pressed, ["Enter", "Space", "direct"]);
-  assert.deepEqual([got.by, got.seen], ["direct", true]);
+  assert.deepEqual(l.pressed, ["Enter", "Space"]);
+  assert.deepEqual([got.by, got.seen], ["Space", true]);
 });
 
 test("a control that answers no way is said to have answered none", async () => {
   const l = ladder({});
   const got = await l.run(quiet());
-  assert.deepEqual(got.tried, ["pointer", "Enter", "Space", "direct"]);
+  assert.deepEqual(got.tried, ["pointer", "Enter", "Space"]);
   assert.deepEqual([got.by, got.seen], [null, false]);
+});
+
+test("the control's own click is never called on top of the pointer's click", async () => {
+  // It runs the listeners the first click already ran: a control that took the first would act twice.
+  const l = ladder({});
+  await l.run(quiet());
+  assert.ok(!l.pressed.includes("direct"));
+  const { source } = require("../helpers/content-source.js");
+  assert.ok(!/\.click\(\)/.test(source("pressBy")), "pressBy calls no click()");
+  assert.ok(!/\.click\(\)/.test(source("otherPressWays")));
+});
+
+test("what a press did out of sight is an answer: it is not made another way", async () => {
+  for (const unseen of ["value", "scroll", "request", "focus", "canvas"]) {
+    const l = ladder({});
+    assert.equal(await l.run(quiet({ unseen: [unseen] })), null, unseen);
+    assert.deepEqual(l.pressed, [], unseen);
+  }
+  // The same after a key: Space is not sent on top of an Enter that changed a field's value.
+  const l = ladder({ Enter: quiet({ unseen: ["value"] }) });
+  const got = await l.run(quiet());
+  assert.deepEqual(l.pressed, ["Enter"]);
+  assert.deepEqual([got.by, got.seen], ["Enter", false]);
+});
+
+test("a key the control cannot be given, for not holding the focus, is not counted as tried", async () => {
+  const l = ladder({ Enter: null, Space: null });
+  assert.equal(await l.run(quiet()), null);
+  assert.deepEqual(l.pressed, ["Enter", "Space"]);
+  assert.match(CONTENT, /if \(way === 'Enter' \|\| way === 'Space'\) \{\s*focusField\(el\);\s*if \(focusNow\(\) !== el\) return null;\s*\}/);
 });
 
 test("a way the page took without showing a change ends the tries there", async () => {
@@ -90,6 +120,12 @@ test("only a control a press does something to is pressed another way", () => {
   assert.equal(takesPress(el({ disabled: true })), false);
   assert.equal(takesPress(el({ getAttribute: (k) => (k === "aria-disabled" ? "true" : null) })), false);
   assert.equal(takesPress(el({ isConnected: false })), false);
+  // The one already chosen rightly does nothing when pressed.
+  assert.equal(takesPress(el({ getAttribute: (k) => (k === "aria-selected" ? "true" : null) })), false);
+  assert.equal(takesPress(el({ tagName: "A", getAttribute: (k) => (k === "aria-current" ? "page" : null) })), false);
+  assert.equal(takesPress(el({ getAttribute: (k) => (k === "aria-selected" || k === "aria-current" ? "false" : null) })), true);
+  // A toggle that is on is still one to press.
+  assert.equal(takesPress(el({ getAttribute: (k) => (k === "aria-pressed" ? "true" : null) })), true);
   assert.equal(takesPress(null), false);
 });
 
@@ -153,6 +189,130 @@ test("the watch takes its listeners off when it stops", () => {
   assert.deepEqual(t.watch.stop(), [], "stopping twice is the same as once");
 });
 
+// ------------------------------------------- what a press does out of sight
+
+/** A stand-in page for watchUnseen: fields, shadow roots, canvases, and the listeners it is given. */
+function unseeing(o = {}) {
+  const listeners = new Map();
+  const target = (extra) => {
+    const t = { ...extra, addEventListener: (type, fn) => listeners.set(t, { type, fn }), removeEventListener: (type, fn) => { if (listeners.get(t) && listeners.get(t).fn === fn) listeners.delete(t); } };
+    return t;
+  };
+  const fields = o.fields || [];
+  const inner = o.innerFields || [];
+  const root = target({ querySelectorAll: (sel) => (/input/.test(sel) ? inner : []) });
+  const host = { shadowRoot: root };
+  const document = target({
+    activeElement: o.active || null,
+    querySelectorAll: (sel) => (sel === "*" ? (o.noRoot ? [] : [host]) : sel === "canvas" ? (o.canvases || []) : fields),
+  });
+  const observers = [];
+  class PerformanceObserver {
+    constructor(fn) { this.fn = fn; this.left = []; observers.push(this); }
+    observe(what) { this.what = what; }
+    takeRecords() { return this.left; }
+    disconnect() { this.off = true; }
+  }
+  const scope = { document, agentDrawn: () => false, shownNow: (c) => c.shown !== false, pageNetLastStart: 0, Date: { now: () => 5000 }, ...(o.noObserver ? { PerformanceObserver: undefined } : { PerformanceObserver }) };
+  const names = ["openRoots", "fieldsNow", "focusNow", "watchUnseen"];
+  const keys = Object.keys(scope);
+  const { source } = require("../helpers/content-source.js");
+  // pageNetLastStart is a variable of the content script: the test sets it through `net`.
+  const made = new Function(...keys, `${names.map(source).join("\n")}\nreturn { ${names.join(", ")}, net: (t) => { pageNetLastStart = t; } };`)(...keys.map((k) => scope[k]));
+  return { ...made, document, root, listeners, observers, fields, inner };
+}
+
+test("a field given a new value by the page's code is seen, in a component's own root too", () => {
+  const qty = { type: "number", value: "1", checked: false };
+  const a = unseeing({ fields: [qty] });
+  const w = a.watchUnseen();
+  qty.value = "2";
+  assert.deepEqual(w.stop(), ["value"]);
+  const box = { type: "checkbox", value: "on", checked: false };
+  const b = unseeing({ innerFields: [box] });
+  const w2 = b.watchUnseen();
+  box.checked = true;
+  assert.deepEqual(w2.stop(), ["value"]);
+  // Nothing changed: nothing seen, and stopping twice is the same as once.
+  const c = unseeing({ fields: [{ type: "text", value: "x", checked: false }] });
+  const w3 = c.watchUnseen();
+  assert.deepEqual(w3.stop(), []);
+  assert.deepEqual(w3.stop(), []);
+});
+
+test("what a password box holds is compared by its length only", () => {
+  const a = unseeing({ fields: [{ type: "password", value: "hunter2", checked: false }] });
+  assert.ok(!a.fieldsNow().includes("hunter2"));
+  assert.ok(a.fieldsNow().startsWith("7"));
+});
+
+test("a box scrolled inside the page is seen, inside a component too, and the listeners come off", () => {
+  const a = unseeing();
+  const w = a.watchUnseen();
+  assert.equal(a.listeners.size, 2, "the document and the component's root are listened to");
+  assert.equal(a.listeners.get(a.root).type, "scroll");
+  a.listeners.get(a.root).fn({ target: {} });
+  assert.deepEqual(w.stop(), ["scroll"]);
+  assert.equal(a.listeners.size, 0);
+});
+
+test("anything the page fetched is seen: by the page's own count, its background too, or by the browser's record", () => {
+  const counted = unseeing();
+  const w = counted.watchUnseen();
+  counted.net(5000);
+  assert.deepEqual(w.stop(), ["request"]);
+  // One begun before the press is not this press's.
+  const earlier = unseeing();
+  earlier.net(4000);
+  assert.deepEqual(earlier.watchUnseen().stop(), []);
+  // A request made through a function the page kept from before the count began is still in the browser's record.
+  const kept = unseeing();
+  const w2 = kept.watchUnseen();
+  assert.deepEqual(kept.observers[0].what, { type: "resource" });
+  kept.observers[0].fn({ getEntries: () => [{ name: "https://shop.example/api/cart" }] });
+  assert.deepEqual(w2.stop(), ["request"]);
+  assert.equal(kept.observers[0].off, true);
+  // What the extension itself loads into the page is not the page fetching.
+  const own = unseeing();
+  const w4 = own.watchUnseen();
+  own.observers[0].fn({ getEntries: () => [{ name: "chrome-extension://abcdef/icons/icon-48.png" }] });
+  assert.deepEqual(w4.stop(), []);
+  // One that ended just before the watch stopped.
+  const late = unseeing();
+  const w3 = late.watchUnseen();
+  late.observers[0].left = [{}];
+  assert.deepEqual(w3.stop(), ["request"]);
+  // A browser without that record: the rest still works.
+  assert.deepEqual(unseeing({ noObserver: true }).watchUnseen().stop(), []);
+});
+
+test("the focus going elsewhere is seen", () => {
+  const button = {};
+  const a = unseeing({ active: button });
+  const w = a.watchUnseen();
+  a.document.activeElement = {};
+  assert.deepEqual(w.stop(), ["focus"]);
+});
+
+test("a drawing on the page cannot be judged: what a press redraws in it is not seen", () => {
+  const big = { getBoundingClientRect: () => ({ width: 600, height: 400 }) };
+  assert.deepEqual(unseeing({ canvases: [big] }).watchUnseen().stop(), ["canvas"]);
+  const icon = { getBoundingClientRect: () => ({ width: 16, height: 16 }) };
+  assert.deepEqual(unseeing({ canvases: [icon] }).watchUnseen().stop(), []);
+  assert.deepEqual(unseeing({ canvases: [{ ...big, shown: false }] }).watchUnseen().stop(), []);
+});
+
+test("changes inside a component's own root are counted with the page's", () => {
+  const observed = [];
+  class MutationObserver { constructor(fn) { this.fn = fn; } observe(node) { observed.push(node); } disconnect() {} }
+  const root = { querySelectorAll: () => [] };
+  const body = {};
+  const document = { body, querySelectorAll: (sel) => (sel === "*" ? [{ shadowRoot: root }] : []) };
+  const { createMutationCounter } = build(["openRoots", "createMutationCounter"], { document, MutationObserver, agentDrawn: () => false });
+  createMutationCounter().stop();
+  assert.deepEqual(observed, [body, root]);
+});
+
 test("the page presses another way only for a scripted click the user did not approve as one press", () => {
   assert.match(CONTENT, /const again = !!SETTLE_TOOLS && !request\.data\.once && \(kind === 'click' \|\| kind === 'hover'\);/);
   assert.match(CONTENT, /const scripted = again && result\.pointer === 'synthetic' && !result\.opensTab && acted && acted\.isConnected;/);
@@ -162,19 +322,27 @@ test("the page presses another way only for a scripted click the user did not ap
 // ------------------------------------------------------ what the model is told
 
 test("the result names the way that worked", () => {
-  assert.equal(CONTEXT.waysNote({ tried: ["pointer", "Enter"], by: "Enter", seen: true }, 5), "The page did not answer pointer events on it; the Enter key with the focus on it worked.");
-  assert.equal(CONTEXT.waysNote({ tried: ["pointer", "Enter", "Space", "direct"], by: "direct", seen: true }, 5), "The page did not answer pointer events on it; its own click called directly worked.");
+  assert.equal(CONTEXT.waysNote({ tried: ["pointer", "Enter"], by: "Enter", seen: true }, 5), "No change was seen after pointer events on it. It was then pressed with the Enter key with the focus on it, and the page changed: check that the change is the one you wanted.");
 });
 
-test("a control that answered no way is said to ignore scripted input, with the user's press as the way on", () => {
-  const said = CONTEXT.waysNote({ tried: ["pointer", "Enter", "Space", "direct"], by: null, seen: false }, 12);
-  assert.match(said, /^It did not answer a press made by script in any of the ways tried: pointer events, the Enter key with the focus on it, the Space key with the focus on it, its own click called directly\./);
-  assert.match(said, /it ignores scripted input and takes only a real press/);
-  assert.match(said, /The user can press it once for you: ask_user with kind "press" and ref 12\.$/);
+test("a control with no change seen after any way is said as that, not as ignoring scripted input, with the user's press as a way on", () => {
+  const said = CONTEXT.waysNote({ tried: ["pointer", "Enter", "Space"], by: null, seen: false }, 12);
+  assert.match(said, /^No change was seen after a press made by script in any of the ways tried: pointer events, the Enter key with the focus on it, the Space key with the focus on it\./);
+  // What was seen is all that is claimed: the three things it can mean are left to the model.
+  assert.match(said, /It may have nothing to do here, it may have done something that cannot be seen from here, or it may take only a real press\./);
+  assert.ok(!/ignores scripted input/.test(said));
+  assert.match(said, /Do not press it again by script\./);
+  assert.match(said, /the user can press it once for you: ask_user with kind "press" and ref 12\.$/);
+});
+
+test("a field's new value after a press is said, where nothing else on the page changed", () => {
+  assert.equal(CONTEXT.waysNote(undefined, 5, ["value"]), "A field on the page holds a different value after it.");
+  assert.match(ENGINE, /const valued = !moved && Array\.isArray\(res\.taken\) && res\.taken\.includes\("value"\);/);
+  assert.match(ENGINE, /noEffect: !!o\.noEffect && !moved && !valued,/);
 });
 
 test("a way the page took without a change is said as that, not as working", () => {
-  assert.equal(CONTEXT.waysNote({ tried: ["pointer", "Enter", "Space"], by: "Space", seen: false }, 3), "The page did not answer pointer events on it. It took the Space key with the focus on it, though no change was seen.");
+  assert.equal(CONTEXT.waysNote({ tried: ["pointer", "Enter", "Space"], by: "Space", seen: false }, 3), "No change was seen after pointer events on it. It was then pressed with the Space key with the focus on it: the page took that, though it shows no change either.");
 });
 
 test("a hover that brought nothing up says what cannot be opened by script", () => {
@@ -202,7 +370,9 @@ test("the model is told once, as a fact, that its pointer and keys are scripted,
   const page = { url: "https://a.example/", title: "A", elements: [], innerText: "A", visibleText: "A" };
   assert.match(CONTEXT.stepMessages(run, page, { scripted: true }).system, /made by script/);
   assert.ok(!/made by script/.test(CONTEXT.stepMessages(run, page, {}).system));
-  assert.match(ENGINE, /session\.extras\.scripted = !chrome\.debugger \|\| debuggerDisabled;/);
+  // Where there is a debugger but a tab refused it, the last pointer action of the run says how it was made.
+  assert.match(ENGINE, /session\.extras\.scripted = !chrome\.debugger \|\| debuggerDisabled \|\| !!\(session\.pointerWas && session\.pointerWas\.run === run\.id && session\.pointerWas\.how === "synthetic"\);/);
+  assert.match(ENGINE, /if \(pointer\.pointer\) session\.pointerWas = \{ run: run\.id, how: pointer\.pointer \};/);
 });
 
 test("the tool does not promise what a scripted pointer cannot do", () => {

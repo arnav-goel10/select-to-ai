@@ -6,6 +6,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const INJECT = require("../../extension/core/inject.js");
 
+// A name of the shape the content script makes for a page.
+const NAME = "n0123456789abcdef01234567";
+
 const tick = () => new Promise((r) => setImmediate(r));
 
 /** A page's world, and the shim run in it from its source, as the browser runs it. */
@@ -24,18 +27,18 @@ function world(o = {}) {
     addEventListener(type, fn) { this.listeners[type] = fn; }
   }
   window.XMLHttpRequest = XMLHttpRequest;
-  const run = () => new Function("window", "document", "CustomEvent", `return (${INJECT.netShim.toString()})(${JSON.stringify(INJECT.NET_EVENT)});`)(window, document, CustomEvent);
+  const run = () => new Function("window", "document", "CustomEvent", `return (${INJECT.netShim.toString()})(${JSON.stringify(NAME)});`)(window, document, CustomEvent);
   return { said, window, fetchCalls, run, XMLHttpRequest };
 }
 
-test("the shim says it is there, and a second run only says so again", () => {
+test("the shim says it is there under the name it was given, and leaves no mark on the window", () => {
   const w = world();
+  const before = Object.getOwnPropertyNames(w.window).sort();
   assert.equal(w.run(), true);
-  assert.deepEqual(w.said, [{ name: INJECT.NET_EVENT, t: "hello" }]);
-  const wrapped = w.window.fetch;
-  assert.equal(w.run(), true);
-  assert.equal(w.window.fetch, wrapped, "fetch is not wrapped a second time");
-  assert.deepEqual(w.said.map((e) => e.t), ["hello", "hello"]);
+  assert.deepEqual(w.said, [{ name: NAME, t: "hello" }]);
+  assert.deepEqual(Object.getOwnPropertyNames(w.window).sort(), before, "nothing new on the window");
+  assert.ok(!/__selectToAi|select-to-ai/.test(INJECT.netShim.toString()), "no fixed name in what is sent to the page");
+  assert.match(NAME, INJECT.NET_EVENT);
 });
 
 test("a fetch is said to begin and to end, and reaches the page's own fetch unchanged", async () => {
@@ -46,9 +49,9 @@ test("a fetch is said to begin and to end, and reaches the page's own fetch unch
   const got = w.window.fetch("/api/search?q=1", init);
   assert.equal(got, promise, "the page gets the very promise its own fetch returned");
   assert.deepEqual(w.fetchCalls[0].args, ["/api/search?q=1", init]);
-  assert.deepEqual(w.said[1], { name: INJECT.NET_EVENT, t: "start", id: "Fetch1", kind: "Fetch", url: "/api/search?q=1" });
+  assert.deepEqual(w.said[1], { name: NAME, t: "start", id: "Fetch1", kind: "Fetch", url: "/api/search?q=1" });
   await tick();
-  assert.deepEqual(w.said[2], { name: INJECT.NET_EVENT, t: "end", id: "Fetch1" });
+  assert.deepEqual(w.said[2], { name: NAME, t: "end", id: "Fetch1" });
 });
 
 test("a fetch that fails is said to end too, and still fails for the page", async () => {
@@ -75,9 +78,9 @@ test("an XMLHttpRequest is said to begin when sent and to end when it is over", 
   assert.equal(w.said.length, 1, "nothing is said until it is sent");
   x.send("body");
   assert.deepEqual(x.sent, [["body"]]);
-  assert.deepEqual(w.said[1], { name: INJECT.NET_EVENT, t: "start", id: "XHR1", kind: "XHR", url: "/api/rows" });
+  assert.deepEqual(w.said[1], { name: NAME, t: "start", id: "XHR1", kind: "XHR", url: "/api/rows" });
   x.listeners.loadend();
-  assert.deepEqual(w.said[2], { name: INJECT.NET_EVENT, t: "end", id: "XHR1" });
+  assert.deepEqual(w.said[2], { name: NAME, t: "end", id: "XHR1" });
 });
 
 test("an XMLHttpRequest whose send throws is not left open", () => {

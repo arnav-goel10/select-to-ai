@@ -97,7 +97,7 @@ The user asks whether the recipe on the page is vegetarian. The page text lists 
   // real pointer and keys there is nothing to say.
   const SCRIPTED = `
 # How your actions reach the page
-In this browser your pointer and your keys are made by script: the page is sent the events a mouse and a keyboard send, and most pages take them as a person's. A few things answer only the real ones: a menu that opens only while the mouse is over it, a drag the page follows by holding on to the pointer, a key the browser itself acts on (Tab to move to the next field, Escape to close a browser dialog), a file chooser, copying to the clipboard, and a control built to ignore scripted presses. A result says when a control did not answer. The same thing can often be reached another way (its link, the listing, find, fill), and the user can press one control for you: ask_user with kind "press" and its ref.
+In this browser your pointer and your keys are made by script: the page is sent the events a mouse and a keyboard send, and most pages take them as a person's. A few things answer only the real ones: a menu that opens only while the mouse is over it, a drag the page follows by holding on to the pointer, a key the browser itself acts on (Tab to move to the next field, Escape to close a browser dialog), a file chooser, copying to the clipboard, and a control built to ignore scripted presses. A result says when no change was seen after a press. The same thing can often be reached another way (its link, the listing, find, fill), and the user can press one control for you: ask_user with kind "press" and its ref.
 
 `;
 
@@ -601,7 +601,6 @@ In this browser your pointer and your keys are made by script: the page is sent 
   const PRESS_WAYS = Object.freeze({
     Enter: "the Enter key with the focus on it",
     Space: "the Space key with the focus on it",
-    direct: "its own click called directly",
   });
   // What a press was seen to set off that the page itself does not show.
   const TAKEN = Object.freeze({
@@ -609,13 +608,17 @@ In this browser your pointer and your keys are made by script: the page is sent 
     form: "The press sent a form.",
     window: "Another window or tab took over from this one.",
     media: "Something on the page started or stopped playing.",
+    value: "A field on the page holds a different value after it.",
   });
 
   /**
    * Which way of pressing a control the page answered, when pointer events
-   * made by script were not it, or that it answered none. Facts for the
-   * model: a control that answers no scripted press may have nothing to
-   * do, or may take only a real one, and the user can give it that.
+   * made by script were not it, or that no change was seen after any.
+   * Facts for the model, and no more than was seen: such a control may
+   * have nothing to do, may have done something out of sight, or may take
+   * only a real press, and the user can give it that. A change that came
+   * after a key is said as that, for the model to check: the key went to
+   * the page as well as to the control.
    * `ways`: {tried, by, seen, hover} from the page; `ref` the control;
    * `taken` what a press with no change on the page was seen to set off.
    */
@@ -627,16 +630,17 @@ In this browser your pointer and your keys are made by script: the page is sent 
         ? "The pointer made by script brought nothing up; putting the focus on it did."
         : "Nothing came up under the pointer made by script, or with the focus on it. What opens only under the real mouse cannot be opened by script.";
     }
-    if (ways.by && ways.seen) return `The page did not answer pointer events on it; ${PRESS_WAYS[ways.by] || ways.by} worked.`;
-    if (ways.by) return `The page did not answer pointer events on it. It took ${PRESS_WAYS[ways.by] || ways.by}, though no change was seen.`;
+    if (ways.by && ways.seen) return `No change was seen after pointer events on it. It was then pressed with ${PRESS_WAYS[ways.by] || ways.by}, and the page changed: check that the change is the one you wanted.`;
+    if (ways.by) return `No change was seen after pointer events on it. It was then pressed with ${PRESS_WAYS[ways.by] || ways.by}: the page took that, though it shows no change either.`;
     const others = ways.tried.slice(1).map((w) => PRESS_WAYS[w] || w).join(", ");
-    return `It did not answer a press made by script in any of the ways tried: pointer events, ${others}. Either it has nothing to do here, or it ignores scripted input and takes only a real press. The user can press it once for you: ask_user with kind "press" and ref ${ref}.`;
+    return `No change was seen after a press made by script in any of the ways tried: pointer events, ${others}. It may have nothing to do here, it may have done something that cannot be seen from here, or it may take only a real press. Do not press it again by script. If it has to be pressed, the user can press it once for you: ask_user with kind "press" and ref ${ref}.`;
   }
 
   /**
    * What is said when an action was followed by no change on the page.
    * "Nothing changed" is only said of a page whose requests were in view
-   * and that asked for nothing: a page that was still waiting for an
+   * and none was seen (some cannot be: one made from a worker, or over a
+   * socket, so it is not said that none was made): a page that was still waiting for an
    * answer, or whose requests could not be seen, may yet show a result, and
    * the model is told which it is and how long the page was watched.
    * `settle`: {ms, loading, network, asked} from the wait after the action.
@@ -648,7 +652,7 @@ In this browser your pointer and your keys are made by script: the page is sent 
     // The wait ended at its ceiling: what was still going on is said after this.
     if (s.loading) return `No change was seen on the page${watched}.`;
     if (s.network && s.asked) return `No change was seen on the page${watched}. The page did ask its server for something, and got its answer: what came of it may show elsewhere.`;
-    if (s.network) return `Nothing on the page changed${watched}, and the page asked its server for nothing.`;
+    if (s.network) return `Nothing on the page changed${watched}, and no request from it was seen.`;
     return `No change was seen on the page${watched}. Its requests cannot be seen here, so it may still be loading: wait gives it more time.`;
   }
 

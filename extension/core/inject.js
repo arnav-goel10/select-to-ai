@@ -57,9 +57,11 @@
     return Promise.race([sent, new Promise((resolve) => { timer = setTimeout(() => resolve(null), injectMs); })]).finally(() => clearTimeout(timer));
   }
 
-  // The event the page's own world tells the content script about its
-  // requests with (agentContentScript.js listens for the same name).
-  const NET_EVENT = "select-to-ai:net";
+  // The name of the event the page's own world tells the content script
+  // about its requests with is made by the content script, anew for each
+  // page, and comes to the engine with the listing. This is the shape a
+  // name must have to be used.
+  const NET_EVENT = /^n[0-9a-f]{12,40}$/;
 
   /**
    * Runs in the page's own world, where the page's fetch and XMLHttpRequest
@@ -68,16 +70,15 @@
    * that has nothing more to do. A build without the debugger has no other
    * way to know. Only that a call began or ended, its kind and its address
    * are said; nothing of what was sent or came back is read, and each call
-   * goes to the page's own function unchanged. Safe to run twice: a second
-   * run only says it is there.
+   * goes to the page's own function unchanged. Nothing is left on the
+   * window to say it ran: the content script knows from its "hello", and
+   * the engine does not send it to a page that has said so.
    *
    * It is sent to the page as its source, so it uses nothing from this file.
    */
   function netShim(name) {
     const w = window;
     const say = (d) => { try { document.dispatchEvent(new CustomEvent(name, { detail: JSON.stringify(d) })); } catch (_e) { /* the page goes on regardless */ } };
-    if (w.__selectToAiNet) { say({ t: "hello" }); return true; }
-    try { Object.defineProperty(w, "__selectToAiNet", { value: true }); } catch (_e) { return false; }
     let count = 0;
     const begin = (kind, url) => { const id = `${kind}${++count}`; say({ t: "start", id, kind, url: String(url || "").slice(0, 300) }); return id; };
     const end = (id) => say({ t: "end", id });

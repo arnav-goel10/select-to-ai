@@ -43,6 +43,10 @@ test("the engine keeps what the browser said, tells the user once, and says it o
   // The browser's own words are caught, not swallowed.
   assert.match(ENGINE, /captureVisibleTab\(tab\.windowId, \{ format: "jpeg", quality: 60 \}\)\)\.catch\(\(e\) => \{ refused = String\(\(e && e\.message\) \|\| e\); return null; \}\);/);
   assert.match(ENGINE, /return CONTEXT\.noPicture\(refused, !tab\.active\);/);
-  assert.match(ENGINE, /if \(shot\.lasting && !told\) \{\s*session\.noPictures = \{ run: run\.id, tabId, why: shot\.why \};\s*run\.journal\.push\(\{ k: "note", text: "Chrome did not let the agent take a picture of this page/);
+  assert.match(ENGINE, /if \(shot\.lasting && !told\) \{\s*session\.noPictures = \{ run: run\.id, tabId, why: shot\.why \};\s*if \(!noted\) run\.journal\.push\(\{ k: "note", text: "Chrome did not let the agent take a picture of this page/);
+  // Once in a run, whatever tab it is on by then.
+  assert.match(ENGINE, /const noted = !!\(session\.noPictures && session\.noPictures\.run === run\.id\);/);
+  // A picture taken after all on that tab ends the fact there.
+  assert.match(ENGINE, /if \(shot\.image\) \{[^}]*if \(session\.noPictures && session\.noPictures\.tabId === tabId\) session\.noPictures = \{ run: session\.noPictures\.run, tabId: -1, why: "" \};/);
   assert.match(ENGINE, /session\.extras\.noPictures = session\.noPictures && session\.noPictures\.run === run\.id && session\.noPictures\.tabId === tab\.id \? session\.noPictures\.why : "";/);
 });
