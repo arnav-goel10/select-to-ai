@@ -98,11 +98,12 @@ test("OpenRouter requests carry the project's repository as the referer, and the
   assert.equal(h["X-Title"], D.OPENROUTER_ATTRIBUTION["X-Title"]);
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../../extension/manifest.json"), "utf8"));
   assert.equal(h["HTTP-Referer"], manifest.homepage_url, "the referer is the listing's own homepage");
-  // welcome.js tests a key with its own fetch: it must say the same.
-  const welcome = fs.readFileSync(path.join(__dirname, "../../extension/welcome.js"), "utf8");
-  assert.ok(welcome.includes(`"HTTP-Referer"] = "${h["HTTP-Referer"]}"`) || welcome.includes("OPENROUTER_ATTRIBUTION"), "welcome.js sends the same referer");
-  assert.ok(welcome.includes(`"X-Title"] = "${h["X-Title"]}"`) || welcome.includes("OPENROUTER_ATTRIBUTION"), "welcome.js sends the same title");
-  for (const f of ["core/llm.js", "defaults.js", "welcome.js"]) {
+  // The setup pages test a key with their own fetch (setup.js, used by
+  // welcome.js and Settings): it must say the same.
+  const welcome = ["setup.js", "welcome.js"].map((f) => fs.readFileSync(path.join(__dirname, "../../extension", f), "utf8")).join("\n");
+  assert.ok(welcome.includes(`"HTTP-Referer"] = "${h["HTTP-Referer"]}"`) || welcome.includes("OPENROUTER_ATTRIBUTION"), "the setup key test sends the same referer");
+  assert.ok(welcome.includes(`"X-Title"] = "${h["X-Title"]}"`) || welcome.includes("OPENROUTER_ATTRIBUTION"), "the setup key test sends the same title");
+  for (const f of ["core/llm.js", "defaults.js", "welcome.js", "setup.js"]) {
     assert.ok(!fs.readFileSync(path.join(__dirname, "../../extension", f), "utf8").includes("selecttoai.github.io"), `${f} names the unregistered page`);
   }
 });
