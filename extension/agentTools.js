@@ -1547,10 +1547,21 @@
     // pays, sends or deletes would carry; otherwise choosing is moving about.
     const choice = choiceOf(el);
     if (choice && !labelRisk(el)) return null;
-    if ((!isButton && !choice) || !label) return null;
+    // A link that says it deletes or sends may do it at once (a one-click
+    // unsubscribe, a link the site runs as a request), so it is asked about,
+    // told where it goes. A link that says it pays is still judged by its
+    // destination alone: "Subscribe to e-mail listings" opens a help page.
+    let linkTo = "";
+    if (!isButton && tag === "a" && href && ["delete", "send"].includes(labelRisk(el))) {
+      try {
+        const u = new URL(href, (page && page.url) || undefined);
+        linkTo = clip(`${u.hostname === hostOf((page && page.url) || "") ? "" : u.hostname}${u.pathname || "/"}`, 120);
+      } catch (_e) { linkTo = clip(href, 120); }
+    }
+    if ((!isButton && !choice && !linkTo) || !label) return null;
     const form = el.formId !== undefined ? ((page && page.forms) || []).find((f) => f.id === el.formId) : null;
     const sendsForm = !!(el.submits && form && !form.search);
-    if (!sendsForm && !choice && readsPlainly(label)) return null;
+    if (!sendsForm && !choice && !linkTo && readsPlainly(label)) return null;
     const fields = form
       ? els.filter((e) => e.formId === form.id && e.id !== el.id && !e.submits && /^(input|textarea|select)$/.test(String(e.tagName || "").toLowerCase()))
         .map((e) => clip(e.accName || e.label || e.placeholder || e.title || e.name || "", 60)).filter(Boolean).slice(0, 8)
@@ -1561,7 +1572,7 @@
     // An answer holds for this control on this page and in this form: the
     // same words on another step of a site can do something else.
     const formKey = form ? `${form.action || ""}#${form.id}` : "";
-    return { kind: "press", key: `press|${siteOf((page && page.url) || "")}|${where}|${formKey}|${label}`, host, label, fields, ...(choice ? { choice } : {}) };
+    return { kind: "press", key: `press|${siteOf((page && page.url) || "")}|${where}|${formKey}|${label}${linkTo ? `|${linkTo}` : ""}`, host, label, fields, ...(choice ? { choice } : {}), ...(linkTo ? { linkTo } : {}) };
   }
 
   const PRESS_TOOL = Object.freeze({
@@ -1614,6 +1625,7 @@
     }
     lines.push(`The control: ${said(c.label, 70)}`);
     if (c.choice) lines.push(`What kind of control it is, from the page's structure: ${c.choice}.`);
+    if (c.linkTo) lines.push(`It is a link to: ${said(c.linkTo, 120)}`);
     if (c.fields) lines.push(c.fields.length ? `It submits a form with these boxes: ${c.fields.map((f) => said(f, 60)).join(", ")}` : "It submits a form with no boxes to fill.");
     lines.push("", "Would pressing it commit the user to something that is hard to undo? Does it pay, send (including signing up), delete, or nothing of the kind?");
     return { system: OPINION_SYSTEM, user: lines.join("\n"), tool: PRESS_TOOL };

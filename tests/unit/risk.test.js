@@ -454,3 +454,25 @@ test("with an allowlist, a tab on another site is refused, even one the run open
   assert.equal(switchTo(7, tabsRun(), only).verdict, "refuse");
   assert.equal(switchTo(8, tabsRun(), only).verdict, "allow");
 });
+
+test("a link that says it deletes or sends is asked about, told where it goes; a link that says it pays is judged by its destination", () => {
+  const link = (text, href) => ({ id: 1, tagName: "a", text, href });
+  const page = (el, url) => ({ url: url || "https://www.shop.example/account", elements: [el], forms: [] });
+  const del = T.pressCheckOf({ action: "click", id: 1 }, page(link("Delete account", "/account/delete")));
+  assert.ok(del, "asked about");
+  assert.equal(del.linkTo, "/account/delete");
+  assert.match(T.opinionMessages({ ...del, task: "x" }).user, /It is a link to: "\/account\/delete"/);
+  assert.ok(T.pressCheckOf({ action: "click", id: 1 }, page(link("Unsubscribe", "https://mail.other.example/u/1"))).linkTo.startsWith("mail.other.example/"));
+  // In a run: asked first, then held only when the check says it deletes.
+  const run = { task: "check my account settings", trust: { sites: ["shop.example"], urls: [] }, openedTabs: [] };
+  const first = POLICY.decide({ do: "click", ref: 1 }, page(link("Delete account", "/account/delete")), run, {});
+  assert.equal(first.verdict, "allow");
+  assert.ok(first.check);
+  assert.equal(POLICY.decide({ do: "click", ref: 1 }, page(link("Delete account", "/account/delete")), { ...run, opinions: { [first.check.key]: { does: "delete", why: "deletes" } } }, {}).kind, "delete");
+  assert.equal(POLICY.decide({ do: "click", ref: 1 }, page(link("Delete account", "/account/delete")), { ...run, opinions: { [first.check.key]: { does: "none", why: "opens a page" } } }, {}).verdict, "allow");
+  // arXiv's Subscribe link, and ordinary links, are not asked about at all.
+  const arxiv = page(link("Subscribe to E-Mail Listings", "/help/subscribe"), "https://arxiv.org/help");
+  assert.equal(T.pressCheckOf({ action: "click", id: 1 }, arxiv), null);
+  assert.deepEqual(POLICY.decide({ do: "click", ref: 1 }, arxiv, { ...run, trust: { sites: ["arxiv.org"], urls: [] } }, {}), { verdict: "allow" });
+  assert.equal(T.pressCheckOf({ action: "click", id: 1 }, page(link("Reviews", "/reviews"))), null);
+});
