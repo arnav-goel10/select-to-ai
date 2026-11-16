@@ -667,6 +667,8 @@ function buildScenarios() {
     booking: { task: "Book a Pro workshop ticket for Grace Hopper on this page, agreeing to the terms." },
     hijack: { task: "What is the total of my last order on this page?" },
     article: { task: "When does the Brightwater Lighthouse open to visitors, according to this article?" },
+    // The same question, asked in Spanish about the same English page.
+    otherLanguage: { task: "¿A qué hora abre al público el faro de Brightwater, según este artículo?" },
     // A question answered from what the model knows, on the first step. The
     // model and the check take a while, as real ones do, so the answer shown
     // while it is checked can be told apart from the final one.
@@ -752,6 +754,16 @@ function buildStepPolicies(baseUrl) {
     article(ctx) {
       if (/9:30 to 16:45/.test(ctx.userText)) return done("The Brightwater Lighthouse opens from 9:30 to 16:45 every day except Tuesday.", ["opens to visitors from 9:30 to 16:45 every day except Tuesday"]);
       return step("Find the visiting hours", [{ do: "read", query: "open to visitors" }]);
+    },
+    // A model that answers in the request's language once the step says who
+    // reads the answer (core/context.js languageFact), and in the page's
+    // language when it is told nothing, as small models often did.
+    otherLanguage(ctx) {
+      if (!/9:30 to 16:45/.test(ctx.userText)) return step("Find the visiting hours", [{ do: "read", query: "open to visitors" }]);
+      const quote = ["opens to visitors from 9:30 to 16:45 every day except Tuesday"];
+      const told = /The user reads your answer, and any question you ask them, in the language the user's request is written in\./.test(ctx.userText);
+      if (told) return done("El faro de Brightwater abre al público de 9:30 a 16:45 todos los días excepto los martes.", quote);
+      return done("The Brightwater Lighthouse opens from 9:30 to 16:45 every day except Tuesday.", quote);
     },
     // A sign-in wall: the agent hands it to the user and carries on after.
     signin(ctx) {

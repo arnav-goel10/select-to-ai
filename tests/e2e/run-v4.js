@@ -335,6 +335,17 @@ async function main() {
         if (r.llmCalls !== 2) return `a question the page answers took ${r.llmCalls} model calls, not one step and one check`;
         return null;
       }],
+      // A request in Spanish about an English page: the step names the
+      // browser's language and says whose language the answer is read in,
+      // and the answer the user gets is the Spanish one.
+      ["otherLanguage", "/article", async () => false, (r) => {
+        const sent = r.prompts.join("\n");
+        if (!sent.includes("¿A qué hora abre al público el faro de Brightwater, según este artículo?")) return "the request did not reach the model as written";
+        const fact = (sent.match(/The user's browser is set to [^\n]*/) || [""])[0];
+        if (!/^The user's browser is set to \S.* \([A-Za-z-]+\)\. The user reads your answer, and any question you ask them, in the language the user's request is written in\./.test(fact)) return `the language fact is missing or names no browser language: ${JSON.stringify(fact)}`;
+        if (!/abre al público de 9:30 a 16:45/.test(r.answer)) return `the answer is not in the request's language: ${JSON.stringify(r.answer)}`;
+        return null;
+      }],
       ["decade", "/article", watchAnswer, (r) => {
         const s = r.seen;
         if (!s.firstShownAt) return "the answer was not shown while it was checked";
