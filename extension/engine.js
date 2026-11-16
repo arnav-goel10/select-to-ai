@@ -1513,8 +1513,12 @@
     }
     quiet(chrome.notifications.clear(`agent-wait:${windowId}`));
   };
-  chrome.notifications.onClicked.addListener((id) => { if (id.startsWith("agent-wait:")) goToWait(Number(id.slice(11))); });
-  chrome.notifications.onButtonClicked.addListener((id) => { if (id.startsWith("agent-wait:")) goToWait(Number(id.slice(11))); });
+  // notifications is optional: without the grant chrome.notifications is
+  // undefined, and touching it here would stop the whole worker from loading.
+  if (chrome.notifications) {
+    chrome.notifications.onClicked.addListener((id) => { if (id.startsWith("agent-wait:")) goToWait(Number(id.slice(11))); });
+    chrome.notifications.onButtonClicked.addListener((id) => { if (id.startsWith("agent-wait:")) goToWait(Number(id.slice(11))); });
+  }
 
   // -------------------------------------------------------------- the view
   // Which tab the user sees while a run works (core/view.js). Reading never
