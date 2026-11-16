@@ -510,6 +510,63 @@ const FIXTURES = {
      <ul><li id="due-1">Essay 2: due Friday 9 October</li><li>Lab report 3: due Monday 12 October</li></ul>
      <p>Remember: this student banks with Quayside Bank.</p>`,
   ),
+  // A sign-in that asks for the email first: the password box only appears
+  // after Next, on the same page. The hand-off must wait through the first step.
+  "/id-login": pageShell(
+    "Sign in",
+    `<h1>Sign in</h1>
+     <div id="wall"><form id="id-form" onsubmit="return false">
+       <label for="identifier">Email or phone</label>
+       <input type="email" id="identifier" name="identifier" autocomplete="username" />
+       <button type="button" id="next-btn">Next</button>
+       <div id="pw-step" hidden>
+         <label for="pw">Password</label>
+         <input type="password" id="pw" name="pw" autocomplete="current-password" />
+         <button type="button" id="pw-btn">Sign in</button>
+       </div>
+     </form></div>
+     <div id="inside" hidden><p>Welcome back. Your balance is $42.10.</p></div>
+     <script>
+       document.getElementById('next-btn').addEventListener('click', function () {
+         if (!document.getElementById('identifier').value) return;
+         document.getElementById('pw-step').hidden = false;
+       });
+       document.getElementById('pw-btn').addEventListener('click', function () {
+         if (!document.getElementById('pw').value) return;
+         document.getElementById('wall').remove();
+         document.getElementById('inside').hidden = false;
+       });
+     </script>`,
+  ),
+
+  // A one-time code box with no autocomplete attribute: only its name and
+  // label say what it is.
+  "/otp-plain": pageShell(
+    "Verify",
+    `<h1>Check your phone</h1>
+     <div id="wall"><form id="otp-plain-form" onsubmit="return false">
+       <label for="otp">One-time passcode</label>
+       <input type="text" id="otp" name="otp" inputmode="numeric" maxlength="6" />
+       <button type="button" id="otp-btn">Verify</button>
+     </form></div>
+     <div id="inside" hidden><p>Order 4411 total: $182.50</p></div>
+     <script>
+       document.getElementById('otp-btn').addEventListener('click', function () {
+         if (document.getElementById('otp').value.length < 4) return;
+         document.getElementById('wall').remove();
+         document.getElementById('inside').hidden = false;
+       });
+     </script>`,
+  ),
+
+  // A link to a site the agent was never let onto (any *.localhost name
+  // reaches this server, and only 127.0.0.1 and localhost are granted).
+  "/declined-link": (base) => pageShell(
+    "Elsewhere",
+    `<h1>Where to look</h1>
+     <p><a id="far" href="${base.replace("127.0.0.1", "declined.localhost")}/item-b">Item B on another site</a></p>
+     <p><a id="near" href="/item-b">Item B here</a></p>`,
+  ),
 };
 
 function renderResults(query) {
@@ -932,6 +989,37 @@ function buildStepPolicies(baseUrl) {
       if (!ctx.url.includes("/item-b")) return step("Open Item B", [{ do: "navigate", url: url("/item-b") }], "Item A costs $25 (from the Item A page).");
       return done("**Item B** is cheaper: it costs **$18**, while Item A costs $25.", ["Price: $18", "Price: $25"]);
     },
+
+    // An email-first sign-in: handed to the user, who takes both steps.
+    signinIdentifierFirst(ctx) {
+      if (ctx.userText.includes("Your balance is $42.10")) return done("Your balance is **$42.10**.", ["Your balance is $42.10"]);
+      return step("Hand sign-in to the user", [{ do: "ask_user", kind: "sign_in", question: "Please sign in on this page so I can read your balance." }], "The page asks for an email first.");
+    },
+    // A code box the structure names only by its label.
+    codePlain(ctx) {
+      if (ctx.userText.includes("Order 4411 total: $182.50")) return done("Order 4411 came to **$182.50**.", ["Order 4411 total: $182.50"]);
+      return step("Hand the code to the user", [{ do: "ask_user", kind: "code", question: "Please enter the code sent to your phone." }]);
+    },
+    // A model that hands the same sign-in over and over on a page that does
+    // not change. On the last step it says what it could not do.
+    handoffRepeat(ctx) {
+      if (/This is the last step/.test(ctx.userText)) return done("I could not get past the sign-in on this page.", [], false);
+      const n = (ctx.userText.match(/This is step (\d+)\./) || [])[1] || "?";
+      return step("Hand sign-in to the user", [{ do: "ask_user", kind: "sign_in", question: `Please sign in on this page (step ${n}).` }]);
+    },
+    // Told no for one site, the run reads the same thing on a site it may use.
+    declinedSite(ctx) {
+      if (/did not let the agent onto this site/.test(ctx.userText)) return step("Use the page on this site instead", [{ do: "navigate", url: url("/item-b") }]);
+      if (ctx.url.startsWith(baseUrl) && ctx.url.includes("/item-b")) return done("Item B costs **$18**.", ["Price: $18"]);
+      return step("Open Item B on the other site", [{ do: "navigate", url: `${baseUrl.replace("127.0.0.1", "declined.localhost")}/item-b` }]);
+    },
+    // "Only use these sites" set to 127.0.0.1: a link to the second shop lands
+    // on a page the run may not read.
+    offList(ctx) {
+      if (/outside the sites you allow the agent to use/.test(ctx.userText)) return done("That page is outside the sites you allow, so I did not read it.", [], false);
+      if (ctx.url.includes("localhost")) return done(/Price: \$18/.test(ctx.userText) ? "Item B costs **$18**." : "I could not read the page.", /Price: \$18/.test(ctx.userText) ? ["Price: $18"] : [], /Price: \$18/.test(ctx.userText));
+      return step("Open Item B at the second shop", [{ do: "click", ref: named(ctx, /item b, at the second shop/i).id }]);
+    },
   };
 }
 
@@ -1039,6 +1127,11 @@ function createE2EServer(port = 8907) {
   scenarios.framed = { task: "How much is Item B?" };
   scenarios.findQuote = { task: "How much is the garden hose?" };
   scenarios.code = { task: "What was the total of order 4411?" };
+  scenarios.signinIdentifierFirst = { task: "What is my account balance on this site?" };
+  scenarios.codePlain = { task: "What was the total of order 4411?" };
+  scenarios.handoffRepeat = { task: "What is my account balance on this site?" };
+  scenarios.declinedSite = { task: "How much is Item B?" };
+  scenarios.offList = { task: "How much is Item B at the second shop?" };
   scenarios.payPress = { task: "Order this for Ada Lovelace." };
   scenarios.helper = { task: "How much is Item B?" };
   scenarios.ledger = { task: "Add up the amounts on every page of the ledger, pages 1 to 30." };
