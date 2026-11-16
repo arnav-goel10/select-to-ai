@@ -174,12 +174,25 @@
     await quiet(chrome.storage.session.set({ [KEY(session.windowId)]: { turns: session.turns.slice(-12), run: run ? RUN.toStored(run) : null, touched, spawned: session.spawned || {}, view: session.view || newView(null), extras: { selection: session.extras.selection || "", selectionPlace: session.extras.selectionPlace || null, selectionCaptured: !!session.extras.selectionCaptured, openTabPages: session.extras.openTabPages || [] } } }));
   }
 
+  // Waits whose blocker the page was seen to show (agentContentScript.js
+  // waitForUser). Kept in session storage, so a worker that wakes up again
+  // still knows a sign-in page it watched was there.
+  const SEEN_KEY = "agentSeenWaits";
+  let seenWaits = new Set();
+  function markSeen(waitId) {
+    if (!waitId || seenWaits.has(waitId)) return;
+    seenWaits.add(waitId);
+    while (seenWaits.size > 50) seenWaits.delete(seenWaits.values().next().value);
+    quiet(chrome.storage.session.set({ [SEEN_KEY]: [...seenWaits] }));
+  }
+
   /** Brings back what was saved before the worker was stopped. */
   let restored = null;
   function restore() {
     if (restored) return restored;
     restored = (async () => {
       const all = (await quiet(chrome.storage.session.get(null))) || {};
+      if (Array.isArray(all[SEEN_KEY])) seenWaits = new Set([...all[SEEN_KEY], ...seenWaits]);
       for (const [k, v] of Object.entries(all)) {
         if (!k.startsWith("agentSession:") || !v) continue;
         const windowId = Number(k.slice("agentSession:".length));
@@ -1514,6 +1527,12 @@
       if (hellos.size > 200) hellos.delete(hellos.keys().next().value);
       return false;
     }
+    // The page waited on showed its blocker: from now on it going away means the user got past it.
+    if (message.action === "agentBlockerSeen") {
+      if (sender.frameId) return false;
+      restore().then(() => { const on = waitingOn(sender.tab.id); if (on && on.wait.kind === message.kind) markSeen(on.wait.id); });
+      return false;
+    }
     if (message.action !== "agentBlockerCleared" && message.action !== "agentWaitDone") return false;
     restore().then(() => {
       const on = waitingOn(sender.tab.id);
@@ -1524,6 +1543,9 @@
 
   // The waited-on tab loaded a new page: the watch went with the old one.
   // Look only at whether the blocker is still there, and watch again if so.
+  // A blocker that was never seen (an email-first sign-in, a hand-off the
+  // structure does not show) is not said to be gone by a page without it:
+  // the page is watched again, and the user's "I'm done" ends the wait.
   chrome.tabs.onUpdated.addListener((tabId, info) => {
     if (info.status !== "complete") return;
     restore().then(async () => {
@@ -1534,7 +1556,9 @@
       const res = await send(tabId, { action: "probe" });
       if (!waitsOf(session.run).some((w) => w.id === wait.id)) return;
       // A button the user was to press is gone with the page it was on.
-      const gone = wait.press ? true : !!res && !(res.blockers || []).some((b) => b.kind === wait.kind);
+      const there = !!res && (res.blockers || []).some((b) => b.kind === wait.kind);
+      if (there) markSeen(wait.id);
+      const gone = wait.press ? true : !!res && !there && seenWaits.has(wait.id);
       if (gone) enqueue(session, { type: "cleared", id: wait.id });
       else if (res) watchPage(wait);
     });
