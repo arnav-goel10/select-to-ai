@@ -170,7 +170,28 @@ function compareVersions(a, b) {
 
 const LEGACY_V2_SETTINGS = ['sidebarMode', 'contextMode'];
 // Read by the popup: shows a one-time "What is new" note. No tab is opened.
-const UPGRADE_NOTICE_KEY = 'upgradeNotice';
+// Worker and popup take the key from config.js, so they cannot drift apart.
+const UPGRADE_NOTICE_KEY = CONFIG.STORAGE.UPGRADE_NOTICE;
+
+/**
+ * "New" on the toolbar icon while the note is unread: an update opens no
+ * tab, so this is what tells the user there is something to open the popup
+ * for. Chrome forgets a badge when the browser closes, so it is set again at
+ * every worker start and cleared when the popup removes the notice.
+ */
+function showUpgradeBadge(on) {
+    if (!chrome.action || typeof chrome.action.setBadgeText !== 'function') return;
+    try {
+        const done = chrome.action.setBadgeText({ text: on ? 'New' : '' }, () => void chrome.runtime.lastError);
+        if (done && typeof done.catch === 'function') done.catch(() => {});
+    } catch (e) { /* the badge is a hint, never a reason to fail */ }
+}
+chrome.storage.local.get(UPGRADE_NOTICE_KEY, (items) => {
+    if (!chrome.runtime.lastError && items && items[UPGRADE_NOTICE_KEY]) showUpgradeBadge(true);
+});
+chrome.storage.onChanged.addListener((changes, namespace) => {
+    if (namespace === 'local' && changes[UPGRADE_NOTICE_KEY]) showUpgradeBadge(!!changes[UPGRADE_NOTICE_KEY].newValue);
+});
 
 /**
  * 2.0 saved a setting only when its control was touched, and read the

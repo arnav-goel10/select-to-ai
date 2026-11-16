@@ -85,9 +85,10 @@ document.addEventListener('DOMContentLoaded', () => {
         window.close();
     });
 
-    // Once, after the update from an earlier version (the worker sets
-    // whatsNew40): what changed, in the popup, with no tab opened.
-    const WHATS_NEW = 'whatsNew40';
+    // Once, after the update from an earlier version: what changed, in the
+    // popup, with no tab opened. The worker writes this key (background.js
+    // onInstalled), and both take its name from config.js.
+    const WHATS_NEW = STORAGE.UPGRADE_NOTICE;
     chrome.storage.local.get(WHATS_NEW, (r) => {
         if (chrome.runtime.lastError || !r || !r[WHATS_NEW]) return;
         $('whatsNew').hidden = false;
