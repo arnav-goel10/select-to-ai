@@ -863,7 +863,7 @@
     // A picture the model asked for goes with this step only.
     const image = run.image || null;
     run.image = null;
-    fx.push({ type: "model", system: messages.system, user: image ? `${messages.user}\nA picture of the page as it is on screen is attached.` : messages.user, tool, tier: taker.by === "helper" ? "helper" : "pro", purpose: "step", effort, ...(image ? { image } : {}) });
+    fx.push({ type: "model", system: messages.system, user: image ? `${messages.user}\nA picture of the page as it is on screen is attached.` : messages.user, tool, tier: taker.by === "helper" ? "helper" : "pro", purpose: "step", effort, ...(image ? { image } : {}), ...(run.askedOut ? { reasks: 0 } : {}) });
     return fx;
   }
 
@@ -925,6 +925,7 @@
       return unusable(run, page, env, fx, check.error, event.reply);
     }
     run.facts.invalid = 0;
+    run.askedOut = false;
     // The provider answered: a later refusal that names no wait starts from the shortest pause again.
     run.pauses = 0;
     run.pausedInRow = { n: 0, ms: 0 };
@@ -1942,6 +1943,10 @@
         // The model answered, but with nothing that names a step: the same as a step that cannot be used.
         if (event.kind === "no_action" && event.purpose !== "verify" && page) {
           addUsage(run, event.usage);
+          // The call already asked again as often as one step may (llm.js):
+          // the asks that follow here are single ones, so a model that names
+          // no step costs six requests before the run stops, not twelve.
+          run.askedOut = true;
           return unusable(run, page, e, [], "It did not call the step tool. Reply only by calling it.");
         }
         // The provider wants a while before it takes more: the run waits,

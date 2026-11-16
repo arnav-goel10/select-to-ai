@@ -772,7 +772,7 @@
     let last = 0;
     try {
       const out = await clientFor().call({
-        system: fx.system, user: fx.user, tool: fx.tool, tier: fx.tier, effort: fx.effort, image: fx.image, signal: session.abort.signal,
+        system: fx.system, user: fx.user, tool: fx.tool, tier: fx.tier, effort: fx.effort, image: fx.image, reasks: fx.reasks, signal: session.abort.signal,
         // A sub-task's reply as it is written is not shown: its steps are.
         onText: (text) => { const t = Date.now(); if (!session.parent && t - last > 150) { last = t; post(session, { type: "stream", runId: run.id, text: String(text).slice(-6000) }); } },
       }, session.cfg);
