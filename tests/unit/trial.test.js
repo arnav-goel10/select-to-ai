@@ -120,3 +120,30 @@ test("the dry check fails when a fixture run ends another way or a counter is mi
   assert.equal(T.checkDry([row("fx", { success: true })], [{ id: "fx", level: "fixture", dry: "passed", dryScripted: 1, dryTyped: 1 }], shards).length, 2);
   assert.equal(T.checkDry([row("fx", { success: true }), row("held", { success: false, counters: { heldActions: 1 } })], tasks, []).length, 1);
 });
+
+test("the judge never gets a key that belongs to another provider's endpoint", () => {
+  const C = require("../bench/judge-call.js");
+  // An OpenAI agent key with no judge key: nothing is sent anywhere.
+  const leak = C.judgeConfig({ BENCH_PROVIDER: "openai", BENCH_API_KEY: "agent-key" });
+  assert.equal(leak.key, "");
+  assert.match(leak.problem, /never sent to another provider/);
+  // The same agent with the judge's own key and address: the judge's key, on Anthropic.
+  const own = C.judgeConfig({ BENCH_PROVIDER: "openai", BENCH_API_KEY: "agent-key", BENCH_JUDGE_KEY: "judge-key", BENCH_JUDGE_URL: C.ANTHROPIC_URL });
+  assert.deepEqual([own.key, own.isAnthropic, own.problem], ["judge-key", true, ""]);
+  // An Anthropic agent may share its key with a judge on Anthropic, and only there.
+  const same = C.judgeConfig({ BENCH_PROVIDER: "anthropic", BENCH_API_KEY: "agent-key" });
+  assert.deepEqual([same.key, same.url, same.problem], ["agent-key", C.ANTHROPIC_URL, ""]);
+  const moved = C.judgeConfig({ BENCH_PROVIDER: "anthropic", BENCH_API_KEY: "agent-key", BENCH_JUDGE_URL: "https://integrate.api.nvidia.com/v1" });
+  assert.equal(moved.key, "");
+  assert.ok(moved.problem);
+  // A look-alike host is not the provider.
+  assert.equal(C.judgeConfig({ BENCH_PROVIDER: "anthropic", BENCH_API_KEY: "agent-key", BENCH_JUDGE_URL: "https://api.anthropic.com.evil.example/v1/messages" }).key, "");
+  assert.equal(C.judgeConfig({}).problem, "Set BENCH_JUDGE_KEY for the judge.");
+});
+
+test("a provider's error text is saved without anything shaped like a key", () => {
+  const { scrub } = require("../bench/judge-call.js");
+  const out = scrub('{"error":"Incorrect API key provided: sk-proj-abc123def456ghi789. Authorization: Bearer abcdefghijklmnop"}');
+  assert.ok(!/abc123def456|abcdefghijklmnop/.test(out), out);
+  assert.match(out, /Incorrect API key provided/);
+});
