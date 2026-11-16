@@ -106,6 +106,9 @@
 
             <div class="console-pinned-bottom">
                 <div class="console-wrapper">
+                    <!-- The data consent, above the composer, so a redraw of the
+                         conversation never takes it away (setup.js). -->
+                    <div id="consentSlot"></div>
                     <!-- No model connected yet. -->
                     <div id="credentialsWarning" class="warning-card" role="alert">
                         <span class="warning-icon" aria-hidden="true">

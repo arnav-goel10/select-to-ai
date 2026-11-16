@@ -1628,14 +1628,19 @@
     return false;
   }
 
+  // The card sits above the composer, outside the conversation, which the
+  // engine may redraw at any time.
+  const consentSlot = () => document.getElementById("consentSlot");
+
   function showConsent(targets, origins, again) {
     const SETUP = window.SELECT_TO_AI_SETUP;
     const G = window.SELECT_TO_AI_GRANTS;
-    if (consentShown && consentShown.isConnected) { consentShown.scrollIntoView({ block: "center" }); return; }
+    const slot = consentSlot();
+    if (!slot) return;
+    if (consentShown && consentShown.isConnected) { consentShown.scrollIntoView({ block: "nearest" }); return; }
+    slot.textContent = "";
     const main = targets[0];
     const backup = targets[1];
-    const bubble = el("div", "message-bubble assistant consent-bubble");
-    const content = el("div", "bubble-content");
     const card = SETUP.consentCard(document, {
       provider: main.provider,
       customUrl: main.customUrl,
@@ -1647,7 +1652,7 @@
           config.dataConsent = c;
           return reached;
         }).then((ok) => {
-          bubble.remove();
+          card.remove();
           consentShown = null;
           if (!ok) { askForHosts(targets, origins, again); return ""; }
           hostsChecked = origins.join(" ");
@@ -1655,32 +1660,40 @@
           return "";
         });
       },
-      onCancel: () => { bubble.remove(); consentShown = null; appendSimpleAssistantBubble("Nothing was sent. Your task is still in the box."); },
+      onCancel: () => {
+        consentShown = null;
+        const note = el("p", "consent-said", "Nothing was sent. Your task is still in the box.");
+        slot.appendChild(note);
+        setTimeout(() => note.remove(), 6000);
+      },
     });
-    content.appendChild(card);
-    bubble.appendChild(content);
-    chatContainer.appendChild(bubble);
-    consentShown = bubble;
-    scrollToBottom(true);
+    slot.appendChild(card);
+    consentShown = card;
+    card.scrollIntoView({ block: "nearest" });
   }
 
   function askForHosts(targets, origins, again) {
     const G = window.SELECT_TO_AI_GRANTS;
+    const slot = consentSlot();
+    if (!slot) return;
     const names = targets.map((t) => friendlyProviderName(t.provider)).join(" and ");
-    const bubble = appendSimpleAssistantBubble(`Chrome has not let the extension reach ${names} yet, so nothing was sent.`);
-    const row = el("div", "confirm-actions");
+    slot.textContent = "";
+    const box = el("div", "consent-card consent-hosts");
+    box.appendChild(el("p", "", `Chrome has not let the extension reach ${names} yet, so nothing was sent.`));
+    const row = el("div", "consent-actions");
     const allow = el("button", "btn btn-primary", "Allow access");
     allow.type = "button";
     allow.addEventListener("click", () => {
       G.requestHost(origins).then((ok) => {
         if (!ok) return;
         hostsChecked = origins.join(" ");
-        bubble.remove();
+        box.remove();
         again();
       });
     });
     row.appendChild(allow);
-    bubble.querySelector(".bubble-content").appendChild(row);
+    box.appendChild(row);
+    slot.appendChild(box);
   }
 
   /**
