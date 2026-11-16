@@ -479,16 +479,16 @@ const FIXTURES = {
   // This one takes a press from the keyboard (a click that is no mouse's:
   // detail 0) or a click whose mouse press was a real one.
   "/press-direct": pageShell(
-    "Newsletter",
-    `<h1>Newsletter</h1>
-     <p id="state">Not subscribed</p>
-     <button type="button" id="sub">Subscribe</button>
+    "Ridge trail",
+    `<h1>Ridge trail</h1>
+     <p id="state">Details hidden</p>
+     <button type="button" id="sub">Show details</button>
      <script>
        window.subs = 0;
        let armed = false;
        const sub = document.getElementById('sub');
        sub.addEventListener('mousedown', (e) => { armed = e.isTrusted; });
-       sub.addEventListener('click', (e) => { if (e.detail !== 0 && !armed) return; armed = false; window.subs += 1; document.getElementById('state').textContent = 'Subscribed'; });
+       sub.addEventListener('click', (e) => { if (e.detail !== 0 && !armed) return; armed = false; window.subs += 1; document.getElementById('state').textContent = 'Details shown'; });
      </script>`,
   ),
   // This one takes only a person's own press.
@@ -941,8 +941,8 @@ function buildStepPolicies(baseUrl) {
       return step("Save the settings", [{ do: "click", ref: named(ctx, /save settings/i).id }]);
     },
     pressDirect(ctx) {
-      if (/\bSubscribed\b/.test(ctx.userText)) return done("You are subscribed.", ["Subscribed"]);
-      return step("Subscribe", [{ do: "click", ref: named(ctx, /^subscribe$/i).id }]);
+      if (/Details shown/.test(ctx.userText)) return done("The details are shown.", ["Details shown"]);
+      return step("Show the details", [{ do: "click", ref: named(ctx, /^show details$/i).id }]);
     },
     // A control that takes only the user's own press: told so, the model hands that one press over.
     pressUser(ctx) {
@@ -1269,7 +1269,7 @@ function createE2EServer(port = 8907) {
   scenarios.pointerRisk = { task: "Tidy up my account." };
   scenarios.hoverScripted = { task: "Choose Pricing from the Products menu." };
   scenarios.pressKeyboard = { task: "Save my settings." };
-  scenarios.pressDirect = { task: "Subscribe me to the newsletter." };
+  scenarios.pressDirect = { task: "Show the details of this trail." };
   scenarios.pressUser = { task: "Unlock the downloads." };
   scenarios.shadowClick = { task: "Add this to my basket." };
   scenarios.toolbar = { task: "Make the title upper case." };

@@ -712,7 +712,7 @@ async function main() {
       }],
       ["pressDirect", "/press-direct", async () => false, async (r) => {
         const at = await r.fixture.evaluate(() => ({ state: document.getElementById("state").textContent, subs: window.subs }));
-        if (at.subs !== 1 || at.state !== "Subscribed") return `subscribed ${at.subs} times (${at.state}): ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (at.subs !== 1 || at.state !== "Details shown") return `shown ${at.subs} times (${at.state}): ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
         if (r.actions.filter((a) => a.do === "click").length !== 1) return `the model had to press more than once: ${JSON.stringify(r.actions.map((a) => a.do))}`;
         const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
         if (press.pointer === "real") return null;
