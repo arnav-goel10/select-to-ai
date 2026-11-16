@@ -4,6 +4,8 @@
  *   node tests/e2e/run-v4.js            every scenario
  *   E2E_ONLY=signin,reopen node tests/e2e/run-v4.js
  *   E2E_DEBUGGER=off node tests/e2e/run-v4.js   (as if the debugger permission were absent)
+ *   E2E_EXT=dir      load the extension from dir (for example the unzipped package)
+ *   E2E_NOT_APPLICABLE=tests/e2e/not-applicable-4.0.json   skip the scenarios listed there
  *
  * Chromium runs with the real extension. The model is played by the scripted
  * gateway in server.js, so every run is the same: what is tested is the
@@ -19,8 +21,11 @@ const { createE2EServer } = require("./server.js");
 const TOOLS = require("../../extension/agentTools.js");
 
 const PORT = parseInt(process.env.E2E_PORT || "8917", 10);
-const EXT = path.resolve(__dirname, "../../extension");
+// The local test server is granted, as after Allow on the site-access card.
+const EXT = require("../helpers/granted-build.js").grantedBuild(path.resolve(process.env.E2E_EXT || path.join(__dirname, "../../extension")));
 const ONLY = (process.env.E2E_ONLY || "").split(",").filter(Boolean);
+// Scenarios that do not apply to the build under test, with the reason, from a checked-in file.
+const NOT_APPLICABLE = process.env.E2E_NOT_APPLICABLE ? require(path.resolve(process.env.E2E_NOT_APPLICABLE)) : { scenarios: [] };
 const TIMEOUT_MS = 60000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -47,6 +52,7 @@ async function main() {
   await server.listen();
   const browser = await puppeteer.launch({ headless: !process.env.E2E_HEADFUL, args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, "--no-first-run", "--disable-features=DialMediaRouteProvider"] });
   const results = [];
+  const skipped = [];
   // How long each settle scenario's press waited, for the report.
   const settleTimes = [];
   try {
@@ -181,7 +187,9 @@ async function main() {
       return /Flight 101|note is shown/.test(r.answer) ? null : `answer: ${JSON.stringify(r.answer)}`;
     };
     // Plays the user closing the debugging bar before it opens: the connection is refused.
+    // A build without the debugger permission (4.0) has nothing to refuse.
     const refuseDebugger = (on) => worker.evaluate((refuse) => {
+      if (!chrome.debugger) return true;
       if (refuse) { self.__attach = self.__attach || chrome.debugger.attach; chrome.debugger.attach = () => Promise.reject(new Error("refused for the test")); }
       else if (self.__attach) chrome.debugger.attach = self.__attach;
       return true;
@@ -191,6 +199,7 @@ async function main() {
     // A tab is still held when the extension cannot attach to it again.
     const attachedTabs = () => worker.evaluate(async () => {
       const held = [];
+      if (!chrome.debugger) return held;
       for (const t of await chrome.tabs.query({})) {
         if (!/^https?:/.test(t.url || "")) continue;
         try { await chrome.debugger.attach({ tabId: t.id }, "1.3"); await chrome.debugger.detach({ tabId: t.id }); } catch (e) { if (/already attached/i.test(String((e && e.message) || e))) held.push(t.url); }
@@ -1013,6 +1022,7 @@ async function main() {
     for (const [name, startPath, user, check, label, opts] of scenarios) {
       const title = label || name;
       if (ONLY.length && !ONLY.includes(title)) continue;
+      if (NOT_APPLICABLE.scenarios.includes(title)) { skipped.push(title); console.log(`N/A   ${title}`); continue; }
       let detail;
       try {
         const r = opts && opts.custom ? await opts.custom() : await play(name, startPath, user, opts);
@@ -1028,6 +1038,9 @@ async function main() {
   if (settleTimes.length) console.log(`\nwait after the press: ${settleTimes.join("; ")}`);
   const failed = results.filter((r) => r.detail).length;
   console.log(`\n${results.length - failed}/${results.length} v4 scenarios passed`);
+  if (skipped.length) console.log(`${skipped.length} not applicable to this build (${process.env.E2E_NOT_APPLICABLE}): ${skipped.join(", ")}`);
+  const unknown = NOT_APPLICABLE.scenarios.filter((t) => !skipped.includes(t) && !ONLY.length);
+  if (unknown.length) { console.log(`listed as not applicable but no such scenario: ${unknown.join(", ")}`); process.exit(1); }
   process.exit(failed || !results.length ? 1 : 0);
 }
 

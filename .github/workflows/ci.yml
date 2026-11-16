@@ -1,16 +1,39 @@
 name: CI
 
+# Release gates for 4.0. Every job below is one check from the release plan.
+# On pull requests and pushes to main and release-4.0 every gate runs; the
+# debugger-on suite runs nightly, the link check on release tags, and the
+# provider smoke test only by hand.
 on:
   push:
-    branches: [main, master]
+    branches: [main, release-4.0]
+    tags: ["v*"]
   pull_request:
+    branches: [main, release-4.0]
+  schedule:
+    - cron: "23 19 * * *"
+  workflow_dispatch:
+    inputs:
+      nightly:
+        description: Run the debugger-on e2e suite
+        type: boolean
+        default: false
+      link_check:
+        description: Run the logged-out link check
+        type: boolean
+        default: false
+      provider_smoke:
+        description: Run one live call per default model (uses repo secrets)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   checks:
-    name: Unit tests, manifest and package
+    name: Unit tests and syntax
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -25,15 +48,164 @@ jobs:
           PUPPETEER_SKIP_DOWNLOAD: "true"
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
       - run: npm run check:fast
-      - run: npm run package
+
+  manifest-contract:
+    name: manifest-contract
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/check-manifest.mjs
+      - run: node --test tests/contract/manifest-contract.test.js
+
+  text-lint:
+    name: text-lint
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/check-text.mjs
+
+  package-integrity:
+    name: package-integrity
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      artifact: ${{ steps.meta.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/package-extension.mjs
+      - id: meta
+        run: |
+          version=$(node -p "require('./extension/manifest.json').version")
+          artifact="select-to-ai-${version}.zip"
+          cp dist/select-to-ai-extension.zip "dist/${artifact}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "artifact=${artifact}" >> "$GITHUB_OUTPUT"
+      # Uploaded before the check, so the browser jobs below test this exact
+      # zip and the check's verdict is reported on its own.
       - uses: actions/upload-artifact@v4
         with:
-          name: select-to-ai-extension
-          path: dist/select-to-ai-extension.zip
+          name: ${{ steps.meta.outputs.artifact }}
+          path: dist/${{ steps.meta.outputs.artifact }}
           if-no-files-found: error
+      - run: node scripts/check-package.mjs "dist/${{ steps.meta.outputs.artifact }}"
+
+  permission-warning-diff:
+    name: permission-warning-diff
+    needs: package-integrity
+    if: ${{ !cancelled() && needs.package-integrity.outputs.artifact != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - run: npx puppeteer browsers install chrome
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.package-integrity.outputs.artifact }}
+      - run: mkdir -p build && unzip -q "${{ needs.package-integrity.outputs.artifact }}" -d build
+      - run: node tests/contract/permission-warning-diff.js build
+
+  upgrade-from-2:
+    name: upgrade-from-2.0
+    needs: package-integrity
+    if: ${{ !cancelled() && needs.package-integrity.outputs.artifact != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - run: npx puppeteer browsers install chrome
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.package-integrity.outputs.artifact }}
+      - run: mkdir -p build && unzip -q "${{ needs.package-integrity.outputs.artifact }}" -d build
+      - run: node tests/e2e/upgrade-from-2.0.js build
+
+  worker-no-optional-grants:
+    name: worker-no-optional-grants
+    needs: package-integrity
+    if: ${{ !cancelled() && needs.package-integrity.outputs.artifact != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - run: npx puppeteer browsers install chrome
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.package-integrity.outputs.artifact }}
+      - run: mkdir -p build && unzip -q "${{ needs.package-integrity.outputs.artifact }}" -d build
+      - run: node tests/e2e/worker-no-optional-grants.js build
+
+  # The required e2e suite: the shipped configuration, without the debugger.
+  # Scenarios that need the debugger are listed, with the reason, in
+  # tests/e2e/not-applicable-4.0.json and run in the nightly job below.
+  e2e-shipped:
+    name: e2e-shipped (debugger off)
+    needs: package-integrity
+    if: ${{ !cancelled() && needs.package-integrity.outputs.artifact != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - run: npx puppeteer browsers install chrome
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.package-integrity.outputs.artifact }}
+      - run: mkdir -p build && unzip -q "${{ needs.package-integrity.outputs.artifact }}" -d build
+      - run: npm run test:v4
+        env:
+          E2E_DEBUGGER: "off"
+          E2E_EXT: build
+          E2E_NOT_APPLICABLE: tests/e2e/not-applicable-4.0.json
 
   browser:
-    name: Browser tests (Chromium)
+    name: Browser tests (Chromium, other suites)
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -52,4 +224,169 @@ jobs:
       # Ubuntu 24.04 blocks the unprivileged user namespaces Chrome's sandbox
       # needs; without this every launch fails with "No usable sandbox".
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - run: npm run check:browser
+      # check:browser without test:v4, which runs in e2e-shipped and nightly.
+      - run: npm run test:extract && npm run test:scan && npm run test:widgets && npm run test:chatgpt && npm run test:recipes-driver && npm run test:recipes-ext
+
+  # Shells for the scenarios P2 (tests/e2e/core-flow.js) and P4
+  # (tests/e2e/consent.js) add, so those packages do not edit this file.
+  # Until the file exists the job says so and passes.
+  core-flow-e2e:
+    name: core-flow-e2e
+    needs: package-integrity
+    if: ${{ !cancelled() && needs.package-integrity.outputs.artifact != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - id: has
+        run: echo "file=$([ -f tests/e2e/core-flow.js ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
+      - if: steps.has.outputs.file == 'no'
+        run: echo "No core-flow scenarios yet. P2 adds tests/e2e/core-flow.js."
+      - if: steps.has.outputs.file == 'yes'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - if: steps.has.outputs.file == 'yes'
+        run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - if: steps.has.outputs.file == 'yes'
+        run: npx puppeteer browsers install chrome && sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - if: steps.has.outputs.file == 'yes'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.package-integrity.outputs.artifact }}
+      - if: steps.has.outputs.file == 'yes'
+        run: mkdir -p build && unzip -q "${{ needs.package-integrity.outputs.artifact }}" -d build && node tests/e2e/core-flow.js build
+        env:
+          PACKAGE_DIR: build
+
+  consent-gate:
+    name: consent-gate
+    needs: package-integrity
+    if: ${{ !cancelled() && needs.package-integrity.outputs.artifact != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - id: has
+        run: echo "file=$([ -f tests/e2e/consent.js ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
+      - if: steps.has.outputs.file == 'no'
+        run: echo "No consent scenarios yet. P4 adds tests/e2e/consent.js."
+      - if: steps.has.outputs.file == 'yes'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - if: steps.has.outputs.file == 'yes'
+        run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - if: steps.has.outputs.file == 'yes'
+        run: npx puppeteer browsers install chrome && sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - if: steps.has.outputs.file == 'yes'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.package-integrity.outputs.artifact }}
+      - if: steps.has.outputs.file == 'yes'
+        run: mkdir -p build && unzip -q "${{ needs.package-integrity.outputs.artifact }}" -d build && node tests/e2e/consent.js build
+        env:
+          PACKAGE_DIR: build
+
+  # Store screenshots from the packed build, under xvfb, at 1280x800.
+  screenshots:
+    name: screenshots
+    needs: package-integrity
+    if: ${{ !cancelled() && needs.package-integrity.outputs.artifact != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - run: npx puppeteer browsers install chrome
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.package-integrity.outputs.artifact }}
+      - run: mkdir -p build && unzip -q "${{ needs.package-integrity.outputs.artifact }}" -d build
+      - run: xvfb-run --auto-servernum --server-args="-screen 0 1600x1000x24" node scripts/ui-shots.mjs store-screens
+        env:
+          EXT: build
+          HEADFUL: "1"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: store-screens
+          path: store-screens
+          if-no-files-found: warn
+
+  # Not a required check: the debugger is not in the 4.0 build. Its known
+  # busyPage timing failure on the current runner image is tracked here.
+  e2e-debugger-on-nightly:
+    name: e2e debugger on (nightly)
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - run: npx puppeteer browsers install chrome
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: npm run test:v4
+
+  # Stays red until the repository is public, so it runs on release tags and
+  # by hand only.
+  link-check:
+    name: link-check
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.link_check)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/check-links.mjs
+
+  provider-smoke:
+    name: provider-smoke
+    if: github.event_name == 'workflow_dispatch' && inputs.provider_smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: One live call per default model id
+        run: |
+          if [ ! -f scripts/provider-smoke.mjs ]; then
+            echo "scripts/provider-smoke.mjs is not in this commit yet (P6 adds it)."
+            exit 1
+          fi
+          node scripts/provider-smoke.mjs
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}

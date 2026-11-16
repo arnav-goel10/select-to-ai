@@ -1,0 +1,14 @@
+{
+  "suite": "tests/e2e/run-v4.js",
+  "configuration": "E2E_DEBUGGER=off",
+  "why": "4.0 ships without the debugger permission. These scenarios exercise what only the debugger can do (real key and pointer input, listener discovery, network-idle waits), so they cannot pass in the shipped build. They still run in the nightly debugger-on suite. Measured on 10 Nov 2026: results/e2e/e2e-debugger-off-2026-11-10.txt, 52 of 59 pass, these 7 fail.",
+  "scenarios": [
+    "listened",
+    "slowResults",
+    "pointerHover",
+    "pointerFrame",
+    "pointerDrag",
+    "pointerCanvas",
+    "realKeys"
+  ]
+}

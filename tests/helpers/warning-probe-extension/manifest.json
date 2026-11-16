@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "Permission warning probe (test only)",
+  "version": "1.0.0",
+  "description": "Test helper. Asks Chrome which permission warnings a manifest would show. Never shipped.",
+  "background": {
+    "service_worker": "background.js"
+  }
+}
