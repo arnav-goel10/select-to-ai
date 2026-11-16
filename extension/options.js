@@ -490,6 +490,34 @@
     } catch (e) { /* presets stay */ }
   });
 
+  // ---------- Claude, when its host is missing ----------
+  // claude.ai is optional in 4.0. The chip shows as on only once the host is
+  // held, and a user who had Claude on (showClaude true) without the host is
+  // told so, with one button to add it back and one to leave it off.
+  function showClaudeState() {
+    return G.hasHost(G.ASSISTANT_HOSTS.claude).then((held) => {
+      $("showClaude").checked = held && settings.showClaude !== false;
+      $("claudeBack").hidden = held || settings.showClaude !== true;
+    });
+  }
+  $("claudeBackAdd").addEventListener("click", () => {
+    // Asked for here, inside the click.
+    G.requestHost(G.ASSISTANT_HOSTS.claude).then((ok) => {
+      if (!ok) { toast("Chrome did not allow claude.ai, so Claude stays off."); return; }
+      save({ showClaude: true });
+      G.registerAssistantScripts();
+      showClaudeState();
+    });
+  });
+  $("claudeBackOff").addEventListener("click", () => {
+    save({ showClaude: false });
+    showClaudeState();
+  });
+  // The host can be granted or taken away elsewhere (the popup, Chrome's own page).
+  for (const changed of [chrome.permissions.onAdded, chrome.permissions.onRemoved]) {
+    if (changed && typeof changed.addListener === "function") changed.addListener(() => { showClaudeState(); });
+  }
+
   // ---------- simple controls ----------
   const TOGGLES = {
     agentRiskConfirmation: (s) => s.agentRiskConfirmation !== false,
@@ -524,6 +552,7 @@
           if (!ok) { e.target.checked = false; toast("Chrome did not allow claude.ai, so Claude stays off."); return; }
           save({ showClaude: true });
           G.registerAssistantScripts();
+          showClaudeState();
         });
         return;
       }
@@ -635,7 +664,7 @@
       document.querySelector(`input[name="openingMode"][value="${mode}"]`).checked = true;
       for (const [id, read] of Object.entries(TOGGLES)) $(id).checked = read(settings);
       // Claude shows as on only once claude.ai is allowed.
-      if ($("showClaude").checked) G.hasHost(G.ASSISTANT_HOSTS.claude).then((ok) => { if (!ok) $("showClaude").checked = false; });
+      showClaudeState();
       $("agentCostBudget").value = settings.agentCostBudget !== undefined ? settings.agentCostBudget : AGENT.costBudget;
       // A choice saved that the list does not offer shows as the nearest one it does.
       const checkIn = settings.agentCheckInMinutes === undefined ? AGENT.checkInMinutes : Number(settings.agentCheckInMinutes) || 0;

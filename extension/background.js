@@ -218,6 +218,19 @@ function migrateFromV2() {
     });
 }
 
+/**
+ * 3.x showed Claude unless it was turned off, and held claude.ai from the
+ * install. 4.0 asks for that host, so what 3.x was showing is written down:
+ * the popup and Settings then know this user had Claude, and offer it back
+ * when Chrome does not hold the host after the update.
+ */
+function keepClaudeChoice() {
+    chrome.storage.sync.get(['showClaude'], (items) => {
+        if (chrome.runtime.lastError || !items || items.showClaude !== undefined) return;
+        chrome.storage.sync.set({ showClaude: true });
+    });
+}
+
 // The menu is built at every worker start from the stored settings (see
 // updateCache), so onInstalled only migrates. A fresh install also opens the
 // welcome page; an update opens nothing.
@@ -227,6 +240,7 @@ function onInstalledHandler(details) {
     if (reason === 'update') {
         const previous = details.previousVersion;
         if (majorVersion(previous) < 3) migrateFromV2();
+        else if (compareVersions(previous, '4.0.0') < 0) keepClaudeChoice();
         if (previous && compareVersions(previous, '4.0.0') < 0) {
             chrome.storage.local.set({ [UPGRADE_NOTICE_KEY]: { from: String(previous), at: Date.now() } });
         }
@@ -313,6 +327,8 @@ function menuItems(settings, claudeGranted) {
     if (settings.showGemini) items.push({ name: 'openGemini', title: 'Send to Gemini' });
     if (settings.showPerplexity) items.push({ name: 'openPerplexity', title: 'Send to Perplexity' });
     // claude.ai is optional in 4.0: the item appears once the user grants it.
+    // A user who had Claude and lost the host is offered it back in the
+    // popup and in Settings (showClaude true with the host not held).
     if (settings.showClaude && claudeGranted) items.push({ name: 'openClaude', title: 'Send to Claude' });
     if (settings.showAgent) items.push({ name: 'openAgent', title: 'Ask the agent about this' });
     return items;

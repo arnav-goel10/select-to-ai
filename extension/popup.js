@@ -97,6 +97,21 @@ document.addEventListener('DOMContentLoaded', () => {
         $('whatsNew').hidden = true;
         chrome.storage.local.remove(WHATS_NEW);
     });
+
+    // Claude was on for this user, but Chrome does not hold claude.ai (the
+    // host became optional in 4.0), so "Send to Claude" is not in the menu.
+    // It is never dropped without a word: this row adds it back.
+    const G = globalThis.SELECT_TO_AI_GRANTS;
+    const addClaudeBtn = $('addClaudeBtn');
+    chrome.storage.sync.get(['showClaude'], (s) => {
+        if (chrome.runtime.lastError || !G || !s || s.showClaude !== true) return;
+        G.hasHost(G.ASSISTANT_HOSTS.claude).then((held) => { addClaudeBtn.hidden = held; });
+    });
+    addClaudeBtn.addEventListener('click', () => {
+        // Asked for inside the click. Chrome's prompt can close the popup;
+        // the worker hears of the grant either way and rebuilds the menu.
+        G.requestHost(G.ASSISTANT_HOSTS.claude).then((held) => { if (held) addClaudeBtn.hidden = true; });
+    });
     openAgentBtn.addEventListener('click', () => openAgent('', true));
     $('openPaletteBtn').addEventListener('click', () => {
         chrome.runtime.sendMessage({ action: 'openPaletteFromPopup' });

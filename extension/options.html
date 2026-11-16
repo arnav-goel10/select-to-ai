@@ -205,6 +205,13 @@
               <label class="chip"><input type="checkbox" id="showPerplexity" /><span>Perplexity</span></label>
             </div>
           </div>
+          <div class="row" id="claudeBack" role="status" hidden>
+            <div><span class="t">Claude is not in your right-click menu</span><span class="d">Since 4.0 Chrome asks before the extension may use claude.ai. Add it back here, or leave it off.</span></div>
+            <div class="controls">
+              <button class="btn btn-sm btn-primary" id="claudeBackAdd" type="button">Add Claude back</button>
+              <button class="btn btn-sm btn-ghost" id="claudeBackOff" type="button">Leave it off</button>
+            </div>
+          </div>
           <div class="row">
             <div><span class="t">Open in</span></div>
             <div class="seg" role="radiogroup" aria-label="Open assistants in">
