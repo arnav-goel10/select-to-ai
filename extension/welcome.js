@@ -42,7 +42,7 @@
     const el = $("status");
     el.className = "status " + kind;
     el.innerHTML = kind === "busy" ? '<span class="spin"></span>' : "";
-    el.appendChild(document.createTextNode(text));
+    if (text) el.appendChild(document.createTextNode(text));
     if (warning) {
       const w = document.createElement("span");
       w.className = "warn-line";
@@ -51,25 +51,11 @@
     }
   }
 
-  // ---- which provider does this key belong to? ----
-  // Ordered: specific prefixes before the generic "sk-".
-  const KEY_SHAPES = [
-    [/^sk-or-/, ["openrouter"]],
-    [/^sk-ant-/, ["anthropic"]],
-    [/^oc_sk_/, ["opencode"]],
-    [/^(AIza|AQ\.)/, ["gemini"]],
-    [/^mstrl_/, ["mistral"]],
-    [/^gsk_/, ["groq"]],
-    [/^csk-/, ["cerebras"]],
-    [/^xai-/, ["xai"]],
-    [/^sk-/, ["openai", "deepseek"]], // both issue "sk-" keys: try each
-  ];
-  const NAMES = { chatgpt: "ChatGPT", openrouter: "OpenRouter", anthropic: "Anthropic", opencode: "OpenCode", gemini: "Google Gemini", groq: "Groq", xai: "xAI", openai: "OpenAI", deepseek: "DeepSeek", cerebras: "Cerebras" };
-
-  function candidatesFor(key) {
-    for (const [re, providers] of KEY_SHAPES) if (re.test(key)) return providers;
-    return [];
-  }
+  // ---- which provider does this key belong to? (setup.js) ----
+  // The key's shape names one provider and the key goes only there. A second
+  // provider is offered only after a plain 401, and only if the user picks it.
+  const S = globalThis.SELECT_TO_AI_SETUP;
+  const name = (p) => S.providerName(p);
 
   function modelFor(provider) {
     return provider === D.AGENT_DEFAULTS.activeProvider
@@ -80,19 +66,8 @@
   /** One tiny real call, so a key is only saved once it provably works. */
   async function testKey(provider, key) {
     const model = modelFor(provider);
-    const base = D.PROVIDER_ENDPOINTS[provider].baseUrl;
-    let url, headers, body;
-    if (provider === "anthropic") {
-      url = base;
-      headers = { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" };
-      body = { model, max_tokens: 1, messages: [{ role: "user", content: "Hi" }] };
-    } else {
-      url = base.replace(/\/$/, "") + "/chat/completions";
-      headers = { "content-type": "application/json", authorization: "Bearer " + key };
-      if (provider === "openrouter") { headers["HTTP-Referer"] = "https://github.com/arnav-goel10/select-to-ai"; headers["X-Title"] = "Select to AI"; }
-      body = { model, max_tokens: 1, messages: [{ role: "user", content: "Hi" }] };
-    }
-    const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(30000) });
+    const req = S.testRequest(provider, key, model);
+    const res = await fetch(req.url, { method: "POST", headers: req.headers, body: JSON.stringify(req.body), signal: AbortSignal.timeout(30000) });
     if (res.ok) return { ok: true };
     let message = "";
     let data = null;
@@ -117,43 +92,106 @@
     );
   }
 
+  // ---- the data consent, before the first request to a provider ----
+  let consent = {};
+  S.readConsent(chrome.storage.local).then((c) => { consent = c; });
+
+  function clearConsentCard() { $("consentSlot").textContent = ""; }
+
+  /**
+   * Runs `go` once the user has agreed to send data to `provider` and Chrome
+   * lets the extension reach it. With consent already given, the host is
+   * asked for at once, inside the gesture that called this. Resolves to a
+   * problem to show, or to "".
+   */
+  function withConsent(provider, go) {
+    const id = S.consentId(provider);
+    if (S.hasConsent(consent, id)) {
+      clearConsentCard();
+      return S.requestProviderHost(provider).then((ok) => {
+        if (!ok) return `Chrome did not allow access to ${name(provider)}, so nothing was sent.`;
+        go();
+        return "";
+      });
+    }
+    status("", "");
+    clearConsentCard();
+    $("consentSlot").appendChild(S.consentCard(document, {
+      provider,
+      onAgree: () => {
+        // The host request goes first, while the click still counts.
+        const reached = S.requestProviderHost(provider);
+        return S.recordConsent(chrome.storage.local, [id]).then((c) => {
+          consent = c;
+          return reached;
+        }).then((ok) => {
+          if (!ok) return `Chrome did not allow access to ${name(provider)}. Try again and press Allow.`;
+          clearConsentCard();
+          go();
+          return "";
+        });
+      },
+      onCancel: () => status("", "Nothing was sent."),
+    }));
+    return Promise.resolve("");
+  }
+
   let checking = false;
-  async function connectWithKey(key, source) {
+  function connectWithKey(key, source) {
     if (checking) return;
     key = key.trim();
     if (!key) { status("err", "Paste a key first."); return; }
-    const providers = candidatesFor(key);
-    if (!providers.length) {
-      status("err", "That doesn't look like a key from a provider this page knows. You can add Mistral, Together or your own server in Settings.");
+    const route = S.routeKey(key);
+    if (!route) {
+      status("err", "That does not look like a key from a provider this page knows. You can add Together AI or your own server in Settings.");
       return;
     }
-    let lastError = null;
+    withConsent(route.provider, () => runCheck(key, source)).then((problem) => { if (problem) status("err", problem); });
+  }
+
+  async function runCheck(key, source) {
+    if (checking) return;
     checking = true;
+    let r;
     try {
-    for (const provider of providers) {
-      status("busy", `Checking your ${NAMES[provider]} key…`);
-      try {
-        const result = await testKey(provider, key);
-        if (result.ok) {
-          await save(provider, key);
-          status("ok", `Connected to ${NAMES[provider]}.`, result.note);
-          setTimeout(() => showDone(provider, source), result.note ? 4000 : 500);
-          return;
-        }
-        lastError = { provider, ...result };
-      } catch (e) {
-        lastError = { provider, message: e.name === "TimeoutError" ? "the provider did not answer in time" : e.message };
-      }
-    }
+      status("busy", `Checking your ${name(S.routeKey(key).provider)} key…`);
+      r = await S.checkKey(key, (p) => testKey(p, key));
     } finally { checking = false; }
-    const why = lastError.status === 401 || lastError.status === 403
-      ? "the key was not accepted"
-      : lastError.message || `error ${lastError.status}`;
-    status("err", `${NAMES[lastError.provider]} said ${why}. Check the key and try again.`);
+    if (r.state === "ok") { await connected(r.provider, key, r.note, source); return; }
+    if (r.state === "unknown") { status("err", "That does not look like a key from a provider this page knows."); return; }
+    status("err", S.failureText(r.provider, r.error));
+    if (r.alt) offerOther(key, r.alt, r.provider, r.error, source);
+  }
+
+  async function connected(provider, key, note, source) {
+    await save(provider, key);
+    status("ok", `Connected to ${name(provider)}.`, note);
+    setTimeout(() => showDone(provider, source), note ? 4000 : 500);
+  }
+
+  // The same key shape is issued by one other provider. The user decides
+  // whether it goes there. It is never sent there on its own.
+  function offerOther(key, alt, first, firstError, source) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "btn btn-ghost try-other";
+    b.textContent = `It is a ${name(alt)} key`;
+    b.onclick = () => {
+      b.remove();
+      withConsent(alt, async () => {
+        status("busy", `Checking your ${name(alt)} key…`);
+        let result;
+        try { result = await testKey(alt, key); } catch (e) { result = { ok: false, message: e.name === "TimeoutError" ? "the provider did not answer in time" : e.message }; }
+        if (result.ok) { await connected(alt, key, result.note, source); return; }
+        // The first provider's answer is the one reported, with this one after it.
+        status("err", S.failureText(first, firstError), `${name(alt)} did not accept it either.`);
+      }).then((problem) => { if (problem) status("err", problem); });
+    };
+    $("status").appendChild(b);
   }
 
   $("useKey").onclick = () => connectWithKey($("keyInput").value, "paste");
-  $("keyInput").addEventListener("keydown", (e) => { if (e.key === "Enter") connectWithKey($("keyInput").value, "paste"); });
+  $("keyInput").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) connectWithKey($("keyInput").value, "paste"); });
   // Pasting is the whole gesture: no button press needed.
   $("keyInput").addEventListener("paste", () => setTimeout(() => connectWithKey($("keyInput").value, "paste"), 0));
 
@@ -196,7 +234,9 @@
       btn.disabled = false;
     }
   }
-  $("connectOR").onclick = connectOpenRouter;
+  $("connectOR").onclick = () => {
+    withConsent("openrouter", connectOpenRouter).then((problem) => { if (problem) status("err", problem); });
+  };
 
   // ---- or: the user's own ChatGPT plan (Sign in with ChatGPT) ----
   // Shown only when the feature is on (defaults.js FEATURES).
@@ -234,7 +274,7 @@
     const free = provider === "openrouter";
     $("doneLede").textContent = (free
       ? "You're on OpenRouter's free models."
-      : provider === "chatgpt" ? "You're using your ChatGPT plan." : `You're on ${NAMES[provider]}.`) +
+      : provider === "chatgpt" ? "You're using your ChatGPT plan." : `You're on ${name(provider)}.`) +
       " Try a first task. Chrome will ask once to let the agent use websites, and you can stop it at any time.";
     const list = $("tries");
     list.textContent = "";
@@ -251,9 +291,10 @@
   }
   function openAgent(task) {
     const url = chrome.runtime.getURL("agent.html") + (task ? `?task=${encodeURIComponent(task)}&autostart=1` : "");
-    // The first run needs to read real websites. Asking here, on the click,
-    // means one Chrome prompt now instead of a pause on every new site.
-    chrome.permissions.request({ origins: ["https://*/*", "http://*/*"] }, () => {
+    // The first run needs to read real websites, and says when it needs you.
+    // Asking here, on the click, means one Chrome prompt now instead of a
+    // pause on every new site. Both stay optional: a no still opens the agent.
+    chrome.permissions.request({ origins: ["https://*/*", "http://*/*"], permissions: ["notifications"] }, () => {
       void chrome.runtime.lastError;
       chrome.tabs.create({ url });
     });
