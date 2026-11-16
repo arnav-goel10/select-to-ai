@@ -11,7 +11,7 @@ name: Real-task trial
 # another OpenAI-compatible endpoint.
 #
 # Dry mode needs no secret: the scripted model in tests/e2e/server.js plays
-# six fixture tasks and the same artifacts and summary are produced. It runs
+# seven fixture tasks and the same artifacts and summary are produced. It runs
 # when the dry box is ticked, when BENCH_API_KEY is not set, and on every push
 # to the branch this workflow was written on, which never touches a secret.
 on:
@@ -60,6 +60,11 @@ on:
 
 permissions:
   contents: read
+
+# With pipefail, so a failed check behind a pipe fails its step.
+defaults:
+  run:
+    shell: bash
 
 concurrency:
   group: real-tasks-${{ github.ref }}-${{ github.event_name }}

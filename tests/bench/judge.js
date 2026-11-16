@@ -300,6 +300,8 @@ function normaliseTasks(list) {
     ...(t.scenario ? { scenario: String(t.scenario) } : {}),
     ...(t.dry ? { dry: String(t.dry) } : {}),
     ...(t.dryHeld ? { dryHeld: Number(t.dryHeld) } : {}),
+    ...(t.dryScripted ? { dryScripted: Number(t.dryScripted) } : {}),
+    ...(t.dryTyped ? { dryTyped: Number(t.dryTyped) } : {}),
   })).filter((t) => t.task && /^https?:\/\//.test(t.url));
 }
 

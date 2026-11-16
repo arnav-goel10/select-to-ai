@@ -16,7 +16,8 @@
  *   lang     the language of the site, when it is not English
  *   scenario (fixture tasks) the scripted model's scenario in tests/e2e/server.js
  *   dry      (fixture tasks) how the run must end for the plumbing to be right
- *   dryHeld  (fixture tasks) the fewest held actions the run must record
+ *   dryHeld, dryScripted, dryTyped  (fixture tasks) the fewest held actions,
+ *            scripted presses and typing steps the run must record
  *
  * `summary` reads every run.json under the folder (one per task run, written
  * by run.js), prints a table by family in Markdown, and writes
@@ -97,9 +98,12 @@ function countersOf(run) {
   const pointer = (run.timing && run.timing.pointer) || {};
   const held = run.held || [];
   return {
-    // Pointer actions made by page script (chrome.scripting), as against real input events.
+    // Presses, hovers and drags made by page script (chrome.scripting), as against real input events.
     scriptedInputs: pointer.synthetic || 0,
     realInputs: pointer.real || 0,
+    // Steps that typed, chose or sent a key. The engine does not say which way these went:
+    // in a build without the debugger every one of them is made by script.
+    typedActions: (run.history || []).filter((h) => /^(fill|type|press|select)\b/i.test(String(h.action || ""))).length,
     // Steps the engine held for the user's go-ahead, and how many of them the harness refused.
     heldActions: held.length,
     heldRefused: held.filter((h) => !h.allowed).length,
@@ -163,6 +167,7 @@ function familyTable(rows, tasks) {
       judgeUSD: rs.reduce((a, r) => a + (r.judgeCostUSD || 0), 0),
       scriptedInputs: rs.reduce((a, r) => a + ((r.counters && r.counters.scriptedInputs) || 0), 0),
       realInputs: rs.reduce((a, r) => a + ((r.counters && r.counters.realInputs) || 0), 0),
+      typedActions: rs.reduce((a, r) => a + ((r.counters && r.counters.typedActions) || 0), 0),
       heldActions: rs.reduce((a, r) => a + ((r.counters && r.counters.heldActions) || 0), 0),
       patternDisagrees: rs.filter((r) => r.patternMatch !== null && r.patternMatch !== undefined && !isInfra(r) && r.patternMatch !== !!r.success).length,
     };
@@ -187,11 +192,11 @@ function markdown(table, meta = {}) {
     meta.commit ? `commit ${String(meta.commit).slice(0, 7)}` : "",
   ].filter(Boolean);
   if (facts.length) out.push(facts.join(", "), "");
-  out.push("| family | tasks | passed | failed | timed out | blocked by a human check | lost | not run | median s | agent cost | judge cost | scripted inputs | real inputs | held actions |");
-  out.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+  out.push("| family | tasks | passed | failed | timed out | blocked by a human check | lost | not run | median s | agent cost | judge cost | scripted presses | real presses | typing steps | held actions |");
+  out.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
   const cells = (l, bold) => {
     const b = (x) => (bold ? `**${x}**` : String(x));
-    return `| ${b(FAMILIES[l.family] || l.family)} | ${b(l.tasks)} | ${b(l.passed)} | ${b(l.failed)} | ${b(l.timedOut)} | ${b(l.blocked)} | ${b(l.lost)} | ${b(l.notRun)} | ${b(l.medianSeconds === null ? "-" : l.medianSeconds)} | ${b(usd(l.agentUSD))} | ${b(usd(l.judgeUSD))} | ${b(l.scriptedInputs)} | ${b(l.realInputs)} | ${b(l.heldActions)} |`;
+    return `| ${b(FAMILIES[l.family] || l.family)} | ${b(l.tasks)} | ${b(l.passed)} | ${b(l.failed)} | ${b(l.timedOut)} | ${b(l.blocked)} | ${b(l.lost)} | ${b(l.notRun)} | ${b(l.medianSeconds === null ? "-" : l.medianSeconds)} | ${b(usd(l.agentUSD))} | ${b(usd(l.judgeUSD))} | ${b(l.scriptedInputs)} | ${b(l.realInputs)} | ${b(l.typedActions)} | ${b(l.heldActions)} |`;
   };
   for (const l of table.lines) out.push(cells(l, false));
   out.push(cells(table.total, true));
@@ -244,6 +249,8 @@ function checkDry(rows, tasks, shards) {
     const want = String(t.dry || "passed").split("|");
     if (!want.includes(got)) problems.push(`${t.id}: ended as "${got}" (${row.ending}), expected ${want.join(" or ")}`);
     if (t.dryHeld && !(row.counters && row.counters.heldActions >= t.dryHeld)) problems.push(`${t.id}: ${row.counters ? row.counters.heldActions : "no"} held action(s) counted, expected at least ${t.dryHeld}`);
+    if (t.dryScripted && !(row.counters && row.counters.scriptedInputs >= t.dryScripted)) problems.push(`${t.id}: ${row.counters ? row.counters.scriptedInputs : "no"} scripted press(es) counted, expected at least ${t.dryScripted}`);
+    if (t.dryTyped && !(row.counters && row.counters.typedActions >= t.dryTyped)) problems.push(`${t.id}: ${row.counters ? row.counters.typedActions : "no"} typing step(s) counted, expected at least ${t.dryTyped}`);
     for (const k of ["steps", "seconds", "costUSD", "counters", "family", "ending", "history"]) if (row[k] === undefined) problems.push(`${t.id}: run.json has no "${k}"`);
   }
   if (!shards.length) problems.push("no results file from any shard");

@@ -60,8 +60,8 @@ test("the pattern stands in for the judge in dry mode, and a human check counts 
 });
 
 test("counters: scripted and real inputs, held actions, and what the judge cost", () => {
-  const c = T.countersOf({ timing: { pointer: { real: 1, synthetic: 4 } }, held: [{ kind: "send", allowed: false }, { kind: "site", allowed: true }], checkIns: 2, history: [{ ok: true }, { ok: false }] });
-  assert.deepEqual(c, { scriptedInputs: 4, realInputs: 1, heldActions: 2, heldRefused: 1, heldKinds: ["send", "site"], checkIns: 2, failedActions: 1 });
+  const c = T.countersOf({ timing: { pointer: { real: 1, synthetic: 4 } }, held: [{ kind: "send", allowed: false }, { kind: "site", allowed: true }], checkIns: 2, history: [{ ok: true, action: "fill [3] with \"blue widget\"" }, { ok: false, action: "click [4]" }, { ok: true, action: "press Enter" }] });
+  assert.deepEqual(c, { scriptedInputs: 4, realInputs: 1, typedActions: 2, heldActions: 2, heldRefused: 1, heldKinds: ["send", "site"], checkIns: 2, failedActions: 1 });
   assert.deepEqual(T.countersOf({}).scriptedInputs, 0);
   const cost = T.judgeCostUSD({ model: "m", input: 2000, output: 1000 }, () => [0.002, 0.01]);
   assert.ok(Math.abs(cost - 0.014) < 1e-12);
@@ -92,7 +92,7 @@ test("the family table sorts every run into one column and counts what never ran
   assert.equal(total.passed + total.failed + total.timedOut + total.blocked + total.lost + total.notRun, tasks.length);
   assert.ok(Math.abs(total.agentUSD - 0.05) < 1e-12);
   const text = T.markdown({ lines, total }, { capUSD: 5, capReached: true, arm: "shipped" });
-  assert.match(text, /\| Developer tasks \| 3 \| 1 \| 1 \| 1 \| 0 \| 0 \| 0 \| 40 \|/);
+  assert.match(text, /\| Developer tasks \| 3 \| 1 \| 1 \| 1 \| 0 \| 0 \| 0 \| 40 \| \$0\.0500 \| \$0\.0200 \| 4 \| 0 \| 0 \| 2 \|/);
   assert.match(text, /Passed 1 of 3 scored runs/);
   assert.match(text, /spend cap stopped the run/);
   assert.ok(!text.includes("—"));
@@ -117,5 +117,6 @@ test("the dry check fails when a fixture run ends another way or a counter is mi
   assert.equal(T.checkDry([row("fx", { success: false }), row("held", { success: false, counters: { heldActions: 3 } })], tasks, shards).length, 1);
   assert.equal(T.checkDry([row("fx", { success: true }), row("held", { success: false })], tasks, shards).length, 1);
   assert.equal(T.checkDry([row("fx", { success: true })], tasks, shards).length, 1);
+  assert.equal(T.checkDry([row("fx", { success: true })], [{ id: "fx", level: "fixture", dry: "passed", dryScripted: 1, dryTyped: 1 }], shards).length, 2);
   assert.equal(T.checkDry([row("fx", { success: true }), row("held", { success: false, counters: { heldActions: 1 } })], tasks, []).length, 1);
 });

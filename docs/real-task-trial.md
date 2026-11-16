@@ -9,7 +9,7 @@ Why it exists: every real-site number in [agent-v4-status.md](agent-v4-status.md
 | File | What it is |
 |---|---|
 | `tests/bench/everyday-tasks.json` | 93 tasks in 11 families. Each has a start page, the request as a person would type it, and a way to check it: `expect` (what a right result holds, given to the judge), `pattern` (a regular expression the answer should match), or both. |
-| `tests/bench/fixture-tasks.json` | 6 tasks on the local fixture pages, for dry mode. |
+| `tests/bench/fixture-tasks.json` | 7 tasks on the local fixture pages, for dry mode. |
 | `tests/bench/trial.js` | Checks a task file, and turns a folder of results into the table by family. |
 | `.github/workflows/real-tasks.yml` | The workflow. |
 
@@ -52,7 +52,7 @@ Two limits to know. Spend is counted at the list prices in `extension/defaults.j
 
 Dry mode proves the plumbing with no key and no spend. The model is the scripted one from the end-to-end tests (`tests/e2e/server.js`), the pages are its local fixtures, and each task's `pattern` stands in for the judge. The packed zip, the shards, the per-task files, the merge and the summary are all the real ones.
 
-It runs when `dry` is ticked, when `BENCH_API_KEY` is not set, and on every push to `rel40-real-tasks`. The summary job then checks that each of the six fixture tasks ended the way its `dry` field says (four pass, one stops at a human check, one has its form submission held and declined) and fails if any did not. Dry mode says nothing about how good the agent is.
+It runs when `dry` is ticked, when `BENCH_API_KEY` is not set, and on every push to `rel40-real-tasks`. The summary job then checks that each of the seven fixture tasks ended the way its `dry` field says (five pass, one stops at a human check, one has its form submission held and declined), and that the counters it expects are there (typing steps, scripted presses, held actions) and fails if any did not. Dry mode says nothing about how good the agent is.
 
 ## Reading the results
 
@@ -68,7 +68,8 @@ The job summary has one table, a line per family:
 | not run | Never started (the cap, or a shard that stopped). |
 | median s | Median seconds per run, lost runs left out. |
 | agent cost, judge cost | Model spend at list prices. |
-| scripted inputs, real inputs | Pointer actions made by page script, and by real input events. The shipped arm should show 0 real inputs. |
+| scripted presses, real presses | Presses, hovers and drags made by page script, and by real input events. The shipped arm must show 0 real presses. In the debugger-on arm a scripted press is a fallback: the real pointer could not be used for that step. |
+| typing steps | Steps that typed into a field, chose an option or sent a key. The engine does not record which way these went. In the shipped arm all of them are made by script. |
 | held actions | Steps the agent stopped at to ask for a go-ahead (a send, a payment, a deletion, a site outside the request). |
 
 Under the table: the pass rate over scored runs (passed, failed, timed out), and the stricter rate with blocked, lost and not-run tasks counted as failures. Quote both.
@@ -76,12 +77,12 @@ Under the table: the pass rate over scored runs (passed, failed, timed out), and
 Artifacts, kept 30 days:
 
 - `trial-summary`: `trial-summary.json`, the table as data plus one line per run (outcome, steps, seconds, cost, counters, failure reason).
-- `trial-shard-N`: for each task, `<task id>/run1/run.json`, `log.txt` and the screenshots. `run.json` holds the steps taken (`history`), how the run ended (`ending`), the judge's verdict (`success`, `blocked`, `reason`, `keyPoints`), `costUSD`, `judgeCostUSD`, `seconds`, `failure`, `patternMatch` and `counters` (`scriptedInputs`, `realInputs`, `heldActions`, `heldRefused`, `heldKinds`, `checkIns`, `failedActions`).
+- `trial-shard-N`: for each task, `<task id>/run1/run.json`, `log.txt` and the screenshots. `run.json` holds the steps taken (`history`), how the run ended (`ending`), the judge's verdict (`success`, `blocked`, `reason`, `keyPoints`), `costUSD`, `judgeCostUSD`, `seconds`, `failure`, `patternMatch` and `counters` (`scriptedInputs`, `realInputs`, `typedActions`, `heldActions`, `heldRefused`, `heldKinds`, `checkIns`, `failedActions`).
 
 Read first:
 
 1. Runs where the judge and the pattern disagree (the summary counts them). Either the judge erred or the pattern is too loose or too tight. Fix the task file when it is the pattern.
-2. Failures in `form-fill`, `tables-lists` and `shopping` with many scripted inputs. These are where scripted input is most likely to differ from a real press.
+2. Failures in `form-fill`, `tables-lists` and `shopping` with many scripted presses and typing steps. These are where scripted input is most likely to differ from a real press.
 3. The blocked column by site. GitHub's runners have data-centre addresses, and some sites turn those away where they would let a person's browser in. A site that blocks every run should leave the task file.
 
 ## Limits
