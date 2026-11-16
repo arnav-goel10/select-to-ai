@@ -460,6 +460,93 @@ const FIXTURES = {
        zone.addEventListener('drop', (e) => { e.preventDefault(); zone.appendChild(chip); document.getElementById('dropped').textContent = 'Dropped: ' + e.dataTransfer.getData('text/plain'); });
      </script>`,
   ),
+  // Controls that do not answer a click made by script, each in its own
+  // way: the run has no debugger, so its pointer and keys are scripted.
+  // This one takes a real mouse press, or Enter with the focus on it.
+  "/press-keys": pageShell(
+    "Settings",
+    `<h1>Settings</h1>
+     <p id="state">Not saved</p>
+     <div id="save" role="button" tabindex="0" style="display:inline-block;padding:8px 18px;border:1px solid #888">Save settings</div>
+     <script>
+       window.saves = 0;
+       const save = document.getElementById('save');
+       const saved = (how) => { window.saves += 1; document.getElementById('state').textContent = 'Saved ' + how; };
+       save.addEventListener('click', (e) => { if (e.isTrusted) saved('with the mouse'); });
+       save.addEventListener('keydown', (e) => { if (e.key === 'Enter' && document.activeElement === save) saved('with the keyboard'); });
+     </script>`,
+  ),
+  // This one takes a press from the keyboard (a click that is no mouse's:
+  // detail 0) or a click whose mouse press was a real one.
+  "/press-direct": pageShell(
+    "Newsletter",
+    `<h1>Newsletter</h1>
+     <p id="state">Not subscribed</p>
+     <button type="button" id="sub">Subscribe</button>
+     <script>
+       window.subs = 0;
+       let armed = false;
+       const sub = document.getElementById('sub');
+       sub.addEventListener('mousedown', (e) => { armed = e.isTrusted; });
+       sub.addEventListener('click', (e) => { if (e.detail !== 0 && !armed) return; armed = false; window.subs += 1; document.getElementById('state').textContent = 'Subscribed'; });
+     </script>`,
+  ),
+  // This one takes only a person's own press.
+  "/press-real": pageShell(
+    "Downloads",
+    `<h1>Downloads</h1>
+     <p id="state">Downloads locked</p>
+     <button type="button" id="real">Unlock downloads</button>
+     <script>
+       window.scripted = 0;
+       document.getElementById('real').addEventListener('click', (e) => { if (!e.isTrusted) { window.scripted += 1; return; } document.getElementById('state').textContent = 'Downloads unlocked'; });
+     </script>`,
+  ),
+  // A button inside a component's shadow root, with the page listening for
+  // the click outside it, as a framework that listens at the root does.
+  "/shadow-click": pageShell(
+    "Basket",
+    `<h1>Basket</h1>
+     <p id="state">Basket empty</p>
+     <shop-card id="card"></shop-card>
+     <script>
+       window.adds = 0;
+       const root = document.getElementById('card').attachShadow({ mode: 'open' });
+       root.innerHTML = '<button type="button" id="add">Add to basket</button>';
+       document.addEventListener('click', (e) => { const first = e.composedPath()[0]; if (first && first.id === 'add') { window.adds += 1; document.getElementById('state').textContent = 'Added to basket'; } });
+     </script>`,
+  ),
+  // A toolbar button that keeps the cursor where it is by cancelling the
+  // press, as a text editor's toolbar does, and acts on the box that has it.
+  "/toolbar": pageShell(
+    "Note",
+    `<h1>Note</h1>
+     <label for="title">Title</label><input type="text" id="title" value="shopping list" />
+     <button type="button" id="upper">Upper case</button>
+     <p id="state">Nothing done</p>
+     <script>
+       const title = document.getElementById('title'), upper = document.getElementById('upper');
+       upper.addEventListener('mousedown', (e) => e.preventDefault());
+       upper.addEventListener('click', () => {
+         if (document.activeElement !== title) { document.getElementById('state').textContent = 'The title lost the cursor'; return; }
+         title.value = title.value.toUpperCase();
+         document.getElementById('state').textContent = 'Title in upper case';
+       });
+     </script>`,
+  ),
+  // A chart only a picture shows, and a button that puts its legend in words.
+  "/chart": pageShell(
+    "Sales",
+    `<h1>Sales</h1>
+     <canvas id="chart" width="300" height="120" style="border:1px solid #000"></canvas>
+     <button type="button" id="legend-btn">Show the legend</button>
+     <p id="legend"></p>
+     <script>
+       const g = document.getElementById('chart').getContext('2d');
+       g.fillRect(20, 60, 40, 60); g.fillRect(90, 30, 40, 90); g.fillRect(160, 80, 40, 40);
+       document.getElementById('legend-btn').addEventListener('click', () => { document.getElementById('legend').textContent = 'Legend: sales by month'; });
+     </script>`,
+  ),
   // A drawing to press at a point, below the fold, and a button something is drawn over.
   "/pointer-canvas": pageShell(
     "Drawing",
@@ -840,6 +927,48 @@ function buildStepPolicies(baseUrl) {
       if (pricing) return step("Choose Pricing", [{ do: "click", ref: pricing.id }]);
       return step("Open the Products menu", [{ do: "hover", ref: named(ctx, /^products$/i).id }]);
     },
+    // The same menu with a scripted pointer: nothing comes up, the result says why, and the hover is not tried again.
+    hoverScripted(ctx) {
+      if (/Pricing chosen/.test(ctx.userText)) return done("Pricing is chosen.", ["Pricing chosen"]);
+      const pricing = named(ctx, /^pricing$/i);
+      if (pricing) return step("Choose Pricing", [{ do: "click", ref: pricing.id }]);
+      if (/What opens only under the real mouse cannot be opened by script/.test(ctx.userText)) return done("The Products menu opens only under the real mouse, which I cannot move here, so Pricing was not chosen.", [], false);
+      return step("Open the Products menu", [{ do: "hover", ref: named(ctx, /^products$/i).id }]);
+    },
+    // Controls that ignore a click made by script: one press each, and the page says what it took.
+    pressKeyboard(ctx) {
+      if (/Saved with/.test(ctx.userText)) return done("The settings are saved.", ["Saved with"]);
+      return step("Save the settings", [{ do: "click", ref: named(ctx, /save settings/i).id }]);
+    },
+    pressDirect(ctx) {
+      if (/\bSubscribed\b/.test(ctx.userText)) return done("You are subscribed.", ["Subscribed"]);
+      return step("Subscribe", [{ do: "click", ref: named(ctx, /^subscribe$/i).id }]);
+    },
+    // A control that takes only the user's own press: told so, the model hands that one press over.
+    pressUser(ctx) {
+      if (/Downloads unlocked/.test(ctx.userText)) return done("Downloads are unlocked.", ["Downloads unlocked"]);
+      const button = named(ctx, /unlock downloads/i);
+      const handOver = ctx.userText.match(/ask_user with kind "press" and ref (\d+)/);
+      if (handOver) return step("Hand the press to the user", [{ do: "ask_user", kind: "press", ref: Number(handOver[1]), question: "Please press Unlock downloads on the page: it only takes your own press." }]);
+      return step("Unlock the downloads", [{ do: "click", ref: button.id }]);
+    },
+    shadowClick(ctx) {
+      if (/Added to basket/.test(ctx.userText)) return done("It is in the basket.", ["Added to basket"]);
+      return step("Add it to the basket", [{ do: "click", ref: named(ctx, /add to basket/i).id }]);
+    },
+    toolbar(ctx) {
+      if (/Title in upper case/.test(ctx.userText)) return done("The title is in upper case.", ["Title in upper case"]);
+      if (/The title lost the cursor/.test(ctx.userText)) return done("The button did nothing: the title lost the cursor.", [], false);
+      return step("Put the cursor in the title and press Upper case", [{ do: "click", ref: named(ctx, /^title$/i).id }, { do: "click", ref: named(ctx, /upper case/i).id }]);
+    },
+    // A page with a chart: the model asks for a picture once its tab is in front.
+    lookPerSite(ctx) {
+      if (/A picture of the page as it is on screen is attached/.test(ctx.userText)) return done("I looked at the chart: sales by month.", ["Legend: sales by month"]);
+      if (/A picture of this tab could not be taken/.test(ctx.userText)) return done("I could not take a picture of the chart. Its legend says sales by month.", ["Legend: sales by month"]);
+      if (/cannot be shown pictures/.test(ctx.userText)) return done("policy error: the run did not offer look to a model that takes pictures", [], false);
+      if (!/Legend: sales by month/.test(ctx.userText)) return step("Show the legend", [{ do: "click", ref: named(ctx, /show the legend/i).id }]);
+      return step("Look at the chart", [{ do: "look" }]);
+    },
     // A button in another site's frame, below the fold of both.
     pointerFrame(ctx) {
       if (/Seat 12A picked/.test(ctx.userText)) return done("Seat 12A is picked.", ["Seat 12A picked"]);
@@ -1138,6 +1267,13 @@ function createE2EServer(port = 8907) {
   scenarios.pointerNoDebugger = { task: "Count once and move Apples to the end of the list." };
   scenarios.pointerCanvas = { task: "Press the drawing a little right of its middle, then press the hidden button." };
   scenarios.pointerRisk = { task: "Tidy up my account." };
+  scenarios.hoverScripted = { task: "Choose Pricing from the Products menu." };
+  scenarios.pressKeyboard = { task: "Save my settings." };
+  scenarios.pressDirect = { task: "Subscribe me to the newsletter." };
+  scenarios.pressUser = { task: "Unlock the downloads." };
+  scenarios.shadowClick = { task: "Add this to my basket." };
+  scenarios.toolbar = { task: "Make the title upper case." };
+  scenarios.lookPerSite = { task: "What does the sales chart show?" };
   scenarios.framed = { task: "How much is Item B?" };
   scenarios.findQuote = { task: "How much is the garden hose?" };
   scenarios.code = { task: "What was the total of order 4411?" };
