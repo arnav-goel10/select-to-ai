@@ -370,7 +370,15 @@
     }
     if ((run.openedTabs || []).includes(a.tab) || s.riskConfirmation === false) return ALLOW;
     const site = TOOLS.siteOf(url);
-    if (!site || !/^https?:/i.test(url) || ((run.trust && run.trust.sites) || []).includes(site)) return ALLOW;
+    if (!/^https?:/i.test(url) || !site) {
+      // An empty tab or the browser's new-tab page holds nothing to read.
+      // Anything else that is not a web page (a local file, a tab still
+      // loading with no address yet) is the user's to allow.
+      const kind = url ? TOOLS.startPageKind(url) : "";
+      if (kind === "blank" || kind === "newtab") return ALLOW;
+      return { verdict: "confirm", kind: "site", why: "This moves the agent into one of your own tabs that is not a web page it can name. What is in that tab would be read and sent to the model.", detail: [`Tab: ${String(tab.title || url || "a tab with no address yet").slice(0, 120)}`], site: "" };
+    }
+    if (((run.trust && run.trust.sites) || []).includes(site)) return ALLOW;
     return { verdict: "confirm", kind: "site", why: `This moves the agent into one of your own tabs, on ${site}. What is on that page would be read and sent to the model.`, detail: [`Tab: ${String(tab.title || url).slice(0, 120)}`], site };
   }
 

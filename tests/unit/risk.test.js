@@ -481,6 +481,24 @@ test("a tab the run was not shown is refused, even with approvals off; one it op
   assert.equal(switchTo(42, tabsRun({ openedTabs: [7, 42] })).verdict, "allow", "opened by the run");
 });
 
+test("a tab that is not a web page is asked about, unless it is empty or the run opened it", () => {
+  const odd = [
+    ...tabList,
+    { id: 11, url: "file:///Users/someone/notes.txt", title: "notes.txt" },
+    { id: 12, url: "", title: "Loading" },
+    { id: 13, url: "about:blank", title: "" },
+    { id: 14, url: "chrome://newtab/", title: "New Tab" },
+  ];
+  const go = (tab, run, settings) => POLICY.decide({ do: "tabs", op: "switch", tab }, { url: "https://shop.example/kettle-a", elements: [] }, run || tabsRun(), settings || { riskConfirmation: true }, KNOWN.empty(), odd);
+  assert.equal(go(11).verdict, "confirm", "a local file");
+  assert.equal(go(11).kind, "site");
+  assert.equal(go(12).verdict, "confirm", "a tab with no address yet");
+  assert.equal(go(13).verdict, "allow", "an empty tab");
+  assert.equal(go(14).verdict, "allow", "the new-tab page");
+  assert.equal(go(11, tabsRun({ openedTabs: [11] })).verdict, "allow", "opened by the run");
+  assert.equal(go(11, tabsRun(), { riskConfirmation: false }).verdict, "allow", "approvals off");
+});
+
 test("with an allowlist, a tab on another site is refused, even one the run opened", () => {
   const only = { riskConfirmation: true, allowlist: "shop.example" };
   assert.equal(switchTo(9, tabsRun(), only).verdict, "refuse");
