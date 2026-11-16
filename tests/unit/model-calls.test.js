@@ -269,6 +269,16 @@ test("after a step's asks are used up, the run asks once at a time until it stop
   RUN.advance(run, { type: "acted", result: { ok: true, message: "Done.", pageChanged: true } }, env);
   fx = RUN.advance(run, { type: "observed", page }, env);
   assert.equal(fx[0].reasks, undefined);
+  // A call that names a step the run cannot use is still a call: the ask after it has its full budget.
+  assert.equal(failed()[0].reasks, 0);
+  fx = RUN.advance(run, { type: "model_replied", purpose: "step", reply: { memory: "", goal: "g", actions: [{ do: "click", ref: 999 }] }, usage: {} }, env);
+  if (fx[0].type === "observe") fx = RUN.advance(run, { type: "observed", page }, env);
+  assert.equal(fx[0].type, "model", JSON.stringify(fx));
+  assert.equal(fx[0].reasks, undefined, "the model did call the tool");
+  fx = RUN.advance(run, { type: "model_replied", purpose: "step", reply: { memory: "", goal: "g", actions: [{ do: "click", ref: 3 }] }, usage: {} }, env);
+  assert.equal(fx[0].type, "act");
+  RUN.advance(run, { type: "acted", result: { ok: true, message: "Done.", pageChanged: true } }, env);
+  RUN.advance(run, { type: "observed", page }, env);
   // Three in a row end the run: 4 + 1 + 1 requests at most.
   assert.equal(failed()[0].reasks, 0);
   assert.equal(failed()[0].reasks, 0);

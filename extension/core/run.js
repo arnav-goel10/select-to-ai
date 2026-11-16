@@ -920,6 +920,9 @@
     if (budget > 0 && run.usage.cost >= budget) {
       return end(run, fx, env, { state: "error", kind: "budget", text: `Cost budget reached: this task has used $${run.usage.cost.toFixed(4)} of the $${budget.toFixed(4)} limit set in Settings.` });
     }
+    // The model called the tool this time: whatever is wrong with the step,
+    // the single asks that follow a reply with no call are over.
+    if (event.reply && typeof event.reply === "object") run.askedOut = false;
     const check = STEP.checkStep(event.reply, { page, labels: run.labels, labelOf: TOOLS.elementLabel, maxActions: run.maxActions, finalStep: run.finalStep, notes: run.memory, canDelegate: !run.sub });
     if (!check.ok) {
       // Notes written in a reply that could not be run are still the model's notes.
@@ -927,7 +930,6 @@
       return unusable(run, page, env, fx, check.error, event.reply);
     }
     run.facts.invalid = 0;
-    run.askedOut = false;
     // The provider answered: a later refusal that names no wait starts from the shortest pause again.
     run.pauses = 0;
     run.pausedInRow = { n: 0, ms: 0 };
