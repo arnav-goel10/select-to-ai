@@ -245,7 +245,11 @@ test("ChatGPT adapter covers the Sep 2026 build and keeps the older one", () => 
   assert.ok(a.send.some((s) => s.includes("Send message")));
   assert.match(a.sentProbe, /data-message-role='user'/);
   const manifest = JSON.parse(read("manifest.json"));
-  assert.ok(manifest.content_scripts[0].matches.includes("https://perplexity.ai/*"), "Perplexity's bare domain is covered");
+  // perplexity.ai without www is optional in 4.0: its content script is
+  // registered at run time once granted (core/grants.js).
+  const GRANTS = require(path.join(extensionRoot, "core/grants.js"));
+  assert.ok(!manifest.content_scripts[0].matches.includes("https://perplexity.ai/*"));
+  assert.ok(Object.values(GRANTS.ASSISTANT_HOSTS).includes("https://perplexity.ai/*"), "Perplexity's bare domain is covered after a grant");
 });
 
 test("quick box: what is typed starts the agent, with no router and no answer of its own", () => {

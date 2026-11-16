@@ -5,7 +5,9 @@
   "description": "Send selected text to ChatGPT, Claude, Gemini or Perplexity, or ask an AI agent to read and use websites in your own browser.",
   "version": "4.0.0",
   "homepage_url": "https://github.com/arnav-goel10/select-to-ai",
+  "minimum_chrome_version": "120",
   "offline_enabled": false,
+  "incognito": "not_allowed",
   "action": {
     "default_popup": "popup.html",
     "default_title": "Select to AI"
@@ -19,15 +21,15 @@
     "storage",
     "sidePanel",
     "tabs",
-    "activeTab",
     "declarativeNetRequest",
+    "activeTab",
     "scripting",
-    "notifications",
     "identity",
     "alarms",
-    "idle",
-    "debugger",
-    "favicon"
+    "idle"
+  ],
+  "optional_permissions": [
+    "notifications"
   ],
   "background": {
     "service_worker": "background.js"
@@ -38,22 +40,7 @@
   "host_permissions": [
     "https://chatgpt.com/*",
     "https://gemini.google.com/*",
-    "https://www.perplexity.ai/*",
-    "https://perplexity.ai/*",
-    "https://claude.ai/*",
-    "http://localhost/*",
-    "http://127.0.0.1/*",
-    "https://opencode.ai/*",
-    "https://openrouter.ai/*",
-    "https://api.anthropic.com/*",
-    "https://api.openai.com/*",
-    "https://api.deepseek.com/*",
-    "https://generativelanguage.googleapis.com/*",
-    "https://api.mistral.ai/*",
-    "https://api.groq.com/*",
-    "https://api.together.xyz/*",
-    "https://api.x.ai/*",
-    "https://api.cerebras.ai/*"
+    "https://www.perplexity.ai/*"
   ],
   "optional_host_permissions": [
     "https://*/*",
@@ -64,9 +51,7 @@
       "matches": [
         "https://chatgpt.com/*",
         "https://gemini.google.com/*",
-        "https://www.perplexity.ai/*",
-        "https://perplexity.ai/*",
-        "https://claude.ai/*"
+        "https://www.perplexity.ai/*"
       ],
       "js": [
         "config.js",
@@ -94,8 +79,8 @@
   "commands": {
     "open-sidebar": {
       "suggested_key": {
-        "default": "Alt+N",
-        "mac": "MacCtrl+Shift+S"
+        "default": "Ctrl+Shift+S",
+        "mac": "Command+Shift+S"
       },
       "description": "Open the side panel"
     },
@@ -113,8 +98,5 @@
       },
       "description": "Open the quick box"
     }
-  },
-  "omnibox": {
-    "keyword": "ai"
   }
 }
