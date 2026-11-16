@@ -69,9 +69,19 @@ async function open(puppeteer, extDir, profile, id) {
   const browser = await puppeteer.launch({
     headless: !process.env.E2E_HEADFUL,
     userDataDir: profile,
-    args: [`--disable-extensions-except=${extDir}`, `--load-extension=${extDir}`, "--no-first-run", "--disable-features=DialMediaRouteProvider"],
+    args: [`--disable-extensions-except=${extDir}`, `--load-extension=${extDir}`, "--no-first-run", "--disable-features=DialMediaRouteProvider", "--enable-logging=stderr", "--v=0"],
   });
   const errors = [];
+  // A throw while the worker's scripts load happens before a debugger can
+  // attach, so Chrome's own log of the worker's console is read as well.
+  const proc = browser.process();
+  if (proc && proc.stderr) {
+    proc.stderr.on("data", (chunk) => {
+      for (const line of String(chunk).split("\n")) {
+        if (line.includes(`chrome-extension://${id}/`) && /Uncaught/.test(line)) errors.push(line.replace(/^\[[^\]]*\]\s*/, "").trim());
+      }
+    });
+  }
   const target = await browser.waitForTarget((t) => t.type() === "service_worker" && t.url().startsWith(`chrome-extension://${id}/`), { timeout: 20000 })
     .catch(() => null);
   if (target) {
@@ -110,6 +120,11 @@ async function main() {
     await sleep(2500); // onInstalled and the migrations run
     const running = await s.worker.evaluate(() => chrome.runtime.getManifest().version);
     check(`running version is the build (${version})`, running === version, `running ${running}`);
+    // What the updated build was granted, so a missing API in the worker
+    // (for example a permission the update added) is explained in the log.
+    const grants = await s.worker.evaluate(async () => ({ all: await chrome.permissions.getAll(), notifications: typeof chrome.notifications, debugger: typeof chrome.debugger }));
+    console.log(`granted after update: ${JSON.stringify(grants.all)}`);
+    console.log(`chrome.notifications is ${grants.notifications}, chrome.debugger is ${grants.debugger}`);
     const engine = await s.worker.evaluate(() => typeof self.SELECT_TO_AI_ENGINE);
     check("every worker script loaded (engine present)", engine !== "undefined", `self.SELECT_TO_AI_ENGINE is ${engine}`);
 
