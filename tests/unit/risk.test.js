@@ -419,3 +419,38 @@ test("a search box on a site outside the task takes the request's words or the p
   // On a site that is part of the task nothing is held.
   assert.equal(type("order 4411", ctx({ trustedSites: new Set(["other.test"]) })), null);
 });
+
+const tabsRun = (extra) => ({ task: "compare the two kettles", trust: { sites: ["shop.example"], urls: [] }, openedTabs: [7], ...extra });
+const tabList = [
+  { id: 1, current: true, url: "https://shop.example/kettle-a", title: "Kettle A" },
+  { id: 7, url: "https://reviews.example.net/kettle-a", title: "Kettle A review" },
+  { id: 8, url: "https://shop.example/kettle-b", title: "Kettle B" },
+  { id: 9, url: "https://mail.example.org/inbox", title: "Inbox (4)" },
+];
+const switchTo = (tab, run, settings) => POLICY.decide({ do: "tabs", op: "switch", tab }, { url: "https://shop.example/kettle-a", elements: [] }, run || tabsRun(), settings || { riskConfirmation: true }, KNOWN.empty(), tabList);
+
+test("switching into a tab the run did not open, on a site outside the task, asks once per site", () => {
+  const v = switchTo(9);
+  assert.equal(v.verdict, "confirm");
+  assert.equal(v.kind, "site");
+  assert.equal(v.site, "example.org");
+  // Once allowed, the site is part of the task for the rest of the run.
+  const run = tabsRun();
+  run.trust = POLICY.remember(run.trust, v);
+  assert.equal(switchTo(9, run).verdict, "allow");
+});
+
+test("switching to a tab the run opened, one on the task's site, or the current one is free", () => {
+  assert.equal(switchTo(7).verdict, "allow", "opened by the run");
+  assert.equal(switchTo(8).verdict, "allow", "on the task's own site");
+  assert.equal(switchTo(1).verdict, "allow", "the tab it is on");
+  assert.equal(switchTo(42).verdict, "allow", "not in the list: the engine says there is no such tab");
+  assert.equal(switchTo(9, tabsRun(), { riskConfirmation: false }).verdict, "allow", "with approvals turned off");
+});
+
+test("with an allowlist, a tab on another site is refused, even one the run opened", () => {
+  const only = { riskConfirmation: true, allowlist: "shop.example" };
+  assert.equal(switchTo(9, tabsRun(), only).verdict, "refuse");
+  assert.equal(switchTo(7, tabsRun(), only).verdict, "refuse");
+  assert.equal(switchTo(8, tabsRun(), only).verdict, "allow");
+});

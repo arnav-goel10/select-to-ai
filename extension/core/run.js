@@ -1061,7 +1061,7 @@
     const lands = POLICY.pressLandsOn(run.queue[0], page, run);
     if (lands.length || (run.queue[0].do === "press" && run.queue[0].ref === undefined)) run.queue = [{ ...run.queue[0], landsOn: lands }, ...run.queue.slice(1)];
     const act = run.queue[0];
-    let verdict = POLICY.decide(act, page, run, env.settings, store);
+    let verdict = POLICY.decide(act, page, run, env.settings, store, env.extras && env.extras.tabs);
     // The rules could not settle this press: a second opinion first, then
     // the same decision again with its answer. Once the opinion has failed
     // too often to be worth asking, the press is decided as one it could
@@ -1069,7 +1069,7 @@
     if (verdict.check) {
       if ((run.opinionMisses || 0) < OPINION_MISSES) return askOpinion(run, verdict.check, fx);
       run.opinions = { ...(run.opinions || {}), [verdict.check.key]: { unanswered: true } };
-      verdict = POLICY.decide(act, page, run, env.settings, store);
+      verdict = POLICY.decide(act, page, run, env.settings, store, env.extras && env.extras.tabs);
     }
     if (verdict.note) log(run, "system", "Not Held", verdict.note);
     if (verdict.verdict === "refuse") {

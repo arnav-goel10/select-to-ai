@@ -187,6 +187,8 @@
    * @param run      the run: task, trust {sites, urls}, openedTabs,
    *                 opinions (second opinions by key), typed (text put in boxes this step, by ref)
    * @param settings {riskConfirmation, allowlist}
+   * @param store    the user's memory (saved details, consents)
+   * @param tabs     the tab list the run is shown: [{id, url, current}]
    */
   /**
    * The user's own words for the run. A sub-task's instruction was written
@@ -195,7 +197,7 @@
    */
   const requestOf = (run) => String((run && (run.request || run.task)) || "");
 
-  function decide(a, page, run, settings, store) {
+  function decide(a, page, run, settings, store, tabs) {
     const s = settings || {};
     const els = (page && page.elements) || [];
     const el = a.ref !== undefined ? els.find((e) => e.id === a.ref) : null;
@@ -208,6 +210,7 @@
     if (a.do === "tabs" && a.op === "close" && !(run.openedTabs || []).includes(a.tab)) {
       return { verdict: "refuse", message: "That tab was not opened in this run, so it stays open. To leave a page, use back or navigate." };
     }
+    if (a.do === "tabs" && a.op === "switch") return decideSwitch(a, run, s, tabs);
     // The user's own details go into a site's form only with their say-so:
     // once per site, or once and for all for that site.
     if (a.do === "drag" || a.do === "click_at") return decidePointer(a, page, run, s, store);
@@ -347,6 +350,26 @@
   }
 
   /**
+   * Moving the run into another tab. The tab's page is read and sent to the
+   * model once the run is there, so a tab the run did not open, on a site
+   * that is not part of the request, is the user's to allow: once per site.
+   * When the user limits the agent to some sites, a tab elsewhere is
+   * refused. A tab not in the list is left to the engine, which says so.
+   */
+  function decideSwitch(a, run, s, tabs) {
+    const tab = (tabs || []).find((t) => t && t.id === a.tab);
+    if (!tab || tab.current) return ALLOW;
+    const url = String(tab.url || "");
+    if (s.allowlist && !SECURITY.isUrlAllowedByDomains(url, s.allowlist)) {
+      return { verdict: "refuse", message: `That tab is on a site outside the sites the user allows the agent to use (${String(s.allowlist).slice(0, 120)}).` };
+    }
+    if ((run.openedTabs || []).includes(a.tab) || s.riskConfirmation === false) return ALLOW;
+    const site = TOOLS.siteOf(url);
+    if (!site || !/^https?:/i.test(url) || ((run.trust && run.trust.sites) || []).includes(site)) return ALLOW;
+    return { verdict: "confirm", kind: "site", why: `This moves the agent into one of your own tabs, on ${site}. What is on that page would be read and sent to the model.`, detail: [`Tab: ${String(tab.title || url).slice(0, 120)}`], site };
+  }
+
+  /**
    * The way to the first site of a run that began with no site open. Until
    * the run has read a web page, nothing it could carry off exists except
    * what the user said and what they keep on file, so an address is judged
@@ -384,7 +407,7 @@
     return t;
   }
 
-  const api = Object.freeze({ decide, blockersOf, remember, asRiskAction, keptFromSending, pressesControl, pressLandsOn, firstAddress, pointTarget, dropPoint, HANDOVER });
+  const api = Object.freeze({ decide, decideSwitch, blockersOf, remember, asRiskAction, keptFromSending, pressesControl, pressLandsOn, firstAddress, pointTarget, dropPoint, HANDOVER });
   root.SELECT_TO_AI_POLICY = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
