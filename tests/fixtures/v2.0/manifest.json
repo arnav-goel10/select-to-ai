@@ -1,0 +1,64 @@
+{
+  "manifest_version": 3,
+  "name": "Select to AI",
+  "description": "Send selected text to ChatGPT, Gemini, or Perplexity via New Tab, Popup Window, or Side Panel.",
+  "version": "2.0",
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "permissions": [
+    "contextMenus",
+    "storage",
+    "sidePanel",
+    "tabs",
+    "declarativeNetRequest"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "ruleset_1",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://gemini.google.com/*",
+    "https://www.perplexity.ai/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://gemini.google.com/*",
+        "https://www.perplexity.ai/*"
+      ],
+      "js": [
+        "contentScript.js"
+      ],
+      "all_frames": true
+    }
+  ],
+  "web_accessible_resources": [],
+  "icons": {
+    "16": "logo.png",
+    "48": "logo.png",
+    "128": "logo.png"
+  },
+  "commands": {
+    "open-sidebar": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+S",
+        "mac": "Command+Shift+S"
+      },
+      "description": "Open the AI sidebar panel"
+    }
+  }
+}
