@@ -128,9 +128,12 @@ function judgeMessage(run) {
   const earlier = pages.filter((p) => p.url !== run.finalUrl).slice(-5).reverse()
     .map((p) => `Page: ${p.title || ""} | ${p.url}\n${excerptFor(p.text, run.task, { quotes })}`);
   const shots = (run.screenshots || []).length;
+  // A task across several sites names them itself (the task file's "sites").
+  const named = [...new Set([siteOf(run.startUrl), ...(run.sites || []).map((s) => siteOf(/^https?:/.test(s) ? s : `https://${s}`))].filter(Boolean))];
   return [
     `Task: ${run.task}`,
-    `Started at: ${run.startUrl}${siteOf(run.startUrl) ? ` (the site the task names: ${siteOf(run.startUrl)})` : ""}`,
+    `Started at: ${run.startUrl}${named.length > 1 ? ` (the sites the task names: ${named.join(", ")})` : named.length ? ` (the site the task names: ${named[0]})` : ""}`,
+    run.expect ? `What the task's author says a right result holds (a guide to the key points, not evidence: the run must still show it): ${run.expect}` : "",
     "",
     `Actions taken (${(run.history || []).length}):`,
     actions || "(none)",
@@ -188,7 +191,7 @@ function parseVerdict(text) {
 }
 
 /** A run that says nothing about the agent: the browser, the provider or the judge failed. */
-const isInfra = (r) => !!r.judgeFailed || /^(harness error|provider unavailable|provider limit)/.test(String(r.ending || ""));
+const isInfra = (r) => !!r.judgeFailed || /^(harness error|provider unavailable|provider limit|spend cap reached)/.test(String(r.ending || ""));
 
 /**
  * Summary of a benchmark: rows are {id, run, success, steps, seconds,
@@ -287,6 +290,16 @@ function normaliseTasks(list) {
     task: String(t.task || t.confirmed_task || "").trim(),
     url: String(t.url || t.website || "").trim(),
     level: String(t.level || "").trim(),
+    // Optional, for task files written by hand (everyday-tasks.json): what a
+    // right result holds, a pattern the answer should match, the other sites
+    // a task names, its language, and the scripted scenario of a fixture task.
+    ...(t.expect ? { expect: String(t.expect) } : {}),
+    ...(t.pattern ? { pattern: String(t.pattern) } : {}),
+    ...(Array.isArray(t.sites) && t.sites.length ? { sites: t.sites.map(String) } : {}),
+    ...(t.lang ? { lang: String(t.lang) } : {}),
+    ...(t.scenario ? { scenario: String(t.scenario) } : {}),
+    ...(t.dry ? { dry: String(t.dry) } : {}),
+    ...(t.dryHeld ? { dryHeld: Number(t.dryHeld) } : {}),
   })).filter((t) => t.task && /^https?:\/\//.test(t.url));
 }
 

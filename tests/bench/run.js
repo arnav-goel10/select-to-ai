@@ -65,6 +65,20 @@
  *                      Prints pass, steps and seconds for A against B, and
  *                      what was known and shown at the start of B. Unset,
  *                      learning is off and every run stands alone.
+ *   BENCH_DEBUGGER     "on" adds the debugger permission to the loaded copy,
+ *                      so the agent presses and types with real input events
+ *                      (4.0 ships without it); "off" tells the engine not to
+ *                      use it. Unset, the build runs as it is.
+ *   BENCH_MAX_USD      stop when the model spend of this process (the agent's
+ *                      runs and the judge's calls, at the list prices in
+ *                      defaults.js) reaches this many US dollars. Each run is
+ *                      also given what is left as its own cost budget, so no
+ *                      single run can pass the cap.
+ *   BENCH_DRY          1 runs without any key: the model is the scripted one
+ *                      in tests/e2e/server.js, the pages are its fixtures
+ *                      (tests/bench/fixture-tasks.json), and the task's
+ *                      pattern stands in for the judge. Proves the plumbing,
+ *                      says nothing about the agent.
  */
 "use strict";
 
@@ -74,6 +88,7 @@ const J = require("./judge.js");
 const { summarise, normaliseTasks, sampleTasks, isInfra } = J;
 const { judgeConfig, judgeRun } = require("./judge-call.js");
 const BENCH_PROFILE_LIB = require("./profile.js");
+const TRIAL = require("./trial.js");
 
 // BENCH_EXTENSION runs another build of the extension (an older commit's
 // checkout) under this same harness, for before-and-after comparisons.
@@ -81,12 +96,17 @@ const EXT = process.env.BENCH_EXTENSION ? path.resolve(process.env.BENCH_EXTENSI
 // BENCH_PROFILE: the owner's ChatGPT plan, from a profile he signed in to (profile.js).
 let CHATGPT = null;
 try { CHATGPT = BENCH_PROFILE_LIB.profileEnv(process.env); } catch (e) { console.error(e.message); process.exit(1); }
-const PROVIDER = CHATGPT ? CHATGPT.provider : process.env.BENCH_PROVIDER || "openrouter";
-const MODEL = CHATGPT ? CHATGPT.model : process.env.BENCH_MODEL || "openrouter/free";
-const HELPER_MODEL = CHATGPT ? CHATGPT.helperModel : process.env.BENCH_HELPER_MODEL || "";
-const KEY = process.env.BENCH_API_KEY || "";
-const JUDGE = judgeConfig();
-const CUSTOM_URL = process.env.BENCH_CUSTOM_URL || "";
+// BENCH_DRY: the scripted model and its fixture pages, no key and no judge.
+const DRY = process.env.BENCH_DRY === "1" && !CHATGPT;
+const DRY_BASE = DRY ? `http://127.0.0.1:${TRIAL.DRY_PORT}` : "";
+const PROVIDER = DRY ? "custom" : CHATGPT ? CHATGPT.provider : process.env.BENCH_PROVIDER || "openrouter";
+const MODEL = DRY ? "e2e-scripted-model" : CHATGPT ? CHATGPT.model : process.env.BENCH_MODEL || "openrouter/free";
+const HELPER_MODEL = DRY ? "" : CHATGPT ? CHATGPT.helperModel : process.env.BENCH_HELPER_MODEL || "";
+const KEY = DRY ? "" : process.env.BENCH_API_KEY || "";
+const JUDGE = DRY ? { model: "none (the task's pattern)", vision: false, shots: 0, url: "" } : judgeConfig();
+const CUSTOM_URL = DRY ? `${DRY_BASE}/v1` : process.env.BENCH_CUSTOM_URL || "";
+const DEBUGGER = process.env.BENCH_DEBUGGER || "";
+const MAX_USD = Math.max(0, parseFloat(process.env.BENCH_MAX_USD || "0") || 0);
 const RUNS = Math.max(1, parseInt(process.env.BENCH_RUNS || "1", 10));
 const TIMEOUT_MS = Math.max(30, parseInt(process.env.BENCH_TIMEOUT_S || "300", 10)) * 1000;
 const ALLOW = new Set((process.env.BENCH_ALLOW || "site,address").split(",").map((s) => s.trim()).filter(Boolean));
@@ -128,6 +148,11 @@ async function tabIdOf(browser, extensionId, agentPage, url) {
 
 async function runTask(browser, extensionId, task, runIndex, dir) {
   fs.mkdirSync(dir, { recursive: true });
+  // Dry mode: the scripted model plays this task's scenario.
+  if (DRY) {
+    const set = await fetch(`${DRY_BASE}/control/scenario`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: task.scenario }) }).then((r) => r.json());
+    if (set.error || !set.task) throw new Error(`fixture task ${task.id}: scenario "${task.scenario}" is not in tests/e2e/server.js`);
+  }
   // One ordinary tab, as when a person opens the agent on the page they are
   // looking at: the browser's first tab is reused, and no blank tab is left
   // beside it for the agent to mistake for the current one.
@@ -220,7 +245,9 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
   const answer = J.finalAnswer(trace, shown);
   const log = await agentPage.evaluate(() => [...document.querySelectorAll(".log-item")].map((i) => i.textContent).join("\n")).catch(() => "");
   if (ending === "timed out") await agentPage.evaluate(() => { const b = document.getElementById("actionBtn"); if (b.classList.contains("stop-btn")) b.click(); }).catch(() => {});
-  if (trace && trace.waitingForUser && trace.waitKind === "pause") ending = "provider limit (paused, still waiting at the timeout)";
+  // BENCH_MAX_USD: the run's own budget was what was left under the cap.
+  if (MAX_USD && trace && trace.stopState === "error" && /^Cost budget reached/.test(answer)) ending = "spend cap reached";
+  else if (trace && trace.waitingForUser && trace.waitKind === "pause") ending = "provider limit (paused, still waiting at the timeout)";
   else if (trace && trace.waitingForUser) ending = "asked the user";
   else if (/aborted by user safety confirmation/i.test(answer)) ending = `stopped at a confirmation (${(held.find((h) => !h.allowed) || {}).kind || "refused"})`;
   else if (/I ran out of steps/i.test(answer)) ending = "ran out of steps";
@@ -241,10 +268,15 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
   const run = {
     id: task.id,
     level: task.level,
+    family: task.level,
     run: runIndex,
     task: task.task,
     startUrl: task.url,
+    ...(task.expect ? { expect: task.expect } : {}),
+    ...(task.sites ? { sites: task.sites } : {}),
     ending,
+    // What the run was waiting on the user for when it ended (a human check, a sign-in, a question), or "".
+    waitKind: trace && trace.waitingForUser ? trace.waitKind || "" : "",
     answer,
     history: trace ? trace.history : [],
     steps: trace ? trace.steps : 0,
@@ -281,10 +313,10 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
 }
 
 (async () => {
-  if (!KEY && !CHATGPT) { console.error("Set BENCH_API_KEY."); process.exit(1); }
+  if (!KEY && !CHATGPT && !DRY) { console.error("Set BENCH_API_KEY."); process.exit(1); }
   const profileMeta = CHATGPT ? BENCH_PROFILE_LIB.readMeta(CHATGPT.profile) : null;
   if (CHATGPT && !profileMeta) { console.error(`${CHATGPT.profile} is not a profile made by chatgpt-profile.js. ${BENCH_PROFILE_LIB.LOGIN_HINT}`); process.exit(1); }
-  const file = process.env.BENCH_TASKS || path.join(__dirname, "smoke-tasks.json");
+  const file = process.env.BENCH_TASKS || path.join(__dirname, DRY ? "fixture-tasks.json" : "smoke-tasks.json");
   let tasks = normaliseTasks(JSON.parse(fs.readFileSync(file, "utf8")));
   if (ONLY.length) tasks = tasks.filter((t) => ONLY.includes(t.id));
   tasks = sampleTasks(tasks, parseInt(process.env.BENCH_SAMPLE || "0", 10), parseInt(process.env.BENCH_SEED || "1", 10));
@@ -304,6 +336,8 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
   const manifestPath = path.join(loaded, "manifest.json");
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   manifest.host_permissions = [...new Set([...(manifest.host_permissions || []), "https://*/*", "http://*/*"])];
+  // BENCH_DEBUGGER=on: the same build with the one permission 4.0 leaves out.
+  if (DEBUGGER === "on") manifest.permissions = [...new Set([...(manifest.permissions || []), "debugger"])];
   // On a ChatGPT profile, the profile's key: the extension gets the id its sign-in is stored under.
   if (profileMeta) manifest.key = profileMeta.key;
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
@@ -311,7 +345,13 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
   const profileCopy = CHATGPT ? BENCH_PROFILE_LIB.copyProfile(CHATGPT.profile) : "";
 
   const puppeteer = require("puppeteer");
-  const { PROVIDER_ENDPOINTS } = require(path.join(EXT, "defaults.js"));
+  const { PROVIDER_ENDPOINTS, findModelRates } = require(path.join(EXT, "defaults.js"));
+  // Dry mode: the scripted model and the fixture pages, on this machine only.
+  const dryServer = DRY ? require("../e2e/server.js").createE2EServer(TRIAL.DRY_PORT) : null;
+  if (dryServer) await dryServer.listen();
+  // The user's yes to what the agent sends to its provider (setup.js consent): without it a run waits at the consent card.
+  const consentIds = [PROVIDER === "custom" ? `custom ${(() => { try { return new URL(CUSTOM_URL).origin; } catch (_e) { return ""; } })()}` : PROVIDER];
+  let debuggerAvailable = null;
   /** A browser with the extension loaded and set up for this benchmark. */
   const launch = async () => {
     const browser = await puppeteer.launch({
@@ -347,12 +387,15 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
       // except under BENCH_LEARN, which measures exactly that.
       agentLearning: !!LEARN,
       agentEngine: process.env.BENCH_ENGINE || "v4",
+      ...(DEBUGGER === "off" ? { agentDebuggerMode: "off" } : {}),
       // Switches for measuring one design choice against another.
       ...(process.env.BENCH_OBSERVE ? { agentObserve: process.env.BENCH_OBSERVE } : {}),
       ...(process.env.BENCH_PRESSABLES ? { agentPressables: process.env.BENCH_PRESSABLES } : {}),
     });
     // ChatGPT has no key: the profile's sign-in is used.
-    await worker.evaluate((e) => new Promise((r) => chrome.storage.local.set(e, r)), { onboardingComplete: true, ...(CHATGPT ? { agentProviderPause: null } : { [PROVIDER === "custom" ? "agentCustomKey" : PROVIDER_ENDPOINTS[PROVIDER].keyName]: KEY }) });
+    await worker.evaluate((e) => new Promise((r) => chrome.storage.local.set(e, r)), { onboardingComplete: true, agentDataConsent: Object.fromEntries(consentIds.map((id) => [id, Date.now()])), ...(CHATGPT ? { agentProviderPause: null } : { [PROVIDER === "custom" ? "agentCustomKey" : PROVIDER_ENDPOINTS[PROVIDER].keyName]: KEY }) });
+    // Whether this build can use real input events at all: false for the shipped 4.0 build.
+    debuggerAvailable = await worker.evaluate(() => typeof chrome.debugger !== "undefined").catch(() => null);
     return { browser, extensionId };
   };
 
@@ -485,6 +528,15 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
 
   let lostInARow = 0;
   let stoppedEarly = "";
+  // BENCH_MAX_USD: what this process has spent on models, the agent's and the judge's.
+  let spent = 0;
+  let capReached = false;
+  const spendOf = (row) => (row.costUSD || 0) + (row.judgeCostUSD || 0);
+  /** Gives the next run what is left under the cap as its own cost budget. */
+  const setRunBudget = async (left) => {
+    const worker = await BENCH_PROFILE_LIB.workerOf(session.browser, session.extensionId);
+    await worker.evaluate((v) => new Promise((r) => chrome.storage.sync.set({ agentCostBudget: v }, r)), left.toFixed(4));
+  };
   const lostRun = (task, r, why) => ({ id: task.id, level: task.level, run: r, task: task.task, startUrl: task.url, ending: `harness error: ${String(why).slice(0, 120)}`, answer: "", history: [], steps: 0, helperSteps: 0, seconds: 0, costUSD: 0, screenshots: [], held: [] });
   // BENCH_LEARN: pairs of runs in fresh browsers, instead of the loop below.
   if (LEARN) {
@@ -505,9 +557,13 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
         // the provider or the judge.
         if (fs.existsSync(saved)) {
           const prior = JSON.parse(fs.readFileSync(saved, "utf8"));
-          if (!isInfra(prior)) { rows.push({ ...prior, screenshots: prior.screenshots || [] }); console.log(`${prior.success ? "PASS" : "FAIL"}  ${task.id.padEnd(28)} run ${r}  (recorded earlier)  ${prior.ending}`); continue; }
+          if (!isInfra(prior)) { spent += spendOf(prior); rows.push({ ...prior, screenshots: prior.screenshots || [] }); console.log(`${prior.success ? "PASS" : "FAIL"}  ${task.id.padEnd(28)} run ${r}  (recorded earlier)  ${prior.ending}`); continue; }
         }
         let run;
+        if (MAX_USD) {
+          if (spent >= MAX_USD) { capReached = true; stoppedEarly = `the spend cap of $${MAX_USD.toFixed(2)} was reached ($${spent.toFixed(4)} spent); the remaining tasks were not started.`; break; }
+          await setRunBudget(MAX_USD - spent).catch(() => {});
+        }
         const notReady = await chatgptNotReady();
         if (notReady) { stoppedEarly = notReady; break; }
         for (let attempt = 0; attempt < 2; attempt++) {
@@ -520,8 +576,15 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
           session = await launch();
         }
         const lost = isInfra(run);
-        const verdict = lost ? { success: false, reason: "not judged: the run was lost before the agent could act" } : await judgeRun(run, JUDGE);
+        const verdict = lost ? { success: false, reason: "not judged: the run was lost before the agent could act" } : DRY ? TRIAL.patternVerdict(task, run) : await judgeRun(run, JUDGE);
         const row = { ...run, success: verdict.success, blocked: !!verdict.blocked, reason: verdict.reason, keyPoints: verdict.keyPoints, met: verdict.met, judgeFailed: !!verdict.judgeFailed, judgeReply: verdict.judgeReply, judgeUsage: verdict.judgeUsage };
+        // The task's own answer pattern beside the judge, what the judge cost, and what the run did by script or had held.
+        row.patternMatch = TRIAL.patternMatch(task, run.answer);
+        row.judgeCostUSD = TRIAL.judgeCostUSD(verdict.judgeUsage, findModelRates);
+        row.counters = TRIAL.countersOf(run);
+        row.failure = TRIAL.failureOf(row);
+        spent += spendOf(row);
+        if (row.ending === "spend cap reached") capReached = true;
         rows.push(row);
         fs.writeFileSync(saved, JSON.stringify({ ...row, pages: (row.pages || []).map((p) => ({ ...p, text: p.text.slice(0, 20000) })), screenshots: row.screenshots.map((s) => path.basename(s)) }, null, 2));
         if (!QUIET && row.problems && row.problems.length) console.log(`  [page errors] ${row.problems.slice(0, 3).join(" | ")}`);
@@ -538,6 +601,7 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
     await session.browser.close().catch(() => {});
     fs.rmSync(loaded, { recursive: true, force: true });
     if (profileCopy) fs.rmSync(profileCopy, { recursive: true, force: true });
+    if (dryServer) await dryServer.close().catch(() => {});
   }
 
   const s = summarise(rows);
@@ -553,6 +617,7 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
   if (s.lost) console.log(`${s.lost} run(s) were lost to the browser, the provider or the judge and are left out of the rate.`);
   if (s.blocked || s.lost) console.log(`Success with the ${s.blocked} blocked and ${s.lost} lost run(s) counted as failures: ${pct(s.successAllRuns)}.`);
   if (stoppedEarly) console.log(`Stopped early: ${stoppedEarly}`);
-  fs.writeFileSync(path.join(OUT, `results${SHARD ? `-${SHARD[1]}of${SHARD[2]}` : ""}.json`), JSON.stringify({ agent: { provider: PROVIDER, model: MODEL, helperModel: HELPER_MODEL || undefined, url: CUSTOM_URL || undefined, extension: EXT, profile: CHATGPT ? CHATGPT.profile : undefined }, judge: { model: JUDGE.model, url: JUDGE.url, vision: JUDGE.vision, shots: JUDGE.vision ? JUDGE.shots : 0 }, summary: s, stoppedEarly, rows: rows.map((r) => ({ ...r, finalText: undefined, pages: undefined, screenshots: (r.screenshots || []).length })) }, null, 2));
-  if (stoppedEarly) process.exitCode = 2;
+  fs.writeFileSync(path.join(OUT, `results${SHARD ? `-${SHARD[1]}of${SHARD[2]}` : ""}.json`), JSON.stringify({ agent: { provider: PROVIDER, model: MODEL, helperModel: HELPER_MODEL || undefined, url: CUSTOM_URL || undefined, extension: EXT, profile: CHATGPT ? CHATGPT.profile : undefined, debugger: DEBUGGER || "as built", debuggerAvailable }, judge: { model: JUDGE.model, url: JUDGE.url, vision: JUDGE.vision, shots: JUDGE.vision ? JUDGE.shots : 0 }, dry: DRY, spentUSD: spent, capUSD: MAX_USD, capReached, planned: tasks.map((t) => t.id), summary: s, stoppedEarly, rows: rows.map((r) => ({ ...r, finalText: undefined, pages: undefined, screenshots: (r.screenshots || []).length })) }, null, 2));
+  // The spend cap doing its job is not a failure of the run.
+  if (stoppedEarly && !capReached) process.exitCode = 2;
 })().catch((e) => { console.error(e); process.exit(1); });

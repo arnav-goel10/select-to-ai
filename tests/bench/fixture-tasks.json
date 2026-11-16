@@ -1,0 +1,8 @@
+[
+  { "id": "fx-search", "level": "fixture", "scenario": "search", "url": "http://127.0.0.1:8931/search", "task": "Use the site search to find the price of the Blue Widget and tell me what it costs.", "pattern": "\\$19", "dry": "passed" },
+  { "id": "fx-article", "level": "fixture", "scenario": "article", "url": "http://127.0.0.1:8931/article", "task": "When does the Brightwater Lighthouse open to visitors, according to this article?", "pattern": "9:30 to 16:45", "dry": "passed" },
+  { "id": "fx-compare", "level": "fixture", "scenario": "compare", "url": "http://127.0.0.1:8931/home", "task": "Compare the prices of Item A and Item B on this site and tell me which one is cheaper.", "pattern": "Item B[\\s\\S]*\\$18", "dry": "passed" },
+  { "id": "fx-find-quote", "level": "fixture", "scenario": "findQuote", "url": "http://127.0.0.1:8931/find-quote", "task": "How much is the garden hose?", "pattern": "24\\.99", "dry": "passed" },
+  { "id": "fx-human-check", "level": "fixture", "scenario": "humanCheck", "url": "http://127.0.0.1:8931/gate", "task": "How much is Item B?", "pattern": "\\$18", "dry": "blocked" },
+  { "id": "fx-signup-held", "level": "fixture", "scenario": "form", "url": "http://127.0.0.1:8931/signup", "task": "Fill the signup form with the name Ada Lovelace, email ada@example.com, company Analytical Engines Ltd and phone 555-0100, then submit it.", "pattern": "confirmed the signup", "dry": "failed|timed out", "dryHeld": 1 }
+]
