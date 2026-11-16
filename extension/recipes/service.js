@@ -109,6 +109,28 @@
     } catch (_) { return false; }
   }
 
+  const flat = (t) => String(t == null ? "" : t).replace(/\s+/g, " ").trim();
+
+  /**
+   * Whether the page reads differently after a recorded step than before
+   * it: another address, other words on the page, another announcement, or
+   * the box the step was in emptied or gone. A new line typed into a box
+   * changes none of these.
+   */
+  function changedAfter(entry) {
+    const b = (entry && entry.before) || {};
+    const a = (entry && entry.after) || {};
+    if (String(a.url || "") !== String(b.url || "")) return true;
+    if (flat(a.text) !== flat(b.text)) return true;
+    if (flat((a.notices || []).join(" ")) !== flat((b.notices || []).join(" "))) return true;
+    const el = entry && entry.el;
+    if (!el || entry.ref === undefined || entry.ref === null) return false;
+    const now = (a.elements || []).find((e) => e.ref === entry.ref);
+    if (!now) return true;
+    const holds = (e) => flat(e.value !== undefined ? e.value : e.text);
+    return holds(now) !== holds(el);
+  }
+
   /**
    * Whether a recorded press may have saved, sent or deleted something, for
    * a recording that cannot see requests. The shipped build has no
@@ -118,21 +140,40 @@
    *   - it is inside a search form;
    *   - it is on a field (a click there only focuses or opens it; a tick
    *     inside a form is committed by that form's own submit);
-   *   - it is a link that led to another address, which is a page load.
+   *   - it is a link the browser followed, to another address or to a
+   *     place on the same page.
    * Anything else, a script-driven Save, Apply or Remove button above all,
    * is recorded as a commit step: replayed as recorded, and stopped for the
    * user when the page around it has changed.
+   *
+   * Enter is the other way a script sends: in a message box or an editor
+   * that no form holds, or with nothing in focus that the recording knows.
+   * There Enter may also be only a new line, so it is a commit step when
+   * the page read differently afterwards (changedAfter), unless the box is
+   * one the page itself calls a search box.
    */
   function mayHaveWritten(entry) {
     const a = (entry && entry.action) || {};
     const el = entry && entry.el;
-    const pressed = a.do === "click" || (a.do === "press" && /^(enter| |space|spacebar)$/i.test(String(a.key || "")));
-    if (!pressed || !el) return false;
+    const key = a.do === "press" ? String(a.key || "") : "";
+    const enter = /^enter$/i.test(key);
+    if (!el) return enter && changedAfter(entry);
+    if (!(a.do === "click" || enter || /^( |space|spacebar)$/i.test(key))) return false;
     if (el.form && el.form.search) return false;
     const field = !!el.editable || el.tag === "textarea" || el.tag === "select" || (el.tag === "input" && !/^(button|submit|reset|image)$/.test(el.inputType || ""));
-    if (field) return CHECKS.has(el.kind) && !el.form;
-    const page = (u) => String(u || "").split("#")[0];
-    if (el.kind === "link" && /^https?:/i.test(el.href || "") && page(entry.after && entry.after.url) !== page(entry.before && entry.before.url)) return false;
+    if (field) {
+      if (CHECKS.has(el.kind)) return !el.form;
+      const typedIn = el.tag !== "select" && el.kind !== "searchbox" && el.inputType !== "search";
+      return enter && typedIn && !el.form && changedAfter(entry);
+    }
+    if (el.kind === "link" && /^https?:/i.test(el.href || "")) {
+      const page = (u) => String(u || "").split("#")[0];
+      const before = String((entry.before && entry.before.url) || "");
+      const after = String((entry.after && entry.after.url) || "");
+      if (page(after) !== page(before)) return false;
+      // The same page at the place the link names: the browser followed it there.
+      if (after !== before && after === el.href && /#./.test(el.href)) return false;
+    }
     return true;
   }
 
@@ -182,7 +223,9 @@
     const tabs = "it worked in more than one tab, and a recipe works in one";
     const why = a.do === "fill_details" ? details
       : a.do === "tabs" ? tabs
-        : !REPEATS.has(a.do) ? `it used ${a.do}, which a recipe cannot repeat`
+        : a.do === "click_at" ? "it pressed a spot on the page by where it was, not a control with a name, which a recipe cannot repeat"
+          : a.do === "delegate" ? "it handed part of the work to a helper run, which a recipe does not record"
+            : !REPEATS.has(a.do) ? `it used ${String(a.do).replace(/_/g, " ")}, which a recipe cannot repeat`
           : run.tabId !== r.tabId ? tabs
             : Number(a.ref) >= FRAME_BASE ? "it worked inside a frame of the page (a page within the page), where a recipe cannot reach"
               : a.from ? details : "";
@@ -501,7 +544,7 @@
     });
   }
 
-  const api = Object.freeze({ begin, around, end, saveable, canSave, saveRun, mayHaveWritten, runRecipe, summary, modelFrom, tierFor, install, load, _recordings: recordings });
+  const api = Object.freeze({ begin, around, end, saveable, canSave, saveRun, mayHaveWritten, changedAfter, runRecipe, summary, modelFrom, tierFor, install, load, _recordings: recordings });
   root.SELECT_TO_AI_RECIPES = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -19,6 +19,8 @@ const CONTROLS = {
   1: button({ name: "Apply" }),
   2: { tag: "a", kind: "link", name: "Orders", href: "https://app.example/orders", form: null, submits: false },
   3: { tag: "input", kind: "textbox", inputType: "text", name: "Quantity", form: { search: false, fields: 2 }, submits: false },
+  // A message box no form holds: Enter in it sends, by a script.
+  4: { ref: "e4", tag: "input", kind: "textbox", inputType: "text", name: "Message", value: "hello there", form: null, submits: false },
 };
 
 /** service.js over a stand-in recorder and driver; `sees` is whether requests are seen (the debugger build). */
@@ -29,8 +31,10 @@ function load({ sees }) {
       const el = target ? CONTROLS[target.agentId] : null;
       const r = await this.driver.act(action);
       if (r.ok === false) throw new Error(`record: ${action.do} failed: ${r.error}`);
-      const after = action.do === "navigate" ? action.url : el && el.kind === "link" ? el.href : PAGE;
-      this.tape.push({ action, el, before: snap(PAGE), after: snap(after), requests: r.requests || [], declaredClass: opts && opts.class });
+      const after = snap(action.do === "navigate" ? action.url : el && el.kind === "link" ? el.href : PAGE);
+      // Enter in the message box sends: the message joins the page and the box empties.
+      if (action.do === "press" && el && el.name === "Message") { after.text = "You: hello there"; after.elements = [{ ...el, value: "" }]; }
+      this.tape.push({ action, el, ref: el ? el.ref : null, before: snap(PAGE), after, requests: r.requests || [], declaredClass: opts && opts.class });
       return r;
     }
     goto(url) { return this._do({ do: "navigate", url }, null); }
@@ -85,11 +89,80 @@ test("without a view of requests, a press that may have written is a commit step
   assert.equal(yes({ tag: "a", kind: "link", href: "https://app.example/orders", form: null }, { do: "click" }, "https://app.example/orders"), false, "a link that led to its page");
   assert.equal(yes(button({ form: { search: true, fields: 1 } })), false, "a search form");
   assert.equal(yes({ tag: "input", kind: "textbox", inputType: "text", form: null }), false, "a click into a box");
-  assert.equal(yes({ tag: "input", kind: "textbox", inputType: "text", form: null }, { do: "press", key: "Enter" }), false, "Enter in a box is judged by its form");
+  assert.equal(yes({ tag: "input", kind: "textbox", inputType: "text", form: null }, { do: "press", key: "Enter" }), false, "Enter in a box that changed nothing");
   assert.equal(yes({ tag: "input", kind: "checkbox", inputType: "checkbox", form: { search: false, fields: 2 } }), false, "a tick inside a form waits for its submit");
   assert.equal(yes({ tag: "select", kind: "combobox", form: null }), false);
   assert.equal(yes(button(), { do: "hover" }), false);
   assert.equal(yes(button(), { do: "fill", value: "x" }), false);
+});
+
+test("without a view of requests, Enter in a box or editor outside a form is a commit step when the page read differently afterwards", () => {
+  const RECIPES = load({ sees: false });
+  const box = (more) => ({ ref: "e7", tag: "input", kind: "textbox", inputType: "text", name: "Message", value: "hello there", form: null, ...more });
+  const editor = (more) => ({ ref: "e7", tag: "div", kind: "textbox", editable: true, name: "Comment", text: "looks good", form: null, ...more });
+  const page = (text, el, more) => ({ url: PAGE, title: "", outline: [], notices: [], text, elements: el ? [el] : [], ...more });
+  const enter = (el, before, after, key = "Enter") => RECIPES.mayHaveWritten({ action: { do: "press", key }, el, ref: el ? el.ref : null, before, after });
+  // A chat send: the message joins the thread and the box empties.
+  assert.equal(enter(box(), page("Ana: hi", box()), page("Ana: hi You: hello there", box({ value: "" }))), true, "a message sent with Enter");
+  // The thread reads the same once spaces are set aside, but the box emptied.
+  assert.equal(enter(editor(), page("Thread looks good", editor()), page("Thread\nlooks good", editor({ text: "" }))), true, "an editor that emptied");
+  assert.equal(enter(editor(), page("Post", editor()), page("Post", null)), true, "the box is gone");
+  assert.equal(enter(box(), page("Ana: hi", box()), page("Ana: hi", box(), { notices: ["Saved"] })), true, "the page announced something");
+  assert.equal(enter(box(), page("Ana: hi", box()), page("Ana: hi", box(), { url: "https://app.example/items/42" })), true, "another address");
+  // Enter with nothing the recording knows in focus.
+  assert.equal(enter(null, page("3 items"), page("2 items")), true, "Enter with no target, after which the page changed");
+  assert.equal(enter(null, page("3 items"), page("3 items")), false, "Enter with no target that changed nothing");
+  assert.equal(enter(null, page("3 items"), page("2 items"), " "), false, "Space with no target scrolls");
+  // Only a new line: the words on the page and in the box are the same.
+  assert.equal(enter(editor(), page("Thread looks good", editor()), page("Thread looks good\n", editor({ text: "looks good\n" }))), false, "a new line in an editor");
+  assert.equal(enter({ ...box(), tag: "textarea" }, page("Notes", box()), page("Notes", box({ value: "hello there\n" }))), false, "a new line in a text area");
+  // A box the page itself calls a search box, and a list, are not sends.
+  assert.equal(enter(box({ kind: "searchbox", inputType: "search" }), page("All items", box()), page("1 item", box())), false, "a search box");
+  assert.equal(enter(box({ kind: "searchbox" }), page("All items", box()), page("1 item", box())), false, "a box with the search role");
+  assert.equal(enter({ ref: "e7", tag: "select", kind: "combobox", form: null }, page("a"), page("b")), false);
+  assert.equal(enter(box(), page("Ana: hi", box()), page("Ana: hi You: hello there", box({ value: "" })), "a"), false, "a letter typed is not a press");
+  // Inside a form, Enter is the form's own submit, which the core classes.
+  assert.equal(enter(box({ form: { search: false, fields: 2 } }), page("a", box()), page("b", box())), false);
+  assert.equal(CORE.classOf({ action: { do: "press", key: "Enter" }, el: box({ form: { search: false, fields: 2 } }), requests: [] }), "commit");
+});
+
+test("a link the browser followed to a place on the same page is not a commit step; one that went nowhere is", () => {
+  const RECIPES = load({ sees: false });
+  const link = (href) => ({ tag: "a", kind: "link", href, form: null });
+  const went = (href, after) => RECIPES.mayHaveWritten({ action: { do: "click" }, el: link(href), before: snap(PAGE), after: snap(after) });
+  assert.equal(went(`${PAGE}#returns`, `${PAGE}#returns`), false, "a link to a section of the page");
+  assert.equal(went(`${PAGE}#`, `${PAGE}#`), true, "an empty fragment is a script's button");
+  assert.equal(went(`${PAGE}#returns`, PAGE), true, "the address did not follow the link");
+  assert.equal(went("https://app.example/orders", PAGE), true, "a link to another page that stayed here");
+});
+
+test("a recorded Enter that sent a message is a commit step on a build that sees no requests", async () => {
+  const blind = load({ sees: false });
+  const a = agentRun(blind, fakeChrome());
+  await a.act({ do: "fill", ref: 4, value: "hello there" });
+  await a.act({ do: "press", ref: 4, key: "Enter" });
+  await a.act({ do: "press", key: "Enter" });
+  assert.deepEqual(classes(blind, a.run.id), ["navigate:read", "fill:edit", "press:commit", "press:read"]);
+  const seeing = load({ sees: true });
+  const b = agentRun(seeing, fakeChrome());
+  await b.act({ do: "press", ref: 4, key: "Enter" });
+  assert.deepEqual(classes(seeing, b.run.id), ["navigate:read", "press:read"]);
+});
+
+test("the reason a run cannot be saved is in plain words for every action a recipe cannot repeat", async () => {
+  const chrome = fakeChrome();
+  const RECIPES = load({ sees: false });
+  const why = async (action) => {
+    const a = agentRun(RECIPES, chrome);
+    await a.act({ do: "click", ref: 1 });
+    await a.act(action);
+    a.finish();
+    return (await RECIPES.canSave(chrome, a.run.id)).why;
+  };
+  assert.match(await why({ do: "click_at", x: 10, y: 20 }), /pressed a spot on the page by where it was/);
+  assert.match(await why({ do: "delegate", task: "look it up" }), /handed part of the work to a helper run/);
+  assert.equal(await why({ do: "drag", ref: 1, to_ref: 3 }), "it used drag, which a recipe cannot repeat");
+  for (const action of [{ do: "click_at" }, { do: "delegate" }, { do: "some_new_action" }]) assert.doesNotMatch(await why(action), /_/, "no action name with an underscore reaches the user");
 });
 
 test("a recorded press on a script-driven button is a commit step on a build that sees no requests, and only there", async () => {
