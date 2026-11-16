@@ -289,3 +289,74 @@ test("a link is judged by where it goes, a script link by what it says", () => {
   assert.equal(T.actionRisk({ action: "click", id: 1 }, page(link("Delete account", "#"))).kind, "delete", "a script link acts like a button");
   assert.equal(T.actionRisk({ action: "click", id: 1 }, page(link("Pay now", "/orders/12", { role: "button" }))).kind, "pay");
 });
+
+// ---------------------------------------------------------------------------
+// Sending, leaving and moving: the holds added for 4.0, each with the
+// ordinary step it must leave free.
+// ---------------------------------------------------------------------------
+const POLICY = require("../../extension/core/policy.js");
+const KNOWN = require("../../extension/core/memory.js");
+
+const chat = (box, url) => ({ url: url || "https://chat.example/c/general", innerText: "General channel", elements: [box], forms: [] });
+const enterIn = (box, url) => T.actionRisk({ action: "keypress", id: box.id, text: "Enter" }, chat(box, url));
+
+test("Enter in a message box with no form is an unsure send, settled by the page-blind check", () => {
+  const boxes = [
+    { id: 4, tagName: "textarea", accName: "Message #general", value: "" },
+    { id: 4, tagName: "div", isContentEditable: true, accName: "Type a message" },
+    { id: 4, tagName: "div", role: "textbox", accName: "Write a comment" },
+  ];
+  for (const box of boxes) {
+    const r = enterIn(box);
+    assert.ok(r, `${box.accName} is held`);
+    assert.equal(r.kind, "send", box.accName);
+    assert.ok(r.unsure, `${box.accName} is unsure, so a second opinion decides`);
+    assert.equal(r.unsure.host, "chat.example");
+    assert.equal(r.unsure.box, box.accName);
+    assert.equal(r.unsure.button, "");
+    assert.equal(r.unsure.to, "");
+    assert.equal(r.unsure.key, `chat.example|${box.accName}`);
+  }
+  // On a payment page the box is held as a payment, as before.
+  assert.equal(enterIn(boxes[0], "https://shop.example/checkout/review").kind, "pay");
+});
+
+test("Enter in a plain input, a search box or a search region with no form stays free", () => {
+  assert.equal(enterIn({ id: 4, tagName: "input", inputType: "text", accName: "Filter results" }), null);
+  assert.equal(enterIn({ id: 4, tagName: "input", inputType: "search", accName: "Search" }), null);
+  assert.equal(enterIn({ id: 4, tagName: "div", isContentEditable: true, role: "searchbox", accName: "Search messages" }), null);
+  assert.equal(enterIn({ id: 4, tagName: "textarea", role: "combobox", accName: "Search" }), null);
+  assert.equal(T.isMessageBox({ tagName: "input", inputType: "text" }), false);
+  assert.equal(T.isMessageBox({ tagName: "textarea" }), true);
+});
+
+test("a formless message box is asked about first; a multi-line note box the check calls a lookup goes through", () => {
+  const run = { task: "post 'standup at 10' in general", trust: { sites: ["chat.example"], urls: [] }, openedTabs: [], typed: { 4: "standup at 10" } };
+  const message = chat({ id: 4, tagName: "textarea", accName: "Message #general" });
+  const first = POLICY.decide({ do: "press", ref: 4, key: "Enter" }, message, run, {});
+  assert.equal(first.verdict, "confirm");
+  assert.equal(first.check.kind, "form");
+  assert.equal(first.check.key, "form|chat.example|Message #general");
+  assert.equal(first.check.text, "standup at 10", "the check is shown what the agent typed");
+  assert.equal(T.opinionMessages(first.check).user.includes("none named; Enter is pressed in the box"), true);
+  // The check says it posts for other people: the user approves it.
+  const sent = POLICY.decide({ do: "press", ref: 4, key: "Enter" }, message, { ...run, opinions: { [first.check.key]: { sends: true, why: "a chat message" } } }, {});
+  assert.equal(sent.verdict, "confirm");
+  assert.equal(sent.kind, "send");
+  // A notes box where Enter only adds a line: the check says it sends nothing to people, so nothing is held.
+  const notes = chat({ id: 4, tagName: "textarea", accName: "Notes" }, "https://notes.example/today");
+  const asked = POLICY.decide({ do: "press", ref: 4, key: "Enter" }, notes, { ...run, trust: { sites: ["notes.example"], urls: [] } }, {});
+  const freed = POLICY.decide({ do: "press", ref: 4, key: "Enter" }, notes, { ...run, trust: { sites: ["notes.example"], urls: [] }, opinions: { [asked.check.key]: { sends: false, why: "a private note" } } }, {});
+  assert.equal(freed.verdict, "allow");
+  // Typing into the box is not the send, and is not held on the task's own site.
+  assert.equal(POLICY.decide({ do: "fill", ref: 4, value: "standup at 10" }, message, run, {}).verdict, "allow");
+});
+
+test("'write it but don't send' refuses Enter in a formless message box, and leaves a formless search alone", () => {
+  const run = { task: "draft a reply to Sam but don't send it", trust: { sites: ["chat.example"], urls: [] }, openedTabs: [] };
+  const v = POLICY.decide({ do: "press", ref: 4, key: "Enter" }, chat({ id: 4, tagName: "div", isContentEditable: true, accName: "Message Sam" }), run, {});
+  assert.equal(v.verdict, "refuse");
+  assert.match(v.message, /Enter was not pressed/);
+  const search = POLICY.decide({ do: "press", ref: 4, key: "Enter" }, chat({ id: 4, tagName: "input", inputType: "text", accName: "Search messages" }), run, {});
+  assert.equal(search.verdict, "allow");
+});

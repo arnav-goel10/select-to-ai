@@ -331,7 +331,9 @@
     const form = el.formId !== undefined ? ((page && page.forms) || []).find((f) => f.id === el.formId) : null;
     if (form && form.search) return null;
     const clicks = (a.do === "click" || (a.do === "press" && pressesControl(el, a.key))) && !!TOOLS.guardNoSubmit({ action: "click", id: el.id }, requestOf(run), page);
-    const enters = a.do === "press" && !pressesControl(el, a.key) && ENTER_KEY.test(String(a.key || "")) && !!form && form.fields > 0;
+    // Enter in a message box with no form sends it as surely as in a form.
+    const enters = a.do === "press" && !pressesControl(el, a.key) && ENTER_KEY.test(String(a.key || ""))
+      && ((!!form && form.fields > 0) || (!form && TOOLS.isMessageBox(el)));
     if (!clicks && !enters) return null;
     const what = clicks ? `"${TOOLS.elementLabel(el) || "that button"}"` : "Enter";
     return { verdict: "refuse", message: `The user asked for this to be filled in but not sent, so ${what} was not pressed: it would submit the form. Finish now and tell the user it is ready for them to check and send.` };

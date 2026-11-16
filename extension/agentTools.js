@@ -1230,6 +1230,19 @@
     return CHOICE_ROLES[String(el.role || "").toLowerCase()] || null;
   }
 
+  /**
+   * A box people write messages in: a textarea, an editable region or a
+   * control with the textbox role. A search box is not one, whatever its
+   * shape: its type or role says it searches.
+   */
+  function isMessageBox(el) {
+    if (!el || el.sensitive) return false;
+    const tag = String(el.tagName || "").toLowerCase();
+    const role = String(el.role || "").toLowerCase();
+    if (String(el.inputType || "").toLowerCase() === "search" || role === "searchbox" || role === "combobox") return false;
+    return tag === "textarea" || el.isContentEditable === true || role === "textbox";
+  }
+
   function labelRisk(el) {
     const label = [el.accName, el.text, el.label, el.value, el.title].filter(Boolean).join(" ");
     if (!label || RISK_LABEL_HARMLESS.test(label)) return null;
@@ -1355,6 +1368,15 @@
       };
       return r;
     };
+    // The same for a message box that has no form: no action, no button.
+    const formlessSend = (box) => {
+      const r = risk("send", box);
+      let host = "";
+      try { host = new URL(String((page && page.url) || "")).hostname; } catch (_e) { /* no address */ }
+      const boxName = clip(box.accName || box.label || box.placeholder || box.title || box.name || box.htmlId || "", 70);
+      r.unsure = { host, to: "", box: boxName, button: "", boxRef: box.id, text: clip(box.value || "", 300), key: `${host}|${boxName}` };
+      return r;
+    };
 
     if (["click", "double_click"].includes(action.action) && el) {
       // A link to another page is judged by where it goes: "Subscribe to
@@ -1394,6 +1416,12 @@
           if (buttons.some((c) => labelRisk(c))) return risk("send", el);
           return { ...unsureSend(form, buttons[0], el), target: elementLabel(el) };
         }
+        // A message box with no form around it: chat and comment boxes send
+        // on Enter by script, so the page's structure cannot tell a message
+        // from a note. It is an unsure send, settled by the same page-blind
+        // check as a form of one box. A plain text input stays free, since
+        // most formless inputs are searches and filters.
+        if (!form && isMessageBox(el) && !RISK_URL.test(String((page && page.url) || ""))) return formlessSend(el);
       }
       return RISK_URL.test(String((page && page.url) || "")) ? risk("pay", el) : null;
     }
@@ -1663,6 +1691,7 @@
     sitesNamedIn,
     knownSiteUrl,
     addressOrigin,
+    isMessageBox,
     startPageKind,
     searchOfRequest,
     carriesDetail,
