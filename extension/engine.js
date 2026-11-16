@@ -409,7 +409,7 @@
     if (fx.type === "observe") observe(session, fx, back).catch((e) => back({ type: "model_failed", kind: "page", message: `The page could not be read: ${e && e.message ? e.message : e}` })).finally(() => timed("observe"));
     else if (fx.type === "model") model(session, fx, back).finally(() => timed("model"));
     else if (fx.type === "act") toFront(session, fx.action).then(() => (RECIPES ? RECIPES.around(session, fx.action, () => act(session, fx.action)) : act(session, fx.action))).then(settledFor).then(pointed).then((result) => lookAgain(session, result, back)).then((result) => back({ type: "acted", result }), (e) => back({ type: "acted", result: { ok: false, message: String((e && e.message) || e) } })).finally(() => timed("act"));
-    else if (fx.type === "attention") attention(rootOf(session), fx.wait).catch((e) => console.error("Select to AI attention:", e));
+    else if (fx.type === "attention") attention(rootOf(session), fx.wait, !!fx.again).catch((e) => console.error("Select to AI attention:", e));
     else if (fx.type === "memory") changeMemory(fx).catch((e) => console.error("Select to AI memory:", e));
     else if (fx.type === "end") finished(session);
   }
@@ -1178,7 +1178,13 @@
     quiet(chrome.alarms.create(RESUME(session.windowId, wait.id), { when: wait.until }));
   }
 
-  async function attention(session, wait) {
+  /**
+   * The run waits: the page, the badge and, where the user is not looking,
+   * a notice tell them. `again` is the same wait brought back after the
+   * worker restarted: the user was told already, and its one reminder alarm
+   * outlives the worker, so only the watch and the badge are put back.
+   */
+  async function attention(session, wait, again) {
     keepAwake();
     // Nothing for the user to do: the run carries on by itself when the time is up.
     if (wait.kind === "pause") { session.attending.set(wait.id, wait); wakeAt(session, wait); return; }
@@ -1187,11 +1193,12 @@
     session.attending.set(wait.id, wait);
     if (watched) await watchPage(wait);
     // What is asked on the agent's page takes the user back there (core/view.js).
-    await settleView(session, wait.kind).catch((e) => console.error("Select to AI view:", e));
+    if (!again) await settleView(session, wait.kind).catch((e) => console.error("Select to AI view:", e));
     const badge = watched ? { tabId } : {};
     quiet(chrome.action.setBadgeText({ ...badge, text: "!" }));
     quiet(chrome.action.setBadgeBackgroundColor({ ...badge, color: "#c2410c" }));
     quiet(chrome.action.setTitle({ ...badge, title: `Select to AI needs you: ${String(wait.question || "").slice(0, 80)}` }));
+    if (again) return;
 
     // Where the user is decides how loudly they are told.
     const tab = tabId !== null && tabId !== undefined ? await quiet(chrome.tabs.get(tabId)) : null;
