@@ -8,7 +8,13 @@
  * (driver.js). The action itself is the agent's own: the recorder is handed
  * it to run, so the agent's run does not change. A run that did something a
  * recipe cannot repeat (another tab, a frame, a drag, the user's saved
- * details) is marked as not saveable, with why.
+ * details) is marked as not saveable, with why. Where the requests a press
+ * sent cannot be seen (no debugger), a press that may have saved, sent or
+ * deleted something is recorded as a commit step (mayHaveWritten).
+ *
+ * When a run ends, what can be saved of it (the compiled recipe, or why
+ * there is none) is kept in session storage, so "Save as recipe" still
+ * works, or still says why not, after the service worker restarted.
  *
  * Replay: a saved recipe runs in a tab of its own with no model call; a
  * changed page is repaired under the step's contract with the user's
@@ -35,8 +41,14 @@
   const LOOKS = new Set(["scroll", "wait", "look", "read", "find", "recall", "remember"]);
   const REPEATS = new Set(["click", "fill", "press", "hover", "navigate", "back"]);
   const COMMIT_KINDS = new Set(["pay", "send", "delete"]);
+  const CHECKS = new Set(["checkbox", "radio", "switch", "menuitemcheckbox", "menuitemradio"]);
+  // What can be saved of the last few ended runs, in session storage.
+  const DRAFTS = "recipeDrafts";
+  const GONE = "its recording is no longer kept (the browser or the extension restarted before the run ended, or newer runs took its place)";
+  const SAVED = "it is already saved as a recipe";
 
   const recordings = new Map(); // runId -> recording
+  let host = null; // the chrome object, for a run that ends with no recording
   const running = new Map(); // tabId -> {recipeId, stop}
   const isWeb = (url) => /^https?:/.test(url || "");
   const clip = (t, n) => { const v = String(t == null ? "" : t).replace(/\s+/g, " ").trim(); return v.length > n ? `${v.slice(0, n - 1)}…` : v; };
@@ -47,6 +59,7 @@
   /** A recording for a run that is starting in a tab. */
   function begin(run, chrome) {
     if (!CORE || !DRIVER || !run || !run.id) return;
+    host = chrome;
     const r = {
       runId: run.id, task: run.task || "", tabId: run.tabId, chrome,
       broken: "", steps: 0, started: false, pending: null, ended: null, at: Date.now(),
@@ -56,6 +69,7 @@
     const base = r.network ? DRIVER.createDriver({ chrome, tabId: r.tabId, network: r.network }) : null;
     // The recorder's driver: everything as the extension driver does it, but
     // the action is the one the agent is carrying out.
+    r.sees = !!(r.network && r.network.sees);
     r.driver = base && {
       ...base,
       act: async () => {
@@ -93,6 +107,33 @@
       // A button whose effect its words do not make plain is held as a commit.
       return !!TOOLS.pressCheckOf(risky, page);
     } catch (_) { return false; }
+  }
+
+  /**
+   * Whether a recorded press may have saved, sent or deleted something, for
+   * a recording that cannot see requests. The shipped build has no
+   * debugger, so "it sent no write" is not something it ever observed; a
+   * press is then taken to have written unless the recording itself shows
+   * otherwise:
+   *   - it is inside a search form;
+   *   - it is on a field (a click there only focuses or opens it; a tick
+   *     inside a form is committed by that form's own submit);
+   *   - it is a link that led to another address, which is a page load.
+   * Anything else, a script-driven Save, Apply or Remove button above all,
+   * is recorded as a commit step: replayed as recorded, and stopped for the
+   * user when the page around it has changed.
+   */
+  function mayHaveWritten(entry) {
+    const a = (entry && entry.action) || {};
+    const el = entry && entry.el;
+    const pressed = a.do === "click" || (a.do === "press" && /^(enter| |space|spacebar)$/i.test(String(a.key || "")));
+    if (!pressed || !el) return false;
+    if (el.form && el.form.search) return false;
+    const field = !!el.editable || el.tag === "textarea" || el.tag === "select" || (el.tag === "input" && !/^(button|submit|reset|image)$/.test(el.inputType || ""));
+    if (field) return CHECKS.has(el.kind) && !el.form;
+    const page = (u) => String(u || "").split("#")[0];
+    if (el.kind === "link" && /^https?:/i.test(el.href || "") && page(entry.after && entry.after.url) !== page(entry.before && entry.before.url)) return false;
+    return true;
   }
 
   function labelOf(a, page) {
@@ -137,10 +178,14 @@
     const r = run && !session.parent ? recordings.get(run.id) : null;
     if (!r || r.broken || !r.rec || !a) return perform();
     if (LOOKS.has(a.do)) return perform();
-    const why = !REPEATS.has(a.do) ? `it used ${a.do}, which a recipe cannot repeat`
-      : run.tabId !== r.tabId ? "it worked in more than one tab"
-        : Number(a.ref) >= FRAME_BASE ? "it acted inside a frame of the page"
-          : a.from ? "it filled in your saved details, which a recipe does not keep" : "";
+    const details = "it filled in your saved details, which a recipe does not keep";
+    const tabs = "it worked in more than one tab, and a recipe works in one";
+    const why = a.do === "fill_details" ? details
+      : a.do === "tabs" ? tabs
+        : !REPEATS.has(a.do) ? `it used ${a.do}, which a recipe cannot repeat`
+          : run.tabId !== r.tabId ? tabs
+            : Number(a.ref) >= FRAME_BASE ? "it worked inside a frame of the page (a page within the page), where a recipe cannot reach"
+              : a.from ? details : "";
     if (why) { r.broken = why; return perform(); }
     let result;
     let acted = false;
@@ -165,6 +210,9 @@
       r.pending = doIt;
       await recorderCall(r, a, session.page);
       r.steps++;
+      // No view of what the press sent: when the recording cannot tell, it is a commit.
+      const taped = r.rec.tape[r.rec.tape.length - 1];
+      if (!r.sees && taped && mayHaveWritten(taped)) taped.declaredClass = "commit";
     } catch (e) {
       r.pending = null;
       // The recorder stops on an action that failed; a failed action changed nothing to repeat.
@@ -174,23 +222,95 @@
     return acted ? result : perform();
   }
 
-  /** The run ended: a successful one can be saved. */
+  /**
+   * The run ended: a successful one can be saved. What can be saved of it
+   * is also kept past a restart of the worker (keep).
+   */
   function end(run) {
     const r = run && recordings.get(run.id);
-    if (!r) return;
+    if (!r) {
+      // The worker restarted while the run was going, and took the steps
+      // recorded so far with it. (A draft already kept for the run stands.)
+      const lost = { runId: run && run.id, at: Date.now(), why: "the extension restarted while the run was going, so its steps were not all recorded" };
+      if (run && run.id && !run.sub && host) drafts(host, (list) => (list.some((d) => d.runId === run.id) ? list : [lost, ...list])).catch(() => {});
+      return;
+    }
     const state = run.outcome && run.outcome.state;
     r.ended = state || "ended";
     if (r.network) { r.network.close(); r.network = null; }
     if (state !== "success" && !r.broken) r.broken = state === "unconfirmed" ? "the run's answer was not confirmed" : "the run did not finish";
+    r.keeping = keepRecording(r).catch(() => {});
   }
 
+  /** Whether a recorded run can be saved; when not, why, in words the user is shown. */
   function saveable(runId) {
     const r = recordings.get(runId);
-    if (!r) return { ok: false, why: "this run was not recorded (the extension restarted, or it is too old)" };
-    if (!r.ended) return { ok: false, why: "the run is still going" };
+    if (!r) return { ok: false, why: GONE };
+    if (r.saved) return { ok: false, why: SAVED, saved: r.saved };
+    if (!r.ended) return { ok: false, why: "the run is still going", pending: true };
     if (r.broken) return { ok: false, why: r.broken };
-    if (!r.steps) return { ok: false, why: "the run did nothing on a page to repeat" };
+    // Nothing to repeat is not something lost: the view says nothing of it.
+    if (!r.steps) return { ok: false, why: "the run did nothing on a page to repeat", nothing: true };
     return { ok: true, steps: r.steps };
+  }
+
+  /* ------------------------------------------------- kept past a restart */
+
+  // The worker's memory goes when Chrome stops it, which it does soon after
+  // a run ends. What "Save as recipe" needs is therefore also kept in
+  // session storage (in memory only, gone when the browser closes): for a
+  // run that can be saved, its compiled recipe; for one that cannot, why.
+  // A secret typed in the run is not in a compiled recipe (it is a variable
+  // the user supplies), so none is kept here either.
+  let draftChain = Promise.resolve();
+
+  /** Reads the kept drafts, newest first; with `change`, writes what it returns. One at a time. */
+  function drafts(chrome, change) {
+    const area = chrome && chrome.storage && chrome.storage.session;
+    if (!area) return Promise.resolve([]);
+    const step = draftChain.then(async () => {
+      const got = await area.get(DRAFTS);
+      const list = got && Array.isArray(got[DRAFTS]) ? got[DRAFTS] : [];
+      if (!change) return list;
+      const next = change(list).slice(0, RECORDINGS_KEPT);
+      await area.set({ [DRAFTS]: next });
+      return next;
+    });
+    draftChain = step.catch(() => {});
+    return step;
+  }
+
+  const keep = (chrome, draft) => drafts(chrome, (list) => [draft, ...list.filter((d) => d.runId !== draft.runId)]);
+
+  async function keepRecording(r) {
+    if (!(r.chrome && r.chrome.storage && r.chrome.storage.session)) return;
+    const can = saveable(r.runId);
+    const draft = { runId: r.runId, at: Date.now() };
+    if (can.ok) {
+      try { draft.recipe = r.rec.compile(); draft.steps = can.steps; } catch (e) { draft.why = firstLine(e); }
+    } else {
+      draft.why = can.why;
+      if (can.nothing) draft.nothing = true;
+    }
+    try { await keep(r.chrome, draft); } catch (_) {
+      // Too large for session storage: after a restart, at least the reason is known.
+      if (draft.recipe) await keep(r.chrome, { runId: r.runId, at: draft.at, why: "its recording was too large to keep after the extension restarted" }).catch(() => {});
+    }
+  }
+
+  /** saveable(), for a run whose recording the worker no longer holds. */
+  function fromDraft(d) {
+    if (!d) return { ok: false, why: GONE };
+    if (d.saved) return { ok: false, why: SAVED, saved: d.saved };
+    if (d.why || !d.recipe) return { ok: false, why: d.why || GONE, ...(d.nothing ? { nothing: true } : {}) };
+    return { ok: true, steps: d.steps || d.recipe.steps.length };
+  }
+
+  /** Whether a run can be saved, from the worker's memory or from what was kept of it. */
+  async function canSave(chrome, runId) {
+    const r = recordings.get(runId);
+    if (r) { if (r.keeping) await r.keeping; return saveable(runId); }
+    return fromDraft((await drafts(chrome).catch(() => [])).find((d) => d.runId === runId));
   }
 
   /* --------------------------------------------------------------- storage */
@@ -208,17 +328,20 @@
   const keptReceipt = (receipt) => { const { recipe: _r, ...rest } = receipt; return rest; };
 
   async function saveRun(chrome, runId, title) {
-    const can = saveable(runId);
-    if (!can.ok) return can;
     const r = recordings.get(runId);
+    const kept = r ? null : (await drafts(chrome).catch(() => [])).find((d) => d.runId === runId);
+    const can = r ? saveable(runId) : fromDraft(kept);
+    if (!can.ok) return can;
     let recipe;
-    try { recipe = r.rec.compile(); } catch (e) { return { ok: false, why: firstLine(e) }; }
+    if (r) { try { recipe = r.rec.compile(); } catch (e) { return { ok: false, why: firstLine(e) }; } } else recipe = kept.recipe;
     if (title) recipe.title = clip(title, 120);
     recipe.provenance = { ...recipe.provenance, source: "agent_run", author: "you" };
     const s = await load(chrome);
     s.recipes = [{ recipe, savedAt: Date.now(), runId, receipts: [] }, ...s.recipes].slice(0, MAX_RECIPES);
     await store(chrome, s);
-    drop(runId);
+    // Saved once: the recording is let go, and that it was saved is remembered.
+    if (r) { r.saved = recipe.id; r.rec = null; r.driver = null; }
+    await keep(chrome, { runId, at: Date.now(), saved: recipe.id }).catch(() => {});
     return { ok: true, id: recipe.id };
   }
 
@@ -340,7 +463,7 @@
           // The answer is shown a moment before the run is wound up.
           const id = String(m.runId || "");
           for (let i = 0; i < 40 && recordings.has(id) && !recordings.get(id).ended; i++) await new Promise((res) => setTimeout(res, 100));
-          reply(saveable(id));
+          reply(await canSave(chrome, id));
         }
         else if (m.type === "save") reply(await saveRun(chrome, String(m.runId || ""), m.title));
         else if (m.type === "list") reply({ recipes: (await load(chrome)).recipes.map(summary) });
@@ -369,6 +492,7 @@
   }
 
   function install(chrome) {
+    host = chrome;
     chrome.runtime.onConnect.addListener((port) => {
       if (port.name !== "recipesView") return;
       const SECURITY = need("SELECT_TO_AI_SECURITY");
@@ -377,7 +501,7 @@
     });
   }
 
-  const api = Object.freeze({ begin, around, end, saveable, saveRun, runRecipe, summary, modelFrom, tierFor, install, load, _recordings: recordings });
+  const api = Object.freeze({ begin, around, end, saveable, canSave, saveRun, mayHaveWritten, runRecipe, summary, modelFrom, tierFor, install, load, _recordings: recordings });
   root.SELECT_TO_AI_RECIPES = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

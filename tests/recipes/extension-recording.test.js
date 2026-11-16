@@ -96,6 +96,21 @@ test("a press the agent's own risk checks hold as sending is recorded as a commi
   assert.equal(recipe.steps[1].class, "commit");
 });
 
+test("with no view of requests, a script-driven button outside a form is recorded as a commit step", async () => {
+  app.reset();
+  const a = await agentOn(`${app.url}/items/41/edit`);
+  // Plain words the agent's own risk checks pass, no form, a script behind
+  // it: whether it saved anything is not something this recording can see.
+  await a.page.evaluate(() => { const b = document.createElement("button"); b.type = "button"; b.textContent = "Apply"; b.onclick = () => { document.querySelector("h1").textContent = "Applied"; }; document.querySelector("main").appendChild(b); });
+  await a.look();
+  await a.act({ do: "click", ref: a.id(/^Apply$/) });
+  a.session.run.outcome = { state: "success" };
+  RECIPES.end(a.session.run);
+  const recipe = RECIPES._recordings.get(a.session.run.id).rec.compile();
+  await a.ctx.close();
+  assert.deepEqual(recipe.steps.map((s) => `${s.action.do}:${s.class}`), ["navigate:read", "click:commit"]);
+});
+
 test("what a recipe cannot repeat is said, and the agent's action still happens", async () => {
   app.reset();
   const a = await agentOn(`${app.url}/inventory`);
