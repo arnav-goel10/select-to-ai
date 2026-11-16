@@ -14,13 +14,13 @@
     "llm",
     "reliability"
   ],
-  "homepage": "https://github.com/OWNER/REPO/tree/main/packages/recipes#readme",
+  "homepage": "https://github.com/arnav-goel10/select-to-ai/tree/main/packages/recipes#readme",
   "bugs": {
-    "url": "https://github.com/OWNER/REPO/issues"
+    "url": "https://github.com/arnav-goel10/select-to-ai/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/OWNER/REPO.git",
+    "url": "git+https://github.com/arnav-goel10/select-to-ai.git",
     "directory": "packages/recipes"
   },
   "license": "MIT",
