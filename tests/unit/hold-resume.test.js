@@ -543,6 +543,15 @@ test("a hold with nobody looking is told by a notice, once", async () => {
 
 // ------------------------------------------------------------------ the page
 
+test("a held run is not called paused: the bar and the live line say it is on hold, and for whom", () => {
+  const V = require("../../extension/core/view.js");
+  assert.deepEqual(V.barLine({ status: "waiting", wait: { kind: "pause", hold: "limit" } }), { state: "needs", text: "On hold: waiting for you" });
+  assert.deepEqual(V.barLine({ status: "waiting", wait: { kind: "pause", hold: "limit", until: 5 } }), { state: "working", text: "On hold until the provider takes requests again" });
+  assert.deepEqual(V.barLine({ status: "waiting", wait: { kind: "pause", until: 5 } }), { state: "working", text: "Paused by the provider" }, "a short wait is as it was");
+  const agent = fs.readFileSync(path.join(EXT, "agent.js"), "utf8");
+  assert.match(agent, /words = engineWait && engineWait\.kind === "pause" && engineWait\.hold \? \(engineWait\.until \? "On hold until the provider takes requests again" : "On hold: waiting for you"\) : WAIT_WORDS\[/);
+});
+
 test("the hold card offers a backup, trying again and stopping with what was found, and the pill shows what is left", () => {
   const agent = fs.readFileSync(path.join(EXT, "agent.js"), "utf8");
   assert.match(agent, /card\.dataset\.hold = wait\.hold/);

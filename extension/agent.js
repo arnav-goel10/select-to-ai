@@ -1961,7 +1961,7 @@
     const waiting = engineStatus === "waiting" || (engineStatus === "running" && counts.waiting > 0 && !counts.running);
     liveHeader.dataset.state = waiting || counts.waiting ? "needs" : "working";
     let words;
-    if (engineStatus === "waiting") words = WAIT_WORDS[engineWait && engineWait.kind] || "Waiting for you";
+    if (engineStatus === "waiting") words = engineWait && engineWait.kind === "pause" && engineWait.hold ? (engineWait.until ? "On hold until the provider takes requests again" : "On hold: waiting for you") : WAIT_WORDS[engineWait && engineWait.kind] || "Waiting for you";
     else if (counts.running || counts.waiting) {
       // While sub-tasks work, the header counts them.
       const parts = [];
