@@ -25,7 +25,9 @@
   const DEFAULTS = need("SELECT_TO_AI_DEFAULTS", "../defaults.js");
   const LIMITS = need("SELECT_TO_AI_LIMITS", "../usageLimits.js");
   const SECURITY = need("SELECT_TO_AI_SECURITY", "../security.js");
-  const CHATGPT = need("SELECT_TO_AI_CHATGPT", "../chatgptAuth.js");
+  // Sign in with ChatGPT is not in the 4.0 package. Its module, when present
+  // in a development build, is picked up here; otherwise the provider is refused.
+  const CHATGPT = (() => { try { return need("SELECT_TO_AI_CHATGPT", "../chatgptAuth.js"); } catch (e) { return null; } })();
 
   const clip = (t, n) => { const v = String(t == null ? "" : t).replace(/\s+/g, " ").trim(); return v.length > n ? `${v.slice(0, n - 1)}…` : v; };
 
@@ -87,12 +89,13 @@
     const slugs = account && Array.isArray(account.models) ? account.models.map((m) => m.slug) : [];
     const problemOf = (provider) => {
       if (provider !== "chatgpt") return keyProblem(provider, detailsOf(provider).apiKey);
+      if (!CHATGPT) return "Sign in with ChatGPT is not in this version. Pick another provider in Settings.";
       if (!account || !account.signedIn) return "The agent needs you to sign in with ChatGPT first.";
       if (!account.planEnabled) return "ChatGPT plan use is not turned on for this sign-in. Turn it on in Settings with Continue with ChatGPT.";
       return "";
     };
     const detailsOf = (provider) => {
-      if (provider === "chatgpt") return { apiKey: "", baseUrl: CHATGPT.API_BASE };
+      if (provider === "chatgpt") return { apiKey: "", baseUrl: CHATGPT ? CHATGPT.API_BASE : "" };
       if (provider === "custom") return { apiKey: it.agentCustomKey || "", baseUrl: it.agentCustomUrl || A.customUrl };
       const entry = (DEFAULTS.PROVIDER_ENDPOINTS || {})[provider];
       return entry ? { apiKey: it[entry.keyName] || "", baseUrl: entry.baseUrl } : { apiKey: "", baseUrl: "" };
@@ -111,8 +114,8 @@
     const fallbacks = DEFAULTS.PROVIDER_FALLBACK_MODELS[provider] || DEFAULTS.PROVIDER_FALLBACK_MODELS.openrouter;
     // On ChatGPT a model has to be one the account lists.
     const listed = (m) => provider !== "chatgpt" || !slugs.length || slugs.includes(m);
-    const pro = modelFits(provider, model) && listed(model) ? model : provider === "chatgpt" ? CHATGPT.bestModel(account && account.models) || fallbacks.pro : fallbacks.pro;
-    const lite = provider === "custom" ? pro : provider === "chatgpt" ? CHATGPT.liteModel(account && account.models) || pro : fallbacks.lite || pro;
+    const pro = modelFits(provider, model) && listed(model) ? model : provider === "chatgpt" && CHATGPT ? CHATGPT.bestModel(account && account.models) || fallbacks.pro : fallbacks.pro;
+    const lite = provider === "custom" ? pro : provider === "chatgpt" ? (CHATGPT && CHATGPT.liteModel(account && account.models)) || pro : fallbacks.lite || pro;
     const d = detailsOf(provider);
     // A stronger model on the same provider and key. A backup standing in has none.
     const helper = String(it.agentHelperModel || "").trim();

@@ -6,7 +6,7 @@
   "scripts": {
     "check": "npm run check:fast && npm run check:browser",
     "check:fast": "npm run check:syntax && npm run check:manifest && npm test && npm run benchmark",
-    "check:browser": "npm run test:extract && npm run test:scan && npm run test:widgets && npm run test:chatgpt && npm run test:v4 && npm run test:recipes-driver && npm run test:recipes-ext",
+    "check:browser": "npm run test:extract && npm run test:scan && npm run test:widgets && npm run test:v4 && npm run test:recipes-driver && npm run test:recipes-ext",
     "check:syntax": "node scripts/check-syntax.mjs",
     "check:manifest": "node scripts/validate-manifest.mjs",
     "test": "node --test tests/unit/*.test.js",
@@ -22,7 +22,6 @@
     "bench:split": "node tests/bench/split.js",
     "bench:matrix": "node tests/bench/matrix.js",
     "test:widgets": "node tests/e2e/widgets.js",
-    "test:chatgpt": "node tests/e2e/chatgpt-capture.js",
     "bench:chatgpt-login": "node tests/bench/chatgpt-profile.js",
     "bench:recipes": "node bench/recipes/run.js",
     "test:recipes": "node --test tests/recipes/*.test.js",

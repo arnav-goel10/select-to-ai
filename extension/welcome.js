@@ -238,32 +238,6 @@
     withConsent("openrouter", connectOpenRouter).then((problem) => { if (problem) status("err", problem); });
   };
 
-  // ---- or: the user's own ChatGPT plan (Sign in with ChatGPT) ----
-  // Shown only when the feature is on (defaults.js FEATURES).
-  const UI = globalThis.SELECT_TO_AI_CHATGPT_UI;
-  if (!D.FEATURES.chatgptSignIn) {
-    $("chatgptWay").remove();
-    $("chatgptMention").remove();
-  }
-  const chatgptBtn = UI.button({ block: true });
-  if (D.FEATURES.chatgptSignIn) $("chatgptSlot").appendChild(chatgptBtn);
-  chatgptBtn.onclick = async () => {
-    chatgptBtn.disabled = true;
-    status("busy", "Opening ChatGPT sign-in…");
-    try {
-      const r = await UI.signIn({ use: true }, (text) => status("busy", text));
-      if (r.state === "ok") {
-        status("ok", r.message);
-        await UI.welcomeOnce();
-        setTimeout(() => showDone("chatgpt"), 500);
-      } else {
-        status("err", r.message);
-      }
-    } finally {
-      chatgptBtn.disabled = false;
-    }
-  };
-
   // ---- done: a first task, one click away ----
   const FIRST_TASKS = [
     ["What's the top story on Hacker News right now?", "news.ycombinator.com"],

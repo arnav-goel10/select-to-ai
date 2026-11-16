@@ -422,9 +422,10 @@ test("Reset removes every kind of data the extension keeps about the user", () =
   const kept = [
     constant("engine.js", "MEMORY_KEY"),
     constant("recipes/service.js", "STORE"),
-    constant("chatgptConnect.js", "ACCOUNT"),
-    constant("chatgptConnect.js", "CREDENTIALS"),
-    constant("chatgptConnect.js", "HOST"),
+    // Left by a development build with Sign in with ChatGPT.
+    "chatgptAccount",
+    "chatgptCredentials",
+    "chatgptHostId",
     "agentCrossSessionMemory",
   ];
   for (const k of kept) assert.ok(listed.includes(k), `Reset leaves ${k} behind`);
