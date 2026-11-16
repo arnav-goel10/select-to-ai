@@ -381,3 +381,60 @@ test("the workflow pairs each provider with its own key and gives the judge Anth
   for (const m of y.matchAll(/uses: (\S+)/g)) assert.match(m[1], /@[0-9a-f]{40}$/, m[1]);
   assert.ok(!y.includes("\u2014"));
 });
+
+// The plan step itself, run as GitHub runs it, with nothing but environment values.
+function plan(env) {
+  const y = fs.readFileSync(path.join(__dirname, "../../.github/workflows/real-tasks.yml"), "utf8");
+  const from = y.indexOf("        run: |\n", y.indexOf("name: Work out what to run")) + "        run: |\n".length;
+  const script = y.slice(from, y.indexOf("      - name: The task files are sound")).split("\n").map((l) => l.slice(10)).join("\n");
+  const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "plan-"));
+  const out = path.join(dir, "out");
+  const summary = path.join(dir, "summary");
+  const r = require("node:child_process").spawnSync("bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", script], {
+    cwd: path.join(__dirname, "../.."),
+    env: { PATH: process.env.PATH, GITHUB_OUTPUT: out, GITHUB_STEP_SUMMARY: summary, EVENT: "workflow_dispatch", IN_DRY: "false", HAS_ANTHROPIC_KEY: "true", HAS_OPENAI_KEY: "true", ...env },
+    encoding: "utf8",
+  });
+  const read = (f) => (fs.existsSync(f) ? fs.readFileSync(f, "utf8") : "");
+  const res = { status: r.status, said: `${r.stdout}${r.stderr}${read(summary)}`, outputs: Object.fromEntries(read(out).split("\n").filter(Boolean).map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)])) };
+  fs.rmSync(dir, { recursive: true, force: true });
+  return res;
+}
+
+test("the plan step fails a real run with a missing key or a pairing that is not written out, and never makes it dry", { skip: process.platform === "win32" }, () => {
+  const ok = plan({});
+  assert.equal(ok.status, 0, ok.said);
+  assert.deepEqual([ok.outputs.dry, ok.outputs.provider, ok.outputs.model, ok.outputs.judge_model], ["false", "anthropic", "claude-haiku-5-5", "claude-sonnet-5-5"]);
+  const openai = plan({ IN_PROVIDER: "openai" });
+  assert.deepEqual([openai.status, openai.outputs.dry, openai.outputs.model], [0, "false", "gpt-5.4-mini"]);
+
+  // A missing key fails the job, and no output says dry.
+  for (const env of [{ HAS_ANTHROPIC_KEY: "false" }, { HAS_ANTHROPIC_KEY: "" }, { IN_PROVIDER: "openai", HAS_OPENAI_KEY: "false" }, { IN_PROVIDER: "openai", HAS_ANTHROPIC_KEY: "false" }]) {
+    const r = plan(env);
+    assert.equal(r.status, 1, JSON.stringify(env));
+    assert.match(r.said, /has no (ANTHROPIC|OPENAI)_API_KEY secret/);
+    assert.equal(r.outputs.dry, undefined);
+  }
+  assert.match(plan({ IN_PROVIDER: "openai", HAS_OPENAI_KEY: "false" }).said, /no OPENAI_API_KEY secret, which provider openai needs/);
+  assert.match(plan({ IN_PROVIDER: "openai", HAS_ANTHROPIC_KEY: "false" }).said, /no ANTHROPIC_API_KEY secret, which the judge needs/);
+
+  // A provider with no key paired to it, a model of another provider, a judge that is not Claude.
+  for (const env of [{ IN_PROVIDER: "nvidia" }, { IN_PROVIDER: "custom" }, { IN_PROVIDER: "openai", IN_MODEL: "claude-haiku-5-5" }, { IN_PROVIDER: "anthropic", IN_MODEL: "gpt-5.4-mini" }, { IN_JUDGE_MODEL: "gpt-5.5" }, { IN_MODEL: "claude-sonnet-5-5" }, { IN_MAX_USD: "0" }, { IN_RUNS: "9" }]) {
+    const r = plan(env);
+    assert.equal(r.status, 1, JSON.stringify(env));
+    assert.equal(r.outputs.dry, undefined);
+  }
+
+  // Dry only when asked for, or on a push; then no key is needed.
+  const dry = plan({ IN_DRY: "true", HAS_ANTHROPIC_KEY: "false", HAS_OPENAI_KEY: "false" });
+  assert.deepEqual([dry.status, dry.outputs.dry, dry.outputs.tasks], [0, "true", "tests/bench/fixture-tasks.json"]);
+  const push = plan({ EVENT: "push", IN_DRY: "", HAS_ANTHROPIC_KEY: "false", HAS_OPENAI_KEY: "false" });
+  assert.deepEqual([push.status, push.outputs.dry], [0, "true"]);
+
+  // The learn suite is counted in pairs, with learning on; the inputs for learning, repeats and recipes pass through.
+  const learn = plan({ IN_SUITE: "learn", IN_SHARDS: "12" });
+  assert.deepEqual([learn.status, learn.outputs.learn, learn.outputs.tasks], [0, "pairs", "tests/bench/learn-tasks.json"]);
+  assert.match(learn.said, /18 pair\(s\)/);
+  const more = plan({ IN_LEARNING: "true", IN_RUNS: "2", IN_RECIPES: "true", IN_MAX_USD: "3", IN_SHARDS: "6" });
+  assert.deepEqual([more.outputs.learn, more.outputs.runs, more.outputs.recipes, more.outputs.cap_per_shard], ["on", "2", "true", "0.5000"]);
+});
