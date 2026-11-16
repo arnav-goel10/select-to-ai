@@ -474,7 +474,7 @@
     showGemini: (s) => s.showGemini !== false,
     showPerplexity: (s) => s.showPerplexity === true,
     autoSend: (s) => s.autoSend === true,
-    autoContext: (s) => s.autoContext !== false,
+    autoContext: (s) => s.autoContext === true,
     agentLearning: (s) => s.agentLearning !== false,
   };
   for (const id of Object.keys(TOGGLES)) {
