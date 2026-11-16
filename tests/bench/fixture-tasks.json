@@ -5,5 +5,5 @@
   { "id": "fx-find-quote", "level": "fixture", "scenario": "findQuote", "url": "http://127.0.0.1:8931/find-quote", "task": "How much is the garden hose?", "pattern": "24\\.99", "dry": "passed" },
   { "id": "fx-click-drag", "level": "fixture", "scenario": "pointerNoDebugger", "url": "http://127.0.0.1:8931/pointer-drag", "task": "Count once and move Apples to the end of the list.", "pattern": "Counted once", "dry": "passed", "dryScripted": 1 },
   { "id": "fx-human-check", "level": "fixture", "scenario": "humanCheck", "url": "http://127.0.0.1:8931/gate", "task": "How much is Item B?", "pattern": "\\$18", "dry": "blocked" },
-  { "id": "fx-signup-held", "level": "fixture", "scenario": "form", "url": "http://127.0.0.1:8931/signup", "task": "Fill the signup form with the name Ada Lovelace, email ada@example.com, company Analytical Engines Ltd and phone 555-0100, then submit it.", "pattern": "confirmed the signup", "dry": "failed|timed out", "dryHeld": 1 }
+  { "id": "fx-signup-held", "level": "fixture", "scenario": "form", "url": "http://127.0.0.1:8931/signup", "task": "Fill the signup form with the name Ada Lovelace, email ada@example.com, company Analytical Engines Ltd and phone 555-0100, then submit it.", "pattern": "confirmed the signup", "dry": "failed|timed out", "dryHeld": 1, "dryForm": "Ada Lovelace" }
 ]

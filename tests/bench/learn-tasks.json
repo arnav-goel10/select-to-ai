@@ -1,0 +1,192 @@
+[
+ {
+  "id": "learn-books-travel-cheapest",
+  "level": "navigation",
+  "url": "https://books.toscrape.com/",
+  "task": "Open the Travel category, find the cheapest book in it, open that book and tell me its UPC and how many are in stock.",
+  "expect": "The run opens Travel, picks the lowest-priced book on that category page, opens it, and reports the UPC and stock count from the product page shown. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+ },
+ {
+  "id": "learn-datatables-oldest",
+  "level": "tables-lists",
+  "url": "https://datatables.net/examples/basic_init/zero_configuration.html",
+  "task": "Who is the oldest person in this table, and which office are they in?",
+  "expect": "Ashton Cox, aged 66, San Francisco. The table shows 10 rows at a time, so it has to be sorted by age or paged through.",
+  "pattern": "(?=[\\s\\S]*Ashton Cox)(?=[\\s\\S]*San Francisco)"
+ },
+ {
+  "id": "learn-govuk-holiday-calculator",
+  "level": "navigation",
+  "url": "https://www.gov.uk/calculate-your-holiday-entitlement",
+  "task": "Use this calculator to work out the statutory holiday entitlement for someone who works 3 days a week, for a full leave year.",
+  "expect": "16.8 days. The calculator's own steps are followed (days worked per week, a full leave year, 3 days).",
+  "pattern": "\\b16\\.8\\b"
+ },
+ {
+  "id": "learn-herokuapp-dynamic-loading",
+  "level": "navigation",
+  "url": "https://the-internet.herokuapp.com/",
+  "task": "Open Dynamic Loading, choose Example 2, press Start, wait for it to finish, and tell me the text that appears.",
+  "expect": "Hello World!",
+  "pattern": "Hello World"
+ },
+ {
+  "id": "learn-webscraper-cheapest-laptop",
+  "level": "shopping",
+  "url": "https://webscraper.io/test-sites/e-commerce/allinone",
+  "task": "Go to Computers, then Laptops, and tell me the cheapest laptop listed and its price.",
+  "expect": "The lowest-priced item on the Laptops page as the run's page shows it; every laptop on the page is considered, not only the first row. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+ },
+ {
+  "id": "learn-selenium-webform",
+  "level": "form-fill",
+  "url": "https://www.selenium.dev/selenium/web/web-form.html",
+  "task": "On this form, type 'Trial run' in the text input, write 'Checked by the agent' in the textarea, pick 'Two' in the dropdown, and tick the default checkbox. Leave the password alone and do not press Submit.",
+  "expect": "Text input 'Trial run', textarea 'Checked by the agent', dropdown 'Two', default checkbox ticked, password empty. The form must not be submitted: the run ends on the form page with the values in place. Judge each value from the harness's list of the final page's form controls: a field the list shows empty or holding something else is unmet, whatever the actions say."
+ },
+ {
+  "id": "learn-httpbin-pizza",
+  "level": "form-fill",
+  "url": "https://httpbin.org/forms/post",
+  "task": "Fill in this order form but do not submit it: customer name Priya Raman, telephone 555-0142, email priya@example.com, size Medium, toppings bacon and extra cheese, delivery time 18:30, and the note 'Ring the bell twice'.",
+  "expect": "Every listed field holds the listed value. The form must not be submitted: the run ends on the form page with the values in place. Judge each value from the harness's list of the final page's form controls: a field the list shows empty or holding something else is unmet, whatever the actions say."
+ },
+ {
+  "id": "learn-osm-brandenburg-gate",
+  "level": "maps-transit",
+  "url": "https://www.openstreetmap.org/",
+  "task": "Search for the Brandenburg Gate in Berlin. Which square is it on?",
+  "expect": "Pariser Platz (in Mitte, Berlin).",
+  "pattern": "Pariser Platz"
+ },
+ {
+  "id": "learn-gdpr-breach-hours",
+  "level": "long-docs",
+  "url": "https://gdpr-info.eu/",
+  "task": "Find the article of the GDPR about notifying a personal data breach to the supervisory authority. Within how many hours must the controller notify it?",
+  "expect": "Article 33: without undue delay and, where feasible, not later than 72 hours after becoming aware of it.",
+  "pattern": "(?=[\\s\\S]*\\b72\\s*hours)(?=[\\s\\S]*Article\\s*33\\b)"
+ },
+ {
+  "id": "learn-python-pairwise",
+  "level": "developer",
+  "url": "https://docs.python.org/3/",
+  "task": "Find itertools.pairwise in these docs. What does it return, and in which Python version was it added?",
+  "expect": "Successive overlapping pairs taken from the input iterable; new in version 3.10.",
+  "pattern": "\\b3\\.10\\b"
+ },
+ {
+  "id": "learn-mdn-fetch-returns",
+  "level": "developer",
+  "url": "https://developer.mozilla.org/en-US/",
+  "task": "Find the documentation for the global fetch() function and tell me what it returns.",
+  "expect": "A Promise that resolves to a Response object.",
+  "pattern": "(?=[\\s\\S]*Promise)(?=[\\s\\S]*Response)"
+ },
+ {
+  "id": "learn-lovelace-father",
+  "level": "navigation",
+  "url": "https://en.wikipedia.org/wiki/Ada_Lovelace",
+  "task": "From this article, go to the article about her father and tell me the year he died and where.",
+  "expect": "Lord Byron died in 1824 at Missolonghi, Greece.",
+  "pattern": "(?=[\\s\\S]*\\b1824\\b)(?=[\\s\\S]*M[ei]ssolonghi)"
+ },
+ {
+  "id": "learn-books-page-two",
+  "level": "tables-lists",
+  "url": "https://books.toscrape.com/",
+  "task": "Go to page 2 of the catalogue and list the first five books on it with their prices.",
+  "expect": "Five titles with prices, the first five on catalogue/page-2.html in page order, as the run's page shows. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass.",
+  "then": "learn-books-mystery-five-star"
+ },
+ {
+  "id": "learn-books-mystery-five-star",
+  "level": "shopping",
+  "url": "https://books.toscrape.com/",
+  "task": "In the Mystery category, find up to three books rated five stars that cost less than £20, with their prices.",
+  "expect": "Each book named is in the Mystery category, shows five stars and costs under £20 on the pages in the run. Fewer than three is right only when the run went through every page of the category and the pages it captured show that fewer exist; an answer that names no book without that evidence fails. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+ },
+ {
+  "id": "learn-scrape-countries",
+  "level": "tables-lists",
+  "url": "https://www.scrapethissite.com/pages/simple/",
+  "task": "Which three countries on this page have the largest population, and what are the figures?",
+  "expect": "China, India and the United States, with the page's figures (about 1.33 billion, 1.17 billion and 310 million: the page's data is old on purpose).",
+  "pattern": "(?=[\\s\\S]*China)(?=[\\s\\S]*India)(?=[\\s\\S]*United States)",
+  "then": "learn-scrape-hockey-bruins"
+ },
+ {
+  "id": "learn-scrape-hockey-bruins",
+  "level": "tables-lists",
+  "url": "https://www.scrapethissite.com/pages/forms/",
+  "task": "Search this table for the Boston Bruins and tell me how many games they won in 1990.",
+  "expect": "44 wins in 1990.",
+  "pattern": "\\b44\\b"
+ },
+ {
+  "id": "learn-herokuapp-checkboxes",
+  "level": "form-fill",
+  "url": "https://the-internet.herokuapp.com/checkboxes",
+  "task": "Make sure both checkboxes on this page are ticked.",
+  "expect": "Both checkboxes end ticked. The second starts ticked, so only the first needs a press; a run that unticks the second fails. Judge each value from the harness's list of the final page's form controls: a field the list shows empty or holding something else is unmet, whatever the actions say.",
+  "then": "learn-herokuapp-largest-due"
+ },
+ {
+  "id": "learn-herokuapp-largest-due",
+  "level": "tables-lists",
+  "url": "https://the-internet.herokuapp.com/tables",
+  "task": "In the first table, who owes the most, and how much?",
+  "expect": "Jason Doe, $100.00.",
+  "pattern": "(?=[\\s\\S]*Jason)(?=[\\s\\S]*Doe)(?=[\\s\\S]*\\$\\s?100\\b)"
+ },
+ {
+  "id": "learn-demoblaze-compare-phones",
+  "level": "shopping",
+  "url": "https://www.demoblaze.com/",
+  "task": "Which is cheaper on this shop, the Samsung galaxy s6 or the Nexus 6, and by how much?",
+  "expect": "Samsung galaxy s6 is $360 and Nexus 6 is $650, so the s6 is cheaper by $290.",
+  "pattern": "(?=[\\s\\S]*\\b360\\b)(?=[\\s\\S]*\\b650\\b)(?=[\\s\\S]*\\b290\\b)",
+  "then": "learn-demoblaze-vaio-price"
+ },
+ {
+  "id": "learn-demoblaze-vaio-price",
+  "level": "shopping",
+  "url": "https://www.demoblaze.com/",
+  "task": "How much is the Sony vaio i5 laptop on this shop?",
+  "expect": "$790, read from the shop's Laptops listing or the product's page.",
+  "pattern": "\\b790\\b"
+ },
+ {
+  "id": "learn-github-vscode-licence",
+  "level": "developer",
+  "url": "https://github.com/microsoft/vscode",
+  "task": "What licence is this repository under, and what is its main language?",
+  "expect": "MIT licence; TypeScript.",
+  "pattern": "(?=[\\s\\S]*\\bMIT\\b)(?=[\\s\\S]*TypeScript)",
+  "then": "learn-github-flask-python"
+ },
+ {
+  "id": "learn-github-flask-python",
+  "level": "developer",
+  "url": "https://github.com/pallets/flask",
+  "task": "Open this project's pyproject.toml and tell me the minimum Python version it requires.",
+  "expect": "The requires-python value in pyproject.toml on the default branch, as shown in the run. The value changes over time: judge it against what the pages in the run show, not against memory. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+ },
+ {
+  "id": "learn-wikipedia-everest",
+  "level": "fact-lookup",
+  "url": "https://en.wikipedia.org/wiki/Mount_Everest",
+  "task": "How tall is Mount Everest in metres, according to this page?",
+  "expect": "About 8,849 m (8,848.86 m).",
+  "pattern": "8[,. ]?84[89]",
+  "then": "learn-wikipedia-golden-gate"
+ },
+ {
+  "id": "learn-wikipedia-golden-gate",
+  "level": "fact-lookup",
+  "url": "https://en.wikipedia.org/wiki/Golden_Gate_Bridge",
+  "task": "When did the Golden Gate Bridge open, and how long is its main span?",
+  "expect": "Opened in 1937; the main span is 4,200 ft (1,280 m).",
+  "pattern": "(?=[\\s\\S]*1937)(?=[\\s\\S]*(4,?200|1,?280))"
+ }
+]
