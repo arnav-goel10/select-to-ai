@@ -143,7 +143,7 @@ DECISION_API_KEY=sk-or-... DECISION_REPEAT=2 npm run eval:decisions
 | `identity` | Run the OpenRouter sign-in from the welcome page, which creates a key for you. |
 | `alarms` | Resume a paused run on time, send one reminder when a run waits for you, and keep the service worker awake while a run is busy. |
 | `idle` | Tell whether you are away, so a waiting run notifies you only then. |
-| `notifications` (optional) | Notify you when a run finishes or needs you. Asked when you set up the agent, and never needed for right-click sending. |
+| `notifications` (optional) | Notify you when a run finishes or needs you. Asked when you turn on "Tell me when a task is done" in Settings, and never needed for right-click sending. |
 | `chatgpt.com`, `gemini.google.com`, `www.perplexity.ai` | Put your text into the assistant you picked. These are the same sites 2.0 used. |
 | Other sites (optional) | Asked the first time a feature needs them: claude.ai for sending to Claude, your model provider for the agent, and the sites you let the agent work on, one at a time or all at once. |
 

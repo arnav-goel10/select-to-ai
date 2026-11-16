@@ -75,7 +75,7 @@ Required permissions. All of them were in 2.0 or give Chrome no install warning,
 
 Optional permissions. None is granted at install. Chrome asks for each one the first time the user picks the feature that needs it.
 
-- notifications (optional): asked when the user sets up the agent. Tells the user a task finished or is waiting for them while they are away from it. If it is not granted, the badge and the panel still show the state.
+- notifications (optional): asked when the user turns on "Tell me when a task is done" in Settings. Tells the user a task finished or is waiting for them while they are away from it. If it is not granted, the badge and the panel still show the state.
 - Optional host permissions, AI provider domains and openrouter.ai: asked when the user connects or picks that provider. Sends the user's requests to the provider they picked.
 - Optional host permissions, claude.ai and perplexity.ai: asked when the user turns on Claude or picks perplexity.ai. Puts the selected text into that chat box.
 - Optional host permissions, localhost and 127.0.0.1: asked when a user points the agent at a model served on their own computer (for example Ollama). Requests go to the exact address they enter.

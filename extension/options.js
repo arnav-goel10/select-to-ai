@@ -518,6 +518,27 @@
     if (changed && typeof changed.addListener === "function") changed.addListener(() => { showClaudeState(); });
   }
 
+  // ---------- task notices ----------
+  // Notifications are optional and asked for here, by the switch that needs
+  // them, not during setup. The switch shows what Chrome holds, since the
+  // grant itself is the setting.
+  const showNoticeState = () => G.hasNotifications().then((held) => { $("taskNotices").checked = held; });
+  $("taskNotices").addEventListener("change", (e) => {
+    if (e.target.checked) {
+      // Inside the click, so Chrome shows its prompt.
+      G.requestNotifications().then((ok) => {
+        e.target.checked = ok;
+        toast(ok ? "Saved" : "Chrome did not allow notifications, so this stays off.");
+      });
+      return;
+    }
+    chrome.permissions.remove({ permissions: ["notifications"] }, () => {
+      void chrome.runtime.lastError;
+      showNoticeState();
+      toast("Saved");
+    });
+  });
+
   // ---------- simple controls ----------
   const TOGGLES = {
     agentRiskConfirmation: (s) => s.agentRiskConfirmation !== false,
@@ -665,6 +686,7 @@
       for (const [id, read] of Object.entries(TOGGLES)) $(id).checked = read(settings);
       // Claude shows as on only once claude.ai is allowed.
       showClaudeState();
+      showNoticeState();
       $("agentCostBudget").value = settings.agentCostBudget !== undefined ? settings.agentCostBudget : AGENT.costBudget;
       // A choice saved that the list does not offer shows as the nearest one it does.
       const checkIn = settings.agentCheckInMinutes === undefined ? AGENT.checkInMinutes : Number(settings.agentCheckInMinutes) || 0;

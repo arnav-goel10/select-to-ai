@@ -249,7 +249,7 @@
     $("doneLede").textContent = (free
       ? "You're on OpenRouter's free models."
       : provider === "chatgpt" ? "You're using your ChatGPT plan." : `You're on ${name(provider)}.`) +
-      " Try a first task. Chrome will ask once to let the agent use websites, and you can stop it at any time.";
+      " Try a first task. Chrome will ask to let the agent use that one site, and you can stop it at any time.";
     const list = $("tries");
     list.textContent = "";
     for (const [task, site] of FIRST_TASKS) {
@@ -258,19 +258,23 @@
       b.innerHTML = `<span></span><em></em>`;
       b.firstChild.textContent = task;
       b.lastChild.textContent = site;
-      b.onclick = () => openAgent(task);
+      b.onclick = () => openAgent(task, site);
       list.appendChild(b);
     }
     show("done");
   }
-  function openAgent(task) {
+  function openAgent(task, site) {
     const url = chrome.runtime.getURL("agent.html") + (task ? `?task=${encodeURIComponent(task)}&autostart=1` : "");
-    // The first run needs to read real websites, and says when it needs you.
-    // Asking here, on the click, means one Chrome prompt now instead of a
-    // pause on every new site. Both stay optional: a no still opens the agent.
-    chrome.permissions.request({ origins: ["https://*/*", "http://*/*"], permissions: ["notifications"] }, () => {
+    const open = () => chrome.tabs.create({ url });
+    // The click asks Chrome for what it needs and no more: the one site this
+    // task works on. Any other site is asked for when the agent first gets
+    // there, and notifications in Settings. A no still opens the agent, which
+    // then asks on its own card. Opening the agent with no task asks nothing.
+    const origins = site ? S.siteAccess(site) : null;
+    if (!origins) { open(); return; }
+    chrome.permissions.request({ origins }, () => {
       void chrome.runtime.lastError;
-      chrome.tabs.create({ url });
+      open();
     });
   }
   $("openAgent").onclick = () => openAgent("");
