@@ -317,8 +317,12 @@
    * middle is read as far as it is sure: an array keeps its complete
    * elements, the outermost object keeps its complete members, and anything
    * that was still being written (a string, a number, an inner object) is
-   * left out, never guessed at. Returns {value, cut}; throws when the text
-   * is not JSON even read this way.
+   * left out, never guessed at. Returns {value, cut, dropped}: `cut` when
+   * the text ended before its last bracket, and `dropped` when it ended in
+   * the middle of something (a key, a value, after a comma), so that what
+   * was read is less than what was being written. Cut and not dropped
+   * means only closing brackets were missing. Throws when the text is not
+   * JSON even read this way.
    */
   function readLoose(text) {
     let s = String(text == null ? "" : text).trim().replace(/^```[a-z]*\s*/i, "");
@@ -329,23 +333,28 @@
     }
     let i = 0;
     let cut = false;
+    let dropped = false;
     class Cut { constructor(partial) { this.partial = partial; } }
+    // The text ended in the middle of something: what is read from here on is not all of it.
+    const midway = (partial) => { dropped = true; return new Cut(partial); };
     const ws = () => { while (i < s.length && /\s/.test(s[i])) i += 1; };
-    const more = () => { ws(); if (i >= s.length) throw new Cut(); return s[i]; };
+    // `between` is a place the text may end with nothing lost: before a
+    // first member or after a complete one, where only brackets are owed.
+    const more = (between) => { ws(); if (i >= s.length) throw between ? new Cut() : midway(); return s[i]; };
     const LITERALS = { true: true, false: false, null: null, True: true, False: false, None: null };
     function string(q) {
       i += 1;
       let out = "";
       for (;;) {
-        if (i >= s.length) throw new Cut();
+        if (i >= s.length) throw midway();
         const c = s[i++];
         if (c === q) return out;
         if (c !== "\\") { out += c; continue; }
-        if (i >= s.length) throw new Cut();
+        if (i >= s.length) throw midway();
         const e = s[i++];
         if (e === "u") {
           const hex = s.slice(i, i + 4);
-          if (hex.length < 4) throw new Cut();
+          if (hex.length < 4) throw midway();
           if (!/^[0-9a-f]{4}$/i.test(hex)) throw new SyntaxError("a bad \\u escape");
           out += String.fromCharCode(parseInt(hex, 16));
           i += 4;
@@ -360,7 +369,7 @@
       const rest = s.slice(i, i + 48);
       const word = (/^-?\d+(?:\.\d+)?(?:e[+-]?\d+)?/i.exec(rest) || /^[A-Za-z]+/.exec(rest) || /^-/.exec(rest) || [""])[0];
       // A number or a word that runs to the end may have had more to come.
-      if (word && i + word.length >= s.length) throw new Cut();
+      if (word && i + word.length >= s.length) throw midway();
       if (/^-?\d/.test(word)) { i += word.length; return Number(word); }
       if (Object.prototype.hasOwnProperty.call(LITERALS, word)) { i += word.length; return LITERALS[word]; }
       throw new SyntaxError(`an unexpected ${JSON.stringify(c)} at character ${i + 1}`);
@@ -368,18 +377,20 @@
     function object(depth) {
       i += 1;
       const out = {};
+      let afterComma = false;
       for (;;) {
         let key = null;
         let open = false;
         try {
-          let c = more();
+          let c = more(!afterComma);
           if (c === "}") { i += 1; return out; }
-          if (c === ",") { i += 1; continue; }
+          if (c === ",") { i += 1; afterComma = true; continue; }
+          afterComma = false;
           if (c === '"' || c === "'") key = string(c);
           else {
             const bare = (/^[A-Za-z_$][\w$-]*/.exec(s.slice(i, i + 80)) || [""])[0];
             if (!bare) throw new SyntaxError(`an unexpected ${JSON.stringify(c)} at character ${i + 1}`);
-            if (i + bare.length >= s.length) throw new Cut();
+            if (i + bare.length >= s.length) throw midway();
             key = bare;
             i += bare.length;
           }
@@ -388,15 +399,17 @@
           open = true;
           out[key] = value(depth + 1);
           open = false;
-          c = more();
-          if (c === ",") i += 1;
+          c = more(true);
+          if (c === ",") { i += 1; afterComma = true; }
           else if (c !== "}" && !/["'A-Za-z_$]/.test(c)) throw new SyntaxError(`an unexpected ${JSON.stringify(c)} at character ${i + 1}`);
         } catch (e) {
           if (!(e instanceof Cut)) throw e;
-          if (open && Array.isArray(e.partial)) out[key] = e.partial;
-          // Only the outermost object is kept when it was cut short.
-          if (depth > 0) throw new Cut();
           cut = true;
+          // Only its closing bracket was missing: it is whole.
+          if (!dropped) return out;
+          if (open && Array.isArray(e.partial)) out[key] = e.partial;
+          // Only the outermost object is kept when it was cut in the middle.
+          if (depth > 0) throw new Cut();
           return out;
         }
       }
@@ -404,26 +417,30 @@
     function array(depth) {
       i += 1;
       const out = [];
+      let afterComma = false;
       for (;;) {
         try {
-          let c = more();
+          let c = more(!afterComma);
           if (c === "]") { i += 1; return out; }
-          if (c === ",") { i += 1; continue; }
+          if (c === ",") { i += 1; afterComma = true; continue; }
+          afterComma = false;
           out.push(value(depth + 1));
-          c = more();
-          if (c === ",") i += 1;
+          c = more(true);
+          if (c === ",") { i += 1; afterComma = true; }
           else if (c !== "]") throw new SyntaxError(`an unexpected ${JSON.stringify(c)} at character ${i + 1}`);
         } catch (e) {
           if (!(e instanceof Cut)) throw e;
+          cut = true;
+          if (!dropped) return out;
           if (Array.isArray(e.partial)) out.push(e.partial);
           if (depth > 0) throw new Cut(out);
-          cut = true;
           return out;
         }
       }
     }
     try {
-      return { value: value(0), cut };
+      const read = value(0);
+      return { value: read, cut, dropped };
     } catch (e) {
       if (e instanceof Cut) throw new SyntaxError("it stopped before anything in it was complete");
       throw e;
@@ -438,6 +455,14 @@
    * one-item list, an object under the tool's name). What counts as the
    * fields is the tool's own schema: its required fields, all present.
    *
+   * Two things are never mended. A reply that stopped in the middle of a
+   * member is not used with that member left out: the missing field
+   * changes what the call does (an answer lost, a press with no target),
+   * so the model is asked again. And the call is looked for inside other
+   * things only when the outside is a wrapper, with none of the tool's
+   * own fields: text in a field of a real call (which may be a page's
+   * text) is never read as the call.
+   *
    * @param given the arguments as the model wrote them (text), or as parsed
    * @returns {args, how} with `how` saying what was mended ("" for nothing),
    *   or {args: null, error} when the model has to be asked again
@@ -449,6 +474,7 @@
     const plain = (v) => !!v && typeof v === "object" && !Array.isArray(v);
     const fits = (v) => plain(v) && required.every((k) => k in v) && (required.length > 0 || !props.length || Object.keys(v).some((k) => props.includes(k)));
     let cut = false;
+    let dropped = false;
     let loose = false;
     let why = "";
     const read = (text) => {
@@ -456,9 +482,11 @@
       const got = readLoose(text);
       loose = true;
       cut = cut || got.cut;
+      dropped = dropped || got.dropped;
       return got.value;
     };
-    // The object that has the tool's fields: the value itself, or the first one inside it.
+    const ownField = (v) => plain(v) && Object.keys(v).some((k) => props.includes(k));
+    // The object that has the tool's fields: the value itself, or the first one inside a wrapper.
     const find = (v, depth) => {
       if (depth > 3) return null;
       if (typeof v === "string") {
@@ -467,6 +495,8 @@
       }
       if (fits(v)) return v;
       if (!v || typeof v !== "object") return null;
+      // An object with the tool's own fields is the call, whole or not: nothing in it is taken for the call.
+      if (ownField(v)) return null;
       for (const inner of Object.values(v)) {
         const got = find(inner, depth + 1);
         if (got) return got;
@@ -480,12 +510,12 @@
       return { args: null, error: `its arguments were not valid JSON (${clip(why || e.message, 120)})` };
     }
     if (!loose && fits(top)) return { args: top, how: "" };
-    const got = find(top, 0);
+    const got = dropped ? null : find(top, 0);
     if (got) return { args: got, how: cut ? "cut short" : loose ? "not valid JSON" : "wrapped in something else" };
     // Valid JSON without every required field is for the caller to judge, as before.
     if (!loose && plain(top)) return { args: top, how: "" };
     const missing = plain(top) ? required.filter((k) => !(k in top)) : [];
-    if (cut) return { args: null, error: `its arguments were cut off${missing.length ? ` before ${missing.join(", ")}` : ""}` };
+    if (cut) return { args: null, cut: true, error: `its arguments were cut off${missing.length ? ` before ${missing.join(", ")}` : dropped ? " in the middle of a field" : ""}` };
     if (missing.length) return { args: null, error: `its arguments were not valid JSON and had no ${missing.join(", ")}` };
     return { args: null, error: `its arguments were not one JSON object with the tool's fields${why ? ` (${clip(why, 120)})` : ""}` };
   }
@@ -688,10 +718,18 @@
           add(usageOf(res, { ...req, user }, model, cfg.provider));
           let reply = (res.calls[0] && res.calls[0].args) || (req.tool ? TOOLS.parseTextAction(res.text) || TOOLS.parseTextAction(res.reasoning) : null);
           let mended = res.calls[0] ? res.mended : "";
+          let bad = res.bad;
           // The call written out as text, and not quite JSON: read the same way.
-          if (!reply && req.tool && !res.bad && String(res.text).includes("{")) {
+          if (!reply && req.tool && !bad && String(res.text).includes("{")) {
             const r = repairArguments(res.text, req.tool);
             if (r.args && r.how) { reply = r.args; mended = r.how; }
+          }
+          // The reply ran out of room and its call has no ending: fields
+          // may have been still to come, so it is not used as it stands.
+          // It is asked for again with more room, below.
+          if (reply && mended === "cut short" && res.finish === "length") {
+            reply = null;
+            bad = "its arguments were cut off when the reply ran out of room";
           }
           if (reply && mended) log("Call Mended", `The model's ${req.tool.name} call was ${mended}. It was read as it stood, without asking again.`, { quiet: true });
           // What the provider says is left of the key's requests, when it says.
@@ -709,9 +747,9 @@
           if (reasks < reaskBudget) {
             reasks += 1;
             // The model is told what was wrong with what it sent, not that it sent nothing.
-            if (res.bad) {
-              log("Call Not Readable", `The model called ${req.tool.name}, but ${res.bad}. Asking again (${reasks}/${reaskBudget}).`, { quiet: true });
-              user = `${req.user}\n\nYour last reply called the ${req.tool.name} tool, but ${res.bad}. Call it again with its arguments as one complete JSON object: double quotes, no trailing commas, every required field.`;
+            if (bad) {
+              log("Call Not Readable", `The model called ${req.tool.name}, but ${bad}. Asking again (${reasks}/${reaskBudget}).`, { quiet: true });
+              user = `${req.user}\n\nYour last reply called the ${req.tool.name} tool, but ${bad}. Call it again with its arguments as one complete JSON object: double quotes, no trailing commas, every required field.`;
               continue;
             }
             log("Reply Without Action", `The model answered without calling ${req.tool.name}${res.finish ? ` (${res.finish})` : ""}${got ? `: ${got}` : ", with nothing"}. Asking again (${reasks}/${reaskBudget}).`, { quiet: true });
