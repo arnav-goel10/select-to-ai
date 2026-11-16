@@ -31,6 +31,8 @@
  *   DECISION_RETRIES    attempts per call when rate limited (default 4)
  *   DECISION_WAIT_MS    first wait between those attempts (default 2000);
  *                       free models often need 8000 or more
+ *   DECISION_SKIP_MISSING=1  leave out cases with no snapshot instead of
+ *                       failing the run
  *   DECISION_DRY=1      no model: print prompt sizes and check each case's
  *                       answer is in its prompt
  *   DECISION_EXTRA_BODY JSON merged into each request body
@@ -383,9 +385,13 @@ function report(rows) {
 
 async function main() {
   const chosen = CASES.filter((c) => !ONLY.length || ONLY.includes(c.name) || ONLY.includes(c.category));
-  // A case added since the snapshots were last captured is left out, and named.
+  // A case with no snapshot fails the run: a score that leaves cases out
+  // is not the score asked for. DECISION_SKIP_MISSING=1 leaves them out, named.
   const missing = chosen.filter((c) => !SNAPSHOTS[c.name]).map((c) => c.name);
-  if (missing.length) console.log(`No snapshot yet for ${missing.join(", ")}: run node tests/decisions/capture.js to include them.\n`);
+  if (missing.length) {
+    console.log(`No snapshot yet for ${missing.join(", ")}: run node tests/decisions/capture.js to include them.\n`);
+    if (!process.env.DECISION_SKIP_MISSING) process.exit(1);
+  }
   const cases = chosen.filter((c) => SNAPSHOTS[c.name]);
   if (DRY) {
     let bad = 0;
