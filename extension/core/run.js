@@ -368,15 +368,18 @@
     if (page.url && page.innerText) keepSeen(run, page);
     // Every address a page showed, and the page itself, are addresses the
     // agent did not make up.
+    // Where a search form on the page sends is the page's own address
+    // too: its results, for any words, are what typing in the form gives.
+    const searches = (page.forms || []).filter((f) => f.search && f.action).map((f) => f.action);
     if (run.trust.urls.length < SEEN_URLS) {
       const known = new Set(run.trust.urls);
-      // Where a search form on the page sends is the page's own address
-      // too: its results, for any words, are what typing in the form gives.
-      const searches = (page.forms || []).filter((f) => f.search && f.action).map((f) => f.action);
       for (const u of [page.url, ...(page.elements || []).map((el) => el.url), ...searches]) {
         if (u && !known.has(u) && known.size < SEEN_URLS) { known.add(u); run.trust.urls.push(u); }
       }
     }
+    // Kept apart too: only a search form's address takes other query values (agentTools.js addressOrigin).
+    run.trust.searches = run.trust.searches || [];
+    for (const u of searches) if (!run.trust.searches.includes(u) && run.trust.searches.length < SEEN_URLS) run.trust.searches.push(u);
     // Labels by ref, so a ref from before a redraw can be pointed to its new number.
     if (!run.previous || String(run.previous.url || "").split("#")[0] !== address) run.labels = {};
     for (const el of page.elements || []) run.labels[el.id] = TOOLS.elementLabel(el);
@@ -1210,7 +1213,7 @@
         sub: { parent: run.id, request: run.request || run.task },
       });
       // What this run has seen, and what the user allowed in it, holds for its sub-tasks.
-      child.trust = { ...child.trust, urls: [...run.trust.urls], ...(run.trust.shared ? { shared: [...run.trust.shared] } : {}) };
+      child.trust = { ...child.trust, urls: [...run.trust.urls], ...(run.trust.searches ? { searches: [...run.trust.searches] } : {}), ...(run.trust.shared ? { shared: [...run.trust.shared] } : {}) };
       run.children.push({ id, task: t.task, url: t.url || "", state: "queued", tabId: null, held: [], result: null, run: child });
       ids.push(id);
     }
@@ -1342,6 +1345,7 @@
     const known = new Set(run.trust.urls);
     for (const u of c.run.trust.urls || []) if (!known.has(u) && run.trust.urls.length < SEEN_URLS) { known.add(u); run.trust.urls.push(u); }
     for (const site of c.run.trust.sites || []) if (!run.trust.sites.includes(site)) run.trust.sites.push(site);
+    for (const u of c.run.trust.searches || []) if (!(run.trust.searches = run.trust.searches || []).includes(u) && run.trust.searches.length < SEEN_URLS) run.trust.searches.push(u);
     if (c.run.injectionSeen) run.injectionSeen = true;
     for (const offer of c.run.offers || []) if (!run.offers.some((x) => x.type === offer.type && x.key === offer.key && x.text === offer.text)) run.offers.push(offer);
     for (const k of c.run.used.details || []) if (!run.used.details.includes(k)) run.used.details.push(k);

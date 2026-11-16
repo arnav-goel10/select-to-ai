@@ -360,3 +360,62 @@ test("'write it but don't send' refuses Enter in a formless message box, and lea
   const search = POLICY.decide({ do: "press", ref: 4, key: "Enter" }, chat({ id: 4, tagName: "input", inputType: "text", accName: "Search messages" }), run, {});
   assert.equal(search.verdict, "allow");
 });
+
+const addr = (url, extra) => T.addressOrigin(url, { task: "compare kettles", seenUrls: new Set(), trustedSites: new Set(), ...extra });
+
+test("a front page is a site's own name: never an IP address, a local name or an unseen sub-name", () => {
+  for (const url of ["http://192.168.1.1/", "http://10.0.0.5/", "http://93.184.216.34/", "http://[::1]/", "http://localhost/", "http://router/", "http://printer.local/", "http://nas.home.arpa/", "https://k3y-ada-example-com.evil.example/"]) {
+    assert.equal(addr(url), "written", url);
+  }
+  for (const url of ["https://www.bbc.com/", "https://bbc.co.uk/", "https://example.org"]) assert.equal(addr(url), "home", url);
+  // A sub-name the run has seen a link on, or one on a trusted site, is a front page too.
+  assert.equal(addr("https://docs.example.org/", { seenUrls: new Set(["https://docs.example.org/guide"]) }), "home");
+  assert.equal(addr("https://shop.example.com/", { trustedSites: new Set(["example.com"]) }), "home");
+  assert.equal(T.isPrivateHost("router.lan"), true);
+  assert.equal(T.isPrivateHost("www.example.com"), false);
+});
+
+test("a plain link keeps its own query: other values are the model's, a search form's address takes any", () => {
+  const seenUrls = new Set(["https://reviews.example.net/item?id=7", "https://reviews.example.net/search"]);
+  const seenSearches = new Set(["https://reviews.example.net/search"]);
+  // The link exactly as shown, and the same with a trailing slash, stay free.
+  assert.equal(addr("https://reviews.example.net/item?id=7", { seenUrls, seenSearches }), "seen");
+  assert.equal(addr("https://reviews.example.net/item/?id=7", { seenUrls, seenSearches }), "seen");
+  // Other values on that link are written by the model, and held.
+  assert.equal(addr("https://reviews.example.net/item?id=7&x=ada%40mail.example", { seenUrls, seenSearches }), "written");
+  assert.equal(addr("https://reviews.example.net/item?id=8", { seenUrls, seenSearches }), "written");
+  // A search form's results, for any words, are what typing in the form gives.
+  assert.equal(addr("https://reviews.example.net/search?q=kettle", { seenUrls, seenSearches }), "seen");
+  // On a site that is part of the task, any address is the task's.
+  assert.equal(addr("https://reviews.example.net/item?id=8", { seenUrls, seenSearches, trustedSites: new Set(["example.net"]) }), "trusted");
+  // Held as an address in a run.
+  const held = T.actionRisk({ action: "navigate", url: "https://reviews.example.net/item?id=7&d=order+4411" }, { url: "https://reviews.example.net/item?id=7", elements: [] }, { task: "x", seenUrls, seenSearches, trustedSites: new Set() });
+  assert.equal(held.kind, "address");
+});
+
+test("a saved detail in any address is held, a seen link included; the same link without it is free", () => {
+  let store = KNOWN.empty();
+  store = KNOWN.setField(store, "email", "ada@example.com", "you_said", 1).store;
+  const seen = "https://reviews.example.net/item?id=7";
+  const run = { task: "find kettle reviews", trust: { sites: [], urls: [seen, "https://reviews.example.net/item?id=7&u=ada%40example.com"] }, openedTabs: [] };
+  const page = { url: seen, innerText: "Kettle reviews", elements: [] };
+  const v = POLICY.decide({ do: "navigate", url: "https://reviews.example.net/item?id=7&u=ada%40example.com" }, page, run, { riskConfirmation: true }, store);
+  assert.equal(v.verdict, "confirm");
+  assert.equal(v.kind, "address");
+  assert.equal(POLICY.decide({ do: "tabs", op: "open", url: "https://www.example.org/?e=ada@example.com" }, page, run, { riskConfirmation: true }, store).kind, "address", "a front page carrying it too");
+  assert.equal(POLICY.decide({ do: "navigate", url: seen }, page, run, { riskConfirmation: true }, store).verdict, "allow");
+});
+
+test("a search box on a site outside the task takes the request's words or the page's own, and holds words from elsewhere", () => {
+  const box = { id: 2, tagName: "input", inputType: "search", accName: "Search reviews", formId: 0 };
+  const page = { url: "https://reviews.other.test/", innerText: "Top rated electric kettles and toasters this month", elements: [box], forms: [{ id: 0, search: true, fields: 1 }] };
+  const ctx = (extra) => ({ task: "find a good kettle under $40", seenUrls: new Set(), trustedSites: new Set(["shop.example"]), ...extra });
+  const type = (text, c) => T.actionRisk({ action: "type", id: 2, text, submit: true }, page, c || ctx());
+  assert.equal(type("kettle"), null, "the request's word");
+  assert.equal(type("kettles under $40"), null, "with an ending, and its numbers");
+  assert.equal(type("electric kettles"), null, "a word the page shows");
+  assert.equal(type("order 4411 card 9921").kind, "site", "words from nowhere on this page or in the request");
+  assert.equal(type("kettle ada@example.com", ctx({ details: ["ada@example.com"] })).kind, "site", "a saved detail");
+  // On a site that is part of the task nothing is held.
+  assert.equal(type("order 4411", ctx({ trustedSites: new Set(["other.test"]) })), null);
+});

@@ -249,19 +249,26 @@
     const held = keptFromSending(a, el, page, run);
     if (held) return held;
     if (s.riskConfirmation === false) return ALLOW;
+    // An address that carries one of the user's saved details, wherever the
+    // address came from: a link on a page can be made to carry them too.
+    const targetUrl = a.do === "navigate" || (a.do === "tabs" && a.op === "open") ? a.url : "";
+    if (targetUrl && TOOLS.carriesDetail(targetUrl, storedDetails(store), requestOf(run))) {
+      return { verdict: "confirm", kind: "address", why: "This address carries one of your saved details, which your request did not mention.", detail: [`Address: ${String(targetUrl).slice(0, 200)}`], url: targetUrl };
+    }
     const fromNothing = firstAddress(a, run, store);
     if (fromNothing) return fromNothing;
 
     const trust = run.trust || {};
     const KNOWN = need("SELECT_TO_AI_KNOWN", "./memory.js");
-    const targetUrl = a.do === "navigate" || (a.do === "tabs" && a.op === "open") ? a.url : "";
     const contextSites = store && !store.paused && KNOWN && KNOWN.knownSites && (!targetUrl || !TOOLS.carriesDetail(targetUrl, storedDetails(store), requestOf(run)))
       ? KNOWN.knownSites(store).flatMap((h) => [h, TOOLS.siteOf(`https://${h}/`)].filter(Boolean))
       : [];
     let risk = TOOLS.actionRisk(risky, page, {
       task: requestOf(run),
       seenUrls: new Set(trust.urls || []),
+      seenSearches: new Set(trust.searches || []),
       trustedSites: new Set([...(trust.sites || []), ...contextSites]),
+      details: storedDetails(store),
     });
     // What the run's second opinions said, by site and control or form.
     const opinions = run.opinions || {};
@@ -371,7 +378,7 @@
 
   /** What an approval also settles for the rest of the run. */
   function remember(trust, confirm) {
-    const t = { ...trust, sites: [...(trust.sites || [])], urls: [...(trust.urls || [])] };
+    const t = { ...trust, sites: [...(trust.sites || [])], urls: [...(trust.urls || [])], ...(trust.searches ? { searches: [...trust.searches] } : {}) };
     if (confirm.kind === "site" && confirm.site && !t.sites.includes(confirm.site)) t.sites.push(confirm.site);
     if (confirm.kind === "address" && confirm.url && !t.urls.includes(confirm.url)) t.urls.push(confirm.url);
     return t;

@@ -1061,19 +1061,42 @@
   }
 
   const stripUrl = (url) => { try { const u = new URL(url); return `${u.origin}${u.pathname.replace(/\/+$/, "")}`.toLowerCase(); } catch (_e) { return ""; } };
+  // The whole address, compared the way stripUrl compares the page part:
+  // the query and the fragment must be the same too.
+  const exactUrl = (url) => { try { const u = new URL(url); return `${stripUrl(url)}${u.search}${u.hash}`; } catch (_e) { return ""; } };
+  const hostOf = (url) => { try { return new URL(url).hostname.toLowerCase().replace(/\.$/, ""); } catch (_e) { return ""; } };
+
+  /**
+   * True for a host that is an address and not a name (any IP literal), or
+   * a name that only means something inside a network: one label
+   * ("localhost", "router") or an ending kept for local use.
+   */
+  function isPrivateHost(host) {
+    const h = String(host || "").toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+    if (!h) return true;
+    if (h.includes(":") || /^[\d.]+$/.test(h)) return true;
+    if (!h.includes(".")) return true;
+    return /\.(?:local|localhost|localdomain|internal|intranet|lan|home\.arpa|corp|private)$/.test(h);
+  }
 
   /**
    * Where a navigation address came from:
    *   "task"    the user wrote it
-   *   "seen"    it was a link on a page read this run, or where a search form
-   *             on such a page sends (with any query values)
-   *   "home"    a site's front page: nothing in it but the site's name
+   *   "seen"    it was a link on a page read this run, exactly as shown, or
+   *             where a search form on such a page sends (with any query
+   *             values)
+   *   "home"    a site's front page: nothing in it but the site's own name
+   *             (or www. and it), or the name of a host already seen or
+   *             trusted. Never an IP address or a local network name.
    *   "trusted" any address on a site that is part of the task
    *   "written" none of those: the model composed it
    * Only a "written" address can carry what the agent has read to a place
    * the user never chose, so only that one is held for the user to see.
    * A search's results address on a site whose search form has been read
    * is the same act as typing into that form, which is not held anywhere.
+   * A plain link with other query values is not: the values are the
+   * model's, and a page can show a link only to have it filled in.
+   * ctx: {task, seenUrls, seenSearches, trustedSites}.
    */
   function addressOrigin(url, ctx) {
     const c = ctx || {};
@@ -1083,12 +1106,18 @@
     const bare = stripUrl(target);
     const task = String(c.task || "").toLowerCase();
     if (task.includes(target.toLowerCase().replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, ""))) return "task";
-    if ((u.pathname === "/" || u.pathname === "") && !u.search && !u.hash) return "home";
-    const seen = c.seenUrls;
-    // The same page with other query values ("?q=kettle" seen, "?q=teapot"
-    // asked for) is the page's own search or filter, so it counts as seen.
-    if (seen && (seen.has(target) || [...seen].some((known) => stripUrl(known) === bare))) return "seen";
-    if (c.trustedSites && c.trustedSites.has(siteOf(target))) return "trusted";
+    const seen = c.seenUrls ? [...c.seenUrls] : [];
+    const host = hostOf(target);
+    const site = siteOf(target);
+    const trusted = !!(c.trustedSites && c.trustedSites.has(site));
+    if ((u.pathname === "/" || u.pathname === "") && !u.search && !u.hash && !isPrivateHost(host)
+      && (host === site || host === `www.${site}` || trusted || seen.some((known) => hostOf(known) === host))) return "home";
+    const exact = exactUrl(target);
+    if (seen.some((known) => known === target || exactUrl(known) === exact)) return "seen";
+    // The same search with other words ("?q=kettle" seen, "?q=teapot" asked
+    // for) is typing into that site's search form, so it counts as seen.
+    if (c.seenSearches && [...c.seenSearches].some((known) => stripUrl(known) === bare)) return "seen";
+    if (trusted) return "trusted";
     return "written";
   }
 
@@ -1123,6 +1152,12 @@
   const wordsOf = (text) => String(text || "").toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
 
   /**
+   * A test for whether a word is one of `asked` (a set of words), or one of
+   * them with an ending ("laptops" for "laptop").
+   */
+  const wordFrom = (asked) => (w) => asked.has(w) || (w.length >= 4 && [...asked].some((a) => a.length >= 3 && !/^\d+$/.test(a) && w.startsWith(a) && w.length - a.length <= 3));
+
+  /**
    * True when an address is a search engine's results for words the user's
    * request already holds: the same as the person typing their own words
    * into that engine's box. Every word searched for is a word of the request
@@ -1136,8 +1171,7 @@
     if (!SEARCH_HOST.test(u.hostname)) return false;
     if (u.hash && u.hash !== "#") return false;
     if (!u.pathname.split("/").every((part) => SEARCH_PATH_PARTS.has(part.toLowerCase()))) return false;
-    const asked = new Set(wordsOf(task));
-    const fromRequest = (w) => asked.has(w) || (w.length >= 4 && [...asked].some((a) => a.length >= 3 && !/^\d+$/.test(a) && w.startsWith(a) && w.length - a.length <= 3));
+    const fromRequest = wordFrom(new Set(wordsOf(task)));
     let searched = 0;
     for (const [name, value] of u.searchParams) {
       const key = name.toLowerCase();
@@ -1293,22 +1327,48 @@
       return addressOrigin(action.url, ctx) === "written" ? { kind: "address", why: RISK_TEXT.address, target: clip(action.url, 200), url: action.url } : null;
     }
     // Typing on a site the user did not send the agent to. A search box is
-    // left alone: a search reads, and most tasks pass through one.
-    const typed = action.action === "type" ? [action.id] : action.action === "fill_form" ? (action.fields || []).map((f) => f.id) : [];
+    // left alone when what is searched for is the user's own words or
+    // words this page already shows: a search reads, and most tasks pass
+    // through one. Words from anywhere else (another page, another tab, the
+    // user's saved details) would leave for a site the user never chose, so
+    // they are held like any other typing there.
+    const typed = action.action === "type" ? [{ id: action.id, text: action.text }] : action.action === "fill_form" ? (action.fields || []).map((f) => ({ id: f.id, text: f.text })) : [];
     if (typed.length && /^https?:/.test(pageUrl)) {
       const site = siteOf(pageUrl);
-      const forms = (page && page.forms) || [];
-      const inSearch = typed.every((id) => {
-        const field = els.find((e) => e.id === id);
-        if (!field) return false;
-        const form = field.formId !== undefined ? forms.find((f) => f.id === field.formId) : null;
-        return (form && form.search) || field.inputType === "search" || field.role === "searchbox" || field.role === "combobox";
-      });
-      if (!inSearch && site && ctx.trustedSites && !ctx.trustedSites.has(site)) {
-        return { kind: "site", why: RISK_TEXT.site, target: site, site };
+      if (site && ctx.trustedSites && !ctx.trustedSites.has(site)) {
+        const forms = (page && page.forms) || [];
+        const inSearch = typed.every(({ id }) => {
+          const field = els.find((e) => e.id === id);
+          if (!field) return false;
+          const form = field.formId !== undefined ? forms.find((f) => f.id === field.formId) : null;
+          return (form && form.search) || field.inputType === "search" || field.role === "searchbox" || field.role === "combobox";
+        });
+        const known = inSearch && !typed.some(({ text }) => carriesDetail(text, ctx.details, ctx.task)) && wordsKnownHere(typed.map((t) => t.text).join(" "), ctx.task, page);
+        if (!known) return { kind: "site", why: RISK_TEXT.site, target: site, site };
       }
     }
     return null;
+  }
+
+  /**
+   * True when every word of `text` is a word of the user's request (or that
+   * word with an ending), or a word the page itself shows in its text or
+   * on its controls: typing those into the page's own search box sends the
+   * site nothing it did not have.
+   */
+  function wordsKnownHere(text, task, page) {
+    const words = wordsOf(text);
+    if (!words.length) return true;
+    const fromRequest = wordFrom(new Set(wordsOf(task)));
+    let shown = null;
+    return words.every((w) => {
+      if (fromRequest(w)) return true;
+      if (!shown) {
+        const labels = ((page && page.elements) || []).map((e) => [e.accName, e.text, e.label, e.placeholder, e.title].filter(Boolean).join(" ")).join(" ");
+        shown = new Set(wordsOf(`${(page && page.innerText) || ""} ${labels}`));
+      }
+      return shown.has(w);
+    });
   }
 
   function contentRisk(action, page) {
@@ -1691,7 +1751,9 @@
     sitesNamedIn,
     knownSiteUrl,
     addressOrigin,
+    isPrivateHost,
     isMessageBox,
+    wordsKnownHere,
     startPageKind,
     searchOfRequest,
     carriesDetail,
