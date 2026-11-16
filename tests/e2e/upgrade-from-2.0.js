@@ -85,6 +85,29 @@ async function open(puppeteer, extDir, profile, id) {
   return { browser, errors, ...(await attach(browser, id, errors)) };
 }
 
+// What chrome://extensions knows about the extension: enabled or not, why
+// it is disabled, and the errors it recorded. For the log when a step fails.
+async function extensionInfo(browser, id) {
+  const page = await browser.newPage();
+  try {
+    await page.goto("chrome://extensions/", { waitUntil: "load" });
+    return await page.evaluate((extId) => new Promise((resolve) => {
+      chrome.developerPrivate.getExtensionInfo(extId, (info) => {
+        if (!info) { resolve({ error: (chrome.runtime.lastError && chrome.runtime.lastError.message) || "no such extension" }); return; }
+        resolve({
+          state: info.state, version: info.version, disableReasons: info.disableReasons,
+          manifestErrors: (info.manifestErrors || []).map((e) => e.message),
+          runtimeErrors: (info.runtimeErrors || []).map((e) => e.message),
+        });
+      });
+    }), id);
+  } catch (e) {
+    return { error: e.message };
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
 // The extension's service worker, other than `previous` (the one a reload
 // replaces), with uncaught exceptions collected from the moment it is found.
 async function attach(browser, id, errors, previous) {
@@ -124,7 +147,11 @@ async function main() {
     await s.worker.evaluate(() => { setTimeout(() => chrome.runtime.reload(), 50); }).catch(() => {});
     Object.assign(s, await attach(s.browser, id, s.errors, s.target));
     check("worker starts after the update, under the same id", s.worker, s.worker ? "" : "no new service worker for this id within 20 s");
-    if (!s.worker) { await s.browser.close(); return report(checks); }
+    if (!s.worker) {
+      console.log(`extension state: ${JSON.stringify(await extensionInfo(s.browser, id))}`);
+      await s.browser.close();
+      return report(checks);
+    }
     await sleep(2500); // onInstalled and the migrations run
     const script = await s.worker.evaluate(() => typeof updateContextMenus).catch((e) => `error: ${e.message}`);
     check("the worker runs the build's background.js", script === "function", `typeof updateContextMenus is ${script}`);
