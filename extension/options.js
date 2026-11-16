@@ -11,6 +11,8 @@
   const { STORAGE } = CONFIG;
   const D = SELECT_TO_AI_DEFAULTS;
   const AGENT = D.AGENT_DEFAULTS;
+  const S = SELECT_TO_AI_SETUP;
+  const G = SELECT_TO_AI_GRANTS;
   const $ = (id) => document.getElementById(id);
 
   // Sign in with ChatGPT is offered only when the feature is on
@@ -73,6 +75,45 @@
     chrome.storage.local.set({ [name]: value }, () => toast(value ? "Key saved" : "Key removed"));
   }
 
+  // ---------- data consent and host access ----------
+  // Nothing goes to a provider until the user has read what is sent and
+  // agreed (setup.js), once per provider. The provider's host is asked for
+  // inside the same click.
+  let consent = {};
+  S.readConsent(chrome.storage.local).then((c) => { consent = c; });
+  function withConsent(slot, note, provider, customUrl, go) {
+    const id = S.consentId(provider, customUrl);
+    const denied = `Chrome did not allow access to ${S.providerName(provider)}, so nothing was sent.`;
+    slot.textContent = "";
+    if (S.hasConsent(consent, id)) {
+      S.requestProviderHost(provider, customUrl).then((ok) => {
+        if (ok) { go(); return; }
+        note.textContent = denied;
+        note.className = "note err";
+      });
+      return;
+    }
+    note.textContent = "";
+    note.className = "note";
+    slot.appendChild(S.consentCard(document, {
+      provider,
+      customUrl,
+      onAgree: () => {
+        const reached = S.requestProviderHost(provider, customUrl);
+        return S.recordConsent(chrome.storage.local, [id]).then((c) => {
+          consent = c;
+          return reached;
+        }).then((ok) => {
+          if (!ok) return denied;
+          slot.textContent = "";
+          go();
+          return "";
+        });
+      },
+      onCancel: () => { note.textContent = "Nothing was sent."; note.className = "note"; },
+    }));
+  }
+
   // ---------- theme ----------
   function applyTheme(choice) {
     const dark = choice === "dark" || (choice !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
@@ -133,6 +174,11 @@
     if (!$("providerPanel").hidden) $("apiKey").focus();
   };
   $("agentOff").onchange = (e) => {
+    if (e.target.checked && assistantsOn() === 0) {
+      e.target.checked = false;
+      toast("Turn on one assistant first, or right-click has nothing to send to.");
+      return;
+    }
     save({ showAgent: !e.target.checked });
     renderStatus();
   };
@@ -168,6 +214,7 @@
   $("backupProvider").onchange = (e) => {
     save({ agentBackupProvider: e.target.value });
     $("backupNote").textContent = "";
+    $("backupConsentSlot").textContent = "";
     renderBackup();
     if (e.target.value && !keys[keyNameFor(e.target.value)]) $("backupKey").focus();
   };
@@ -182,7 +229,13 @@
     $("backupNote").className = warn ? "note err" : "note";
   }
   $("backupKey").addEventListener("change", commitBackupKey);
-  $("backupKey").addEventListener("paste", () => setTimeout(() => { commitBackupKey(); testBackup(); }, 0));
+  $("backupKey").addEventListener("paste", () => setTimeout(() => { commitBackupKey(); askTestBackup(); }, 0));
+  function askTestBackup() {
+    const p = $("backupProvider").value;
+    if (!p) return;
+    if (!$("backupKey").value.trim()) { $("backupNote").textContent = "Paste a key first."; $("backupNote").className = "note err"; return; }
+    withConsent($("backupConsentSlot"), $("backupNote"), p, "", testBackup);
+  }
   async function testBackup() {
     const p = $("backupProvider").value;
     const key = $("backupKey").value.trim();
@@ -218,7 +271,7 @@
       $("backupTest").disabled = false;
     }
   }
-  $("backupTest").onclick = testBackup;
+  $("backupTest").onclick = askTestBackup;
 
   // ---------- provider panel ----------
   function renderProvider() {
@@ -304,6 +357,7 @@
     // A new provider starts on its own default model, not the old one's id.
     // The helper is on the same provider, so it goes with the old one.
     save({ agentActiveProvider: p, agentModel: defaultModelFor(p), agentHelperModel: "" });
+    $("consentSlot").textContent = "";
     $("helperModel").value = "";
     renderProvider();
     renderStatus();
@@ -322,6 +376,8 @@
     const value = $("apiKey").value.trim();
     if (value === (keys[keyNameFor(p)] || "")) return;
     saveKey(keyNameFor(p), value);
+    // The agent can only reach the provider with Chrome's leave to.
+    if (value) S.requestProviderHost(p);
     if (value && settings.showAgent !== true) save({ showAgent: true }, true);
     const warn = keyWarning(p, value);
     $("testNote").textContent = warn;
@@ -329,7 +385,7 @@
     renderStatus();
   }
   $("apiKey").addEventListener("change", commitKey);
-  $("apiKey").addEventListener("paste", () => setTimeout(() => { commitKey(); test(); }, 0));
+  $("apiKey").addEventListener("paste", () => setTimeout(() => { commitKey(); askTest(); }, 0));
   $("revealKey").onclick = () => {
     const input = $("apiKey");
     input.type = input.type === "password" ? "text" : "password";
@@ -395,6 +451,12 @@
     return { url, headers, body: { model: m, max_tokens: 1, messages: [{ role: "user", content: "Hi" }] } };
   }
 
+  function askTest() {
+    const p = provider();
+    if (p === "chatgpt") return;
+    if (p !== "custom" && !$("apiKey").value.trim()) { $("testNote").textContent = "Paste a key first."; $("testNote").className = "note err"; return; }
+    withConsent($("consentSlot"), $("testNote"), p, p === "custom" ? $("customUrl").value.trim() || settings.agentCustomUrl || AGENT.customUrl : "", test);
+  }
   async function test() {
     const p = provider();
     if (p === "chatgpt") return;
@@ -436,14 +498,16 @@
       $("testBtn").disabled = false;
     }
   }
-  $("testBtn").onclick = test;
+  $("testBtn").onclick = askTest;
 
   // Live model list, loaded the first time the model box is used.
   let liveModels = null;
   $("model").addEventListener("focus", async () => {
     if (liveModels) return;
-    liveModels = [];
     const p = provider();
+    // The list comes from the provider, so it waits for the user's yes.
+    if (!S.hasConsent(consent, S.consentId(p, settings.agentCustomUrl || AGENT.customUrl))) return;
+    liveModels = [];
     if (p === "chatgpt") {
       if (!chatgptReady()) return;
       const r = await CG_UI.refreshModels();
@@ -474,11 +538,42 @@
     showGemini: (s) => s.showGemini !== false,
     showPerplexity: (s) => s.showPerplexity === true,
     autoSend: (s) => s.autoSend === true,
+    // Off unless chosen, as in 2.0: the page address is only sent when asked.
     autoContext: (s) => s.autoContext === true,
     agentLearning: (s) => s.agentLearning !== false,
   };
+  const ASSISTANTS = ["showChatGPT", "showClaude", "showGemini", "showPerplexity"];
+  const agentOn = () => settings.showAgent === true;
+  const assistantsOn = () => ASSISTANTS.filter((id) => $(id).checked).length;
+  const NEEDS_ONE = "Keep one assistant on while the agent is off, or right-click has nothing to send to.";
   for (const id of Object.keys(TOGGLES)) {
+    if (ASSISTANTS.includes(id) || id === "agentOff") continue;
     $(id).addEventListener("change", (e) => save({ [id]: e.target.checked }));
+  }
+  for (const id of ASSISTANTS) {
+    $(id).addEventListener("change", (e) => {
+      const on = e.target.checked;
+      if (!on && !agentOn() && assistantsOn() === 0) {
+        e.target.checked = true;
+        toast(NEEDS_ONE);
+        return;
+      }
+      if (on && id === "showClaude") {
+        // claude.ai is optional in 4.0: asked for here, inside the click.
+        G.requestHost(G.ASSISTANT_HOSTS.claude).then((ok) => {
+          if (!ok) { e.target.checked = false; toast("Chrome did not allow claude.ai, so Claude stays off."); return; }
+          save({ showClaude: true });
+          G.registerAssistantScripts();
+        });
+        return;
+      }
+      if (on && id === "showPerplexity") {
+        // www.perplexity.ai is always allowed. perplexity.ai without www is
+        // asked for too, for links that land there, and a no changes nothing.
+        G.requestHost(G.ASSISTANT_HOSTS.perplexityApex).then((ok) => { if (ok) G.registerAssistantScripts(); });
+      }
+      save({ [id]: on });
+    });
   }
 
   document.querySelectorAll('input[name="openingMode"]').forEach((r) =>
@@ -550,7 +645,7 @@
 
   // ---------- memory ----------
   // What Reset removes from local storage besides the API keys.
-  const RESET_LOCAL_KEYS = ["agentUserMemory", "agentSkills", "agentCrossSessionMemory", "agentKnown", "recipesStore", "chatgptAccount", "chatgptCredentials", "chatgptHostId", "agentProviderPause", "sidePanelState"];
+  const RESET_LOCAL_KEYS = ["agentDataConsent", "agentUserMemory", "agentSkills", "agentCrossSessionMemory", "agentKnown", "recipesStore", "chatgptAccount", "chatgptCredentials", "chatgptHostId", "agentProviderPause", "sidePanelState"];
   $("manageMemoryBtn").onclick = () => chrome.tabs.create({ url: chrome.runtime.getURL("agent.html#memory") });
 
   $("resetBtn").onclick = async () => {
@@ -579,6 +674,8 @@
       const mode = settings.openingMode === "tab" ? "tab" : "sidePanel";
       document.querySelector(`input[name="openingMode"][value="${mode}"]`).checked = true;
       for (const [id, read] of Object.entries(TOGGLES)) $(id).checked = read(settings);
+      // Claude shows as on only once claude.ai is allowed.
+      if ($("showClaude").checked) G.hasHost(G.ASSISTANT_HOSTS.claude).then((ok) => { if (!ok) $("showClaude").checked = false; });
       $("agentCostBudget").value = settings.agentCostBudget !== undefined ? settings.agentCostBudget : AGENT.costBudget;
       // A choice saved that the list does not offer shows as the nearest one it does.
       const checkIn = settings.agentCheckInMinutes === undefined ? AGENT.checkInMinutes : Number(settings.agentCheckInMinutes) || 0;

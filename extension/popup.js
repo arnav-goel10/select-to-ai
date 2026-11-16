@@ -55,6 +55,8 @@ document.addEventListener('DOMContentLoaded', () => {
             taskForm.hidden = !agentEnabled;
             $('ideas').hidden = !agentEnabled;
             openAgentBtn.hidden = !agentEnabled;
+            // The quick box starts the agent, so it shows only when the agent is on.
+            $('openPaletteBtn').hidden = !agentEnabled;
             $('setupCard').hidden = agentEnabled;
             if (agentEnabled) taskInput.focus();
         });
@@ -67,7 +69,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     taskInput.addEventListener('input', () => { taskGo.disabled = !taskInput.value.trim(); });
     taskInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); taskForm.requestSubmit(); }
+        // Enter that confirms an IME word is not a send.
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); taskForm.requestSubmit(); }
     });
     taskForm.addEventListener('submit', (e) => {
         e.preventDefault();
@@ -77,6 +80,22 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('.idea').forEach((b) => b.addEventListener('click', () => openAgent(b.dataset.task)));
 
     $('openOptionsBtn').addEventListener('click', () => chrome.runtime.openOptionsPage());
+    $('rightClickSettingsBtn').addEventListener('click', () => {
+        chrome.tabs.create({ url: chrome.runtime.getURL('options.html#ask') });
+        window.close();
+    });
+
+    // Once, after the update from an earlier version (the worker sets
+    // whatsNew40): what changed, in the popup, with no tab opened.
+    const WHATS_NEW = 'whatsNew40';
+    chrome.storage.local.get(WHATS_NEW, (r) => {
+        if (chrome.runtime.lastError || !r || !r[WHATS_NEW]) return;
+        $('whatsNew').hidden = false;
+    });
+    $('whatsNewClose').addEventListener('click', () => {
+        $('whatsNew').hidden = true;
+        chrome.storage.local.remove(WHATS_NEW);
+    });
     openAgentBtn.addEventListener('click', () => openAgent('', true));
     $('openPaletteBtn').addEventListener('click', () => {
         chrome.runtime.sendMessage({ action: 'openPaletteFromPopup' });
