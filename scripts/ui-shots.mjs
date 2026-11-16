@@ -42,7 +42,14 @@ const browser = await puppeteer.launch({
 });
 
 function watch(page, name) {
-  page.on("console", (m) => { if (m.type() === "error") problems.push(`${name}: console error: ${m.text()}`); });
+  page.on("console", (m) => {
+    if (m.type() !== "error") return;
+    // The fixture pages come from the local test server (its missing
+    // favicon.ico logs a 404). Only the extension's own pages are judged.
+    const from = (m.location() && m.location().url) || page.url();
+    if (!from.startsWith("chrome-extension://")) return;
+    problems.push(`${name}: console error: ${m.text()}`);
+  });
   page.on("pageerror", (e) => problems.push(`${name}: page error: ${e.message}`));
   page.on("requestfailed", (r) => { if (r.url().startsWith("chrome-extension://")) problems.push(`${name}: failed request ${r.url()}`); });
 }
@@ -194,8 +201,12 @@ try {
     if (error || !task) throw new Error(`scenario ${scenario}: ${error || "no task"}`);
     const fixture = await newPage(`${name} fixture`);
     await fixture.goto(`${server.baseUrl}${startPath}`, { waitUntil: "load" });
+    // The run is told which tab is its page, or it starts on the browser's
+    // first blank tab instead of the fixture.
+    const tabId = await worker.evaluate(async (href) => { const t = (await chrome.tabs.query({})).find((x) => x.url === href); return t ? t.id : null; }, fixture.url());
+    if (tabId == null) throw new Error(`${name}: the fixture tab was not found`);
     const agent = await newPage(name);
-    await agent.goto(`chrome-extension://${id}/agent.html?task=${encodeURIComponent(task)}&autostart=1&fresh=1`, { waitUntil: "load" });
+    await agent.goto(`chrome-extension://${id}/agent.html?task=${encodeURIComponent(task)}&autostart=1&fresh=1&tabId=${tabId}`, { waitUntil: "load" });
     const t0 = Date.now();
     while (Date.now() - t0 < 60000) {
       if (await agent.evaluate(until).catch(() => false)) break;
