@@ -67,7 +67,7 @@ test("the free daily cap is said where the free path is picked, from one figure"
   assert.match(note, /1,000 after adding \$10 of credit/);
   assert.ok(note.includes(String(D.FREE_CAPS.openrouter.daily)));
   assert.equal(D.freeCapNote("anthropic"), "", "no figure is made up for a provider without one on file");
-  assert.doesNotMatch(note, /—/);
+  assert.equal(note.includes(String.fromCharCode(0x2014)), false);
   // The welcome page shows it beside the button that picks the free path, and again once connected.
   const html = fs.readFileSync(path.join(EXT, "welcome.html"), "utf8");
   const js = fs.readFileSync(path.join(EXT, "welcome.js"), "utf8");
