@@ -327,13 +327,19 @@ async function main() {
     // 7. Zero assistants.
     const zero = { showChatGPT: false, showGemini: false, showPerplexity: false, showClaude: false, showAgent: false };
     const made = await worker.evaluate(async (s) => {
-      const list = [];
+      // The menu that is left once the rebuilds settle: what was created
+      // after the last removeAll. Clearing storage first briefly rebuilds the
+      // menu from the defaults, which is not what the user ends up with.
+      let list = [];
       const real = chrome.contextMenus.create;
+      const realRemoveAll = chrome.contextMenus.removeAll;
       chrome.contextMenus.create = function (props, cb) { list.push(props.title || props.id); return real.call(this, props, cb); };
+      chrome.contextMenus.removeAll = function (...a) { list = []; return realRemoveAll.apply(this, a); };
       await chrome.storage.sync.clear();
       await chrome.storage.sync.set(s);
       await new Promise((r) => setTimeout(r, 1200));
       chrome.contextMenus.create = real;
+      chrome.contextMenus.removeAll = realRemoveAll;
       return list;
     }, zero);
     check("zero assistants: no menu item and no empty parent", made.length === 0, `created ${JSON.stringify(made)}`);
