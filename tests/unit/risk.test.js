@@ -413,6 +413,8 @@ test("a search box on a site outside the task takes the request's words or the p
   const type = (text, c) => T.actionRisk({ action: "type", id: 2, text, submit: true }, page, c || ctx());
   assert.equal(type("kettle"), null, "the request's word");
   assert.equal(type("kettles under $40"), null, "with an ending, and its numbers");
+  assert.equal(type("kettle", ctx({ task: "find kettles" })), null, "without the request's ending");
+  assert.equal(type("ket", ctx({ task: "find kettles" })).kind, "site", "a stub of a word is not the word");
   assert.equal(type("electric kettles"), null, "a word the page shows");
   assert.equal(type("order 4411 card 9921").kind, "site", "words from nowhere on this page or in the request");
   assert.equal(type("kettle ada@example.com", ctx({ details: ["ada@example.com"] })).kind, "site", "a saved detail");

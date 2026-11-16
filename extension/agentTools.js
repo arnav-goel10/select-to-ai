@@ -1359,7 +1359,10 @@
   function wordsKnownHere(text, task, page) {
     const words = wordsOf(text);
     if (!words.length) return true;
-    const fromRequest = wordFrom(new Set(wordsOf(task)));
+    const asked = new Set(wordsOf(task));
+    const withEnding = wordFrom(asked);
+    // Either way round: "kettle" searched for when the request says "kettles".
+    const fromRequest = (w) => withEnding(w) || (w.length >= 3 && !/^\d+$/.test(w) && [...asked].some((a) => a.startsWith(w) && a.length - w.length <= 3));
     let shown = null;
     return words.every((w) => {
       if (fromRequest(w)) return true;
