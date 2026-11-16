@@ -96,7 +96,8 @@ function buildCase(c, again) {
   if (!snap) throw new Error(`No snapshot for ${c.name}: run node tests/decisions/capture.js`);
   const page = { ...snap.scan };
   if (page.protectedPage) page.innerText = "[This tab is a browser page that extensions cannot read.]";
-  const run = RUN.newRun({ id: "d", task: c.task, tabId: 1, startUrl: page.url, marker: "PAGE-0a1b2c3d", settings: { maxActions: profile.maxActions, elementLimit: profile.lines, pageBudget: profile.pageBudget } });
+  // A case may start the run elsewhere (`startUrl`), so the page in front is on a site the request did not name.
+  const run = RUN.newRun({ id: "d", task: c.task, tabId: 1, startUrl: c.startUrl || page.url, marker: "PAGE-0a1b2c3d", settings: { maxActions: profile.maxActions, elementLimit: profile.lines, pageBudget: profile.pageBudget } });
   run.history = (snap.history || []).map((h) => ({ step: h.step, goal: (h.action && h.action.reason) || "", url: page.url, actions: [{ text: describeSnapshotAction(h.action), ok: !!h.success, result: String(h.message || "") }] }));
   run.step = run.history.length + 1;
   // What the engine would have counted by now: the same action, again, with nothing to show for it.
@@ -115,6 +116,13 @@ function buildCase(c, again) {
   KNOWN.annotate(page.elements, KNOWN.empty());
   // Labels by ref, as the engine keeps them once it has looked at the page.
   for (const el of page.elements || []) run.labels[el.id] = TOOLS.elementLabel(el);
+  // What the engine has trusted by now (run.js observe, engine.js observe):
+  // every address the page shows, where its search forms send, and the
+  // sites of the other tabs the request is about.
+  const searches = (page.forms || []).filter((f) => f.search && f.action).map((f) => f.action);
+  run.trust.urls = [...new Set([page.url, ...(page.elements || []).map((el) => el.url), ...searches].filter(Boolean))];
+  run.trust.searches = [...new Set(searches)];
+  for (const t of snap.tabs || []) { const site = t.scan ? TOOLS.siteOf(t.url) : ""; if (site && !run.trust.sites.includes(site)) run.trust.sites.push(site); }
   const current = { id: 1, current: true, active: true, title: page.title, url: page.url };
   const others = (snap.tabs || []).map((t, i) => ({ id: 2 + i, title: t.title, url: t.url, active: false }));
   const m = CONTEXT.stepMessages(run, page, {
@@ -127,7 +135,7 @@ function buildCase(c, again) {
   const lines = (page.elements || []).map((el) => ({ id: el.id, line: TOOLS.formatElementLine(el) }));
   const ctx = { ids: (re) => lines.filter((l) => re.test(l.line)).map((l) => l.id), prompt: `${m.system}\n\n${m.user}` };
   const tool = RUN.toolFor(run, m, { memory: KNOWN.empty() });
-  return { system: INSTRUCTIONS || m.system, user: m.user, ctx, page, run, tool, offered: tool.parameters.properties.do.enum };
+  return { system: INSTRUCTIONS || m.system, user: m.user, ctx, page, run, tool, offered: tool.parameters.properties.do.enum, tabs: [current, ...others] };
 }
 
 // The provider, for the request fields that ask a model to think less (llm.js effortFields).
@@ -251,6 +259,8 @@ function judge(c, args, built) {
   // The actions the engine would run, in order, as next() takes them.
   const ran = [];
   let stopped = "";
+  // What the step typed, by ref, as the engine keeps it for the form check.
+  run.typed = {};
   for (const a of steps) {
     if (a.do === "done" || a.do === "ask_user") { ran.push(a); break; }
     // Notes, and filling from details when none are on file, change nothing on the page.
@@ -258,13 +268,14 @@ function judge(c, args, built) {
     if (a.gone) { stopped = a.gone; break; }
     if (a.do === "look" && !built.offered.includes("look")) { stopped = "This model cannot be shown pictures."; break; }
     if (a.do === "fill" && a.from) { stopped = `Nothing is on file for profile.${a.from}.`; break; }
-    const verdict = POLICY.decide(a, built.page, run, { riskConfirmation: true }, KNOWN.empty());
+    const verdict = POLICY.decide(a, built.page, run, { riskConfirmation: true }, KNOWN.empty(), built.tabs);
     if (verdict.verdict !== "allow") row.policy.push(`${verdict.verdict}${verdict.kind ? ` ${verdict.kind}` : ""}: ${STEP.describe(a)}`);
     // What the user would be asked to approve, and what the engine would first put to a second opinion.
     if (verdict.verdict === "confirm") row.held.push({ kind: verdict.kind, what: STEP.describe(a, run.labels[a.ref]) });
     if (verdict.verdict === "allow" && verdict.check) row.checks.push({ check: verdict.check, what: STEP.describe(a, run.labels[a.ref]) });
     if (verdict.verdict === "handoff") return { ...row, outcome: "saved", why: `the policy handed ${STEP.describe(a, run.labels[a.ref])} to the user (${verdict.kind})` };
     if (verdict.verdict === "refuse") { stopped = verdict.message; break; }
+    if (a.do === "fill" && a.ref !== undefined) run.typed[a.ref] = a.value;
     ran.push(a);
   }
   if (!ran.length) return { ...row, outcome: "fail", why: `${row.first} failed: ${stopped || "the step does nothing"}` };
@@ -302,7 +313,7 @@ function judge(c, args, built) {
  */
 async function settleHolds(c, v, asker) {
   // Only a step that acts on the page is held; a question to the user or an answer is not.
-  if (c.hold === undefined || !["pass", "slow"].includes(v.outcome) || !/^(click|press)\b/.test(v.first || "")) return v;
+  if (c.hold === undefined || !["pass", "slow"].includes(v.outcome) || !/^(click|press|fill|navigate|tabs)\b/.test(v.first || "")) return v;
   const held = [...(v.held || [])];
   let ms = 0;
   for (const { check, what } of v.checks || []) {
@@ -371,7 +382,11 @@ function report(rows) {
 }
 
 async function main() {
-  const cases = CASES.filter((c) => !ONLY.length || ONLY.includes(c.name) || ONLY.includes(c.category));
+  const chosen = CASES.filter((c) => !ONLY.length || ONLY.includes(c.name) || ONLY.includes(c.category));
+  // A case added since the snapshots were last captured is left out, and named.
+  const missing = chosen.filter((c) => !SNAPSHOTS[c.name]).map((c) => c.name);
+  if (missing.length) console.log(`No snapshot yet for ${missing.join(", ")}: run node tests/decisions/capture.js to include them.\n`);
+  const cases = chosen.filter((c) => SNAPSHOTS[c.name]);
   if (DRY) {
     let bad = 0;
     for (const c of cases) {
