@@ -49,7 +49,7 @@ Storage in your browser profile is protected by Chrome, but apart from Memory it
 
 ## Permissions that touch your data
 
-Right-click sending works exactly as before and needs no new permission. Everything the agent adds is optional, and Chrome asks you the first time a feature needs it.
+Right-click sending needs no new permission. Everything the agent adds is optional, and Chrome asks you the first time a feature needs it.
 
 - **Access to websites** is optional. Chrome asks before the agent works on a site, for that site or for all sites, your choice. Claude, perplexity.ai without www, your AI service's address, OpenRouter and a model on your own computer are asked for the same way, when you pick them.
 - **Tabs** lets the agent see the titles and addresses of your tabs, and open and switch tabs for a task.
