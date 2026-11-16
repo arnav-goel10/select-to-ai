@@ -64,7 +64,8 @@ test("an address is traced to the user, a page, a front page, a trusted site, or
   assert.equal(from("https://blog.example.net/posts/42"), "seen");
   assert.equal(from("https://blog.example.net/search?q=teapot"), "written", "a plain link with query values the model chose");
   const blogSearch = new Set(["https://blog.example.net/search"]);
-  assert.equal(T.addressOrigin("https://blog.example.net/search?q=teapot", ctx({ seenSearches: blogSearch, page: { innerText: "Teapot reviews", elements: [] } })), "seen", "where a search form sends, with words the page shows");
+  assert.equal(T.addressOrigin("https://blog.example.net/search?q=teapot", ctx({ seenSearches: blogSearch, page: { url: "https://blog.example.net/posts/42", innerText: "Teapot reviews", elements: [] } })), "seen", "where a search form sends, with words its own site's page shows");
+  assert.equal(T.addressOrigin("https://blog.example.net/search?q=teapot", ctx({ seenSearches: blogSearch, page: { url: "https://news.example.org/", innerText: "Teapot reviews", elements: [], forms: [] } })), "written", "page words to a form neither declared by nor on the site of the page");
   assert.equal(T.addressOrigin("https://blog.example.net/search?q=order+4411", ctx({ seenSearches: blogSearch, page: { innerText: "Teapot reviews", elements: [] } })), "written", "where a search form sends, with words from nowhere");
   assert.equal(from("https://example.io/"), "home");
   assert.equal(from("https://www.example.io/"), "home");

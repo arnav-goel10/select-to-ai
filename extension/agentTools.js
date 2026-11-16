@@ -1083,8 +1083,10 @@
    * Where a navigation address came from:
    *   "task"    the user wrote it
    *   "seen"    it was a link on a page read this run, exactly as shown, or
-   *             where a search form on such a page sends, with words from
-   *             the request or the current page
+   *             where a search form on such a page sends, with no new
+   *             fragment and with words from the request, or from the
+   *             current page when that page declares the form or shares
+   *             its site
    *   "home"    a site's front page: nothing in it but the site's own name
    *             (or www. and it), or the name of a host already seen or
    *             trusted. Never an IP address or a local network name.
@@ -1092,6 +1094,8 @@
    *   "written" none of those: the model composed it
    * Only a "written" address can carry what the agent has read to a place
    * the user never chose, so only that one is held for the user to see.
+   * An address with a name or password before the host is always
+   * "written" unless the user wrote it.
    * A search's results address on a site whose search form has been read
    * is the same act as typing into that form, which is not held anywhere.
    * A plain link with other query values is not: the values are the
@@ -1106,6 +1110,9 @@
     const bare = stripUrl(target);
     const task = String(c.task || "").toLowerCase();
     if (task.includes(target.toLowerCase().replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, ""))) return "task";
+    // A name and password before the host go to the server with the request
+    // (a server that asks for them gets them), so they are a channel too.
+    if (u.username || u.password) return "written";
     const seen = c.seenUrls ? [...c.seenUrls] : [];
     const host = hostOf(target);
     const site = siteOf(target);
@@ -1122,8 +1129,21 @@
     // search form that sends anywhere.
     if (trusted) return "trusted";
     const form = c.seenSearches ? [...c.seenSearches].find((known) => stripUrl(known) === bare) : null;
-    if (form && wordsKnownHere(queryWords(target, form), c.task, c.page)) return "seen";
+    if (form && sameHash(target, form)) {
+      // The current page's words may go only where that page itself
+      // searches: a form it declares, or one on its own site. A form read
+      // on an earlier page could send this page's text anywhere.
+      const pageUrl = String((c.page && c.page.url) || "");
+      const ownForm = ((c.page && c.page.forms) || []).some((f) => f && f.search && f.action && stripUrl(f.action) === bare)
+        || (!!pageUrl && !!siteOf(pageUrl) && siteOf(pageUrl) === site);
+      if (wordsKnownHere(queryWords(target, form), c.task, ownForm ? c.page : null)) return "seen";
+    }
     return "written";
+  }
+
+  /** True when `url` has no fragment, or the same one as the search form's address. A fragment is read by script on the page. */
+  function sameHash(url, form) {
+    try { return !new URL(url).hash || new URL(url).hash === new URL(form).hash; } catch (_e) { return false; }
   }
 
   /** The query values of `url` that the search form's own address does not already hold. */

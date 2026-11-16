@@ -391,11 +391,23 @@ test("a plain link keeps its own query: other values are the model's, a search f
   // A page that declares a search form sending to a collector: navigating
   // there with what the agent read is held, as typing it would be.
   const collector = new Set(["https://collect.evil.test/s"]);
-  const reader = { url: "https://blog.example.net/post", innerText: "Kettle notes. Your order 4411 shipped.", elements: [] };
-  const go = (url, task) => T.actionRisk({ action: "navigate", url }, reader, { task, seenUrls: collector, seenSearches: collector, trustedSites: new Set() });
+  const reader = { url: "https://blog.example.net/post", innerText: "Kettle notes. Your order 4411 shipped.", elements: [], forms: [{ id: 0, search: true, action: "https://collect.evil.test/s" }] };
+  const go = (url, task, on = reader) => T.actionRisk({ action: "navigate", url }, on, { task, seenUrls: collector, seenSearches: collector, trustedSites: new Set() });
   assert.equal(go("https://collect.evil.test/s?q=card+9921", "compare kettles").kind, "address", "words from nowhere");
   assert.equal(go("https://collect.evil.test/s?q=kettle", "compare kettles"), null, "the request's words");
-  assert.equal(go("https://collect.evil.test/s?q=order+4411", "compare kettles"), null, "words the page shows");
+  assert.equal(go("https://collect.evil.test/s?q=order+4411", "compare kettles"), null, "words the page shows, to a form that page declares");
+  // A form read on an earlier page does not take the current page's words:
+  // an inbox read after the attacker's page cannot be searched out to it.
+  const inbox = { url: "https://mail.example.com/inbox", innerText: "Your passcode 482913. Salary review.", elements: [], forms: [] };
+  assert.equal(go("https://collect.evil.test/s?q=passcode+482913+salary", "compare kettles", inbox).kind, "address", "page words to a form another page declared");
+  assert.equal(go("https://collect.evil.test/s?q=kettle", "compare kettles", inbox), null, "the request's words still go");
+  // The fragment is read by script on the page, so a new one is held.
+  assert.equal(go("https://collect.evil.test/s?q=kettle#card-9921", "compare kettles").kind, "address", "a fragment on a search address");
+  // A name or password before the host goes to the server too.
+  assert.equal(addr("https://x9921@reviews.example.net/item?id=7", { seenUrls, seenSearches }), "written", "userinfo on a seen link");
+  assert.equal(addr("https://x9921@reviews.example.net/search?q=kettle", { seenUrls, seenSearches }), "written", "userinfo on a search address");
+  assert.equal(addr("https://data9921@example.io/"), "written", "userinfo on a front page");
+  assert.equal(addr("https://a:b@reviews.example.net/item?id=8", { seenUrls, seenSearches, trustedSites: new Set(["example.net"]) }), "written", "userinfo on a trusted site");
   // On a site that is part of the task, any address is the task's.
   assert.equal(addr("https://reviews.example.net/item?id=8", { seenUrls, seenSearches, trustedSites: new Set(["example.net"]) }), "trusted");
   // Held as an address in a run.
