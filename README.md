@@ -24,7 +24,7 @@ A recipe replays a saved run without calling a model while the pages look as rec
 
 healwright is a selector-healing tool used as the baseline. Limits stated in the same doc:
 
-- The pages are fixture apps written by a separate benchmark author, not real sites.
+- The pages are fixture apps written by our own separate benchmark author, not real sites. The next proof has to be real portals and real users.
 - Repair runs on Haiku 5.5 only. Other models are untested.
 - There are 54 breaking cells, so the coverage interval is wide (42–68%).
 - Commit buttons whose wording changed still stop for the user's approval, by design.
