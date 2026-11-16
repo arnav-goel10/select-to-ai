@@ -185,7 +185,8 @@ Promise.all([
     const state = items[STORAGE.SIDE_PANEL_STATE];
     const fresh = !!(state && state.url && Date.now() - (state.timestamp || 0) < FRESH_MS);
     const agentState = !!(state && isAgentUrl(state.url));
-    if (!agentOn && selector.options.length === 0 && !fresh) { showEmpty(); return; }
+    // Every assistant off and the agent off: an old hand-off is not shown.
+    if (!agentOn && selector.options.length === 0) { showEmpty(); return; }
     if (state && state.url && (agentOn ? fresh || agentState : !agentState)) { updateState(state); return; }
     if (agentOn) { show(agentUrl()); return; }
 
