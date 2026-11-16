@@ -62,18 +62,26 @@ test("an address is traced to the user, a page, a front page, a trusted site, or
   const from = (url) => T.addressOrigin(url, ctx());
   assert.equal(from("https://help.example.org/returns?lang=en"), "task");
   assert.equal(from("https://blog.example.net/posts/42"), "seen");
-  assert.equal(from("https://blog.example.net/search?q=teapot"), "seen", "same page, different query values");
-  assert.equal(from("https://anything.example.io/"), "home");
+  assert.equal(from("https://blog.example.net/search?q=teapot"), "written", "a plain link with query values the model chose");
+  const blogSearch = new Set(["https://blog.example.net/search"]);
+  assert.equal(T.addressOrigin("https://blog.example.net/search?q=teapot", ctx({ seenSearches: blogSearch, page: { url: "https://blog.example.net/posts/42", innerText: "Teapot reviews", elements: [] } })), "seen", "where a search form sends, with words its own site's page shows");
+  assert.equal(T.addressOrigin("https://blog.example.net/search?q=teapot", ctx({ seenSearches: blogSearch, page: { url: "https://news.example.org/", innerText: "Teapot reviews", elements: [], forms: [] } })), "written", "page words to a form neither declared by nor on the site of the page");
+  assert.equal(T.addressOrigin("https://blog.example.net/search?q=order+4411", ctx({ seenSearches: blogSearch, page: { innerText: "Teapot reviews", elements: [] } })), "written", "where a search form sends, with words from nowhere");
+  assert.equal(from("https://example.io/"), "home");
+  assert.equal(from("https://www.example.io/"), "home");
+  assert.equal(from("https://anything.example.io/"), "written", "a name under a site can carry data in its labels");
   assert.equal(from("https://shop.example.com/account/orders"), "trusted");
   assert.equal(from("https://collect.evil.test/c?d=order+4411+card+ending+9921"), "written");
   // No site is trusted for being a search engine: a results address is
   // seen once the site's search form has been on a page read (run.js adds
   // where each search form sends to the seen addresses).
   assert.equal(from("https://www.google.com/search?q=kettle+reviews"), "written");
-  const searched = (url) => T.addressOrigin(url, ctx({ seenUrls: new Set(["https://search.naver.com/search.naver", "https://search.seznam.cz/", "https://www.baidu.com/s"]) }));
+  const forms = ["https://search.naver.com/search.naver", "https://search.seznam.cz/", "https://www.baidu.com/s"];
+  const searched = (url, asked = "find a 주전자, a konvice and a 水壶") => T.addressOrigin(url, ctx({ seenUrls: new Set(forms), seenSearches: new Set(forms), task: asked }));
   assert.equal(searched("https://search.naver.com/search.naver?query=%EC%A3%BC%EC%A0%84%EC%9E%90"), "seen");
   assert.equal(searched("https://search.seznam.cz/?q=konvice"), "seen");
   assert.equal(searched("https://www.baidu.com/s?wd=%E6%B0%B4%E5%A3%B6"), "seen");
+  assert.equal(searched("https://www.baidu.com/s?wd=%E6%B0%B4%E5%A3%B6", "find a kettle"), "written", "words neither the request nor the page holds");
   assert.equal(searched("https://www.baidu.com/collect?wd=x"), "written", "another path on the same site");
   assert.equal(from("https://blog.example.net/admin/export"), "written", "a path never seen, on a site that is not part of the task");
 });
@@ -102,9 +110,11 @@ test("typing on a site that is not part of the task is held once; a search box i
   assert.equal(T.actionRisk({ action: "type", id: 1, text: "ada@example.com" }, elsewhere, ctx({ trustedSites: new Set(["example.com", "other.test"]) })), null);
   // The same on the task's own site, or into a search box anywhere, needs nothing.
   assert.equal(T.actionRisk({ action: "type", id: 1, text: "ada" }, page("https://shop.example.com/x", { elements: [field], forms: [{ id: 0, search: false, fields: 1 }] }), ctx()), null);
+  // A search box takes the request's own words anywhere, and words from nowhere else.
   const box = { id: 2, tagName: "input", inputType: "search", accName: "Search", formId: 0 };
-  assert.equal(T.actionRisk({ action: "type", id: 2, text: "kettle", submit: true }, page("https://reviews.other.test/", { elements: [box], forms: [{ id: 0, search: true, fields: 1 }] }), ctx()), null);
-  assert.equal(T.actionRisk({ action: "type", id: 2, text: "kettle", submit: true }, page("https://www.google.com/", { elements: [{ ...box, formId: undefined, role: "combobox" }], forms: [] }), ctx()), null);
+  assert.equal(T.actionRisk({ action: "type", id: 2, text: "returns policy", submit: true }, page("https://reviews.other.test/", { elements: [box], forms: [{ id: 0, search: true, fields: 1 }] }), ctx()), null);
+  assert.equal(T.actionRisk({ action: "type", id: 2, text: "return policy", submit: true }, page("https://www.google.com/", { elements: [{ ...box, formId: undefined, role: "combobox" }], forms: [] }), ctx()), null);
+  assert.equal(T.actionRisk({ action: "type", id: 2, text: "order 4411 card 9921", submit: true }, page("https://reviews.other.test/", { elements: [box], forms: [{ id: 0, search: true, fields: 1 }] }), ctx()).kind, "site");
 });
 
 test("a search reads on any site, by the form's structure, with no list of search engines", () => {
@@ -116,8 +126,9 @@ test("a search reads on any site, by the form's structure, with no list of searc
   ];
   for (const [url, field] of shapes) {
     const p = page(url, { elements: [field], forms: [{ id: 0, search: true, fields: 1, action: `${url}s` }] });
-    assert.equal(T.actionRisk({ action: "type", id: 3, text: "kettle", submit: true }, p, ctx()), null, url);
-    assert.equal(T.actionRisk({ action: "fill_form", fields: [{ id: 3, text: "kettle" }] }, p, ctx()), null, url);
+    const kettle = ctx({ task: "find a kettle under $40" });
+    assert.equal(T.actionRisk({ action: "type", id: 3, text: "kettle", submit: true }, p, kettle), null, url);
+    assert.equal(T.actionRisk({ action: "fill_form", fields: [{ id: 3, text: "kettles" }] }, p, kettle), null, url);
   }
   // A box outside any search form on a site the request never named is still held.
   const login = page("https://www.naver.com/join", { elements: [{ id: 4, tagName: "input", inputType: "text", accName: "아이디", formId: 0 }], forms: [{ id: 0, search: false, fields: 2 }] });

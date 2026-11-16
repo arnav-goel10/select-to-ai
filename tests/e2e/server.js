@@ -1122,7 +1122,9 @@ function createE2EServer(port = 8907) {
     { action: "add", kind: "fact", text: "Studies at Harbour University; coursework and assignments are on the Harbour University portal (127.0.0.1)", quote: "On the Harbour University portal", values: ["Harbour University portal", "127.0.0.1"] },
     { action: "add", kind: "fact", text: "Banks with Quayside Bank", quote: "Check my assignments", values: ["Quayside Bank"] },
   ] } : { items: [] });
-  scenarios.fromNothing = { task: "Go to the fixture site and tell me what Item B costs." };
+  // The request names the address: a bare IP address is never taken for a
+  // site's front page, so one the model wrote by itself would be held.
+  scenarios.fromNothing = { task: `Go to the fixture site at ${baseUrl.replace(/^https?:\/\//, "")} and tell me what Item B costs.` };
   scenarios.listened = { task: "Press the quiet tile." };
   scenarios.slowResults = { task: "Search for flights and tell me the cheapest." };
   scenarios.stillLoading = { task: "How much do Item C and Item D cost?" };
