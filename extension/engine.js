@@ -2062,6 +2062,7 @@
     let queue = Promise.resolve();
     port.onMessage.addListener((m) => {
       queue = queue.then(() => fromView(m)).catch((e) => console.error("Select to AI port:", e));
+      return queue;
     });
     async function fromView(m) {
       if (!m || typeof m !== "object") return;
