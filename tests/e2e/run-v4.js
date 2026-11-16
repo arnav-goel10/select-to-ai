@@ -755,7 +755,7 @@ async function main() {
         const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
         if (press && press.pointer === "real") return state === "Downloads unlocked" ? null : `a real press left "${state}"`;
         if (!r.seen.cards.some((c) => c.kind === "press")) return `the user was never asked to press it: ${String(r.log).replace(/\s+/g, " ").slice(0, 700)}`;
-        if (!/No change was seen after a press made by script in any of the ways tried: pointer events, the Enter key with the focus on it, the Space key with the focus on it\..*it may take only a real press/.test(press.outcome)) return `the result did not say that no change was seen in any way tried: ${JSON.stringify(press.outcome)}`;
+        if (!/No change was seen after a press made by script in any of the ways tried: pointer events, the Enter key with the focus on it, the Space key with the focus on it\. It may have nothing to do here/.test(press.outcome) || /ignores scripted input/.test(press.outcome)) return `the result did not say that no change was seen in any way tried: ${JSON.stringify(press.outcome)}`;
         if (!r.seen.banner || r.seen.marked !== "real") return `the page did not show the user what to press: banner ${r.seen.banner}, marked "${r.seen.marked}"`;
         // One scripted click reached the page, the pointer's, and it was ignored: the control's own click is not called on top.
         if (r.seen.before.state !== "Downloads locked" || r.seen.before.scripted !== 1) return `before the user's press: ${JSON.stringify(r.seen.before)}`;
