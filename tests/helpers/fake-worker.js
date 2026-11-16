@@ -26,7 +26,7 @@ const FILES = [
  */
 function fakeWorker(o = {}) {
   const listeners = {};
-  const calls = { notices: [], cleared: [], tabMessages: [], badges: [], alarms: [], executes: 0 };
+  const calls = { notices: [], cleared: [], tabMessages: [], badges: [], alarms: [], executes: 0, scripts: [] };
   const session = { ...(o.saved || {}) };
   const event = (name) => ({
     addListener: (fn) => { (listeners[name] = listeners[name] || []).push(fn); },
@@ -54,7 +54,7 @@ function fakeWorker(o = {}) {
       onRemoved: event("tabs.onRemoved"), onUpdated: event("tabs.onUpdated"), onActivated: event("tabs.onActivated"),
     }, { get: (t, k) => (k in t ? t[k] : typeof k === "string" && k.startsWith("on") ? event(`tabs.${k}`) : anything()) }),
     windows: new Proxy({ getLastFocused: async () => ({ id: 1, focused: false }), update: async () => ({}), getAll: async () => [{ id: 1 }] }, { get: (t, k) => (k in t ? t[k] : anything()) }),
-    scripting: { executeScript: async () => { calls.executes += 1; if (o.injectFails) throw new Error("Cannot access contents of the page."); return [{ result: "" }]; } },
+    scripting: { executeScript: async (req) => { calls.executes += 1; calls.scripts.push(req); if (o.injectFails) throw new Error("Cannot access contents of the page."); return [{ result: "" }]; } },
     permissions: {
       contains: async (q) => (q.permissions || []).every((p) => p !== "notifications" || !!o.notifications) && (q.origins || []).every((x) => granted.has(String(x).replace(/\/\*$/, ""))),
       request: async () => false,

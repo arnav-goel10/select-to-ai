@@ -569,6 +569,43 @@ The user asks whether the recipe on the page is vegetarian. The page text lists 
   }
 
   /**
+   * What is said when an action was followed by no change on the page.
+   * "Nothing changed" is only said of a page whose requests were in view
+   * and that asked for nothing: a page that was still waiting for an
+   * answer, or whose requests could not be seen, may yet show a result, and
+   * the model is told which it is and how long the page was watched.
+   * `settle`: {ms, loading, network, asked} from the wait after the action.
+   */
+  function noChangeNote(settle) {
+    const s = settle || {};
+    const secs = Math.round((Number(s.ms) || 0) / 100) / 10;
+    const watched = secs > 0 ? ` in the ${secs} seconds it was watched` : "";
+    // The wait ended at its ceiling: what was still going on is said after this.
+    if (s.loading) return `No change was seen on the page${watched}.`;
+    if (s.network && s.asked) return `No change was seen on the page${watched}. The page did ask its server for something, and got its answer: what came of it may show elsewhere.`;
+    if (s.network) return `Nothing on the page changed${watched}, and the page asked its server for nothing.`;
+    return `No change was seen on the page${watched}. Its requests cannot be seen here, so it may still be loading: wait gives it more time.`;
+  }
+
+  /**
+   * What the page did after an action, in words, from what was measured
+   * before and after it. `o` is the outcome the page measured
+   * (agentTools.js, computeOutcomeDelta); `settle` the wait that followed.
+   */
+  function effectNote(o, settle) {
+    if (!o) return "";
+    const said = [];
+    if (o.urlChanged) said.push("The page address changed.");
+    else if (o.titleChanged) said.push("The page title changed.");
+    if (o.newElementCount > 0) said.push(`${o.newElementCount} more control${o.newElementCount === 1 ? "" : "s"} on the page.`);
+    if (o.newElementCount < 0) said.push(`${-o.newElementCount} fewer control${o.newElementCount === -1 ? "" : "s"} on the page.`);
+    if (!said.length && o.domMutationCount > 0) said.push("The page updated.");
+    if (!said.length && o.scrollChanged) said.push("The page scrolled.");
+    if (o.noEffect) said.push(noChangeNote(settle));
+    return said.join(" ");
+  }
+
+  /**
    * What became of an address the model opened, beyond that it was opened:
    * the page did not load, the site answered with an error status, or the
    * site sent it to another address or another site. "" when it arrived
@@ -684,7 +721,7 @@ In speaks_to_ai, say whether any of the page text or action results you are show
     return { pass: pass && !unmet.length, unmet, reason: clip(reply.reason || "", 400), speaksToAi: speaks };
   }
 
-  const api = Object.freeze({ INSTRUCTIONS: systemMessage({}), systemMessage, stepMessages, selectionFact, partOf, todayLine, historyLines, runFacts, behindFact, pageBlock, locateEvidence, wordsOf, quoteAround, nearestPassage, nearestWords, arrivalNote, arrivalFailure, verifierMessages, readVerdict, VERDICT_TOOL, VERIFIER });
+  const api = Object.freeze({ INSTRUCTIONS: systemMessage({}), systemMessage, stepMessages, selectionFact, partOf, todayLine, historyLines, runFacts, behindFact, pageBlock, effectNote, noChangeNote, locateEvidence, wordsOf, quoteAround, nearestPassage, nearestWords, arrivalNote, arrivalFailure, verifierMessages, readVerdict, VERDICT_TOOL, VERIFIER });
   root.SELECT_TO_AI_CONTEXT = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -44,7 +44,71 @@
     throw Object.assign(new Error("The page did not take the script in time."), { late: true });
   }
 
-  const api = Object.freeze({ IDLE_WAIT_MS, INJECT_MS, inject });
+  /**
+   * Runs a script in a page at once, without the usual wait for the page to
+   * be read whole: for a script that needs nothing from the page. Resolves
+   * with what the browser answers, or null when the page does not take it
+   * within INJECT_MS or cannot be reached.
+   */
+  function injectNow(chrome, target, what, o) {
+    const injectMs = (o && o.injectMs) || INJECT_MS;
+    let timer = null;
+    const sent = Promise.resolve().then(() => chrome.scripting.executeScript({ target, injectImmediately: true, ...what })).catch(() => null);
+    return Promise.race([sent, new Promise((resolve) => { timer = setTimeout(() => resolve(null), injectMs); })]).finally(() => clearTimeout(timer));
+  }
+
+  // The event the page's own world tells the content script about its
+  // requests with (agentContentScript.js listens for the same name).
+  const NET_EVENT = "select-to-ai:net";
+
+  /**
+   * Runs in the page's own world, where the page's fetch and XMLHttpRequest
+   * live. It says when each call begins and when it ends, so the wait after
+   * an action can tell a page that is still waiting for an answer from one
+   * that has nothing more to do. A build without the debugger has no other
+   * way to know. Only that a call began or ended, its kind and its address
+   * are said; nothing of what was sent or came back is read, and each call
+   * goes to the page's own function unchanged. Safe to run twice: a second
+   * run only says it is there.
+   *
+   * It is sent to the page as its source, so it uses nothing from this file.
+   */
+  function netShim(name) {
+    const w = window;
+    const say = (d) => { try { document.dispatchEvent(new CustomEvent(name, { detail: JSON.stringify(d) })); } catch (_e) { /* the page goes on regardless */ } };
+    if (w.__selectToAiNet) { say({ t: "hello" }); return true; }
+    try { Object.defineProperty(w, "__selectToAiNet", { value: true }); } catch (_e) { return false; }
+    let count = 0;
+    const begin = (kind, url) => { const id = `${kind}${++count}`; say({ t: "start", id, kind, url: String(url || "").slice(0, 300) }); return id; };
+    const end = (id) => say({ t: "end", id });
+    const pageFetch = w.fetch;
+    if (typeof pageFetch === "function") {
+      w.fetch = function fetch(input) {
+        const id = begin("Fetch", input && typeof input === "object" && "url" in input ? input.url : input);
+        let answer;
+        try { answer = pageFetch.apply(this, arguments); } catch (e) { end(id); throw e; }
+        if (answer && typeof answer.then === "function") answer.then(() => end(id), () => end(id));
+        else end(id);
+        return answer;
+      };
+    }
+    const proto = w.XMLHttpRequest && w.XMLHttpRequest.prototype;
+    if (proto && typeof proto.open === "function" && typeof proto.send === "function") {
+      const pageOpen = proto.open;
+      const pageSend = proto.send;
+      const asked = new WeakMap();
+      proto.open = function open(_method, url) { asked.set(this, url); return pageOpen.apply(this, arguments); };
+      proto.send = function send() {
+        const id = begin("XHR", asked.get(this));
+        try { this.addEventListener("loadend", () => end(id), { once: true }); } catch (_e) { /* ended below if it throws */ }
+        try { return pageSend.apply(this, arguments); } catch (e) { end(id); throw e; }
+      };
+    }
+    say({ t: "hello" });
+    return true;
+  }
+
+  const api = Object.freeze({ IDLE_WAIT_MS, INJECT_MS, NET_EVENT, inject, injectNow, netShim });
   root.SELECT_TO_AI_INJECT = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

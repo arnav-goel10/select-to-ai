@@ -4149,6 +4149,66 @@
     const TICKS = 3;
     const TICK_MS = 500;
 
+    // The page's own requests, for a browser with no network view to give.
+    // A small function the engine runs in the page's own world
+    // (core/inject.js, netShim) says when each fetch and XMLHttpRequest
+    // call begins and ends. They are counted here the way the engine counts
+    // the debugger's, so what a page asks for by itself is told from what
+    // an action made it ask for.
+    const NET_EVENT = 'select-to-ai:net';
+    const pageNet = SETTLE_TOOLS && SETTLE_TOOLS.createNetworkTracker ? SETTLE_TOOLS.createNetworkTracker() : null;
+    // True once that function has said it is there.
+    let pageNetAlive = false;
+    const pageNetOpen = new Set();
+
+    /** One thing the page's world said about its requests. Anything else a page sends under that name is left alone. */
+    function onPageNet(e) {
+        let said = null;
+        try { said = JSON.parse(String(e.detail || '')); } catch (_) { return; }
+        if (!pageNet || !said || typeof said !== 'object') return;
+        if (said.t === 'hello') { pageNetAlive = true; return; }
+        const id = String(said.id || '').slice(0, 40);
+        if (!id) return;
+        if (said.t === 'start' && (said.kind === 'Fetch' || said.kind === 'XHR') && pageNetOpen.size < 200) {
+            let url = String(said.url || '').slice(0, 300);
+            try { url = new URL(url, location.href).href; } catch (_) { /* counted under what it was given as */ }
+            pageNetOpen.add(id);
+            pageNet.started(id, url, said.kind, Date.now());
+        } else if (said.t === 'end' && pageNetOpen.delete(id)) {
+            pageNet.ended(id, Date.now());
+        }
+    }
+
+    /**
+     * The requests an action begun at `since` started, as the page's own
+     * world counted them: { open, quietFor, asked }, or null when nothing
+     * is counting. `asked` is whether it started any at all.
+     */
+    function pageRequests(since, now) {
+        if (!pageNet || !pageNetAlive) return null;
+        const st = pageNet.state(since, now);
+        return { ...st, asked: st.open > 0 || st.quietFor < now - since };
+    }
+
+    /**
+     * Starts listening to the page's world, and reads what the page asked
+     * for before this script arrived from the browser's own record of it,
+     * so an address the page asks for again and again by itself is known as
+     * its background from the first action on.
+     */
+    function watchRequests() {
+        if (!pageNet) return;
+        try {
+            for (const r of performance.getEntriesByType('resource')) {
+                if (r.initiatorType !== 'fetch' && r.initiatorType !== 'xmlhttprequest') continue;
+                const id = `past ${r.startTime}`;
+                pageNet.started(id, r.name, r.initiatorType === 'fetch' ? 'Fetch' : 'XHR', performance.timeOrigin + r.startTime);
+                pageNet.ended(id, performance.timeOrigin + (r.responseEnd || r.startTime));
+            }
+        } catch (_) { /* no record: the count starts now */ }
+        document.addEventListener(NET_EVENT, onPageNet, true);
+    }
+
     /** An element the page changes over and over by itself: a clock, a feed, a rotating panel. */
     function changesByItself(el, now) {
         const rec = idleChanges.get(el);
@@ -4250,7 +4310,7 @@
             try {
                 chrome.runtime.sendMessage({ action: 'agentNetState', since }, (r) => {
                     void (chrome.runtime && chrome.runtime.lastError);
-                    finish(r && r.net ? { open: Number(r.open) || 0, quietFor: Number(r.quietFor) || 0 } : null);
+                    finish(r && r.net ? { open: Number(r.open) || 0, quietFor: Number(r.quietFor) || 0, asked: !!r.asked } : null);
                 });
             } catch (_) { finish(null); }
         });
@@ -4259,24 +4319,29 @@
     /**
      * Waits until the page has finished what the action started: nothing it
      * started is open on the network, no new busy mark is showing, and the
-     * page has not changed for the quiet period; or until the ceiling.
-     * Returns { ms, loading, signs }.
+     * page has not changed for the quiet period; or until the ceiling. The
+     * requests are the browser's view of the tab where the engine has one,
+     * else the page's own count of them, else not known.
+     * Returns { ms, loading, signs, network, asked }: `network` is whether
+     * the requests could be seen, `asked` whether the action started any.
      */
     async function settleAfterAction(since, busyBefore) {
         const T = SETTLE_TOOLS;
         const S = T.SETTLE;
         const begun = Date.now();
-        let net = await askNetwork(since);
-        let ceiling = net ? S.CEILING_MS : S.FALLBACK_MS;
+        let far = await askNetwork(since);
+        let net = far || pageRequests(since, Date.now());
+        let asked = !!(net && net.asked);
         let verdict = { done: false, signs: [] };
         for (;;) {
             await new Promise((r) => setTimeout(r, 100));
+            // The engine's view can go away (the user closed the debugging bar): the page's count is used from then on.
+            if (far) far = await askNetwork(since);
             const now = Date.now();
-            if (net) {
-                net = await askNetwork(since);
-                // The view went away (the user closed the debugging bar): what the page shows is all there is.
-                if (!net) ceiling = S.FALLBACK_MS;
-            }
+            net = far || pageRequests(since, now);
+            if (net && net.asked) asked = true;
+            // With no requests in view, what the page shows is all there is.
+            const ceiling = net ? S.CEILING_MS : S.FALLBACK_MS;
             const busy = [];
             for (const [k, kind] of busyMarks()) if (!busyBefore.has(k)) busy.push(kind);
             // An endless animation says little by itself: a carousel or a
@@ -4286,8 +4351,8 @@
             const fetching = !!(net && net.open > 0);
             if (busy.includes('animation') && !fetching && (net || now - begun > 6000)) busy.splice(0, busy.length, ...busy.filter((k) => k !== 'animation'));
             verdict = T.settleVerdict({ elapsed: now - begun, domQuietFor: now - Math.max(since, lastChangeAt), busy, net });
-            if (verdict.done || cancelRequested) return { ms: now - begun, loading: false, network: !!net };
-            if (now - begun >= ceiling) return { ms: now - begun, loading: true, signs: verdict.signs, network: !!net };
+            if (verdict.done || cancelRequested) return { ms: now - begun, loading: false, network: !!net, asked };
+            if (now - begun >= ceiling) return { ms: now - begun, loading: true, signs: verdict.signs, network: !!net, asked };
         }
     }
 
@@ -4419,6 +4484,7 @@
     }
 
     watchPage();
+    watchRequests();
 
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const reply = sendResponse;
@@ -4458,6 +4524,8 @@
                     frameAreas: window === window.top ? frameAreas() : [],
                     overlays: overlayLayers.map((l) => ({ where: l.where, name: l.name, framed: l.framed, controls: list.filter((e) => e.onTop && elementMap[e.id] && l.node.contains(elementMap[e.id])).length })),
                     blockers: detectBlockers(),
+                    // Whether the page's own world is counting its requests yet (the engine starts that).
+                    netView: pageNetAlive,
                     whole: !!request.whole,
                     // A tab behind another is not drawn: its animations stand still.
                     inBackground: document.visibilityState === 'hidden',
@@ -4526,6 +4594,7 @@
                     const since = Date.now();
                     actingSince = since;
                     actionTicks = new WeakMap();
+                    if (pageNet) pageNet.begin();
                     let result;
                     try {
                         result = await performAction(request.data);
@@ -4538,6 +4607,7 @@
                         }
                     } finally {
                         actingSince = 0;
+                        if (pageNet) pageNet.end();
                     }
                     const mutationCount = counter.stop();
                     const after = captureOutcomeSnapshot();

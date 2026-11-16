@@ -542,6 +542,9 @@
     });
   }
 
+  /** Starts the count of a page's own requests, in the page's world. It runs at once: there is nothing in the page it waits for. */
+  const countRequests = (tabId) => INJECT.injectNow(chrome, { tabId }, { world: "MAIN", func: INJECT.netShim, args: [INJECT.NET_EVENT] });
+
   /** A page that cannot be read still has an address and a title, and can be left. */
   const unreadable = (tab, why) => ({ url: tab.url || "", title: tab.title || "", elements: [], innerText: `[${why}]`, visibleText: "", protectedPage: true });
 
@@ -585,6 +588,10 @@
     // (agentPressables: "off" leaves them out, for measuring with and without.)
     if (!near && !(session.items && session.items.agentPressables === "off") && await pressables(tab.id)) res = (await send(tab.id, request)) || res;
     if (!Array.isArray(res.elements)) res.elements = [];
+    // With no debugger connection to show the tab's requests, the page's own
+    // world is asked to count them (core/inject.js), so the wait after an
+    // action can tell a page still waiting for an answer from a finished one.
+    if (!res.netView && !nets.has(tab.id)) countRequests(tab.id);
     session.frames = [];
     if (!near && res.frames) { try { await readFrames(session, tab, res); } catch (_e) { session.frames = []; } }
     return res;
@@ -836,19 +843,8 @@
   /** The model is told when the page was still loading as the wait ended. */
   const loadingNote = (waited, ms) => (waited && waited.loading ? ` ${TOOLS.stillLoadingNote(ms, waited.signs)}` : "");
 
-  /** What the page did, in words, from what was measured before and after. */
-  function effectOf(o) {
-    if (!o) return "";
-    const said = [];
-    if (o.urlChanged) said.push("The page address changed.");
-    else if (o.titleChanged) said.push("The page title changed.");
-    if (o.newElementCount > 0) said.push(`${o.newElementCount} more control${o.newElementCount === 1 ? "" : "s"} on the page.`);
-    if (o.newElementCount < 0) said.push(`${-o.newElementCount} fewer control${o.newElementCount === -1 ? "" : "s"} on the page.`);
-    if (!said.length && o.domMutationCount > 0) said.push("The page updated.");
-    if (!said.length && o.scrollChanged) said.push("The page scrolled.");
-    if (o.noEffect) said.push("Nothing on the page changed.");
-    return said.join(" ");
-  }
+  /** What the page did, in words, from what was measured before and after (core/context.js). */
+  const effectOf = (o, settle) => CONTEXT.effectNote(o, settle);
 
   /**
    * One action on the page, and the wait for the page to finish what it
@@ -941,7 +937,7 @@
     const numbers = (text) => (at.k ? text.replace(/\[(\d+)\]/g, (_m, n) => `[${at.k * FRAME_BASE + Number(n)}]`) : text);
     // The wait ended at the ceiling: said plainly, so the model can choose to wait or act.
     const still = loaded && loaded.loading ? loadingNote(loaded, Date.now() - started).trim() : res.settle && res.settle.loading ? TOOLS.stillLoadingNote(res.settle.ms, res.settle.signs) : "";
-    const message = [String(res.message || "Done.").replace(/\s*Outcome:.*$/s, ""), moved ? `The page changed: now at ${after.url}` : numbers(shown) || effectOf(o), still].filter(Boolean).join(" ");
+    const message = [String(res.message || "Done.").replace(/\s*Outcome:.*$/s, ""), moved ? `The page changed: now at ${after.url}` : numbers(shown) || effectOf(o, res.settle), still].filter(Boolean).join(" ");
     const pageChanged = moved || !!o.urlChanged || !!o.titleChanged || (o.newElementCount || 0) !== 0 || (navigates && (o.domMutationCount || 0) > 0) || !!(res.choices && res.choices.length);
     // Changed where it stands: same address, same title, nothing left to choose.
     const soft = pageChanged && !moved && !o.urlChanged && !o.titleChanged && !(res.choices && res.choices.length);
@@ -1526,7 +1522,10 @@
     if (message.action === "agentNetState") {
       const net = nets.get(sender.tab.id);
       const since = Number(message.since) || Date.now();
-      sendResponse(net ? { net: true, ...net.state(since, Date.now()) } : { net: false });
+      const now = Date.now();
+      const st = net ? net.state(since, now) : null;
+      // `asked`: whether the action started any request at all, open or over.
+      sendResponse(st ? { net: true, ...st, asked: st.open > 0 || st.quietFor < now - since } : { net: false });
       return false;
     }
     // A frame saying which frame it is (readFrames).
