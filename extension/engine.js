@@ -688,6 +688,8 @@
     session.page = page;
     // Whether the pointer and keys are made by script here: said to the model once (core/context.js).
     session.extras.scripted = !chrome.debugger || debuggerDisabled;
+    // A picture the browser refused on this tab, in this run (act, look).
+    session.extras.noPictures = session.noPictures && session.noPictures.run === run.id && session.noPictures.tabId === tab.id ? session.noPictures.why : "";
     session.extras.tabs = await tabList(tab.windowId, tab.id, session.parent ? run.openedTabs : null);
     back(moved ? { type: "observed", page, moved } : { type: "observed", page });
   }
@@ -952,16 +954,23 @@
    * A picture of a tab. The tab in front is pictured as it is on screen; a
    * tab behind another is pictured where it is, through the debugger
    * connection, which draws it for the picture without bringing it to
-   * front, so looking never takes the user's tab. Returns {image} or {why}.
+   * front, so looking never takes the user's tab. Returns {image}, or
+   * {why, lasting} when none could be taken: why is said to the model, and
+   * lasting means the browser would refuse this tab again (core/context.js).
    */
   async function capture(tabId) {
     const tab = await quiet(chrome.tabs.get(tabId));
     if (!tab) return { why: "The tab is gone." };
+    let refused = "";
     if (tab.active) {
-      const image = await quiet(chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 60 }));
+      const image = await Promise.resolve().then(() => chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 60 })).catch((e) => { refused = String((e && e.message) || e); return null; });
       if (image) return { image };
     }
-    if (!(await connected(tabId))) return { why: tab.active ? "" : "It is behind another tab, and it can be pictured there only through the debugger connection, which this tab refused." };
+    if (!(await connected(tabId))) {
+      // With a debugger to ask, a tab behind another was refused by that tab; without one, no tab behind another can be pictured.
+      if (!tab.active && chrome.debugger && !debuggerDisabled) return { why: "It is behind another tab, and it can be pictured there only through the debugger connection, which this tab refused." };
+      return CONTEXT.noPicture(refused, !tab.active);
+    }
     const got = await quiet(chrome.debugger.sendCommand({ tabId }, "Page.captureScreenshot", { format: "jpeg", quality: 60 }));
     return got && got.data ? { image: `data:image/jpeg;base64,${got.data}` } : { why: "" };
   }
@@ -1109,7 +1118,16 @@
       }
       case "look": {
         const shot = await capture(tabId);
-        return shot.image ? { ok: true, pageChanged: true, image: shot.image, message: "A picture of the page is attached to your next step." } : { ok: false, message: `A picture of this tab could not be taken.${shot.why ? ` ${shot.why}` : ""}` };
+        if (shot.image) return { ok: true, pageChanged: true, image: shot.image, message: "A picture of the page is attached to your next step." };
+        // A refusal that will come again is a fact of this run from here on
+        // (core/context.js), and the user is told once that the agent works
+        // without pictures: a run that cannot see is not left to look as if it can.
+        const told = session.noPictures && session.noPictures.run === run.id && session.noPictures.tabId === tabId;
+        if (shot.lasting && !told) {
+          session.noPictures = { run: run.id, tabId, why: shot.why };
+          run.journal.push({ k: "note", text: "Chrome did not let the agent take a picture of this page, so it is working from the page's text and controls only. Maps, charts and images may be read less well." });
+        }
+        return { ok: false, message: `A picture of this tab could not be taken.${shot.why ? ` ${shot.why}` : ""}` };
       }
       case "read": {
         const page = session.page || {};

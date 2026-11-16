@@ -366,6 +366,8 @@ In this browser your pointer and your keys are made by script: the page is sent 
       facts.push(shown.listCut ? "Some of this page's controls are not in the listing." : "Every control on this page is in the listing.");
       facts.push(shown.truncated ? "Only part of this page's text is shown." : "The whole text of this page is shown.");
     }
+    // A picture was refused on this tab, and would be again.
+    if (ctx.noPictures) facts.push(`No picture of the page can be taken on this tab. ${ctx.noPictures} look fails the same way each time: what is on the page is known from its text and its controls.`);
     own.push(`Facts from the browser:\n${facts.map((f) => `- ${f}`).join("\n")}`);
     if (run.notice) own.push(`About your last step:\n${run.notice}`);
 
@@ -579,6 +581,22 @@ In this browser your pointer and your keys are made by script: the page is sent 
     return plain(x) === plain(y);
   }
 
+  /**
+   * Why no picture of the page could be taken, as a fact. `error` is what
+   * the browser said when it refused one of the tab in front; `behind` is
+   * true for a tab that is not in front. The browser gives an extension a
+   * picture of a tab only with access to every address, or on a tab where
+   * the user opened the extension themselves, and says so when it refuses.
+   * Returns { why, lasting }: `lasting` when asking again on this tab will
+   * be refused the same way.
+   */
+  function noPicture(error, behind) {
+    const said = String(error || "").replace(/\s+/g, " ").trim();
+    if (behind) return { why: "It is behind another tab, and a tab can be pictured only while it is the one in front.", lasting: false };
+    if (/all_urls|activeTab/i.test(said)) return { why: "The browser refused: it gives an extension a picture of a tab only with access to every address, or on a tab where the user opened the extension themselves, and neither holds on this tab.", lasting: true };
+    return { why: said ? `The browser refused: ${clip(said, 160)}` : "", lasting: false };
+  }
+
   // The ways a press is made by script after pointer events (agentContentScript.js, otherPressWays).
   const PRESS_WAYS = Object.freeze({
     Enter: "the Enter key with the focus on it",
@@ -768,7 +786,7 @@ In speaks_to_ai, say whether any of the page text or action results you are show
     return { pass: pass && !unmet.length, unmet, reason: clip(reply.reason || "", 400), speaksToAi: speaks };
   }
 
-  const api = Object.freeze({ INSTRUCTIONS: systemMessage({}), systemMessage, stepMessages, selectionFact, partOf, todayLine, historyLines, runFacts, behindFact, pageBlock, effectNote, noChangeNote, waysNote, locateEvidence, wordsOf, quoteAround, nearestPassage, nearestWords, arrivalNote, arrivalFailure, verifierMessages, readVerdict, VERDICT_TOOL, VERIFIER });
+  const api = Object.freeze({ INSTRUCTIONS: systemMessage({}), systemMessage, stepMessages, selectionFact, partOf, todayLine, historyLines, runFacts, behindFact, pageBlock, effectNote, noChangeNote, waysNote, noPicture, locateEvidence, wordsOf, quoteAround, nearestPassage, nearestWords, arrivalNote, arrivalFailure, verifierMessages, readVerdict, VERDICT_TOOL, VERIFIER });
   root.SELECT_TO_AI_CONTEXT = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
