@@ -954,7 +954,7 @@
     chrome.storage.sync.get(
       [...CONFIG.STORAGE.SETTINGS, ...syncedKeys],
       (syncItems) => {
-        chrome.storage.local.get([...syncedKeys, "agentProviderPause", "chatgptAccount", "agentDataConsent"], (localItems) => {
+        chrome.storage.local.get([...syncedKeys, "agentProviderPause", "agentAllowance", "chatgptAccount", "agentDataConsent"], (localItems) => {
           const migratedKeys = {};
           syncedKeys.forEach((key) => {
             if (!localItems[key] && syncItems[key]) migratedKeys[key] = syncItems[key];
@@ -1032,6 +1032,9 @@
           ? `Using your backup, ${providerCapitalized}, until ${clockTime(backupActive.until)}: ${friendlyProviderName(backupActive.from)}'s limit ran out.\nChange it in Settings.`
           : `Provider: ${providerCapitalized}\nModel: ${resolvedModel}\nChange both in Settings.`;
       }
+      if (selectedModelName) pillBase = { text: selectedModelName.textContent, title: headerModel ? headerModel.title : "" };
+      allowance = items.agentAllowance || null;
+      paintAllowance();
 
       // Restore the drawer's open or closed state, once, when the page opens.
       if (sidebar && !sidebarRestored) { sidebarRestored = true; setSidebar(!(items.sidebarCollapsed === true || isNarrow())); }
@@ -1054,10 +1057,25 @@
     );
   }
 
+  // What the provider last said is left of the key's requests (the engine
+  // keeps it), shown in the model pill beside the model in use.
+  let allowance = null;
+  let pillBase = null;
+  function paintAllowance() {
+    const name = document.getElementById("selectedModelName");
+    const header = document.getElementById("headerModel");
+    if (!name || !pillBase) return;
+    const left = SELECT_TO_AI_DEFAULTS.allowanceLabel(allowance, config.agentActiveProvider, Date.now());
+    name.textContent = left ? `${pillBase.text} · ${left.short}` : pillBase.text;
+    if (header) header.title = left ? `${pillBase.title}\n${left.title}` : pillBase.title;
+  }
+
   // Settings storage changed listener
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === "sync" || namespace === "local") {
-      if (namespace === "local" && Object.keys(changes).every((k) => k === "agentCrossSessionMemory" || k === CONFIG.STORAGE.SIDE_PANEL_STATE)) return;
+      // The count of requests left changes with every call: only the pill is redrawn.
+      if (namespace === "local" && changes.agentAllowance) { allowance = changes.agentAllowance.newValue || null; paintAllowance(); }
+      if (namespace === "local" && Object.keys(changes).every((k) => k === "agentAllowance" || k === "agentCrossSessionMemory" || k === CONFIG.STORAGE.SIDE_PANEL_STATE)) return;
       loadSettings();
     }
   });
@@ -2067,7 +2085,7 @@
     taskInput.placeholder = steering
       ? "Add guidance for its next step"
       : kind === "approval" ? "Decide on the step above, or stop the task"
-        : kind === "pause" ? "It carries on by itself when the wait is over"
+        : kind === "pause" ? (engineWait.hold ? "On hold: choose above, or connect a backup in Settings" : "It carries on by itself when the wait is over")
           : kind === "check_in" ? "Add something and keep going"
             : kind === "question" ? "Type your answer"
               : asking ? "Reply here, or do it on the page" : aboutSelection ? "Ask about the selected text" : "Ask anything, or tell it what to do";
@@ -2124,7 +2142,8 @@
     content.className = "bubble-content";
     const title = document.createElement("p");
     title.className = "confirm-title";
-    title.textContent = titles[wait.kind] || "Needs you";
+    title.textContent = wait.hold === "limit" ? "On hold: out of requests for now" : wait.hold ? "On hold: the model is busy" : titles[wait.kind] || "Needs you";
+    if (wait.hold) card.dataset.hold = wait.hold;
     // A sub-task asks in its own name, so it is clear which part of the errand this is.
     if (wait.sub) {
       const from = el("p", "card-from");
@@ -2191,14 +2210,26 @@
         const ms = Math.max(0, (wait.until || 0) - Date.now());
         const m = Math.floor(ms / 60000);
         const sec = Math.floor((ms % 60000) / 1000);
-        left.textContent = ms > 0 ? `Carrying on by itself in ${m}:${String(sec).padStart(2, "0")}` : "Carrying on";
+        // A long hold is told by the clock, a short wait by a countdown.
+        left.textContent = !wait.until ? "Waiting for you: nothing it has done is lost."
+          : ms > 3600000 ? `Carrying on by itself at ${clockTime(wait.until)}`
+            : ms > 0 ? `Carrying on by itself in ${m}:${String(sec).padStart(2, "0")}` : "Carrying on";
         // The card is taken away when the wait ends.
         if (!first && (ms <= 0 || !card.isConnected)) clearInterval(timer);
       };
-      const timer = setInterval(tick, 1000);
+      const timer = wait.until ? setInterval(tick, 1000) : null;
       tick(true);
       content.appendChild(left);
-      button("Stop instead", "pause-stop-btn secondary-btn btn", () => enginePost({ type: "stop" }));
+      if (wait.hold) {
+        // A held run: go on with a backup, try the provider again, or take what it has.
+        const backup = usableBackup(config.agentActiveProvider);
+        button(backup ? `Use my backup (${friendlyProviderName(backup)})` : "Set up a free backup", "hold-backup-btn primary-btn btn btn-primary", () => {
+          if (backup) enginePost({ type: "try_again", id: wait.id });
+          else chrome.tabs.create({ url: chrome.runtime.getURL("options.html#backup") });
+        });
+        button(wait.until ? "Try again now" : "Try again", "hold-retry-btn secondary-btn btn", () => enginePost({ type: "try_again", id: wait.id }));
+        button("Stop and answer with what you have", "hold-stop-btn secondary-btn btn", () => enginePost({ type: "wrap_up", id: wait.id }));
+      } else button("Stop instead", "pause-stop-btn secondary-btn btn", () => enginePost({ type: "stop" }));
     } else if (wait.kind === "question") {
       const hint = document.createElement("p");
       hint.className = "confirm-text hint";
