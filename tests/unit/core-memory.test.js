@@ -188,3 +188,26 @@ test("a help counted by a run's end can be taken back, never below nothing", () 
   s = M.mark(s, [id], "unhelped", 4);
   assert.equal(s.entries[0].helped, 0);
 });
+
+test("a run's route takes the place of the earlier one for the same request, and a refused route leaves the earlier one", () => {
+  const route = (text, runId) => ({ task: "check my orders on the shop", text, steps: ["open https://shop.example/account", 'press "Orders"'], runId });
+  const first = M.learnRoutine(M.empty(), route('"check my orders": open the account page; then press "Orders"', "run-1"), "shop.example", 1);
+  assert.equal(first.replaced, false);
+  assert.equal(first.added.origin.runId, "run-1", "the route carries the run it came from");
+  const second = M.learnRoutine(first.store, route('"check my orders": press "Orders" in the header', "run-2"), "shop.example", 2);
+  assert.equal(second.replaced, true);
+  assert.deepEqual(second.store.entries.map((e) => e.origin.runId), ["run-2"]);
+  // A route that cannot be stored: the one already kept stays.
+  const refused = M.learnRoutine(second.store, route("", "run-3"), "shop.example", 3);
+  assert.equal(refused.added, null);
+  assert.equal(refused.replaced, false);
+  assert.equal(refused.store, second.store, "nothing is lost when nothing is gained");
+  // The same when the site has no room beside what the user taught.
+  const lessons = Array.from({ length: M.LIMITS.perSite + 1 }, (_, i) => ({ id: `l${i}`, kind: "lesson", text: `Correction number ${i}`, scope: "shop.example", source: "correction", created: 10 + i, lastUsed: 0, helped: 0, hurt: 0 }));
+  const full = { ...second.store, entries: [...second.store.entries, ...lessons] };
+  const crowded = M.learnRoutine(full, route('"check my orders": another way', "run-4"), "shop.example", 99);
+  assert.equal(crowded.added, null);
+  assert.match(crowded.why, /no room beside what the user taught/);
+  assert.equal(crowded.store, full);
+  assert.ok(crowded.store.entries.some((e) => e.kind === "routine" && e.origin.runId === "run-2"), "the earlier route is still there");
+});

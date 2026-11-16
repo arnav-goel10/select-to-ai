@@ -282,6 +282,21 @@
     return removed.length ? { store: { ...store, entries: store.entries.filter((e) => !from(e)) }, removed } : { store, removed };
   }
 
+  /**
+   * Keeps the route a run took (core/learn.js routineOf) with `scope`, in
+   * place of an earlier route there for the same request, or one worded
+   * almost the same. When the new route is refused (addEntry), the store is
+   * returned as it was: the earlier route is not lost for nothing.
+   * Returns {store, added, replaced}.
+   */
+  function learnRoutine(store, routine, scope, now) {
+    const alike = (e) => e.task === routine.task || (overlap(e.task, routine.task) >= 0.8 && overlap(routine.task, e.task) >= 0.8);
+    const twin = store.entries.find((e) => e.kind === "routine" && e.scope === scope && alike(e));
+    const base = twin ? removeEntry(store, twin.id) : store;
+    const r = addEntry(base, { kind: "routine", text: routine.text, task: routine.task, steps: routine.steps, scope, source: "run", origin: { runId: routine.runId } }, now);
+    return r.added ? { store: r.store, added: r.added, replaced: !!twin } : { store, added: null, replaced: false, why: r.why };
+  }
+
   function updateEntry(store, id, text, now) {
     const t = clean(text, LIMITS.chars);
     if (!isStorable(t)) return store;
@@ -358,7 +373,11 @@
     // opening its own address does not depend on where the run starts, so
     // from any other site it is shown as it is from a blank tab: when the
     // requests are alike.
-    const opensItself = (e) => Array.isArray(e.steps) && /^open https?:/i.test(e.steps[0] || "");
+    // Only before the run has done anything: once it is working on a
+    // site, another site's route is no longer a way to begin, and showing
+    // it at every step could pull a like-worded task off the site it is on.
+    const begun = !!(opts && opts.begun);
+    const opensItself = (e) => !begun && Array.isArray(e.steps) && /^open https?:/i.test(e.steps[0] || "");
     const routines = store.entries.filter((e) => e.kind === "routine" && e.scope !== "global" && use(e))
       .map((e) => ({ e, share: overlap(e.task, task), here: routineMatchesSite(e.scope) }))
       .filter((r) => (r.here ? r.share >= (site ? ROUTINE_NEAR : ROUTINE_LIKE) : opensItself(r.e) && r.share >= ROUTINE_LIKE))
@@ -763,7 +782,7 @@
       .map((x) => x.e);
   }
 
-  const api = Object.freeze({ wordsOf, overlap, FIELDS, FIELD_LABEL, KINDS, SOURCES, LIMITS, CONTEXT_SAME, prefsFor, contextFor, searchMemory, provenance, groundContext, putFact, noteContextSite, hostOf, empty, fieldKindOf, isStorable, fieldValue, setField, addEntry, removeEntry, forgetRun, updateEntry, mark, knownBlock, knownSites, annotate, planFill, userFilled, saidByUser, migrate, sanitizeStore, profileOf });
+  const api = Object.freeze({ wordsOf, overlap, FIELDS, FIELD_LABEL, KINDS, SOURCES, LIMITS, CONTEXT_SAME, prefsFor, contextFor, searchMemory, provenance, groundContext, putFact, noteContextSite, hostOf, empty, fieldKindOf, isStorable, fieldValue, setField, addEntry, removeEntry, forgetRun, learnRoutine, updateEntry, mark, knownBlock, knownSites, annotate, planFill, userFilled, saidByUser, migrate, sanitizeStore, profileOf });
   root.SELECT_TO_AI_KNOWN = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

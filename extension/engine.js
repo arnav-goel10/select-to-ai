@@ -294,11 +294,8 @@
       else if (change.op === "replace" && change.store && change.store.v === 2) memory = KNOWN.sanitizeStore ? KNOWN.sanitizeStore(change.store, now) : { ...KNOWN.empty(), ...change.store };
       else if (change.op === "mark") memory = KNOWN.mark(memory, change.ids, change.how, now);
       else if (change.op === "learn_routine" && change.routine && change.scope) {
-        const twin = memory.entries.find((e) => e.kind === "routine" && e.scope === change.scope && (e.task === change.routine.task || (KNOWN.overlap && KNOWN.overlap(e.task, change.routine.task) >= 0.8 && KNOWN.overlap(change.routine.task, e.task) >= 0.8)));
-        let base = twin ? KNOWN.removeEntry(memory, twin.id) : memory;
-        const r = KNOWN.addEntry(base, { kind: "routine", text: change.routine.text, task: change.routine.task, steps: change.routine.steps, scope: change.scope, source: "run", origin: { runId: change.routine.runId } }, now);
-        memory = r.store;
-        result = { added: r.added, replaced: !!twin };
+        result = KNOWN.learnRoutine(memory, change.routine, change.scope, now);
+        memory = result.store;
       }
       else if (change.op === "forget_run") { result = KNOWN.forgetRun(memory, change.runId); memory = result.store; }
       else if (change.op === "learn_apply" && change.run && change.flags) {
@@ -671,7 +668,7 @@
     await loadMemory();
     KNOWN.annotate(page.elements, memory);
     const startSite = TOOLS.siteOf(LEARN.startUrl(run) || "");
-    const known = KNOWN.knownBlock(memory, TOOLS.siteOf(page.url || ""), run.task, { page, startSite });
+    const known = KNOWN.knownBlock(memory, TOOLS.siteOf(page.url || ""), run.task, { page, startSite, begun: LEARN.begun(run) });
     session.extras.known = known.text;
     session.extras.siteNotes = known.site;
     session.extras.knownIds = known.ids;
@@ -1871,9 +1868,13 @@
    * it is worth remembering (core/learn.js). One small call, in the
    * background; a failure here costs the user nothing.
    */
+  // A run's learning goes one call after another: the user's thumbs can
+  // come while the learning from the run's end is still out, and what a
+  // thumbs-down takes back must already be written (core/learn.js inTurn).
+  const learnInTurn = LEARN.inTurn();
   async function learn(session, run, feedback) {
     learning += 1;
-    try { await learnFrom(session, run, feedback); } finally { learning -= 1; }
+    try { await learnInTurn(run.id, () => learnFrom(session, run, feedback)); } finally { learning -= 1; }
   }
 
   async function learnFrom(session, run, feedback) {

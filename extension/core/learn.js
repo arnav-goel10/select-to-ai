@@ -115,6 +115,28 @@
     return { task: run.task, text: `"${clip(run.task, 120)}": ${steps.join("; then ")}`, steps, runId: run.id || "", confirmed };
   }
 
+  /** Whether the run has yet gone anywhere or pressed or typed anything. */
+  function begun(run) {
+    const acted = (h) => (h && h.actions ? h.actions : []).some((a) => !!a.way);
+    return ((run && run.history) || []).some(acted) || acted(run && run.current);
+  }
+
+  /**
+   * Runs jobs that share a key one after another, in the order they were
+   * asked for; jobs under different keys do not wait for each other. A job
+   * that fails does not hold up the next. Returns the job's own promise.
+   */
+  function inTurn() {
+    const tails = new Map();
+    return (key, job) => {
+      const done = (tails.get(key) || Promise.resolve()).then(job);
+      const tail = done.catch(() => {});
+      tails.set(key, tail);
+      tail.then(() => { if (tails.get(key) === tail) tails.delete(key); });
+      return done;
+    };
+  }
+
   /**
    * The site a run's route ran on: where its first recorded step went (the
    * address it opened) or acted (the page it pressed or typed on). A
@@ -571,7 +593,7 @@ Write facts, not rules: what is true of the user, never what the assistant shoul
     return { store, changes };
   }
 
-  const api = Object.freeze({ worth, confirmedBy, correctionsOf, learnMessages, applyLearned, routineOf, routineSite, feedbackMarks, routineFollowed, parseWay, resolveRoutineStep, compileRoutinePrefix, startUrl, markOf, noteSite, LEARNED_TOOL, INSTRUCTIONS, userWordsOf, servedOn, contextWorth, contextMessages, contextOps, applyContext, CONTEXT_TOOL, CONTEXT_INSTRUCTIONS });
+  const api = Object.freeze({ worth, confirmedBy, correctionsOf, learnMessages, applyLearned, routineOf, routineSite, begun, inTurn, feedbackMarks, routineFollowed, parseWay, resolveRoutineStep, compileRoutinePrefix, startUrl, markOf, noteSite, LEARNED_TOOL, INSTRUCTIONS, userWordsOf, servedOn, contextWorth, contextMessages, contextOps, applyContext, CONTEXT_TOOL, CONTEXT_INSTRUCTIONS });
   root.SELECT_TO_AI_LEARN = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

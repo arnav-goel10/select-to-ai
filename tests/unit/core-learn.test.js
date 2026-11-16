@@ -193,6 +193,48 @@ test("a routine is filed under the site its steps ran on, not the tab the reques
   assert.match(M.knownBlock(s, "mail.example", "check my orders on the shop", { startSite: "mail.example" }).site, /A request like this one was done on shop\.example before by: /);
   assert.equal(M.knownBlock(s, "mail.example", "check my inbox", { startSite: "mail.example" }).site, "");
   assert.match(M.knownBlock(s, "shop.example", "check my orders on the shop again").site, /done here before by: /);
+  // Another site's route is a way to begin. Once the run has acted, it is
+  // no longer shown from elsewhere; on its own site it still is.
+  assert.equal(L.begun(run({ history: [] })), false);
+  assert.equal(L.begun(run()), false, "steps that only looked");
+  assert.equal(L.begun(run({ history: [], current: { step: 1, actions: [{ text: "click", ok: true, way: 'press "Inbox"' }] } })), true);
+  assert.equal(L.begun(routed()), true);
+  assert.match(M.knownBlock(s, "mail.example", "check my orders on the shop", { startSite: "mail.example", begun: false }).site, /done on shop\.example before by: /);
+  assert.equal(M.knownBlock(s, "mail.example", "check my orders on the shop", { startSite: "mail.example", begun: true }).site, "");
+  assert.equal(M.knownBlock(s, "othershop.example", "check my orders on the shop", { begun: true }).site, "", "a like-worded task at work on another site is not shown it");
+  assert.match(M.knownBlock(s, "shop.example", "check my orders on the shop again", { startSite: "mail.example", begun: true }).site, /done here before by: /);
+});
+
+test("a run's learning calls go one after another, so a thumbs-down finds what the run's end wrote", async () => {
+  const turn = L.inTurn();
+  let s = M.empty();
+  const r = routed();
+  let release;
+  const modelCall = new Promise((ok) => { release = ok; });
+  // The run's end: its route at once, its site notes after a model call that is still out.
+  const end = turn(r.id, async () => {
+    const routine = L.routineOf(r);
+    s = M.learnRoutine(s, routine, L.routineSite(r), 1).store;
+    await modelCall;
+    s = L.applyLearned(s, r, { site_notes: [{ text: "Orders are under the account page", step: 2 }], lesson: "", about_user: [], drop: [] }, "shop.example", { notes: true, lesson: false, about: false, corrections: [] }, 2).store;
+  });
+  // The thumbs-down arrives meanwhile.
+  let removed = null;
+  const thumbs = turn(r.id, async () => { const out = M.forgetRun(s, r.id); s = out.store; removed = out.removed.map((e) => e.kind).sort(); });
+  // Another run's learning does not wait for this one.
+  let other = false;
+  await turn("run-8", async () => { other = true; });
+  assert.equal(other, true);
+  assert.equal(removed, null, "the thumbs waits for the run's own learning");
+  release();
+  await Promise.all([end, thumbs]);
+  assert.deepEqual(removed, ["routine", "site_note"]);
+  assert.deepEqual(s.entries, [], "nothing the run taught is left");
+  // A learning call that fails does not hold up the next, and its failure is its caller's.
+  const failed = turn("run-9", async () => { throw new Error("no model"); });
+  const after = turn("run-9", async () => "ran");
+  await assert.rejects(failed, /no model/);
+  assert.equal(await after, "ran");
 });
 
 test("the engine applies the thumbs through these decisions", () => {
@@ -201,5 +243,7 @@ test("the engine applies the thumbs through these decisions", () => {
   assert.match(src, /op: "forget_run", runId: run\.id/);
   assert.match(src, /LEARN\.routineOf\(run, feedback\)/);
   assert.match(src, /LEARN\.routineSite\(run\)/);
-  assert.match(src, /origin: \{ runId: change\.routine\.runId \}/);
+  assert.match(src, /KNOWN\.learnRoutine\(memory, change\.routine, change\.scope, now\)/);
+  assert.match(src, /learnInTurn\(run\.id, \(\) => learnFrom\(session, run, feedback\)\)/);
+  assert.match(src, /begun: LEARN\.begun\(run\)/);
 });
