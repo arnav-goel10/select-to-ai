@@ -153,3 +153,38 @@ test("routines: the closest two on the site are shown, a paraphrase included, la
   s = M.addEntry(M.empty(), { kind: "routine", text: "x", task: "東京の明日の天気を調べて", scope: "w.example", source: "run" }, 1).store;
   assert.equal(M.knownBlock(s, "w.example", "明日の東京の天気は？").shown.length, 1);
 });
+
+test("a lesson from the user's correction is not removed or pushed out by what runs learn later", () => {
+  let s = M.empty();
+  const lesson = M.addEntry(s, { kind: "lesson", text: "Sort by newest first", scope: "shop.example", source: "correction" }, 1);
+  const note = M.addEntry(lesson.store, { kind: "site_note", text: "The filter is under More", scope: "shop.example", source: "run" }, 2);
+  s = note.store;
+  // Two bad ends count against both; only the run's own note goes.
+  s = M.mark(s, [lesson.added.id, note.added.id], "hurt", 3);
+  s = M.mark(s, [lesson.added.id, note.added.id], "hurt", 4);
+  assert.deepEqual(s.entries.map((e) => e.kind), ["lesson"]);
+  assert.equal(s.entries[0].hurt, 2);
+  // A site full of the user's corrections: a run's note finds no room, and none of them is dropped.
+  let full = M.empty();
+  for (let i = 0; i < M.LIMITS.perSite; i++) full = M.addEntry(full, { kind: "lesson", text: `Correction number ${i}`, scope: "shop.example", source: "correction" }, 10 + i).store;
+  const auto = M.addEntry(full, { kind: "site_note", text: "Search is in the header", scope: "shop.example", source: "run" }, 50);
+  assert.equal(auto.added, null);
+  assert.match(auto.why, /no room beside what the user taught/);
+  assert.equal(auto.store.entries.length, M.LIMITS.perSite);
+  // With room to make, a run's note goes before a correction does, however little the correction helped.
+  let mixed = M.addEntry(M.empty(), { kind: "lesson", text: "Use the staff login", scope: "shop.example", source: "correction" }, 1).store;
+  mixed = M.mark(mixed, [mixed.entries[0].id], "hurt", 2);
+  for (let i = 0; i < M.LIMITS.perSite - 1; i++) mixed = M.addEntry(mixed, { kind: "site_note", text: `Fact number ${i}`, scope: "shop.example", source: "run" }, 10 + i).store;
+  mixed = M.addEntry(mixed, { kind: "site_note", text: "One more fact", scope: "shop.example", source: "run" }, 60).store;
+  assert.ok(mixed.entries.some((e) => e.kind === "lesson"), "the correction is still there");
+  assert.equal(mixed.entries.length, M.LIMITS.perSite);
+});
+
+test("a help counted by a run's end can be taken back, never below nothing", () => {
+  let s = M.addEntry(M.empty(), { kind: "routine", text: "r", task: "t", scope: "shop.example", source: "run" }, 1).store;
+  const id = s.entries[0].id;
+  s = M.mark(s, [id], "helped", 2);
+  s = M.mark(s, [id], "unhelped", 3);
+  s = M.mark(s, [id], "unhelped", 4);
+  assert.equal(s.entries[0].helped, 0);
+});
