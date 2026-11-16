@@ -85,6 +85,16 @@ async function open(puppeteer, extDir, profile, id) {
   return { browser, errors, ...(await attach(browser, id, errors)) };
 }
 
+async function developerMode(browser) {
+  const page = await browser.newPage();
+  try {
+    await page.goto("chrome://extensions/", { waitUntil: "load" });
+    await page.evaluate(() => new Promise((resolve) => chrome.developerPrivate.updateProfileConfiguration({ inDeveloperMode: true }, resolve)));
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
 // What chrome://extensions knows about the extension: enabled or not, why
 // it is disabled, and the errors it recorded. For the log when a step fails.
 async function extensionInfo(browser, id) {
@@ -144,6 +154,9 @@ async function main() {
     // Chrome and relaunching on the changed directory is not enough: the
     // relaunched worker kept running the stand-in's cached script.)
     const version = writeBuild(extDir, key);
+    // Chrome keeps a reloaded unpacked extension enabled only in developer
+    // mode (otherwise it is disabled as unsupportedDeveloperExtension).
+    await developerMode(s.browser);
     await s.worker.evaluate(() => { setTimeout(() => chrome.runtime.reload(), 50); }).catch(() => {});
     Object.assign(s, await attach(s.browser, id, s.errors, s.target));
     check("worker starts after the update, under the same id", s.worker, s.worker ? "" : "no new service worker for this id within 20 s");
