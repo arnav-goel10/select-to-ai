@@ -550,6 +550,10 @@
     touch(session, tab.id);
     if (!isWeb(tab.url) && run.fromNothing && !run.fromNothing.left) return unreadable(tab, "No site is open in this tab yet.");
     if (!isWeb(tab.url)) return unreadable(tab, "This tab is a browser page that extensions cannot read.");
+    // "Only use these sites" holds for every page the run lands on, however
+    // it got there (a link, a tab, the start tab): nothing off the list is read.
+    const allowlist = (session.settings && session.settings.allowlist) || "";
+    if (allowlist && !root.SELECT_TO_AI_SECURITY.isUrlAllowedByDomains(tab.url, allowlist)) return unreadable(tab, "This page is outside the sites you allow the agent to use.");
     // Every control on the page, wherever it is; core/observe.js fits the
     // listing to the model's budget.
     // (agentObserve: "near" keeps the older listing of what is near the
