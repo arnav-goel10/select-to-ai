@@ -73,9 +73,11 @@ test("ask and open in front go to the agent with the rest of the words", () => {
 test("with the agent off, Enter in the address bar or the quick box opens the setup page", () => {
   const bg = fs.readFileSync(path.resolve(__dirname, "../../extension/background.js"), "utf8");
   const enter = bg.slice(bg.indexOf("chrome.omnibox.onInputEntered"));
-  assert.match(enter.slice(0, 600), /if \(!cachedSettings\.showAgent\) \{ notifyAgentDisabled\(\); return; \}/);
+  // The gate reads the settings once they are loaded (cold worker: awaited).
+  const gate = /if \(!(cachedSettings|settings)\.showAgent\) \{ notifyAgentDisabled\([^)]*\); return; \}/;
+  assert.match(enter.slice(0, 900), gate);
   const palette = bg.slice(bg.indexOf("function runPaletteInput"));
-  assert.match(palette.slice(0, 600), /if \(!cachedSettings\.showAgent\) \{ notifyAgentDisabled\(\); return; \}/);
+  assert.match(palette.slice(0, 900), gate);
 });
 
 /** A stand-in for the parts of the chrome API the handler uses, recording what it is asked. */
