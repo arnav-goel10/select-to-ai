@@ -446,8 +446,17 @@ test("switching to a tab the run opened, one on the task's site, or the current 
   assert.equal(switchTo(7).verdict, "allow", "opened by the run");
   assert.equal(switchTo(8).verdict, "allow", "on the task's own site");
   assert.equal(switchTo(1).verdict, "allow", "the tab it is on");
-  assert.equal(switchTo(42).verdict, "allow", "not in the list: the engine says there is no such tab");
   assert.equal(switchTo(9, tabsRun(), { riskConfirmation: false }).verdict, "allow", "with approvals turned off");
+});
+
+test("a tab the run was not shown is refused, even with approvals off; one it opened since its last look is free", () => {
+  // Tab 42 is in another window, or was opened by someone else since the last look.
+  const v = switchTo(42);
+  assert.equal(v.verdict, "refuse");
+  assert.match(v.message, /no tab 42 in the tab list/);
+  assert.equal(switchTo(42, tabsRun(), { riskConfirmation: false }).verdict, "refuse");
+  assert.equal(switchTo(42, tabsRun(), { riskConfirmation: true, allowlist: "shop.example" }).verdict, "refuse");
+  assert.equal(switchTo(42, tabsRun({ openedTabs: [7, 42] })).verdict, "allow", "opened by the run");
 });
 
 test("with an allowlist, a tab on another site is refused, even one the run opened", () => {

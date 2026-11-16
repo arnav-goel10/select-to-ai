@@ -358,7 +358,11 @@
    */
   function decideSwitch(a, run, s, tabs) {
     const tab = (tabs || []).find((t) => t && t.id === a.tab);
-    if (!tab || tab.current) return ALLOW;
+    // A tab the run was not shown (another window, or opened since the
+    // last look) is not one it can name: the engine would find it anyway.
+    // A tab the run opened itself was already judged when it was opened.
+    if (!tab) return (run.openedTabs || []).includes(a.tab) ? ALLOW : { verdict: "refuse", message: `There is no tab ${a.tab} in the tab list. Use a number from the list.` };
+    if (tab.current) return ALLOW;
     const url = String(tab.url || "");
     if (s.allowlist && !SECURITY.isUrlAllowedByDomains(url, s.allowlist)) {
       return { verdict: "refuse", message: `That tab is on a site outside the sites the user allows the agent to use (${String(s.allowlist).slice(0, 120)}).` };
