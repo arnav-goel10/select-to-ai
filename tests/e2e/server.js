@@ -476,19 +476,50 @@ const FIXTURES = {
        save.addEventListener('keydown', (e) => { if (e.key === 'Enter' && document.activeElement === save) saved('with the keyboard'); });
      </script>`,
   ),
-  // This one takes a press from the keyboard (a click that is no mouse's:
-  // detail 0) or a click whose mouse press was a real one.
-  "/press-direct": pageShell(
-    "Ridge trail",
-    `<h1>Ridge trail</h1>
-     <p id="state">Details hidden</p>
-     <button type="button" id="sub">Show details</button>
+  // Controls that take a scripted click and show it only out of sight of
+  // the page's elements. Each also takes Enter and Space, as a control
+  // built for the keyboard does, so a press made a second way would count
+  // twice. This one sets a field's value from its code: no element changes.
+  "/press-silent": pageShell(
+    "Basket",
+    `<h1>Basket</h1>
+     <label for="qty">Apples</label> <input type="text" id="qty" value="1" readonly />
+     <div id="more" role="button" tabindex="0" aria-label="One more apple" style="display:inline-block;padding:8px 18px;border:1px solid #888">+</div>
      <script>
-       window.subs = 0;
-       let armed = false;
+       window.steps = 0;
+       const qty = document.getElementById('qty'), more = document.getElementById('more');
+       const one = () => { window.steps += 1; qty.value = String(Number(qty.value) + 1); };
+       more.addEventListener('click', one);
+       more.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') one(); });
+     </script>`,
+  ),
+  // This one shows what it did only inside its component's own shadow root.
+  "/shadow-silent": pageShell(
+    "Wishlist",
+    `<h1>Wishlist</h1>
+     <wish-card id="card"></wish-card>
+     <script>
+       window.wishes = 0;
+       const root = document.getElementById('card').attachShadow({ mode: 'open' });
+       root.innerHTML = '<div id="wish" role="button" tabindex="0" style="display:inline-block;padding:8px 18px;border:1px solid #888">Add to wishlist</div> <span id="n">In wishlist: 0</span>';
+       const wish = root.getElementById('wish');
+       const one = () => { window.wishes += 1; root.getElementById('n').textContent = 'In wishlist: ' + window.wishes; };
+       wish.addEventListener('click', one);
+       wish.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') one(); });
+     </script>`,
+  ),
+  // A press the user approves is made once, whatever the page shows after
+  // it. This button shows nothing, and counts any key sent to it.
+  "/press-once": pageShell(
+    "Newsletter",
+    `<h1>Newsletter</h1>
+     <p>Weekly notes from the trail.</p>
+     <button type="button" id="sub">Subscribe</button>
+     <script>
+       window.subs = 0; window.keys = 0;
        const sub = document.getElementById('sub');
-       sub.addEventListener('mousedown', (e) => { armed = e.isTrusted; });
-       sub.addEventListener('click', (e) => { if (e.detail !== 0 && !armed) return; armed = false; window.subs += 1; document.getElementById('state').textContent = 'Details shown'; });
+       sub.addEventListener('click', () => { window.subs += 1; });
+       sub.addEventListener('keydown', () => { window.keys += 1; });
      </script>`,
   ),
   // This one takes only a person's own press.
@@ -940,9 +971,19 @@ function buildStepPolicies(baseUrl) {
       if (/Saved with/.test(ctx.userText)) return done("The settings are saved.", ["Saved with"]);
       return step("Save the settings", [{ do: "click", ref: named(ctx, /save settings/i).id }]);
     },
-    pressDirect(ctx) {
-      if (/Details shown/.test(ctx.userText)) return done("The details are shown.", ["Details shown"]);
-      return step("Show the details", [{ do: "click", ref: named(ctx, /^show details$/i).id }]);
+    // A press that worked out of sight: the result says what was seen, and it is not pressed again.
+    pressSilent(ctx) {
+      if (/A field on the page holds a different value after it/.test(ctx.userText)) return done("There is one more apple in the basket.", []);
+      return step("Add one more apple", [{ do: "click", ref: named(ctx, /one more apple/i).id }]);
+    },
+    shadowSilent(ctx) {
+      if (/In wishlist: [1-9]|The page updated/.test(ctx.userText)) return done("It is on the wishlist.", []);
+      return step("Add it to the wishlist", [{ do: "click", ref: named(ctx, /add to wishlist/i).id }]);
+    },
+    // A press the user approved, with no change after it: said as that, and left there.
+    pressOnce(ctx) {
+      if (/Nothing on the page changed|No change was seen/.test(ctx.userText)) return done("I pressed Subscribe once, as you approved. The page shows no change, so I cannot tell whether it took.", [], false);
+      return step("Subscribe", [{ do: "click", ref: named(ctx, /^subscribe$/i).id }]);
     },
     // A control that takes only the user's own press: told so, the model hands that one press over.
     pressUser(ctx) {
@@ -1269,7 +1310,9 @@ function createE2EServer(port = 8907) {
   scenarios.pointerRisk = { task: "Tidy up my account." };
   scenarios.hoverScripted = { task: "Choose Pricing from the Products menu." };
   scenarios.pressKeyboard = { task: "Save my settings." };
-  scenarios.pressDirect = { task: "Show the details of this trail." };
+  scenarios.pressSilent = { task: "Add one more apple to the basket." };
+  scenarios.shadowSilent = { task: "Add this to my wishlist." };
+  scenarios.pressOnce = { task: "Subscribe me to the newsletter." };
   scenarios.pressUser = { task: "Unlock the downloads." };
   scenarios.shadowClick = { task: "Add this to my basket." };
   scenarios.toolbar = { task: "Make the title upper case." };

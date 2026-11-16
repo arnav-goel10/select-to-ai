@@ -708,15 +708,37 @@ async function main() {
         const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
         if (press.pointer === "real") return /Saved with the mouse/.test(at.state) ? null : `a real press left "${at.state}"`;
         if (at.state !== "Saved with the keyboard") return `state: ${at.state}`;
-        return /The page did not answer pointer events on it; the Enter key with the focus on it worked\./.test(press.outcome) ? null : `the result did not name the way that worked: ${JSON.stringify(press.outcome)}`;
+        return /No change was seen after pointer events on it\. It was then pressed with the Enter key with the focus on it, and the page changed/.test(press.outcome) ? null : `the result did not name the way that worked: ${JSON.stringify(press.outcome)}`;
       }],
-      ["pressDirect", "/press-direct", async () => false, async (r) => {
-        const at = await r.fixture.evaluate(() => ({ state: document.getElementById("state").textContent, subs: window.subs }));
-        if (at.subs !== 1 || at.state !== "Details shown") return `shown ${at.subs} times (${at.state}): ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
-        if (r.actions.filter((a) => a.do === "click").length !== 1) return `the model had to press more than once: ${JSON.stringify(r.actions.map((a) => a.do))}`;
+      // A control that took the click and showed it only out of sight of the
+      // page's elements (a field's value set from code; a change inside a
+      // component's own shadow root) is pressed once: no other way is tried
+      // on top, and the result says what was seen.
+      ["pressSilent", "/press-silent", async () => false, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ qty: document.getElementById("qty").value, steps: window.steps }));
         const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
-        if (press.pointer === "real") return null;
-        return /The page did not answer pointer events on it; its own click called directly worked\./.test(press.outcome) ? null : `the result did not name the way that worked: ${JSON.stringify(press.outcome)}`;
+        if (at.steps !== 1 || at.qty !== "2") return `the control acted ${at.steps} times and the box holds ${at.qty}, not once and 2: ${JSON.stringify(press && press.outcome)} ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (r.actions.filter((a) => a.do === "click").length !== 1) return `the model pressed more than once: ${JSON.stringify(r.actions.map((a) => a.do))}`;
+        if (/ways tried|then pressed with/.test(press.outcome)) return `another way was tried on top: ${JSON.stringify(press.outcome)}`;
+        if (/Nothing on the page changed/.test(press.outcome)) return `the result said nothing changed: ${JSON.stringify(press.outcome)}`;
+        return /A field on the page holds a different value after it\./.test(press.outcome) ? null : `the result did not say a field's value changed: ${JSON.stringify(press.outcome)}`;
+      }],
+      ["shadowSilent", "/shadow-silent", async () => false, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ wishes: window.wishes, shown: document.getElementById("card").shadowRoot.getElementById("n").textContent }));
+        const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
+        if (at.wishes !== 1 || at.shown !== "In wishlist: 1") return `the control acted ${at.wishes} times (${at.shown}), not once: ${JSON.stringify(press && press.outcome)} ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (r.actions.filter((a) => a.do === "click").length !== 1) return `the model pressed more than once: ${JSON.stringify(r.actions.map((a) => a.do))}`;
+        if (/ways tried|then pressed with/.test(press.outcome)) return `another way was tried on top: ${JSON.stringify(press.outcome)}`;
+        return /Nothing on the page changed|No change was seen/.test(press.outcome) ? `the change inside the shadow root was not seen: ${JSON.stringify(press.outcome)}` : null;
+      }],
+      // A press the user approved is made once: no key follows it, though the page shows nothing after it.
+      ["pressOnce", "/press-once", approve, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ subs: window.subs, keys: window.keys }));
+        if (r.seen.confirms !== 1) return `${r.seen.confirms} approvals were asked for, not 1: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (at.subs !== 1 || at.keys !== 0) return `after one approved press the button counted ${at.subs} clicks and ${at.keys} keys: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (r.actions.filter((a) => a.do === "click").length !== 1) return `the approved press was repeated: ${JSON.stringify(r.actions.map((a) => a.do))}`;
+        const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
+        return /ways tried|then pressed with/.test(press.outcome) ? `another way was tried on top of an approved press: ${JSON.stringify(press.outcome)}` : null;
       }],
       // A control that takes no scripted press at all: the result says so, the
       // model hands that one press to the user, and the run goes on after it.
@@ -733,10 +755,10 @@ async function main() {
         const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
         if (press && press.pointer === "real") return state === "Downloads unlocked" ? null : `a real press left "${state}"`;
         if (!r.seen.cards.some((c) => c.kind === "press")) return `the user was never asked to press it: ${String(r.log).replace(/\s+/g, " ").slice(0, 700)}`;
-        if (!/It did not answer a press made by script in any of the ways tried: pointer events, the Enter key with the focus on it, the Space key with the focus on it, its own click called directly\..*it ignores scripted input/.test(press.outcome)) return `the result did not say the control ignores scripted input: ${JSON.stringify(press.outcome)}`;
+        if (!/No change was seen after a press made by script in any of the ways tried: pointer events, the Enter key with the focus on it, the Space key with the focus on it\..*it may take only a real press/.test(press.outcome)) return `the result did not say that no change was seen in any way tried: ${JSON.stringify(press.outcome)}`;
         if (!r.seen.banner || r.seen.marked !== "real") return `the page did not show the user what to press: banner ${r.seen.banner}, marked "${r.seen.marked}"`;
-        // The two scripted clicks reached the page (the pointer's and the control's own) and it ignored both.
-        if (r.seen.before.state !== "Downloads locked" || r.seen.before.scripted !== 2) return `before the user's press: ${JSON.stringify(r.seen.before)}`;
+        // One scripted click reached the page, the pointer's, and it was ignored: the control's own click is not called on top.
+        if (r.seen.before.state !== "Downloads locked" || r.seen.before.scripted !== 1) return `before the user's press: ${JSON.stringify(r.seen.before)}`;
         if (r.actions.filter((a) => a.do === "click").length !== 1) return `the dead press was repeated: ${JSON.stringify(r.actions.map((a) => a.do))}`;
         if (state !== "Downloads unlocked") return `state: ${state}`;
         return /Downloads are unlocked/.test(r.answer) ? null : `answer: ${JSON.stringify(r.answer)}`;
@@ -746,7 +768,7 @@ async function main() {
         const at = await r.fixture.evaluate(() => ({ state: document.getElementById("state").textContent, adds: window.adds }));
         if (at.adds !== 1 || at.state !== "Added to basket") return `added ${at.adds} times (${at.state}): ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
         const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
-        return /did not answer pointer events/.test(press.outcome) ? `the pointer's click did not reach the page's listener: ${JSON.stringify(press.outcome)}` : null;
+        return /ways tried|then pressed with|No change was seen after pointer events/.test(press.outcome) ? `the pointer's click did not reach the page's listener: ${JSON.stringify(press.outcome)}` : null;
       }],
       // A press the page cancels (an editor's toolbar) leaves the cursor where it was.
       ["toolbar", "/toolbar", async () => false, async (r) => {
