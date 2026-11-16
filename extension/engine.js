@@ -482,19 +482,36 @@
       const box = await send(tab.id, { action: "frameBox", token: f.token });
       const placed = framePlaces(box, got);
       if (box && box.found) for (const area of page.frameAreas || []) if (area.x === box.area.x && area.y === box.area.y && area.w === box.area.w && area.h === box.area.h) area.read = true;
-      for (const el of got.elements) {
-        page.elements.push({
-          ...el, ...placed(el), id: k * FRAME_BASE + el.id, frame: k, position: f.position || el.position,
-          ...(f.onTop ? { onTop: true } : {}),
-          groupKey: `f${k}:${el.groupKey || 0}`, groupKind: el.groupKind || "frame", group: el.group ? `${name} > ${el.group}` : name,
-        });
-      }
+      joinFrame(page, got, k, f, name, placed);
       const text = String(got.innerText || "").trim();
       if (text) page.innerText = `${page.innerText || ""}\n\n[In the ${name} on this page]\n${text.slice(0, 3000)}`;
       if ((got.unseen || []).length) page.unseen = [...(page.unseen || []), ...got.unseen].slice(0, 8);
       for (const b of got.blockers || []) (page.blockers = page.blockers || []).push({ ...b, whole: false });
       if (f.onTop) for (const o of page.overlays || []) if (o.framed && !o.controls) { o.framed = false; o.controls = got.elements.length; break; }
     }
+  }
+
+  /**
+   * Adds frame k's controls and forms to the page's listing. Both are
+   * numbered after the page's own: frame 1's control 12 is [100012], and
+   * its form 0 is form 100000, since form numbers are counted per document
+   * and a frame's form 0 is not the page's. A control is judged against
+   * the form it is in (agentTools.js contentRisk, policy.js).
+   */
+  function joinFrame(page, got, k, f, name, placed) {
+    const at = placed || (() => ({}));
+    for (const el of got.elements || []) {
+      page.elements.push({
+        ...el, ...at(el), id: k * FRAME_BASE + el.id, frame: k, position: f.position || el.position,
+        formId: el.formId !== undefined && el.formId !== null ? k * FRAME_BASE + el.formId : undefined,
+        ...(f.onTop ? { onTop: true } : {}),
+        groupKey: `f${k}:${el.groupKey || 0}`, groupKind: el.groupKind || "frame", group: el.group ? `${name} > ${el.group}` : name,
+      });
+    }
+    if (Array.isArray(got.forms) && got.forms.length) {
+      page.forms = [...(page.forms || []), ...got.forms.map((form) => ({ ...form, id: k * FRAME_BASE + form.id, frame: k }))];
+    }
+    return page;
   }
 
   /**
@@ -2181,5 +2198,5 @@
   }
 
   // release is exported for the scripted tests, as wake is.
-  root.SELECT_TO_AI_ENGINE = Object.freeze({ sessions, effectOf, wake, loadMemory, changeMemory, release });
+  root.SELECT_TO_AI_ENGINE = Object.freeze({ sessions, effectOf, wake, loadMemory, changeMemory, release, joinFrame, scan });
 })(typeof globalThis !== "undefined" ? globalThis : this);
