@@ -295,8 +295,11 @@
             // No composer selector matched within the wait window. Do NOT
             // guess at elements, put the text on the clipboard and say so.
             console.warn("Select to AI: composer not found:", error.message);
-            copyToClipboard(text).then(() => {
-                showPageToast("Pasted text is on your clipboard");
+            copyToClipboard(text).then((copied) => {
+                const paste = /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || "") ? "Cmd+V" : "Ctrl+V";
+                showPageToast(copied
+                    ? `Select to AI could not find the message box. Your text is copied: click the box and press ${paste}.`
+                    : "Select to AI could not find the message box or copy your text. Select it again and paste it in.");
             });
         });
 
@@ -338,8 +341,12 @@
     // to the side panel (sidePanelState) belongs only to the copy inside the
     // side panel; without this check every open ChatGPT or Claude tab pasted,
     // and with auto-send submitted, the same selection.
+    // Only the assistant page the panel itself holds: a frame nested inside
+    // that page (an embed, a sign-in frame) has the same top origin but is
+    // not the composer, so it must not act.
     function isInSidePanel() {
         try {
+            if (window.parent === window || window.parent !== window.top) return false;
             const origins = window.location.ancestorOrigins;
             return !!origins && origins.length > 0 &&
                 origins[origins.length - 1] === `chrome-extension://${chrome.runtime.id}`;
@@ -420,11 +427,14 @@
         });
 
         // --- Session Tracking ---
-        // Tracks current URL to allow "Resume Session" functionality
+        // Remembers the conversation open in the side panel, so opening the
+        // panel again (with no text) shows it. Only the panel's copy records
+        // it: ordinary assistant tabs are the user's own, and right-click
+        // sends always start a new conversation.
         const validHosts = [HOSTS.CHATGPT, HOSTS.GEMINI, HOSTS.PERPLEXITY, HOSTS.CLAUDE];
         const isSupportedHost = validHosts.some(h => hostname.includes(h));
 
-        if (isSupportedHost) {
+        if (isSupportedHost && inSidePanel) {
             let lastUrl = window.location.href;
             const saveSessionUrl = () => {
                 const currentUrl = window.location.href;

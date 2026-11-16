@@ -116,6 +116,13 @@
   // this long, twice as long each time after, up to the longest.
   const PAUSE_FIRST_MS = 2 * 60000;
   const PAUSE_LONGEST_MS = 30 * 60000;
+  // Pauses in a row, with no answer from the provider between them, end the
+  // run past this many, or past this long in all: it ends with what it found.
+  const PAUSES_IN_ROW = 4;
+  const PAUSED_IN_ROW_MS = 60 * 60000;
+  // Waits for what only the user can do on the page. Two of the same on a
+  // page that did not change between them are the run going round.
+  const HANDOFFS = new Set(["sign_in", "human_check", "code", "payment"]);
   // Sub-tasks (delegate) that run at the same time; more wait their turn.
   // Each makes about one model call per step, and a step's call takes 2.5
   // to 3.2 seconds on a small model (effortOf below) with as long again on
@@ -184,6 +191,12 @@
       // Why the next step is the last: the user asked for the answer now, or the run is going round.
       wrapUp: null,
       pauses: 0,
+      // Pauses since the provider last answered, and how long they were in all.
+      pausedInRow: { n: 0, ms: 0 },
+      // Sites the user would not let the agent onto, by origin, for this run.
+      declinedSites: [],
+      // The last hand-off to the user: its kind, the page it was on, how many in a row.
+      handoff: null,
       // What the step in hand is shown and may do: the main model's, or the helper's on its steps.
       maxActions: own.maxActions,
       elementLimit: own.elementLimit,
@@ -509,6 +522,7 @@
     if (f.cycle && f.cycle.rounds >= 2) return { why: `the same ${f.cycle.size} actions were gone round ${f.cycle.rounds} times with the page back as it was`, circling: true };
     if (f.failures >= 2) return { why: "the last two steps each ended with an action that failed", circling: true };
     if (f.invalid > 0) return { why: "the last reply could not be used", circling: true };
+    if (run.handoff && run.handoff.n >= 2 && run.handoff.print === run.lastPrint) return { why: "the user was asked for the same thing twice on a page that did not change", circling: true };
     if (run.sentBack) return { why: "the check sent the answer back", circling: true };
     if (run.quoteRejected) return { why: "a quote in the answer was not in anything the run had read", circling: true };
     const failed = run.progress && run.progress.failedAsk;
@@ -913,6 +927,7 @@
     run.facts.invalid = 0;
     // The provider answered: a later refusal that names no wait starts from the shortest pause again.
     run.pauses = 0;
+    run.pausedInRow = { n: 0, ms: 0 };
     run.steps = (run.steps || 0) + 1;
     if (run.by === "helper") run.helperSteps = (run.helperSteps || 0) + 1;
     const step = check.step;
@@ -1527,6 +1542,11 @@
 
   function waitFor(run, fx, env, wait) {
     run.waits += 1;
+    if (HANDOFFS.has(wait.kind)) {
+      const print = run.lastPrint || "";
+      const last = run.handoff;
+      run.handoff = last && last.kind === wait.kind && last.print === print ? { ...last, n: last.n + 1 } : { kind: wait.kind, print, n: 1 };
+    }
     run.status = "waiting";
     const page = env && env.page;
     // What was in the page's fields, for a wait the user may answer on the page.
@@ -1547,9 +1567,21 @@
     run.status = "running";
     run.wait = null;
     run.journal.push({ k: "ask_done", id: w.id, how: event.type });
-    // Whatever the user did is something new: the run is not going round any more.
-    run.stuck = { steps: 0, helper: 0, at: run.step };
-    if (run.wrapUp && run.wrapUp.by === "stuck") run.wrapUp = null;
+    // Whatever the user did is something new: the run is not going round any
+    // more. A hand-off said to be over is the exception: whether it changed
+    // anything is told by the next look at the page, which counts a page
+    // that did not change toward the stuck stop.
+    const handedOff = HANDOFFS.has(w.kind) && (event.type === "cleared" || event.type === "user_done");
+    if (!handedOff) {
+      run.stuck = { steps: 0, helper: 0, at: run.step };
+      if (run.wrapUp && run.wrapUp.by === "stuck") run.wrapUp = null;
+    }
+    // "Skip" on letting the agent onto a site: it is not asked again in this run.
+    if (w.kind === "site_access" && event.type === "skipped") {
+      let origin = "";
+      try { origin = new URL(String((w.detail || [])[0] || "")).origin; } catch (_e) { /* no address */ }
+      if (origin && origin !== "null") run.declinedSites = [...new Set([...(run.declinedSites || []), origin])];
+    }
     const a = w.action;
     if (w.kind === "approval") {
       if (event.type === "approved") {
@@ -1816,10 +1848,17 @@
     addUsage(run, event.usage);
     const named = event.waitMs > 0;
     const ms = named ? event.waitMs : Math.min(PAUSE_LONGEST_MS, PAUSE_FIRST_MS * 2 ** (run.pauses || 0));
+    const said = String(event.message || "The provider asked to wait.").trim();
+    // Waiting has a limit: past it the run ends with what it found.
+    const inRow = run.pausedInRow || { n: 0, ms: 0 };
+    if (inRow.n >= PAUSES_IN_ROW || inRow.ms + ms > PAUSED_IN_ROW_MS) {
+      log(run, "system", "Provider Still Refusing", `${said} Stopping after ${inRow.n} wait${inRow.n === 1 ? "" : "s"} in a row.`);
+      return end(run, [], env, { state: "error", kind: "rate_limited", text: `The provider kept turning requests away${inRow.n ? ` after ${inRow.n} wait${inRow.n === 1 ? "" : "s"} (${duration(inRow.ms)} in all)` : ""}, so I stopped here. ${said} Try again later or pick another model in Settings.${found(run)}` });
+    }
+    run.pausedInRow = { n: inRow.n + 1, ms: inRow.ms + ms };
     if (!named) run.pauses = (run.pauses || 0) + 1;
     run.step = Math.max(0, run.step - 1);
     run.queue = [];
-    const said = String(event.message || "The provider asked to wait.").trim();
     log(run, "system", "Provider Asked To Wait", `${said} Waiting ${duration(ms)}.`);
     return waitFor(run, [], env, { kind: "pause", until: (env.now || 0) + ms, question: `${said} I will carry on by myself in ${duration(ms)}.` });
   }

@@ -120,6 +120,7 @@
                 </div>
                 <button class="btn" id="testBtn" type="button">Test</button>
               </div>
+              <div id="consentSlot"></div>
               <span class="note" id="testNote" role="status" aria-live="polite"></span>
             </div>
             <div class="field">
@@ -149,6 +150,7 @@
                 <button class="btn" id="backupTest" type="button">Test</button>
               </div>
               <span class="hint" id="backupHint"></span>
+              <div id="backupConsentSlot"></div>
               <span class="note" id="backupNote" role="status" aria-live="polite"></span>
             </div>
           </div>
@@ -183,7 +185,7 @@
               <textarea class="input" id="agentExtraInstructions" rows="3" aria-label="Your instructions for the agent"></textarea>
             </div>
             <div class="row">
-              <div><span class="t">Turn the agent off</span><span class="d">Hides it from the popup, right-click menu, address bar and shortcuts.</span></div>
+              <div><span class="t">Turn the agent off</span><span class="d">Hides it from the popup, the right-click menu and the shortcuts.</span></div>
               <label class="switch"><input type="checkbox" id="agentOff" aria-label="Turn the agent off" /><span></span></label>
             </div>
           </details>
@@ -204,11 +206,11 @@
         </div>
       </section>
 
-      <section aria-labelledby="h-ask">
+      <section id="ask" aria-labelledby="h-ask">
         <h2 id="h-ask">Ask AI about a selection</h2>
         <div class="card">
           <div class="row stack">
-            <div><span class="t">Assistants in the right-click menu</span><span class="d">Highlight text, right-click, and it arrives in the assistant you pick. No account with us needed.</span></div>
+            <div><span class="t">Assistants in the right-click menu</span><span class="d">Highlight text, right-click, and it arrives in the assistant you pick. No account with us needed. Chrome asks once before Claude is added.</span></div>
             <div class="chips">
               <label class="chip"><input type="checkbox" id="showChatGPT" /><span>ChatGPT</span></label>
               <label class="chip"><input type="checkbox" id="showClaude" /><span>Claude</span></label>
@@ -235,17 +237,14 @@
       </section>
 
       <section aria-labelledby="h-keys">
-        <h2 id="h-keys">Shortcuts and address bar</h2>
+        <h2 id="h-keys">Shortcuts</h2>
         <div class="card">
           <div class="row">
             <div><span class="t">Quick box</span><span class="d" id="paletteShortcutDesc">Start the agent from any page.</span></div>
             <div class="controls">
-              <kbd id="paletteShortcut">&mdash;</kbd>
+              <kbd id="paletteShortcut">Not set</kbd>
               <button class="btn btn-ghost" id="changeShortcutBtn" type="button">Change</button>
             </div>
-          </div>
-          <div class="row">
-            <div><span class="t">Address bar</span><span class="d">Type <kbd>ai</kbd> then a space in the address bar and say what you want: the agent starts on it.</span></div>
           </div>
         </div>
       </section>
@@ -287,6 +286,8 @@
     <script src="defaults.js"></script>
     <script src="security.js"></script>
     <script src="usageLimits.js"></script>
+    <script src="core/grants.js"></script>
+    <script src="setup.js"></script>
     <script src="chatgptAuth.js"></script>
     <script src="chatgptUi.js"></script>
     <script src="options.js"></script>

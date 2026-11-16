@@ -65,7 +65,8 @@ async function main() {
       // E2E_DEBUGGER=off runs every scenario as a build without the debugger would.
       ...(process.env.E2E_DEBUGGER === "off" ? { agentDebuggerMode: "off" } : {}),
     });
-    await worker.evaluate(() => new Promise((r) => chrome.storage.local.set({ onboardingComplete: true }, r)));
+    // The user already agreed to what the agent sends to this server (setup.js consent).
+    await worker.evaluate((origin) => new Promise((r) => chrome.storage.local.set({ onboardingComplete: true, agentDataConsent: { [`custom ${origin}`]: Date.now() } }, r)), new URL(server.baseUrl).origin);
     const control = (p, options) => fetch(`${server.baseUrl}${p}`, options).then((r) => r.json());
     const agentUrl = (task) => `chrome-extension://${extensionId}/agent.html${task ? `?task=${encodeURIComponent(task)}&autostart=1&fresh=1` : ""}`;
 
@@ -170,6 +171,8 @@ async function main() {
     const checkInMinutes = (v) => worker.evaluate((m) => new Promise((r) => (m === null ? chrome.storage.sync.remove("agentCheckInMinutes", r) : chrome.storage.sync.set({ agentCheckInMinutes: m }, r))), v);
     const helperModel = (name) => worker.evaluate((v) => new Promise((r) => chrome.storage.sync.set({ agentHelperModel: v }, r)), name);
     const learning = (on) => worker.evaluate((v) => new Promise((r) => chrome.storage.sync.set({ agentLearning: v }, r)), on);
+    const allowOnly = (v) => worker.evaluate((list) => new Promise((r) => chrome.storage.sync.set({ agentDomainAllowlist: list }, () => r(true))), v);
+    let queuedSlowed = false;
     const until = async (fn, ms = 8000) => { const t0 = Date.now(); for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t0 > ms) return null; await sleep(200); } };
 
     /**
@@ -1017,6 +1020,121 @@ async function main() {
         if (r.trace.stopState !== "success") return `ended ${r.trace.stopState}`;
         return null;
       }, "delegateDecline"],
+
+      // ---- Hand-offs that wait, and waits that survive the worker (package P3).
+      // An email-first sign-in: no password box until the user presses Next.
+      // The wait used to end by itself in about 1.4 s and ask again.
+      ["signinIdentifierFirst", "/id-login", async ({ card, fixture, seen }) => {
+        if (!card || card.kind !== "sign_in") return false;
+        const before = (await control("/control/log", { method: "GET" })).llmCalls;
+        await sleep(3500);
+        const after = (await control("/control/log", { method: "GET" })).llmCalls;
+        seen.waited = { before, after, banner: await hasBanner(fixture) };
+        await fixture.bringToFront();
+        await fixture.type("#identifier", "ada@example.com");
+        await fixture.click("#next-btn");
+        await sleep(1000);
+        await fixture.type("#pw", "correct horse");
+        await fixture.click("#pw-btn");
+        // The user says nothing: the password box was seen and went, so the run goes on by itself.
+        return true;
+      }, (r) => {
+        if (!r.seen.waited) return "no sign-in card was shown";
+        if (r.seen.waited.after !== r.seen.waited.before) return `the model was asked again while the user had not signed in yet (${r.seen.waited.before} then ${r.seen.waited.after} calls)`;
+        if (!r.seen.waited.banner) return "the banner was gone before the user did anything";
+        if (r.seen.cards.filter((c) => c.kind === "sign_in").length !== 1) return `sign-in asked ${r.seen.cards.filter((c) => c.kind === "sign_in").length} times`;
+        return r.answer.includes("$42.10") ? null : `the run did not carry on after the sign-in: ${JSON.stringify(r.answer)}`;
+      }],
+      // A code box with no autocomplete attribute, named only by its label.
+      ["codePlain", "/otp-plain", async ({ card, fixture, seen }) => {
+        if (!card || card.kind !== "code") return false;
+        const before = (await control("/control/log", { method: "GET" })).llmCalls;
+        await sleep(3500);
+        seen.waited = { before, after: (await control("/control/log", { method: "GET" })).llmCalls };
+        await fixture.bringToFront();
+        await fixture.type("#otp", "482913");
+        await fixture.click("#otp-btn");
+        return true;
+      }, (r) => {
+        if (!r.seen.waited) return "no code card was shown";
+        if (r.seen.waited.after !== r.seen.waited.before) return `the wait ended by itself before the code was entered (${r.seen.waited.before} then ${r.seen.waited.after} calls)`;
+        return r.answer.includes("$182.50") ? null : `answer: ${JSON.stringify(r.answer)}`;
+      }],
+      // The same hand-off again and again on a page that does not change:
+      // the user says "done" each time without doing anything, and the run
+      // counts it as going round and stops.
+      ["handoffRepeat", "/id-login", async ({ card, agent, seen }) => {
+        if (!card || card.kind !== "sign_in") return false;
+        seen.handoffs = (seen.handoffs || 0) + 1;
+        await agent.evaluate(() => { const b = [...document.querySelectorAll(".wait-done-btn")].pop(); if (b) b.click(); });
+        return true;
+      }, (r) => {
+        if (!r.trace || !r.trace.stopState) return "the run did not end";
+        if (!/Not Getting Anywhere/.test(r.log)) return `the repeats were never counted as going round (${r.seen.handoffs} hand-offs)`;
+        if ((r.seen.handoffs || 0) > 12) return `${r.seen.handoffs} hand-offs before it stopped`;
+        return /could not get past the sign-in/.test(r.answer) ? null : `answer: ${JSON.stringify(r.answer)}`;
+      }, "handoffRepeat", { timeoutMs: 90000 }],
+      // The worker restarts while the run waits: the wait is put back, and
+      // the user is not alerted again (the reminder alarm is not re-armed).
+      ["signin", "/home", async ({ card, fixture, seen, reopen }) => {
+        if (!card || card.kind !== "sign_in") return false;
+        if (seen.slept) return true;
+        seen.slept = true;
+        const reminders = () => worker.evaluate(async () => (await chrome.alarms.getAll()).filter((a) => a.name.startsWith("agentRemind:")).map((a) => ({ name: a.name, at: a.scheduledTime })));
+        seen.before = await until(async () => { const a = await reminders(); return a.length ? a : null; }, 5000);
+        await sleep(300);
+        await restartWorker();
+        await reopen();
+        await sleep(1500);
+        seen.after = await reminders();
+        await fixture.bringToFront();
+        await fixture.type("#user", "ada");
+        await fixture.type("#pass", "correct horse");
+        await fixture.click("#signin-btn");
+        return true;
+      }, (r) => {
+        if (!r.seen.slept) return "the worker was never restarted";
+        if (!r.seen.before) return "no reminder was armed for the wait";
+        if (JSON.stringify(r.seen.after) !== JSON.stringify(r.seen.before)) return `the wait alerted again after the restart: reminders ${JSON.stringify(r.seen.before)} then ${JSON.stringify(r.seen.after)}`;
+        return r.answer.includes("$42.10") ? null : `the run did not go on after the restart: ${JSON.stringify(r.answer)}`;
+      }, "waitRestartQuiet"],
+      // A task sent from the agent's page while the worker is still reading
+      // back what it saved: it is handled once restoring is done, not dropped.
+      ["search", "/search", async () => false, (r) => {
+        if (!queuedSlowed) return "the restore was not slowed, so this proves nothing";
+        return r.answer.includes("$19") ? null : `the task sent during the restore was lost: ${JSON.stringify(r.answer)}`;
+      }, "queuedAfterHello", { before: async () => {
+        // A cold worker: reading session storage takes a while, and the page connects meanwhile.
+        const slowed = await worker.evaluate(() => {
+          const s = chrome.storage.session;
+          const get = s.get;
+          s.get = function slow(...a) { return new Promise((res, rej) => setTimeout(() => get.apply(s, a).then(res, rej), 1500)); };
+          setTimeout(() => { s.get = get; }, 4000);
+          self.SELECT_TO_AI_ENGINE.wake();
+          return s.get !== get;
+        });
+        queuedSlowed = slowed;
+      } }],
+      // Skip on "Let the agent use this site?": the run goes on without that site.
+      ["declinedSite", "/declined-link", async (ctx) => {
+        if (ctx.card && ctx.card.kind === "site_access") {
+          ctx.seen.skips = (ctx.seen.skips || 0) + 1;
+          await ctx.agent.evaluate(() => { const b = [...document.querySelectorAll(".wait-skip-btn")].pop(); if (b) b.click(); });
+          return true;
+        }
+        return approve(ctx);
+      }, (r) => {
+        if (!r.seen.skips) return "the site-access card was never shown";
+        if (r.seen.skips !== 1) return `asked about the site ${r.seen.skips} times`;
+        return r.answer.includes("$18") ? null : `the run did not carry on elsewhere: ${JSON.stringify(r.answer)}`;
+      }],
+      // "Only use these sites": a link off the list lands on a page that is not read.
+      ["offList", "/offlist-start", approve, async (r) => {
+        await allowOnly("");
+        if (/Kettle: \$77/.test(r.prompts.join("\n"))) return "the off-list page was read and sent to the model";
+        if (!r.prompts.some((p) => /outside the sites you allow the agent to use/.test(p))) return "the model was not told the page is outside the allowed sites";
+        return /outside the sites you allow/.test(r.answer) ? null : `answer: ${JSON.stringify(r.answer)}`;
+      }, "offList", { before: () => allowOnly("127.0.0.1") }],
     ];
 
     for (const [name, startPath, user, check, label, opts] of scenarios) {

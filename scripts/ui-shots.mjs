@@ -142,15 +142,30 @@ try {
 
   // An upgrader: the 2.0 settings, nothing of 4.0's.
   const seed = JSON.parse(fs.readFileSync(path.resolve("tests/fixtures/v2.0/storage-seed.json"), "utf8"));
-  await storage(seed.sync, seed.local);
+  // whatsNew40 is the one-time flag the worker sets on the update, for the popup's banner.
+  await storage(seed.sync, { ...seed.local, whatsNew40: true });
   {
     const page = await composite("popup-upgrade", [{ src: `chrome-extension://${id}/popup.html`, width: 380 }]);
     await shoot(page, "popup-upgrade");
     await page.close();
   }
 
-  // Set up, with the scripted model as the provider.
+  // Set up, with the scripted model as the provider, before the user has
+  // agreed to what the agent sends: the consent card.
   await storage(RUN_SETTINGS, { onboardingComplete: true });
+  {
+    const page = await newPage("consent-card");
+    await page.goto(`chrome-extension://${id}/agent.html?task=${encodeURIComponent("Summarize this page in 5 short bullet points.")}&autostart=1&fresh=1`, { waitUntil: "load" });
+    const t0 = Date.now();
+    while (Date.now() - t0 < 10000 && !(await page.$(".consent-card"))) await sleep(200);
+    if (!(await page.$(".consent-card"))) problems.push("consent-card: no consent card on the agent page within 10 s");
+    await sleep(400);
+    await shoot(page, "consent-card");
+    await page.close();
+  }
+
+  // From here on the user has agreed (setup.js keeps it per provider).
+  await storage(RUN_SETTINGS, { onboardingComplete: true, agentDataConsent: { [`custom ${new URL(server.baseUrl).origin}`]: Date.now() } });
   {
     const page = await composite("popup", [{ src: `chrome-extension://${id}/popup.html`, width: 380 }]);
     await shoot(page, "popup");
