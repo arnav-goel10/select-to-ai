@@ -591,7 +591,7 @@
   }
 
   /** What the user had selected and the other tabs their words point at. */
-  async function gatherContext(task, tab) {
+  async function gatherContext(task, tab, allowlist) {
     const out = { selection: "", openTabPages: [] };
     const work = (async () => {
       if (isWeb(tab.url)) {
@@ -601,7 +601,9 @@
       const all = (await quiet(chrome.tabs.query({ windowId: tab.windowId }))) || [];
       // Chosen from titles and addresses alone: a tab the request is not
       // about is never opened, read or sent anywhere.
-      const others = TOOLS.pickContextTabs(task, tab, all.filter((t) => t.id !== tab.id && isWeb(t.url)), 4);
+      // A tab outside "Only use these sites" is not read for context either.
+      const usable = all.filter((t) => t.id !== tab.id && isWeb(t.url) && (!allowlist || root.SELECT_TO_AI_SECURITY.isUrlAllowedByDomains(t.url, allowlist)));
+      const others = TOOLS.pickContextTabs(task, tab, usable, 4);
       out.openTabPages = await Promise.all(others.map(async (t) => {
         await quiet(inject({ tabId: t.id }, { files: ["agentTools.js", "agentContentScript.js"] }));
         const res = await send(t.id, { action: "readText" });
@@ -626,7 +628,7 @@
     let moved = null;
     // A sub-task's tab is its own: the user's selection and other tabs are the run's.
     if (fx.first && !session.parent) {
-      const ctx = await gatherContext(run.task, tab);
+      const ctx = await gatherContext(run.task, tab, (session.settings && session.settings.allowlist) || "");
       if (!session.extras.selectionCaptured) { session.extras.selection = ctx.selection; session.extras.selectionPlace = null; }
       session.extras.openTabPages = ctx.openTabPages;
       for (const t of ctx.openTabPages) { const site = TOOLS.siteOf(t.url); if (site && !run.trust.sites.includes(site)) run.trust.sites.push(site); }
