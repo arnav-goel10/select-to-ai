@@ -106,11 +106,26 @@ async function main() {
 
   const workerTarget = (previous) => browser.waitForTarget((t) => t !== previous && t.type() === "service_worker" && t.url().endsWith("/background.js"), { timeout: 20000 }).catch(() => null);
   const errors = [];
+  // The worker, driven over its own CDP session: evaluate(fn, ...args) runs
+  // fn in the worker's global scope (so its top-level functions and bindings
+  // are reachable) and returns the value. Puppeteer's WebWorker is not used,
+  // because it can keep a handle to a worker that was stopped.
   async function attach(target) {
     const cdp = await target.createCDPSession();
     cdp.on("Runtime.exceptionThrown", (e) => errors.push((e.exceptionDetails.exception && e.exceptionDetails.exception.description) || e.exceptionDetails.text));
     await cdp.send("Runtime.enable");
-    return target.worker();
+    const evaluate = async (fn, ...args) => {
+      const expression = `(${fn.toString()})(...${JSON.stringify(args)})`;
+      const r = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
+      if (r.exceptionDetails) throw new Error((r.exceptionDetails.exception && r.exceptionDetails.exception.description) || r.exceptionDetails.text);
+      return r.result ? r.result.value : undefined;
+    };
+    const close = async () => {
+      const w = await target.worker();
+      if (!w || typeof w.close !== "function") throw new Error("this Puppeteer has no WebWorker.close()");
+      await w.close();
+    };
+    return { evaluate, close };
   }
 
   try {
@@ -189,18 +204,32 @@ async function main() {
       return made;
     });
     check("menu ids carry the New tab mode", ids.includes("openChatGPT|tab"), `ids ${JSON.stringify(ids)}`);
+    // Stop the worker, wake it from an extension page as a click would, and
+    // find the new one. A restarted worker can come back under the same
+    // target id, so every worker target is tried until one answers and has
+    // lost the mark set before the stop (proof it is a fresh start).
+    await worker.evaluate(() => { self.__coreFlowMark = 1; });
     let stopped = false;
     try { await worker.close(); stopped = true; } catch (e) { console.log(`could not stop the worker: ${e.message}`); }
-    if (stopped) {
-      // Anything from an extension page wakes it again, as a click would.
-      const waker = await browser.newPage();
-      await waker.goto(`chrome-extension://${extId}/popup.html`, { waitUntil: "load" }).catch(() => {});
+    let restarted = null;
+    const waker = await browser.newPage();
+    await waker.goto(`chrome-extension://${extId}/popup.html`, { waitUntil: "load" }).catch(() => {});
+    for (let i = 0; i < 40 && !restarted; i++) {
       await waker.evaluate(() => chrome.runtime.sendMessage({ type: "core-flow-wake" }).catch(() => {})).catch(() => {});
-      const restarted = await workerTarget(target);
-      await waker.close().catch(() => {});
-      check("worker restarts after it was stopped", restarted, "no new service worker within 20 s");
-      if (restarted) { target = restarted; worker = await attach(target); }
+      await sleep(500);
+      for (const t of browser.targets().filter((x) => x.type() === "service_worker" && x.url().endsWith("/background.js"))) {
+        try {
+          const cdp = await t.createCDPSession();
+          const r = await cdp.send("Runtime.evaluate", { expression: "typeof self.__coreFlowMark", returnByValue: true });
+          await cdp.detach().catch(() => {});
+          if (r && r.result && r.result.value === "undefined") { restarted = t; break; }
+        } catch { /* not ready yet */ }
+      }
     }
+    await waker.close().catch(() => {});
+    check("worker restarts after it was stopped", stopped && restarted, stopped ? "no fresh service worker within 20 s" : "worker.close() failed");
+    if (restarted) { target = restarted; worker = await attach(target); }
+    else return report(checks);
     const tab1 = await sourceTab();
     const cold = await newTabsDuring(async (tab) => {
       onMenuClicked({ menuItemId: "openChatGPT|tab", selectionText: "hello world", frameId: 0 }, tab);
@@ -323,7 +352,7 @@ async function main() {
       console.log(`saved ${file}`);
     }
     const sideText = await side.evaluate(() => document.body.innerText);
-    check("side panel text has no em dash and no 'undefined'", !/—|undefined/.test(sideText), sideText);
+    check("side panel text has no em dash and no 'undefined'", !/\u2014|undefined/.test(sideText), sideText);
     await side.close();
 
     check("no uncaught worker error", !errors.length, errors.join(" | "));
