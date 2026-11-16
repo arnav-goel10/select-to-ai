@@ -14,10 +14,14 @@
  *            the only verdict in dry mode, which has no judge
  *   sites    the other sites a task names, when it names more than one
  *   lang     the language of the site, when it is not English
+ *   then     (learn tasks) the id of the task to run next in the same
+ *            browser profile, on the same site: a pair. A task no "then"
+ *            points to, and with none of its own, runs twice
  *   scenario (fixture tasks) the scripted model's scenario in tests/e2e/server.js
  *   dry      (fixture tasks) how the run must end for the plumbing to be right
  *   dryHeld, dryScripted, dryTyped  (fixture tasks) the fewest held actions,
  *            scripted presses and typing steps the run must record
+ *   dryForm  (fixture tasks) a value one form control of the final page must hold
  *
  * `summary` reads every run.json under the folder (one per task run, written
  * by run.js), prints a table by family in Markdown, and writes
@@ -49,6 +53,15 @@ const DRY_PORT = 8931;
 
 // Words for an action no trial task may ask for. A task may say "do not submit".
 const FORBIDDEN = /\b(sign up|sign me up|register an account|create an account|log ?in|buy it|place the order|check ?out and pay|pay for|post a|send the|send a|delete|unsubscribe)\b/i;
+// Words for handing something in. Refused everywhere but in a form task on a
+// practice site, where the form goes nowhere. "book", "apply", "comment" and
+// "reply" are matched as requests ("book a table", "reply to"), not as the
+// nouns a read-only task is full of ("open that book", "comments and docstrings").
+const FORBIDDEN_HAND_IN = /\b(submit|subscribe|upload|book (a|an|me|us|it|one|two|three|the|my|this)\b|apply (for|to|now)\b|(comment|reply) (on|to)\b|(leave|post|write|add) (a |an |the |my |this )?(comment|reply|review))\b/i;
+// Sites built for practising on forms: nothing typed there reaches a person or an account.
+const PRACTICE_SITES = Object.freeze(["httpbin.org", "selenium.dev", "demoqa.com", "the-internet.herokuapp.com", "formy-project.herokuapp.com", "jqueryui.com", "testpages.eviltester.com"]);
+const hostOf = (url) => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch (_e) { return ""; } };
+const onPracticeSite = (url) => PRACTICE_SITES.some((s) => hostOf(url) === s || hostOf(url).endsWith(`.${s}`));
 
 /** Problems with a trial task file, as sentences. Empty when it is sound. */
 function validateTasks(list) {
@@ -66,6 +79,15 @@ function validateTasks(list) {
     if (t.pattern) { try { new RegExp(t.pattern, "i"); } catch (e) { problems.push(`${name}: pattern does not compile (${e.message})`); } }
     const negated = String(t.task).replace(/\b(do not|don't|without|never|not)\b[^.;]*/gi, "");
     if (t.level !== "fixture" && FORBIDDEN.test(negated)) problems.push(`${name}: asks for something a trial task may not do ("${negated.match(FORBIDDEN)[0]}")`);
+    const practiceForm = t.level === "form-fill" && onPracticeSite(t.url);
+    if (t.level === "form-fill" && !practiceForm) problems.push(`${name}: a form task runs only on a practice site (${PRACTICE_SITES.join(", ")})`);
+    if (t.level !== "fixture" && !practiceForm && FORBIDDEN_HAND_IN.test(negated)) problems.push(`${name}: asks to hand something in ("${negated.match(FORBIDDEN_HAND_IN)[0]}"), which only a form task on a practice site may`);
+    if (t.then !== undefined) {
+      const next = (list || []).find((x) => x && x.id === t.then);
+      if (!next) problems.push(`${name}: "then" names ${t.then}, which is not in the file`);
+      else if (hostOf(next.url) !== hostOf(t.url)) problems.push(`${name}: "then" must name a task on the same site (${hostOf(t.url)}, not ${hostOf(next.url)})`);
+      else if (next.then !== undefined) problems.push(`${name}: "then" names ${t.then}, which starts a pair of its own`);
+    }
     if (/—/.test(JSON.stringify(t))) problems.push(`${name}: has an em dash`);
   }
   return problems;
@@ -91,6 +113,131 @@ function patternVerdict(task, run) {
       : hit === null ? "the task has no pattern, and dry mode has no judge"
         : hit ? `the answer matches the pattern, but the run ended as: ${run.ending}` : "the answer does not match the task's pattern";
   return { success, blocked, reason, keyPoints: [], met: [] };
+}
+
+/**
+ * The pairs of a learn run, from a task file: a task with "then" is followed
+ * by the task it names; a task that is nobody's "then" and has none runs
+ * twice. Tasks that are only somebody's "then" start no pair.
+ */
+function learnPlan(tasks) {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const second = new Set(tasks.filter((t) => t.then).map((t) => t.then));
+  return tasks.filter((t) => !second.has(t.id)).map((a) => ({ a, b: a.then ? byId.get(a.then) : a })).filter((p) => p.b);
+}
+
+// A model whose list price rises with the length of the prompt, which the
+// extension's own count (one rate per model) does not follow:
+// Claude Haiku 5.5 costs five times as much for a prompt over 100,000 tokens
+// (platform.claude.com pricing, read 17 Nov 2026).
+const LONG_PROMPT_PRICES = Object.freeze([{ model: /claude-haiku-5-5/i, over: 100000, times: 5 }]);
+
+/** What a run's long prompts cost above the extension's own count, from its model calls. */
+function longPromptSurchargeUSD(modelCalls, ratesFor) {
+  let extra = 0;
+  for (const c of modelCalls || []) {
+    const tier = LONG_PROMPT_PRICES.find((t) => t.model.test(String(c.model || "")) && (c.prompt || 0) > t.over);
+    if (!tier || !ratesFor) continue;
+    const [input, output] = ratesFor(c.model) || [0, 0];
+    extra += (((c.prompt || 0) * input + (c.completion || 0) * output) / 1000) * (tier.times - 1);
+  }
+  return extra;
+}
+
+/** Everything a row cost: the agent, its long prompts, attempts that were lost, the allowance for learning calls, the judge, and a recipe replay. */
+function spendOf(row) {
+  return (row.costUSD || 0) + (row.longPromptUSD || 0) + (row.lostAttemptsUSD || 0) + (row.learnAllowanceUSD || 0) + (row.judgeCostUSD || 0) + ((row.recipe && row.recipe.replay && row.recipe.replay.usd) || 0);
+}
+
+/** A digit of any script as 0 to 9: Unicode's decimal digits come in runs of ten. */
+function asciiDigits(text) {
+  return String(text || "").normalize("NFKC").replace(/\p{Nd}/gu, (d) => {
+    if (d >= "0" && d <= "9") return d;
+    let n = 0;
+    for (let cp = d.codePointAt(0) - 1; n < 9 && /\p{Nd}/u.test(String.fromCodePoint(cp)); cp--) n++;
+    return String(n);
+  });
+}
+
+/**
+ * Whether the numbers in the answer are anywhere in the text the harness
+ * captured (pages, final page, form controls): a mechanical second signal
+ * for tasks about a live value, where no pattern can be written. A number is
+ * compared without its thousands separators. Not proof either way: only the
+ * last few pages are kept, and an answer may state a sum or a difference.
+ */
+function answerGrounding(run) {
+  const numbersOf = (text) => [...asciiDigits(text).matchAll(/\d+(?:[.,:]\d+)*/g)].map((m) => m[0]);
+  const flat = (n) => n.replace(/[,.](?=\d{3}(\D|$))/g, "");
+  const said = [...new Set(numbersOf(run.answer).map(flat))].filter((n) => n.length > 1);
+  const forms = ((run.formState && run.formState.controls) || []).map((c) => `${c.value || ""} ${(c.selected || []).join(" ")}`).join(" ");
+  const seen = new Set(numbersOf([run.finalText, ...(run.pages || []).map((p) => p.text), forms].join("\n")).map(flat));
+  const missing = said.filter((n) => !seen.has(n));
+  return { numbers: said.length, found: said.length - missing.length, missing: missing.slice(0, 12) };
+}
+
+/**
+ * Runs inside a page (it is handed to the browser whole, so it uses nothing
+ * from this file): the state of every form control in the document, with
+ * the label a person would know it by. This is what the fields hold after
+ * the run, whatever the agent's own actions reported.
+ */
+function readFormControls() {
+  const clip = (t, n) => String(t == null ? "" : t).replace(/\s+/g, " ").trim().slice(0, n);
+  const roots = [document];
+  const open = (root) => { for (const el of root.querySelectorAll("*")) if (el.shadowRoot) { roots.push(el.shadowRoot); open(el.shadowRoot); } };
+  try { open(document); } catch (_e) { /* a page that will not be walked */ }
+  const labelOf = (el) => {
+    const parts = [];
+    for (const id of (el.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean)) { const n = document.getElementById(id); if (n) parts.push(n.innerText || n.textContent); }
+    if (el.getAttribute("aria-label")) parts.push(el.getAttribute("aria-label"));
+    if (el.labels) for (const l of el.labels) parts.push(l.innerText || l.textContent);
+    if (!parts.length && el.closest) { const w = el.closest("label"); if (w) parts.push(w.innerText || w.textContent); }
+    if (!parts.length && el.getAttribute("placeholder")) parts.push(el.getAttribute("placeholder"));
+    if (!parts.length && el.getAttribute("title")) parts.push(el.getAttribute("title"));
+    return clip(parts.find((x) => clip(x, 5)) || "", 120);
+  };
+  const seen = new Set();
+  const controls = [];
+  let total = 0;
+  const SELECTOR = "input, textarea, select, [contenteditable=''], [contenteditable='true'], [role=checkbox], [role=radio], [role=switch], [role=combobox], [role=textbox], [role=slider], [role=spinbutton], [role=option][aria-selected=true]";
+  for (const root of roots) {
+    for (const el of root.querySelectorAll(SELECTOR)) {
+      if (seen.has(el)) continue;
+      seen.add(el);
+      const tag = el.tagName.toLowerCase();
+      const type = tag === "input" ? (el.getAttribute("type") || "text").toLowerCase() : tag === "textarea" || tag === "select" ? tag : el.getAttribute("role") || "editable";
+      if (type === "hidden" || ["submit", "button", "reset", "image"].includes(type)) continue;
+      total++;
+      if (controls.length >= 300) continue;
+      const box = el.getBoundingClientRect ? el.getBoundingClientRect() : { width: 0, height: 0 };
+      const c = { type, label: labelOf(el), name: clip(el.getAttribute("name") || "", 80), id: clip(el.id || "", 80) };
+      if (tag === "select") {
+        c.selected = [...el.selectedOptions].map((o) => clip(o.textContent, 120));
+        c.value = clip(el.value, 300);
+      } else if (type === "checkbox" || type === "radio") {
+        c.checked = !!el.checked;
+        c.value = clip(el.value, 120);
+      } else if (type === "password") {
+        // Never the text of a password, only whether one is there.
+        c.value = el.value ? `(${el.value.length} characters, not read)` : "";
+      } else if (type === "file") {
+        c.value = [...(el.files || [])].map((f) => f.name).join(", ");
+      } else if (tag === "input" || tag === "textarea") {
+        c.value = clip(el.value, 300);
+      } else {
+        const ticked = el.getAttribute("aria-checked");
+        if (ticked !== null) c.checked = ticked === "true";
+        const sel = el.getAttribute("aria-selected");
+        if (sel !== null) c.checked = sel === "true";
+        c.value = clip(el.getAttribute("aria-valuetext") || el.getAttribute("aria-valuenow") || el.innerText || el.textContent, 300);
+      }
+      if (el.disabled) c.disabled = true;
+      if (!(box.width > 0 && box.height > 0)) c.hidden = true;
+      controls.push(c);
+    }
+  }
+  return { controls, total };
 }
 
 /** What a run did that the shipped build does differently from the measured one, and what was held. */
@@ -149,7 +296,8 @@ const median = (xs) => {
  */
 function familyTable(rows, tasks) {
   const families = [...new Set([...(tasks || []).map((t) => t.level), ...rows.map((r) => r.family || r.level)])].filter(Boolean);
-  const ran = new Set(rows.map((r) => r.id));
+  // A planned run has a slot when a task runs more than once (repeat runs, a learn pair).
+  const ran = new Set(rows.map((r) => r.slot || r.id));
   const line = (name, rs, planned) => {
     const count = (b) => rs.filter((r) => bucketOf(r) === b).length;
     const scored = rs.filter((r) => bucketOf(r) !== "lost");
@@ -161,15 +309,18 @@ function familyTable(rows, tasks) {
       timedOut: count("timed out"),
       blocked: count("blocked"),
       lost: count("lost"),
-      notRun: planned.filter((t) => !ran.has(t.id)).length,
+      notRun: planned.filter((t) => !ran.has(t.slot || t.id)).length,
       medianSeconds: median(scored.map((r) => r.seconds)),
-      agentUSD: rs.reduce((a, r) => a + (r.costUSD || 0), 0),
+      agentUSD: rs.reduce((a, r) => a + (r.costUSD || 0) + (r.longPromptUSD || 0) + (r.lostAttemptsUSD || 0) + (r.learnAllowanceUSD || 0), 0),
+      replayUSD: rs.reduce((a, r) => a + ((r.recipe && r.recipe.replay && r.recipe.replay.usd) || 0), 0),
       judgeUSD: rs.reduce((a, r) => a + (r.judgeCostUSD || 0), 0),
       scriptedInputs: rs.reduce((a, r) => a + ((r.counters && r.counters.scriptedInputs) || 0), 0),
       realInputs: rs.reduce((a, r) => a + ((r.counters && r.counters.realInputs) || 0), 0),
       typedActions: rs.reduce((a, r) => a + ((r.counters && r.counters.typedActions) || 0), 0),
       heldActions: rs.reduce((a, r) => a + ((r.counters && r.counters.heldActions) || 0), 0),
       patternDisagrees: rs.filter((r) => r.patternMatch !== null && r.patternMatch !== undefined && !isInfra(r) && r.patternMatch !== !!r.success).length,
+      // Passed with numbers in the answer, none of which is in any captured page.
+      ungrounded: rs.filter((r) => r.success && r.grounding && r.grounding.numbers > 0 && r.grounding.found === 0).length,
     };
   };
   const lines = families.map((f) => line(f, rows.filter((r) => (r.family || r.level) === f), (tasks || []).filter((t) => t.level === f)));
@@ -181,12 +332,14 @@ const usd = (x) => `$${Number(x || 0).toFixed(4)}`;
 /** The table and its notes as Markdown, for a job summary. */
 function markdown(table, meta = {}) {
   const out = [];
-  out.push(`## Real-task trial${meta.dry ? " (dry mode: scripted model, fixture pages, no judge)" : ""}`);
+  out.push(`## Real-task trial${meta.dry ? " (dry mode: scripted model, fixture pages, a stub for the judge)" : ""}`);
   out.push("");
   const facts = [
     meta.suite ? `suite ${meta.suite}` : "",
     meta.arm ? `arm ${meta.arm}` : "",
-    meta.debuggerAvailable !== undefined ? `chrome.debugger in the loaded build: ${meta.debuggerAvailable ? "yes" : "no"}` : "",
+    meta.debuggerShards ? `chrome.debugger in the loaded build: ${meta.debuggerShards}` : "",
+    meta.learning ? `learning ${meta.learning}` : "",
+    meta.runs > 1 ? `${meta.runs} runs per task` : "",
     meta.agent ? `agent ${meta.agent}` : "",
     meta.judge ? `judge ${meta.judge}` : "",
     meta.commit ? `commit ${String(meta.commit).slice(0, 7)}` : "",
@@ -204,10 +357,137 @@ function markdown(table, meta = {}) {
   const t = table.total;
   const scored = t.passed + t.failed + t.timedOut;
   out.push(`Passed ${t.passed} of ${scored} scored runs${scored ? ` (${(100 * t.passed / scored).toFixed(1)}%)` : ""}; with blocked, lost and not-run tasks counted as failures, ${t.passed} of ${t.tasks}${t.tasks ? ` (${(100 * t.passed / t.tasks).toFixed(1)}%)` : ""}.`);
-  out.push(`Model spend: ${usd(t.agentUSD + t.judgeUSD)} (agent ${usd(t.agentUSD)}, judge ${usd(t.judgeUSD)})${meta.capUSD ? `, cap $${Number(meta.capUSD).toFixed(2)}` : ""}.${meta.capReached ? " The spend cap stopped the run: the tasks under \"not run\" were never started." : ""}`);
+  const spend = t.agentUSD + t.judgeUSD + (t.replayUSD || 0);
+  out.push(`${meta.dry ? "Priced tokens of the scripted model and the judge stub, nothing spent" : "Model spend"}: ${usd(spend)} (agent ${usd(t.agentUSD)}, judge ${usd(t.judgeUSD)}${t.replayUSD ? `, recipe replays ${usd(t.replayUSD)}` : ""})${meta.capUSD ? `, cap $${Number(meta.capUSD).toFixed(2)}` : ""}.${meta.capReached ? " The spend cap stopped the run: the tasks under \"not run\" were never started." : ""}`);
+  if (meta.spentUSD !== undefined && Math.abs(meta.spentUSD - spend) > 0.00005) out.push(`The shards counted ${usd(meta.spentUSD)} against the cap; the table adds up to ${usd(spend)}.`);
   if (t.patternDisagrees) out.push(`In ${t.patternDisagrees} run(s) the judge and the task's answer pattern disagree: read those first (trial-summary.json lists them).`);
+  if (t.ungrounded) out.push(`${t.ungrounded} passed run(s) state numbers of which none is in any captured page: read those too.`);
+  if (meta.blockedSites && meta.blockedSites.length) out.push(`Blocked, by site: ${meta.blockedSites.map((b) => `${b.site} ${b.blocked} of ${b.runs}`).join(", ")}. A site that turns the runner away leaves the task file; nothing is done to get past it.`);
+  if (meta.armProblems && meta.armProblems.length) out.push(`**Arm check failed.** ${meta.armProblems.join(" ")}`);
+  else if (meta.arm && meta.armChecked) out.push(`Arm check: every shard loaded the build the ${meta.arm} arm names${meta.arm === "shipped" ? ", and no run made a real input event" : ""}.`);
   if (meta.stopped && meta.stopped.length) out.push(`Stopped early: ${meta.stopped.join(" | ")}`);
   if (meta.notes) for (const n of meta.notes) out.push(n);
+  return out.join("\n");
+}
+
+/**
+ * The arm must be what ran. Shipped: no shard's build has chrome.debugger,
+ * and no run made a real input event. Debugger-on: every shard's build has
+ * it. Problems as sentences; empty when the arm holds.
+ */
+function armProblems(arm, shards, rows) {
+  const problems = [];
+  if (arm !== "shipped" && arm !== "debugger-on") return problems;
+  const want = arm === "debugger-on";
+  shards.forEach((s, i) => {
+    const got = s.agent ? s.agent.debuggerAvailable : undefined;
+    const name = s.shard || `shard ${i + 1}`;
+    if (typeof got !== "boolean") problems.push(`${name} did not record whether its build has chrome.debugger.`);
+    else if (got !== want) problems.push(`${name} loaded a build ${got ? "with" : "without"} chrome.debugger in the ${arm} arm.`);
+  });
+  if (arm === "shipped") {
+    const real = rows.filter((r) => r.counters && r.counters.realInputs > 0);
+    if (real.length) problems.push(`${real.length} run(s) made real input events in the shipped arm, which has no way to make one: ${real.slice(0, 8).map((r) => `${r.id} (${r.counters.realInputs})`).join(", ")}.`);
+  }
+  return problems;
+}
+
+const tokensOf = (r) => ((r.tokens && r.tokens.prompt) || 0) + ((r.tokens && r.tokens.completion) || 0);
+
+/** Run 1 against run 2 of every learn pair: outcome, steps, seconds and tokens. Null when no row is from a learn run. */
+function learnTable(rows) {
+  const pairs = new Map();
+  for (const r of rows) {
+    if (!r.learn || !r.learn.pair) continue;
+    const key = `${r.learn.pair}#${r.run || 1}`;
+    if (!pairs.has(key)) pairs.set(key, {});
+    pairs.get(key)[r.learn.phase === "B" ? "b" : "a"] = r;
+  }
+  if (!pairs.size) return null;
+  const side = (r) => (r ? { id: r.id, outcome: bucketOf(r), steps: r.steps || 0, seconds: r.seconds || 0, tokens: tokensOf(r), calls: r.calls || 0 } : null);
+  const lines = [...pairs.values()].map((p) => ({
+    kind: p.a && p.b && p.a.id !== p.b.id ? "neighbour" : "repeat",
+    first: side(p.a),
+    second: side(p.b),
+    knownAtSecond: p.b && p.b.learn && p.b.learn.memoryAtStart ? p.b.learn.memoryAtStart.count : null,
+    shownAtSecond: !!(p.b && p.b.learn && p.b.learn.shownAtFirstStep && p.b.learn.shownAtFirstStep.ids && p.b.learn.shownAtFirstStep.ids.length),
+  }));
+  const totals = (kind) => {
+    const whole = lines.filter((l) => l.kind === kind && l.first && l.second && l.first.outcome !== "lost" && l.second.outcome !== "lost");
+    const med = (k, f) => median(whole.map((l) => l[k][f]));
+    return {
+      kind,
+      pairs: lines.filter((l) => l.kind === kind).length,
+      scored: whole.length,
+      passed: [whole.filter((l) => l.first.outcome === "passed").length, whole.filter((l) => l.second.outcome === "passed").length],
+      steps: [med("first", "steps"), med("second", "steps")],
+      seconds: [med("first", "seconds"), med("second", "seconds")],
+      tokens: [med("first", "tokens"), med("second", "tokens")],
+      // Among pairs where both runs passed: the second run took fewer steps, or more.
+      fewerSteps: whole.filter((l) => l.first.outcome === "passed" && l.second.outcome === "passed" && l.second.steps < l.first.steps).length,
+      moreSteps: whole.filter((l) => l.first.outcome === "passed" && l.second.outcome === "passed" && l.second.steps > l.first.steps).length,
+      bothPassed: whole.filter((l) => l.first.outcome === "passed" && l.second.outcome === "passed").length,
+      startedKnowing: whole.filter((l) => l.knownAtSecond > 0).length,
+      shown: whole.filter((l) => l.shownAtSecond).length,
+    };
+  };
+  return { lines, totals: ["repeat", "neighbour"].map(totals).filter((t) => t.pairs) };
+}
+
+function learnMarkdown(table) {
+  const out = ["", "### Learning: run 1 against run 2 in the same browser profile", ""];
+  const dash = (x) => (x === null || x === undefined ? "-" : x);
+  out.push("| pairs | scored | passed, run 1 | passed, run 2 | median steps 1 / 2 | median seconds 1 / 2 | median tokens 1 / 2 | run 2 in fewer steps | in more steps | run 2 started with something learned | was shown it at its first step |");
+  out.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+  const names = { repeat: "The same task twice", neighbour: "A task, then a neighbour on the same site" };
+  for (const t of table.totals) out.push(`| ${names[t.kind]} (${t.pairs}) | ${t.scored} | ${t.passed[0]} | ${t.passed[1]} | ${dash(t.steps[0])} / ${dash(t.steps[1])} | ${dash(t.seconds[0])} / ${dash(t.seconds[1])} | ${dash(t.tokens[0])} / ${dash(t.tokens[1])} | ${t.fewerSteps} of ${t.bothPassed} | ${t.moreSteps} of ${t.bothPassed} | ${t.startedKnowing} | ${t.shown} |`);
+  out.push("");
+  out.push("| run 1 | run 2 | outcome 1 / 2 | steps 1 / 2 | seconds 1 / 2 | tokens 1 / 2 | known at run 2 |");
+  out.push("| --- | --- | --- | --- | --- | --- | --- |");
+  for (const l of table.lines) {
+    const a = l.first || {};
+    const b = l.second || {};
+    out.push(`| ${dash(a.id)} | ${l.kind === "repeat" ? "the same" : dash(b.id)} | ${dash(a.outcome)} / ${dash(b.outcome)} | ${dash(a.steps)} / ${dash(b.steps)} | ${dash(a.seconds)} / ${dash(b.seconds)} | ${dash(a.tokens)} / ${dash(b.tokens)} | ${dash(l.knownAtSecond)} |`);
+  }
+  out.push("");
+  out.push("A pair is scored when neither run was lost. One pair per task says little: fewer steps on run 2 is a sign, not a measurement, until the suite has run several times.");
+  return out.join("\n");
+}
+
+/** Recipes: of the passed runs, how many could be saved, why not, and how the one replay of each went. Null when the recipe arm did not run. */
+function recipeTable(rows) {
+  const tried = rows.filter((r) => r.recipe);
+  if (!tried.length) return null;
+  const passed = tried.filter((r) => r.success);
+  const saved = passed.filter((r) => r.recipe.saveable);
+  const why = {};
+  for (const r of passed.filter((x) => !x.recipe.saveable)) { const k = String(r.recipe.why || "no reason given"); why[k] = (why[k] || 0) + 1; }
+  const replays = saved.map((r) => r.recipe.replay).filter(Boolean);
+  const ok = replays.filter((x) => x.state === "done_proven");
+  const ends = {};
+  for (const x of replays) { const k = x.state || (x.why ? `did not run: ${x.why}` : "did not run"); ends[k] = (ends[k] || 0) + 1; }
+  return {
+    passed: passed.length,
+    saveable: saved.length,
+    notSaveable: Object.entries(why).sort((a, b) => b[1] - a[1]).map(([reason, runs]) => ({ reason, runs })),
+    replayed: replays.length,
+    replayOk: ok.length,
+    replayEnds: ends,
+    modelCalls: replays.map((x) => x.modelCalls || 0),
+    meanModelCalls: replays.length ? replays.reduce((a, x) => a + (x.modelCalls || 0), 0) / replays.length : null,
+    replayUSD: replays.reduce((a, x) => a + (x.usd || 0), 0),
+    medianReplaySeconds: median(replays.map((x) => x.seconds)),
+  };
+}
+
+function recipeMarkdown(t) {
+  const out = ["", "### Recipes: each passed run saved and replayed once", ""];
+  const share = (a, b) => `${a} of ${b}${b ? ` (${(100 * a / b).toFixed(1)}%)` : ""}`;
+  out.push(`Saveable: ${share(t.saveable, t.passed)} passed runs.`);
+  if (t.notSaveable.length) out.push(`Not saveable, by the extension's own reason: ${t.notSaveable.map((x) => `${x.reason} (${x.runs})`).join("; ")}.`);
+  out.push(`Replays that ended proven done: ${share(t.replayOk, t.replayed)}. How the replays ended: ${Object.entries(t.replayEnds).map(([k, v]) => `${k} ${v}`).join(", ") || "none ran"}.`);
+  out.push(`Model calls per replay: ${t.meanModelCalls === null ? "-" : t.meanModelCalls.toFixed(2)} on average (${t.modelCalls.filter((n) => n === 0).length} of ${t.replayed} replays made none)${t.medianReplaySeconds === null ? "" : `, median ${t.medianReplaySeconds} s`}.`);
+  out.push("A replay is judged by the recipe's own receipt (its checks after each step), not by the judge model.");
   return out.join("\n");
 }
 
@@ -222,7 +502,7 @@ function readRows(dir) {
     }
   };
   if (fs.existsSync(dir)) walk(dir);
-  return rows.sort((a, b) => String(a.id).localeCompare(String(b.id)) || (a.run || 0) - (b.run || 0));
+  return rows.sort((a, b) => String(a.slot || a.id).localeCompare(String(b.slot || b.id)) || (a.run || 0) - (b.run || 0));
 }
 
 /** The shards' own results files: what they ran on, and whether one stopped early. */
@@ -243,7 +523,7 @@ function readShards(dir) {
 function checkDry(rows, tasks, shards) {
   const problems = [];
   for (const t of tasks) {
-    const row = rows.find((r) => r.id === t.id);
+    const row = rows.find((r) => (r.slot || r.id) === (t.slot || t.id));
     if (!row) { problems.push(`${t.id}: no run.json`); continue; }
     const got = bucketOf(row);
     const want = String(t.dry || "passed").split("|");
@@ -251,10 +531,64 @@ function checkDry(rows, tasks, shards) {
     if (t.dryHeld && !(row.counters && row.counters.heldActions >= t.dryHeld)) problems.push(`${t.id}: ${row.counters ? row.counters.heldActions : "no"} held action(s) counted, expected at least ${t.dryHeld}`);
     if (t.dryScripted && !(row.counters && row.counters.scriptedInputs >= t.dryScripted)) problems.push(`${t.id}: ${row.counters ? row.counters.scriptedInputs : "no"} scripted press(es) counted, expected at least ${t.dryScripted}`);
     if (t.dryTyped && !(row.counters && row.counters.typedActions >= t.dryTyped)) problems.push(`${t.id}: ${row.counters ? row.counters.typedActions : "no"} typing step(s) counted, expected at least ${t.dryTyped}`);
-    for (const k of ["steps", "seconds", "costUSD", "counters", "family", "ending", "history"]) if (row[k] === undefined) problems.push(`${t.id}: run.json has no "${k}"`);
+    for (const k of ["steps", "seconds", "costUSD", "counters", "family", "ending", "history", "formState", "grounding"]) if (row[k] === undefined) problems.push(`${t.id}: run.json has no "${k}"`);
+    // The form controls of the final page were read back, with the value the run typed.
+    if (t.dryForm && !(((row.formState && row.formState.controls) || []).some((c) => String(c.value || "") === t.dryForm))) problems.push(`${t.id}: no form control of the final page holds "${t.dryForm}" (${((row.formState && row.formState.controls) || []).length} control(s) read)`);
+    // The judge's code path ran against the stub, and its tokens were counted.
+    if (got !== "lost" && !(row.judgeUsage && row.judgeUsage.calls >= 1 && row.judgeCostUSD > 0)) problems.push(`${t.id}: the judge stub was not called, or its tokens were not counted`);
   }
   if (!shards.length) problems.push("no results file from any shard");
   for (const s of shards) if (!s.agent || typeof s.agent.debuggerAvailable !== "boolean") problems.push("a shard did not record whether the loaded build has chrome.debugger");
+  return problems;
+}
+
+/** The runs a trial was meant to make, one entry per run: {id, level, slot}. */
+function plannedRuns(all, { sample = 0, seed = 1, runs = 1, learn = "" } = {}) {
+  const out = [];
+  if (learn === "pairs") {
+    const pairs = learnPlan(all);
+    const firsts = sampleTasks(pairs.map((p) => p.a), sample, seed);
+    for (const a of firsts) {
+      const b = pairs.find((p) => p.a.id === a.id).b;
+      for (let r = 1; r <= runs; r++) out.push({ ...a, slot: `${a.id}#${r}#A` }, { ...b, slot: `${a.id}#${r}#B` });
+    }
+    return out;
+  }
+  for (const t of sampleTasks(all, sample, seed)) for (let r = 1; r <= runs; r++) out.push({ ...t, slot: `${t.id}#${r}` });
+  return out;
+}
+
+/** The extra dry legs: each proves one path the plain dry run does not reach. Problems as sentences. */
+function checkLeg(leg, { rows, planned, shards, learn, recipes }) {
+  const problems = [];
+  if (!shards.length) problems.push("no results file from any shard");
+  if (leg === "cap") {
+    if (!shards.some((s) => s.capReached)) problems.push("no shard reports that the spend cap was reached");
+    const ran = new Set(rows.map((r) => r.slot || r.id));
+    const notRun = planned.filter((t) => !ran.has(t.slot || t.id)).length;
+    const ended = rows.filter((r) => r.ending === "spend cap reached").length;
+    if (!notRun && !ended) problems.push("every task ran to its end under a cap that should have stopped the run");
+    for (const s of shards) if (!(s.spentUSD > 0)) problems.push("a shard counted no spend at all");
+    for (const s of shards) if (s.capReached && !/spend cap/.test(String(s.stoppedEarly || "")) && !ended) problems.push("the cap was reached but the shard does not say it stopped for it");
+  }
+  if (leg === "learn") {
+    if (!learn) problems.push("no run.json is from a learn pair");
+    else {
+      for (const l of learn.lines) if (!l.first || !l.second) problems.push(`a pair is not whole: ${(l.first || l.second || {}).id}`);
+      for (const l of learn.lines) if (l.second && l.knownAtSecond === null) problems.push(`${l.second.id}: run 2 did not record what was known at its start`);
+      if (!learn.lines.some((l) => l.knownAtSecond > 0)) problems.push("no second run started with anything learned: learning was not on, or nothing was kept");
+      if (!learn.totals.some((t) => t.kind === "repeat") || !learn.totals.some((t) => t.kind === "neighbour")) problems.push("the learn run needs a repeat pair and a neighbour pair");
+    }
+  }
+  if (leg === "recipes") {
+    if (!recipes) problems.push("no run.json has a recipe record");
+    for (const r of rows) {
+      if (bucketOf(r) === "lost") continue;
+      if (!r.recipe || typeof r.recipe.saveable !== "boolean") { problems.push(`${r.id}: no record of whether the run could be saved as a recipe`); continue; }
+      if (!r.recipe.saveable && !r.recipe.why) problems.push(`${r.id}: not saveable, and no reason`);
+      if (r.recipe.saveable && r.success && !(r.recipe.replay && (r.recipe.replay.state || r.recipe.replay.why))) problems.push(`${r.id}: saved, but its replay left no record`);
+    }
+  }
   return problems;
 }
 
@@ -266,50 +600,76 @@ function main(argv) {
     const problems = validateTasks(list);
     const per = {};
     for (const t of list) per[t.level] = (per[t.level] || 0) + 1;
-    console.log(`${list.length} tasks: ${Object.entries(per).map(([k, v]) => `${k} ${v}`).join(", ")}`);
+    console.log(`${list.length} tasks: ${Object.entries(per).map(([k, v]) => `${k} ${v}`).join(", ")}; ${list.filter((t) => t.pattern).length} with a pattern`);
     if (problems.length) { console.error(problems.join("\n")); process.exit(1); }
     return;
   }
   if (cmd === "summary") {
     const taskFile = flag("--tasks");
-    let tasks = taskFile ? normaliseTasks(JSON.parse(fs.readFileSync(taskFile, "utf8"))) : [];
-    // The same sample run.js took, so "not run" counts only tasks that were meant to run.
-    tasks = sampleTasks(tasks, parseInt(flag("--sample") || "0", 10), parseInt(flag("--seed") || "1", 10));
+    const all = taskFile ? normaliseTasks(JSON.parse(fs.readFileSync(taskFile, "utf8"))) : [];
+    const learnMode = flag("--learn");
+    const runs = Math.max(1, parseInt(flag("--runs") || "1", 10));
+    // The same sample run.js took, so "not run" counts only runs that were meant to happen.
+    const planned = plannedRuns(all, { sample: parseInt(flag("--sample") || "0", 10), seed: parseInt(flag("--seed") || "1", 10), runs, learn: learnMode });
     const rows = readRows(target);
     const shards = readShards(target);
     const first = shards[0] || {};
+    const arm = flag("--arm");
+    const has = shards.filter((s) => s.agent && s.agent.debuggerAvailable === true).length;
+    const sites = new Map();
+    for (const r of rows) {
+      const site = hostOf(r.startUrl);
+      if (!site) continue;
+      const e = sites.get(site) || { site, runs: 0, blocked: 0 };
+      e.runs++;
+      if (bucketOf(r) === "blocked") e.blocked++;
+      sites.set(site, e);
+    }
     const meta = {
       dry: shards.some((s) => s.dry),
       suite: flag("--suite"),
-      arm: flag("--arm"),
+      arm,
       commit: flag("--commit"),
-      debuggerAvailable: first.agent ? first.agent.debuggerAvailable : undefined,
+      runs,
+      learning: learnMode === "pairs" ? "on, in pairs" : learnMode === "on" ? "on" : "",
+      debuggerShards: shards.length ? `${has === 0 ? "no" : has === shards.length ? "yes" : "MIXED"} (${has} of ${shards.length} shard(s) have it)` : "",
       agent: first.agent ? `${first.agent.provider} / ${first.agent.model}` : "",
-      judge: first.judge && !first.dry ? first.judge.model : "",
+      judge: first.judge ? first.judge.model : "",
       capUSD: shards.reduce((a, s) => a + (s.capUSD || 0), 0),
+      spentUSD: shards.length ? shards.reduce((a, s) => a + (s.spentUSD || 0), 0) : undefined,
       capReached: shards.some((s) => s.capReached),
       stopped: shards.map((s) => s.stoppedEarly).filter(Boolean),
+      blockedSites: [...sites.values()].filter((e) => e.blocked).sort((a, b) => b.blocked - a.blocked),
+      armChecked: shards.length > 0,
+      armProblems: armProblems(arm, shards, rows),
     };
-    const table = familyTable(rows, tasks);
-    const text = markdown(table, meta);
+    const table = familyTable(rows, planned);
+    const learn = learnTable(rows);
+    const recipes = recipeTable(rows);
+    const text = [markdown(table, meta), learn ? learnMarkdown(learn) : "", recipes ? recipeMarkdown(recipes) : ""].filter(Boolean).join("\n");
     console.log(text);
+    const ran = new Set(rows.map((r) => r.slot || r.id));
+    fs.mkdirSync(target, { recursive: true });
     fs.writeFileSync(path.join(target, "trial-summary.json"), JSON.stringify({
       meta,
       table,
-      runs: rows.map((r) => ({ id: r.id, family: r.family || r.level, outcome: bucketOf(r), ending: r.ending, steps: r.steps, seconds: r.seconds, costUSD: r.costUSD || 0, judgeCostUSD: r.judgeCostUSD || 0, patternMatch: r.patternMatch === undefined ? null : r.patternMatch, counters: r.counters || null, failure: failureOf(r) })),
-      notRun: tasks.filter((t) => !rows.some((r) => r.id === t.id)).map((t) => t.id),
+      learn,
+      recipes,
+      runs: rows.map((r) => ({ id: r.id, slot: r.slot, family: r.family || r.level, outcome: bucketOf(r), ending: r.ending, steps: r.steps, seconds: r.seconds, tokens: tokensOf(r), costUSD: r.costUSD || 0, longPromptUSD: r.longPromptUSD || 0, lostAttemptsUSD: r.lostAttemptsUSD || 0, judgeCostUSD: r.judgeCostUSD || 0, patternMatch: r.patternMatch === undefined ? null : r.patternMatch, grounding: r.grounding || null, counters: r.counters || null, recipe: r.recipe || undefined, learn: r.learn ? { pair: r.learn.pair, phase: r.learn.phase } : undefined, failure: failureOf(r) })),
+      notRun: planned.filter((t) => !ran.has(t.slot || t.id)).map((t) => t.slot || t.id),
     }, null, 2));
-    if (rest.includes("--check-dry")) {
-      const problems = checkDry(rows, tasks, shards);
-      if (problems.length) { console.error(`\nDry run check failed:\n${problems.join("\n")}`); process.exit(1); }
-      console.error(`\nDry run check: ${tasks.length} fixture task(s) ended as expected.`);
-    }
+    const problems = [...meta.armProblems];
+    if (rest.includes("--check-dry")) problems.push(...checkDry(rows, planned, shards));
+    for (const leg of (flag("--check") || "").split(",").filter(Boolean)) problems.push(...checkLeg(leg, { rows, planned, shards, learn, recipes }));
+    if (problems.length) { console.error(`\nTrial check failed:\n${problems.join("\n")}`); process.exit(1); }
+    if (rest.includes("--check-dry")) console.error(`\nDry run check: ${planned.length} fixture run(s) ended as expected.`);
+    if (flag("--check")) console.error(`\nDry leg check (${flag("--check")}): passed.`);
     return;
   }
-  console.error("Usage: node tests/bench/trial.js validate <tasks.json> | summary <out dir> --tasks <tasks.json> [--sample N] [--check-dry]");
+  console.error("Usage: node tests/bench/trial.js validate <tasks.json> | summary <out dir> --tasks <tasks.json> [--sample N] [--runs N] [--learn on|pairs] [--arm shipped|debugger-on] [--check-dry] [--check cap|learn|recipes]");
   process.exit(1);
 }
 
-module.exports = { FAMILIES, DRY_PORT, validateTasks, patternMatch, patternVerdict, countersOf, judgeCostUSD, bucketOf, failureOf, familyTable, markdown, readRows, readShards, checkDry };
+module.exports = { FAMILIES, DRY_PORT, PRACTICE_SITES, validateTasks, patternMatch, patternVerdict, learnPlan, plannedRuns, longPromptSurchargeUSD, spendOf, answerGrounding, countersOf, judgeCostUSD, bucketOf, failureOf, familyTable, markdown, armProblems, learnTable, learnMarkdown, recipeTable, recipeMarkdown, readRows, readShards, checkDry, checkLeg, readFormControls };
 
 if (require.main === module) main(process.argv.slice(2));
