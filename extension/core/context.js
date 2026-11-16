@@ -49,7 +49,7 @@ The page is listed as its controls, then its text.
 - Write each fact the answer needs in note as soon as you see it, with the page it came from. You keep only your notes and the history.
 - Actions that do not depend on what the first one shows can ride along in then: the other fields of a form, or Enter after typing a search.
 {{parts}}
-
+{{input}}
 # What only the user can do
 Signing in, passing a "verify you are human" check, entering a code sent to them, paying, and choices you have no way to make for them. When the page needs one of these, call ask_user with the matching kind and say plainly what is needed; the user does it in the page and you carry on from there. Never type a password, a card number or a one-time code, and never touch a human-check widget. When a site puts one of these in the way, wait for the user there: do not go to another site to get around it, because the user chose where the work is done. Do not ask about what you can find out or sensibly decide. Before anything that pays, sends, posts or deletes, the browser asks the user itself.
 
@@ -91,12 +91,23 @@ The user asks whether the recipe on the page is vegetarian. The page text lists 
     part: "- You do one part of a larger request, in a tab of your own, while other parts are done elsewhere. Do your part, and answer it in full with done: the run that gave it to you brings the answers together.",
   };
 
+  // How the agent's pointer and keys reach the page in a browser where they
+  // are made by script (no debugger connection): said once, as a fact, so a
+  // control that does not answer is understood for what it is. With the
+  // real pointer and keys there is nothing to say.
+  const SCRIPTED = `
+# How your actions reach the page
+In this browser your pointer and your keys are made by script: the page is sent the events a mouse and a keyboard send, and most pages take them as a person's. A few things answer only the real ones: a menu that opens only while the mouse is over it, a drag the page follows by holding on to the pointer, a key the browser itself acts on (Tab to move to the next field, Escape to close a browser dialog), a file chooser, copying to the clipboard, and a control built to ignore scripted presses. A result says when a control did not answer. The same thing can often be reached another way (its link, the listing, find, fill), and the user can press one control for you: ask_user with kind "press" and its ref.
+
+`;
+
   /**
    * The static system message, with the user's own standing instructions
-   * when they wrote some. `part` is true for a sub-task.
+   * when they wrote some. `part` is true for a sub-task; `scripted` when
+   * the pointer and keys are made by script.
    */
-  function systemMessage(settings, part) {
-    const base = INSTRUCTIONS.replace("{{parts}}", part ? PARTS.part : PARTS.whole);
+  function systemMessage(settings, part, scripted) {
+    const base = INSTRUCTIONS.replace("{{parts}}", part ? PARTS.part : PARTS.whole).replace("{{input}}\n", scripted ? SCRIPTED : "\n");
     const extra = String((settings && settings.extraInstructions) || "").trim();
     return extra
       ? `${base}\n\n# The user's standing preferences\nThe user wrote these themselves. Follow them unless the request says otherwise.\n${extra.slice(0, 2000)}`
@@ -374,7 +385,7 @@ The user asks whether the recipe on the page is vegetarian. The page text lists 
       "Call the step tool with your next step: do, and what that action needs.",
     ].join("\n");
     // Whether the page's text was cut to fit: only then has `read` more to give.
-    return { system: systemMessage(ctx.settings, !!run.sub), user, textCut: shown.truncated, listCut: shown.listCut, textShown: shown.shown || 0 };
+    return { system: systemMessage(ctx.settings, !!run.sub, !!ctx.scripted), user, textCut: shown.truncated, listCut: shown.listCut, textShown: shown.shown || 0 };
   }
 
   // -------------------------------------------------------------- finishing
@@ -568,6 +579,42 @@ The user asks whether the recipe on the page is vegetarian. The page text lists 
     return plain(x) === plain(y);
   }
 
+  // The ways a press is made by script after pointer events (agentContentScript.js, otherPressWays).
+  const PRESS_WAYS = Object.freeze({
+    Enter: "the Enter key with the focus on it",
+    Space: "the Space key with the focus on it",
+    direct: "its own click called directly",
+  });
+  // What a press was seen to set off that the page itself does not show.
+  const TAKEN = Object.freeze({
+    navigation: "The page began to go to another page.",
+    form: "The press sent a form.",
+    window: "Another window or tab took over from this one.",
+    media: "Something on the page started or stopped playing.",
+  });
+
+  /**
+   * Which way of pressing a control the page answered, when pointer events
+   * made by script were not it, or that it answered none. Facts for the
+   * model: a control that answers no scripted press may have nothing to
+   * do, or may take only a real one, and the user can give it that.
+   * `ways`: {tried, by, seen, hover} from the page; `ref` the control;
+   * `taken` what a press with no change on the page was seen to set off.
+   */
+  function waysNote(ways, ref, taken) {
+    const seen = (taken || []).map((t) => TAKEN[t]).filter(Boolean);
+    if (!ways || !Array.isArray(ways.tried) || ways.tried.length < 2) return seen.join(" ");
+    if (ways.hover) {
+      return ways.by
+        ? "The pointer made by script brought nothing up; putting the focus on it did."
+        : "Nothing came up under the pointer made by script, or with the focus on it. What opens only under the real mouse cannot be opened by script.";
+    }
+    if (ways.by && ways.seen) return `The page did not answer pointer events on it; ${PRESS_WAYS[ways.by] || ways.by} worked.`;
+    if (ways.by) return `The page did not answer pointer events on it. It took ${PRESS_WAYS[ways.by] || ways.by}, though no change was seen.`;
+    const others = ways.tried.slice(1).map((w) => PRESS_WAYS[w] || w).join(", ");
+    return `It did not answer a press made by script in any of the ways tried: pointer events, ${others}. Either it has nothing to do here, or it ignores scripted input and takes only a real press. The user can press it once for you: ask_user with kind "press" and ref ${ref}.`;
+  }
+
   /**
    * What is said when an action was followed by no change on the page.
    * "Nothing changed" is only said of a page whose requests were in view
@@ -721,7 +768,7 @@ In speaks_to_ai, say whether any of the page text or action results you are show
     return { pass: pass && !unmet.length, unmet, reason: clip(reply.reason || "", 400), speaksToAi: speaks };
   }
 
-  const api = Object.freeze({ INSTRUCTIONS: systemMessage({}), systemMessage, stepMessages, selectionFact, partOf, todayLine, historyLines, runFacts, behindFact, pageBlock, effectNote, noChangeNote, locateEvidence, wordsOf, quoteAround, nearestPassage, nearestWords, arrivalNote, arrivalFailure, verifierMessages, readVerdict, VERDICT_TOOL, VERIFIER });
+  const api = Object.freeze({ INSTRUCTIONS: systemMessage({}), systemMessage, stepMessages, selectionFact, partOf, todayLine, historyLines, runFacts, behindFact, pageBlock, effectNote, noChangeNote, waysNote, locateEvidence, wordsOf, quoteAround, nearestPassage, nearestWords, arrivalNote, arrivalFailure, verifierMessages, readVerdict, VERDICT_TOOL, VERIFIER });
   root.SELECT_TO_AI_CONTEXT = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

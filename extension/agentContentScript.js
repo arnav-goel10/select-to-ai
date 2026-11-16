@@ -3233,7 +3233,8 @@
                 // counter (event-driven, replaces the old fixed 300ms wait).
                 const isTextField = el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && /^(text|search|email|url|tel|number|password)$/.test((el.type || 'text').toLowerCase()));
                 if (el.disabled) return { success: true, pointer, message: `Clicked element [${id}]. It is disabled, so the click does nothing to it.` };
-                return { success: true, pointer, message: `Clicked element [${id}].${isTextField ? ' It is a text field: the click only put the cursor in it.' : ''}${note}` };
+                // `cancelled`: the page took the click over, which is an answer to it.
+                return { success: true, pointer, ...(went ? {} : { cancelled: true }), message: `Clicked element [${id}].${isTextField ? ' It is a text field: the click only put the cursor in it.' : ''}${note}` };
             }
 
             // ----- double_click -----
@@ -4022,8 +4023,11 @@
         let pressed = false;
         if (target) target.addEventListener('click', (e) => { if (e.isTrusted) pressed = true; }, { capture: true });
         const check = () => {
+            // A control to press that is not in this page's own listing (one
+            // inside a frame) cannot be watched from here: the wait is ended
+            // by the user's "I'm done", never by its seeming to be gone.
             const still = pressId
-                ? !pressed && !!(target && target.isConnected && location.href === startUrl)
+                ? !pressed && (target ? target.isConnected && location.href === startUrl : true)
                 : present();
             if (still && !had) { had = true; seen(); }
             // Never seen: nothing here can say it is gone.
@@ -4376,6 +4380,146 @@
         };
     }
 
+    // =========================================================================
+    // A press the page did not answer
+    // =========================================================================
+    //
+    // A press made by script is not a person's press, and a page can ignore
+    // it. When a press changed nothing, and nothing says the page took it,
+    // it is made the next way before the result is given: with the keyboard
+    // (the focus on the control, then Enter, then Space), then by the
+    // control's own click(). The result says which way the page answered,
+    // or that it answered none. A way is tried only while nothing at all
+    // says the page took the one before, so a press that worked out of
+    // sight (a request sent, a form sent, another page on its way) is never
+    // made twice.
+
+    /**
+     * Watches for a press taking effect where the page itself shows no
+     * change: the page begins to go elsewhere, a form is sent, another
+     * window takes the user's eye, or something starts or stops playing.
+     * stop() ends the watch and returns what was seen.
+     */
+    function watchTaken() {
+        const seen = new Set();
+        const going = () => seen.add('navigation');
+        const sent = () => seen.add('form');
+        const away = (e) => { if (e.type !== 'blur' || e.target === window) seen.add('window'); };
+        const playing = () => Array.from(document.querySelectorAll('video, audio')).map((m) => `${m.paused}${m.muted}`).join();
+        const was = { playing: playing(), full: document.fullscreenElement || null };
+        const nav = window.navigation && typeof window.navigation.addEventListener === 'function' ? window.navigation : null;
+        if (nav) nav.addEventListener('navigate', going);
+        window.addEventListener('beforeunload', going, true);
+        window.addEventListener('submit', sent, true);
+        window.addEventListener('blur', away, true);
+        document.addEventListener('visibilitychange', away, true);
+        let stopped = false;
+        return {
+            stop() {
+                if (stopped) return [...seen];
+                stopped = true;
+                if (nav) nav.removeEventListener('navigate', going);
+                window.removeEventListener('beforeunload', going, true);
+                window.removeEventListener('submit', sent, true);
+                window.removeEventListener('blur', away, true);
+                document.removeEventListener('visibilitychange', away, true);
+                if (playing() !== was.playing || (document.fullscreenElement || null) !== was.full) seen.add('media');
+                return [...seen];
+            },
+        };
+    }
+
+    /** One key sent to a control by script: down, pressed and up. False when the page cancelled it. */
+    function scriptKey(el, key) {
+        const meta = resolveKeyMeta(key);
+        const opts = { key, code: meta.code, keyCode: meta.keyCode, which: meta.keyCode, bubbles: true, cancelable: true, composed: true, view: window };
+        const down = el.dispatchEvent(new KeyboardEvent('keydown', opts));
+        const pressed = el.dispatchEvent(new KeyboardEvent('keypress', { ...opts, charCode: meta.keyCode }));
+        const up = el.dispatchEvent(new KeyboardEvent('keyup', opts));
+        return down && pressed && up;
+    }
+
+    /**
+     * True for a control a press does something to, so that a press which
+     * changed nothing may be made another way: it is on the page and
+     * switched on, it is not a box that only takes the cursor, and it is
+     * not a surface that draws its own inside, where a press means a point.
+     */
+    function takesPress(el) {
+        if (!el || !el.isConnected || el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+        if (el.isContentEditable || /^(TEXTAREA|SELECT|CANVAS|VIDEO|AUDIO|IFRAME|OBJECT|EMBED)$/.test(el.tagName)) return false;
+        if (el.tagName === 'INPUT' && !/^(button|submit|reset|image|checkbox|radio|file)$/.test((el.type || 'text').toLowerCase())) return false;
+        return true;
+    }
+
+    /**
+     * True when nothing at all says the page took a press. `m` is what was
+     * measured after it: { changed, cancelled, taken, network, asked,
+     * loading }. A page whose requests cannot be seen is never judged to
+     * have ignored a press: it may be waiting for an answer to it.
+     */
+    function unanswered(m) {
+        return !!m && !m.changed && !m.cancelled && !(m.taken || []).length && !!m.network && !m.asked && !m.loading;
+    }
+
+    /**
+     * Makes a press the page did not answer the next way, and the next.
+     * `first` is what was measured after the press by pointer events;
+     * `pressBy(way)` presses that way and resolves what was measured after
+     * it. Returns null when the first press was answered or cannot be
+     * judged; else { tried, by, seen, last }: the ways tried in order, the
+     * way the page took (null when it took none), and whether a change was
+     * seen after it.
+     */
+    async function otherPressWays(first, pressBy) {
+        const tried = ['pointer'];
+        let last = first;
+        for (const way of ['Enter', 'Space', 'direct']) {
+            if (!unanswered(last) || cancelRequested) break;
+            tried.push(way);
+            last = await pressBy(way);
+            if (last.changed) return { tried, by: way, seen: true, last };
+        }
+        if (tried.length === 1) return null;
+        return unanswered(last) ? { tried, by: null, seen: false, last } : { tried, by: tried[tried.length - 1], seen: false, last };
+    }
+
+    /**
+     * Presses a control one way and measures what the page did: 'Enter' or
+     * 'Space' with the focus on it, 'direct' by its own click(), 'focus'
+     * only puts the focus on it (for a hover that brought nothing up).
+     */
+    async function pressBy(el, way, busyBefore, compute) {
+        // The focus goes on first for a key, so that what is measured is
+        // what the key did, not what taking the focus did.
+        if (way === 'Enter' || way === 'Space') focusField(el);
+        const before = captureOutcomeSnapshot();
+        const counter = createMutationCounter();
+        const state = stateOf(el);
+        const watch = watchTaken();
+        const since = Date.now();
+        let cancelled = false;
+        try {
+            if (way === 'direct') {
+                let click = null;
+                const note = (e) => { click = e; };
+                window.addEventListener('click', note, true);
+                try { el.click(); } finally { window.removeEventListener('click', note, true); }
+                cancelled = !!(click && click.defaultPrevented);
+            } else if (way === 'focus') {
+                focusField(el);
+            } else {
+                cancelled = !scriptKey(el, way === 'Space' ? ' ' : 'Enter');
+            }
+        } catch (_) { /* a page's own handler threw: what the page then did is measured all the same */ }
+        const settle = await settleAfterAction(since, busyBefore);
+        const outcome = compute(before, captureOutcomeSnapshot(), counter.stop());
+        // Taking the focus can scroll the control into view, which brings nothing up.
+        const onlyScrolled = way === 'focus' && outcome.scrollChanged && !outcome.urlChanged && !outcome.titleChanged && !outcome.domMutationCount && !outcome.newElementCount;
+        const changed = (!outcome.noEffect && !onlyScrolled) || !el.isConnected || stateOf(el) !== state;
+        return { changed, cancelled, taken: watch.stop(), outcome, settle, network: !!settle.network, asked: !!settle.asked, loading: !!settle.loading };
+    }
+
     /** Actions whose real page effect should be measured. */
     const MEASURED_ACTIONS = new Set([
         'click', 'double_click', 'right_click', 'hover', 'type', 'fill_form', 'clear',
@@ -4595,6 +4739,15 @@
                     actingSince = since;
                     actionTicks = new WeakMap();
                     if (pageNet) pageNet.begin();
+                    const compute =
+                        typeof SELECT_TO_AI_TOOLS !== "undefined" && SELECT_TO_AI_TOOLS.computeOutcomeDelta
+                            ? SELECT_TO_AI_TOOLS.computeOutcomeDelta
+                            : fallbackComputeOutcomeDelta;
+                    // A press the page does not answer is made another way (see
+                    // otherPressWays), unless the user approved this one press.
+                    const kind = request.data.action;
+                    const again = !!SETTLE_TOOLS && !request.data.once && (kind === 'click' || kind === 'hover');
+                    const watch = again && kind === 'click' ? watchTaken() : null;
                     let result;
                     try {
                         result = await performAction(request.data);
@@ -4604,19 +4757,34 @@
                                 const isTyping = request.data.action === 'type';
                                 await waitForDomStable(isTyping ? 250 : 350, isTyping ? 1200 : 2200);
                             }
+                            result.outcome = compute(before, captureOutcomeSnapshot(), counter.stop());
+                            const taken = watch ? watch.stop() : [];
+                            if (taken.length) result.taken = taken;
+                            const scripted = again && result.pointer === 'synthetic' && !result.opensTab && acted && acted.isConnected;
+                            if (scripted && kind === 'click' && takesPress(acted)) {
+                                const first = { changed: !result.outcome.noEffect || stateOf(acted) !== stateBefore, cancelled: !!result.cancelled, taken, ...result.settle };
+                                let waited = 0;
+                                const ways = await otherPressWays(first, async (way) => { const m = await pressBy(acted, way, busyBefore, compute); waited += m.settle.ms; return m; });
+                                if (ways) {
+                                    result.ways = { tried: ways.tried, by: ways.by, seen: ways.seen };
+                                    result.outcome = ways.last.outcome;
+                                    result.settle = { ...ways.last.settle, ms: result.settle.ms + waited };
+                                }
+                            } else if (scripted && kind === 'hover' && result.outcome.noEffect) {
+                                // Menus made for the keyboard open with the focus on what opens them.
+                                const m = await pressBy(acted, 'focus', busyBefore, compute);
+                                result.ways = { tried: ['pointer', 'focus'], by: m.changed ? 'focus' : null, seen: m.changed, hover: true };
+                                result.outcome = m.outcome;
+                                result.settle = { ...m.settle, ms: result.settle.ms + m.settle.ms };
+                            }
                         }
                     } finally {
                         actingSince = 0;
                         if (pageNet) pageNet.end();
+                        counter.stop();
+                        if (watch) watch.stop();
                     }
-                    const mutationCount = counter.stop();
-                    const after = captureOutcomeSnapshot();
                     if (result && result.success) {
-                        const compute =
-                            typeof SELECT_TO_AI_TOOLS !== "undefined" && SELECT_TO_AI_TOOLS.computeOutcomeDelta
-                                ? SELECT_TO_AI_TOOLS.computeOutcomeDelta
-                                : fallbackComputeOutcomeDelta;
-                        result.outcome = compute(before, after, mutationCount);
                         if (acted && acted.isConnected && typeof result.message === 'string') {
                             const stateNow = stateOf(acted);
                             if (stateNow && stateNow !== stateBefore) {

@@ -686,6 +686,8 @@
     // front is a fact the model is told (core/context.js).
     if (page.inBackground) page.behind = session.parent ? "subtask" : (await followed(session, tab)) ? "follow" : "user";
     session.page = page;
+    // Whether the pointer and keys are made by script here: said to the model once (core/context.js).
+    session.extras.scripted = !chrome.debugger || debuggerDisabled;
     session.extras.tabs = await tabList(tab.windowId, tab.id, session.parent ? run.openedTabs : null);
     back(moved ? { type: "observed", page, moved } : { type: "observed", page });
   }
@@ -937,7 +939,9 @@
     const numbers = (text) => (at.k ? text.replace(/\[(\d+)\]/g, (_m, n) => `[${at.k * FRAME_BASE + Number(n)}]`) : text);
     // The wait ended at the ceiling: said plainly, so the model can choose to wait or act.
     const still = loaded && loaded.loading ? loadingNote(loaded, Date.now() - started).trim() : res.settle && res.settle.loading ? TOOLS.stillLoadingNote(res.settle.ms, res.settle.signs) : "";
-    const message = [String(res.message || "Done.").replace(/\s*Outcome:.*$/s, ""), moved ? `The page changed: now at ${after.url}` : numbers(shown) || effectOf(o, res.settle), still].filter(Boolean).join(" ");
+    // Which way of pressing the page answered, when the first was not it (core/context.js).
+    const ways = moved ? "" : CONTEXT.waysNote(res.ways, data.id, res.taken);
+    const message = [String(res.message || "Done.").replace(/\s*Outcome:.*$/s, ""), ways, moved ? `The page changed: now at ${after.url}` : numbers(shown) || effectOf(o, res.settle), still].filter(Boolean).join(" ");
     const pageChanged = moved || !!o.urlChanged || !!o.titleChanged || (o.newElementCount || 0) !== 0 || (navigates && (o.domMutationCount || 0) > 0) || !!(res.choices && res.choices.length);
     // Changed where it stands: same address, same title, nothing left to choose.
     const soft = pageChanged && !moved && !o.urlChanged && !o.titleChanged && !(res.choices && res.choices.length);
@@ -969,7 +973,8 @@
     const moved = await approvedChanged(session, a);
     if (moved) return moved;
     switch (a.do) {
-      case "click": return interact(session, a, { action: "click", id: a.ref }, true);
+      // A press the user approved is made once: the page is not pressed another way when it shows no answer.
+      case "click": return interact(session, a, { action: "click", id: a.ref, ...(a.approved !== undefined ? { once: true } : {}) }, true);
       case "hover": return interact(session, a, { action: "hover", id: a.ref }, false);
       case "click_at": {
         // What is at the point, as the decision on it saw it: the page
