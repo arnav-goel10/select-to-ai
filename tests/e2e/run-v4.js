@@ -75,6 +75,10 @@ async function main() {
      * panel and plays the person: it returns true once it has acted on a
      * card, so the same card is not acted on twice.
      */
+    // The run the last scenario ended on. A freshly opened agent page can
+    // still show it for a moment before the new task starts, and its answer
+    // must not be taken as this scenario's.
+    let lastFinishedRun = null;
     async function play(name, startPath, user, opts) {
       if (opts && opts.before) await opts.before();
       const { task, error } = await control("/control/scenario", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
@@ -126,11 +130,12 @@ async function main() {
           }
           if (!state.cards.length) await user({ card: null, agent, fixture, state, seen, reopen: async () => { await agent.close(); await sleep(400); agent = await browser.newPage(); await agent.goto(agentUrl(""), { waitUntil: "load" }); return agent; } });
           if (state.trace && state.trace.id) seen.runIds.add(state.trace.id);
-          if (state.trace && state.trace.stopState && state.answer) break;
+          if (state.trace && state.trace.stopState && state.answer && state.trace.id !== lastFinishedRun) break;
         }
         if (Date.now() - t0 > ((opts && opts.timeoutMs) || TIMEOUT_MS)) { state = (await look(agent)) || state; state.timedOut = true; break; }
         await sleep(250);
       }
+      if (state && state.trace && state.trace.id) lastFinishedRun = state.trace.id;
       const logged = await control("/control/log", { method: "GET" });
       const chips = await agent.evaluate(() => [...document.querySelectorAll(".used-chips button")].map((b) => b.textContent)).catch(() => []);
       const notes = await agent.evaluate(() => [...document.querySelectorAll(".memory-note")].map((b) => b.textContent)).catch(() => []);

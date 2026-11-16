@@ -8,7 +8,7 @@ A new engine, built and measured over 1 to 3 October 2026 (the measurements are 
 
 - Recipes ship in this release: save a run that worked from the agent page and replay it from the Recipes panel. A replay calls no model while the pages are as recorded, repairs a step that only moved or was restyled, and stops before a press whose meaning changed.
 - Recipe replays and the agent now wait on a page in one way (`core/inject.js`), so a page that never finishes loading no longer stalls a replay.
-- macOS shortcuts move to Control+Shift+S (side panel), Control+Shift+G (agent) and Control+Shift+Q (quick box). Cmd+K took over the command palettes on GitHub, Slack, Notion and Linear, and Option+N, A and K stopped people typing accented letters. Windows and Linux keep Alt+N, Alt+A and Alt+K.
+- Shortcuts. The side panel keeps the 2.0 key, Ctrl+Shift+S (Command+Shift+S on macOS). The agent is Alt+A and the quick box Alt+K, which are Control+Shift+G and Control+Shift+Q on macOS, because Option+A and Option+K type accented letters there.
 - Sign in with ChatGPT is turned off (`FEATURES.chatgptSignIn` in `defaults.js`) until it has been tried on a real plan.
 - A finished run no longer keeps the text of the pages it read in session storage, and Reset now also removes saved recipes and chat addresses. The privacy policy is rewritten to match; every request and stored item is listed in `docs/privacy-disclosure.md`.
 

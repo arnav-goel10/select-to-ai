@@ -1,6 +1,6 @@
 # Decision: no debugger permission in 4.0
 
-Status: decided 16 Nov 2026. Version 4.0.0 ships without `debugger`. This replaces the 10 Nov 2026 note, which recommended shipping it.
+Status: proposed 16 Nov 2026, awaiting the owner's confirmation. The 4.0.0 build ships without `debugger`. This replaces the 10 Nov 2026 note, which recommended shipping it.
 
 ## Decision
 

@@ -45,7 +45,7 @@ Open source, MIT licence: https://github.com/arnav-goel10/select-to-ai
 ## What's new in 4.0.0 (for the release notes field, if shown)
 
 ```
-Right-click sending works exactly as before. Each send opens a new chat.
+Right-click sending works as in 2.0, except that the popup window mode is gone. Each send opens a new chat.
 New: an agent that does tasks on websites for you. It is off until you set it up.
 It pauses for sign-ins, CAPTCHAs, codes and payments, and carries on when you are done.
 Memory: your details fill forms, stored encrypted in your browser.
@@ -88,7 +88,7 @@ See docs/privacy-disclosure.md, section "Store dashboard answers". In short: tic
 ## Note to the reviewer (optional field)
 
 ```
-Right-click sending works exactly as before and needs no account. 4.0.0 adds a browser agent that is off until the user sets it up and acts only on sites the user grants, one at a time or all at once. Every new access (sites, the AI provider, claude.ai, notifications) is an optional permission asked at first use. Recipes are saved JSON replayed by packaged code; no remote code is loaded. There is no developer server: page content goes only to the AI provider the user configures.
+Right-click sending needs no account. 4.0.0 adds a browser agent that is off until the user sets it up and acts only on sites the user grants, one at a time or all at once. Every new access (sites, the AI provider, claude.ai, notifications) is an optional permission asked at first use. Recipes are saved JSON replayed by packaged code; no remote code is loaded. There is no developer server: page content goes only to the AI provider the user configures.
 ```
 
 ## Test instructions (Test instructions tab)

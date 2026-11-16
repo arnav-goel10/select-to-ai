@@ -35,7 +35,7 @@ Not a request: a session `declarativeNetRequest` rule removes `X-Frame-Options`,
 | `sidePanelState` | local | The panel's URL and text being handed to it | No | Overwritten, Reset |
 | `agentProviderPause`, `onboardingComplete` | local | State flags | No | Reset (pause flag) |
 | `agentSession:<windowId>` | session | Last 12 turns and the run in progress, with the text it has read and other tabs' excerpts. The text of pages the run read is cleared from the record when the run ends (`core/run.js` `toStored`); the other tabs' excerpts and the selection stay until the browser closes | No | Browser close |
-| `agentSelection:<tab>`, `agentHandoff` | session | Selection with nearby text, a task handed over from the quick box or popup | No | Browser close |
+| `agentSelection:<tab>` | session | Selection with nearby text | No | Browser close |
 | Settings (`CONFIG.STORAGE.SETTINGS`) | sync | Preferences, allow-list, extra instructions | No | Reset |
 | IndexedDB `select-to-ai` / `keys` | IndexedDB | The AES key for memory | n/a | Uninstall |
 
