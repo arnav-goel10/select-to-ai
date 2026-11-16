@@ -32,6 +32,19 @@
   // Recipes (recipes/service.js): a run's page actions are recorded so a
   // successful run can be saved and repeated. Recording only watches.
   const RECIPES = root.SELECT_TO_AI_RECIPES || null;
+  // Desktop notifications are optional (core/grants.js): without the grant
+  // chrome.notifications does not exist, and every notice is skipped.
+  const GRANTS = root.SELECT_TO_AI_GRANTS || null;
+  const notice = (id, options) => {
+    if (GRANTS) return GRANTS.notify(id, options);
+    const n = typeof chrome !== "undefined" && chrome.notifications;
+    try { return n ? (typeof id === "string" ? n.create(id, options) : n.create(id)) : Promise.resolve(null); } catch (_e) { return Promise.resolve(null); }
+  };
+  const unnotice = (id) => {
+    if (GRANTS) return GRANTS.clearNotice(id);
+    const n = typeof chrome !== "undefined" && chrome.notifications;
+    try { return n ? n.clear(id) : Promise.resolve(false); } catch (_e) { return Promise.resolve(false); }
+  };
 
   /**
    * What the user sees of a run (core/view.js): home, the agent page's tab
@@ -1189,7 +1202,7 @@
     if (tab && !onTheTab) quiet(chrome.windows.update(tab.windowId, { drawAttention: true }));
     const panelOpen = session.ports.size > 0;
     if (!chromeInFront || idle !== "active" || (!panelOpen && !onTheTab)) {
-      quiet(chrome.notifications && chrome.notifications.create(`agent-wait:${session.windowId}`, {
+      quiet(notice(`agent-wait:${session.windowId}`, {
         type: "basic", iconUrl: "icon128.png", title: "Select to AI needs you",
         message: String(wait.question || "Open the side panel to continue.").slice(0, 240),
         buttons: tab ? [{ title: "Go to tab" }] : undefined,
@@ -1210,7 +1223,7 @@
     }
     // The notice and its reminder stay while another wait of this session is open.
     if (![...session.attending.values()].some((w) => w.kind !== "pause")) {
-      quiet(chrome.notifications && chrome.notifications.clear(`agent-wait:${session.windowId}`));
+      quiet(unnotice(`agent-wait:${session.windowId}`));
       if (chrome.alarms) quiet(chrome.alarms.clear(`agentRemind:${session.windowId}`));
     }
     if (chrome.alarms && wait.kind === "pause") quiet(chrome.alarms.clear(RESUME(session.windowId, wait.id)));
@@ -1511,13 +1524,17 @@
       const tab = await quiet(chrome.tabs.update(wait.tabId, { active: true }));
       if (tab) quiet(chrome.windows.update(tab.windowId, { focused: true }));
     }
-    quiet(chrome.notifications && chrome.notifications.clear(`agent-wait:${windowId}`));
+    quiet(unnotice(`agent-wait:${windowId}`));
   };
   // notifications is optional: without the grant chrome.notifications is
   // undefined, and touching it here would stop the whole worker from loading.
-  if (chrome.notifications) {
-    chrome.notifications.onClicked.addListener((id) => { if (id.startsWith("agent-wait:")) goToWait(Number(id.slice(11))); });
-    chrome.notifications.onButtonClicked.addListener((id) => { if (id.startsWith("agent-wait:")) goToWait(Number(id.slice(11))); });
+  // grants.js attaches the click listeners now when granted, or as soon as
+  // the user grants notifications.
+  const onWaitNotice = (id) => { if (typeof id === "string" && id.startsWith("agent-wait:")) goToWait(Number(id.slice(11))); };
+  if (GRANTS) GRANTS.onNoticeClicked(onWaitNotice);
+  else if (chrome.notifications) {
+    chrome.notifications.onClicked.addListener(onWaitNotice);
+    chrome.notifications.onButtonClicked.addListener(onWaitNotice);
   }
 
   // -------------------------------------------------------------- the view
@@ -1770,7 +1787,7 @@
     for (const r of session.runners.values()) release(r);
     release(session);
     if (!session.ports.size && run.outcome && ["success", "unconfirmed", "error", "limit"].includes(run.outcome.state)) {
-      quiet(chrome.notifications && chrome.notifications.create({ type: "basic", iconUrl: "icon128.png", title: run.outcome.state === "success" ? "Task done" : run.outcome.state === "unconfirmed" ? "Task done, not confirmed" : run.outcome.state === "limit" ? "Usage limit reached" : "Task stopped", message: String(run.outcome.text || "").replace(/[*_`#>]/g, "").slice(0, 240) }));
+      quiet(notice({ type: "basic", iconUrl: "icon128.png", title: run.outcome.state === "success" ? "Task done" : run.outcome.state === "unconfirmed" ? "Task done, not confirmed" : run.outcome.state === "limit" ? "Usage limit reached" : "Task stopped", message: String(run.outcome.text || "").replace(/[*_`#>]/g, "").slice(0, 240) }));
     }
     calm();
     save(session);
@@ -1915,7 +1932,7 @@
       const session = sessions.get(windowId);
       const wait = session && waitsOf(session.run).find((w) => w.kind !== "pause");
       if (!wait) return;
-      quiet(chrome.notifications && chrome.notifications.create(`agent-wait:${windowId}`, { type: "basic", iconUrl: "icon128.png", title: "Select to AI is still waiting for you", message: String(wait.question || "").slice(0, 240), buttons: wait.tabId !== null && wait.tabId !== undefined ? [{ title: "Go to tab" }] : undefined }));
+      quiet(notice(`agent-wait:${windowId}`, { type: "basic", iconUrl: "icon128.png", title: "Select to AI is still waiting for you", message: String(wait.question || "").slice(0, 240), buttons: wait.tabId !== null && wait.tabId !== undefined ? [{ title: "Go to tab" }] : undefined }));
     });
   });
 
