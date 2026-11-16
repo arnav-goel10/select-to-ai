@@ -1189,7 +1189,7 @@
     if (tab && !onTheTab) quiet(chrome.windows.update(tab.windowId, { drawAttention: true }));
     const panelOpen = session.ports.size > 0;
     if (!chromeInFront || idle !== "active" || (!panelOpen && !onTheTab)) {
-      quiet(chrome.notifications.create(`agent-wait:${session.windowId}`, {
+      quiet(chrome.notifications && chrome.notifications.create(`agent-wait:${session.windowId}`, {
         type: "basic", iconUrl: "icon128.png", title: "Select to AI needs you",
         message: String(wait.question || "Open the side panel to continue.").slice(0, 240),
         buttons: tab ? [{ title: "Go to tab" }] : undefined,
@@ -1210,7 +1210,7 @@
     }
     // The notice and its reminder stay while another wait of this session is open.
     if (![...session.attending.values()].some((w) => w.kind !== "pause")) {
-      quiet(chrome.notifications.clear(`agent-wait:${session.windowId}`));
+      quiet(chrome.notifications && chrome.notifications.clear(`agent-wait:${session.windowId}`));
       if (chrome.alarms) quiet(chrome.alarms.clear(`agentRemind:${session.windowId}`));
     }
     if (chrome.alarms && wait.kind === "pause") quiet(chrome.alarms.clear(RESUME(session.windowId, wait.id)));
@@ -1511,7 +1511,7 @@
       const tab = await quiet(chrome.tabs.update(wait.tabId, { active: true }));
       if (tab) quiet(chrome.windows.update(tab.windowId, { focused: true }));
     }
-    quiet(chrome.notifications.clear(`agent-wait:${windowId}`));
+    quiet(chrome.notifications && chrome.notifications.clear(`agent-wait:${windowId}`));
   };
   // notifications is optional: without the grant chrome.notifications is
   // undefined, and touching it here would stop the whole worker from loading.
@@ -1770,7 +1770,7 @@
     for (const r of session.runners.values()) release(r);
     release(session);
     if (!session.ports.size && run.outcome && ["success", "unconfirmed", "error", "limit"].includes(run.outcome.state)) {
-      quiet(chrome.notifications.create({ type: "basic", iconUrl: "icon128.png", title: run.outcome.state === "success" ? "Task done" : run.outcome.state === "unconfirmed" ? "Task done, not confirmed" : run.outcome.state === "limit" ? "Usage limit reached" : "Task stopped", message: String(run.outcome.text || "").replace(/[*_`#>]/g, "").slice(0, 240) }));
+      quiet(chrome.notifications && chrome.notifications.create({ type: "basic", iconUrl: "icon128.png", title: run.outcome.state === "success" ? "Task done" : run.outcome.state === "unconfirmed" ? "Task done, not confirmed" : run.outcome.state === "limit" ? "Usage limit reached" : "Task stopped", message: String(run.outcome.text || "").replace(/[*_`#>]/g, "").slice(0, 240) }));
     }
     calm();
     save(session);
@@ -1915,7 +1915,7 @@
       const session = sessions.get(windowId);
       const wait = session && waitsOf(session.run).find((w) => w.kind !== "pause");
       if (!wait) return;
-      quiet(chrome.notifications.create(`agent-wait:${windowId}`, { type: "basic", iconUrl: "icon128.png", title: "Select to AI is still waiting for you", message: String(wait.question || "").slice(0, 240), buttons: wait.tabId !== null && wait.tabId !== undefined ? [{ title: "Go to tab" }] : undefined }));
+      quiet(chrome.notifications && chrome.notifications.create(`agent-wait:${windowId}`, { type: "basic", iconUrl: "icon128.png", title: "Select to AI is still waiting for you", message: String(wait.question || "").slice(0, 240), buttons: wait.tabId !== null && wait.tabId !== undefined ? [{ title: "Go to tab" }] : undefined }));
     });
   });
 

@@ -231,4 +231,8 @@ test("the worker loads grants.js before engine.js and the engine never touches n
   const engine = fs.readFileSync(path.join(__dirname, "../../extension/engine.js"), "utf8");
   const listener = engine.indexOf("chrome.notifications.onClicked.addListener");
   if (listener > 0) assert.match(engine.slice(Math.max(0, listener - 300), listener), /if \(chrome\.notifications\)/);
+  // A wait that starts or ends must not throw either, or the run never resumes.
+  for (const call of engine.match(/[^\n]{0,40}chrome\.notifications\.(create|clear)\(/g) || []) {
+    assert.match(call, /chrome\.notifications && chrome\.notifications\.|SELECT_TO_AI_GRANTS/, call.trim());
+  }
 });
