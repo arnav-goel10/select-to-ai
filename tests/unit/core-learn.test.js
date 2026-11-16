@@ -109,3 +109,97 @@ test("a routine is kept where its steps begin, and a run's end says whether the 
   s = M.mark(s, [id], L.markOf(run({ outcome: { state: "error", kind: "stuck" } })), 3);
   assert.equal(s.entries.length, 0);
 });
+
+// A run with a route: asked from a tab on one site, done on another.
+const routed = (more) => run({
+  id: "run-7",
+  task: "check my orders on the shop",
+  history: [
+    { step: 1, goal: "go there", url: "https://news.example/today", actions: [{ text: "navigate", ok: true, result: "ok", way: "open https://shop.example/account" }] },
+    { step: 2, goal: "orders", url: "https://shop.example/account", actions: [{ text: 'click [4] "Orders"', ok: true, result: "ok", way: 'press "Orders"' }] },
+    { step: 3, goal: "answer", url: "https://shop.example/orders", actions: [{ text: "done", ok: true, result: "Finished." }] },
+  ],
+  ...more,
+});
+
+test("a thumbs-up on an answer the check gave no verdict on is the confirmation: the route and notes are learned then, once", () => {
+  const unchecked = routed({ outcome: { state: "success", verified: null } });
+  assert.equal(L.routineOf(unchecked), null, "at the run's end nothing confirmed it");
+  const routine = L.routineOf(unchecked, { up: true });
+  assert.deepEqual(routine.steps, ["open https://shop.example/account", 'press "Orders"']);
+  assert.equal(routine.confirmed, "you");
+  assert.equal(routine.runId, "run-7");
+  assert.equal(L.worth(unchecked, M.empty(), {}, { up: true }).notes, true);
+  // A checked run learned at its end; the thumbs-up does not learn it again.
+  assert.equal(L.routineOf(routed(), { up: true }), null);
+  assert.equal(L.worth(routed(), M.empty(), {}, { up: true }), null);
+  assert.equal(L.routineOf(routed()).confirmed, "check");
+  // A thumbs-up cannot overrule a failed check, the run's own "could not", or a thumbs-down.
+  assert.equal(L.routineOf(routed({ outcome: { state: "unconfirmed", verified: false } }), { up: true }), null);
+  assert.equal(L.routineOf(routed({ outcome: { state: "success", verified: null, success: false } }), { up: true }), null);
+  assert.equal(L.routineOf(unchecked, { up: false }), null);
+  assert.equal(L.routineOf({ ...unchecked, injectionSeen: true }, { up: true }), null);
+});
+
+test("the thumbs and the run's end are one decision about the notes the run was shown", () => {
+  let s = M.addEntry(M.empty(), { kind: "routine", text: "r", task: "check my orders on the shop", steps: ['press "Orders"'], scope: "shop.example", source: "run" }, 1).store;
+  s = M.addEntry(s, { kind: "preference", text: "Prices in SGD", scope: "global", source: "you_said" }, 1).store;
+  const [pref, routine] = s.entries;
+  const apply = (store, marks) => marks.reduce((st, m) => M.mark(st, m.ids, m.how, 9), store);
+  const helpedOf = (store) => store.entries.find((e) => e.id === routine.id);
+  // Checked and passed: the end counted the help, a thumbs-up adds none.
+  const ended = M.mark(s, [routine.id, pref.id], L.markOf(routed()), 5);
+  assert.deepEqual(L.feedbackMarks(routed(), { up: true }, ended.entries), []);
+  // No verdict from the check: the thumbs-up is the help, once.
+  const unchecked = routed({ outcome: { state: "success", verified: null } });
+  assert.deepEqual(L.feedbackMarks(unchecked, { up: true }, s.entries), [{ ids: [pref.id, routine.id], how: "helped" }]);
+  // Checked, then the user says it was not right: the help is taken back and it counts against the route.
+  const down = apply(ended, L.feedbackMarks(routed(), { up: false }, ended.entries));
+  assert.deepEqual([helpedOf(down).helped, helpedOf(down).hurt], [0, 1]);
+  assert.equal(down.entries.find((e) => e.id === pref.id).hurt, 0, "what the user said everywhere is not blamed");
+  // An end that already counted against a run's note does not count twice.
+  const failed = routed({ outcome: { state: "unconfirmed", verified: false } });
+  assert.deepEqual(L.feedbackMarks(failed, { up: false }, s.entries), []);
+  // A routine the run did not follow is neither credited nor blamed.
+  const other = run({ outcome: { state: "success", verified: null } });
+  assert.deepEqual(L.feedbackMarks(other, { up: true }, [routine]), []);
+});
+
+test("a thumbs-down takes back what the same run taught, and only that", () => {
+  let s = M.empty();
+  const r = routed();
+  const routine = L.routineOf(r);
+  s = M.addEntry(s, { kind: "routine", text: routine.text, task: routine.task, steps: routine.steps, scope: "shop.example", source: "run", origin: { runId: routine.runId } }, 1).store;
+  s = L.applyLearned(s, r, { site_notes: [{ text: "Orders are under the account page", step: 2 }], lesson: "", about_user: [], drop: [] }, "shop.example", { notes: true, lesson: false, about: false, corrections: [] }, 2).store;
+  s = M.addEntry(s, { kind: "routine", text: "another", task: "track a parcel", scope: "shop.example", source: "run", origin: { runId: "run-8" } }, 3).store;
+  s = M.addEntry(s, { kind: "lesson", text: "Open the newest order first", scope: "shop.example", source: "correction", origin: { runId: "run-7" } }, 4).store;
+  assert.equal(s.entries.filter((e) => e.origin && e.origin.runId === "run-7").length, 3, "the run's route, note and lesson carry its id");
+  const out = M.forgetRun(s, "run-7");
+  assert.deepEqual(out.removed.map((e) => e.kind).sort(), ["routine", "site_note"]);
+  assert.deepEqual(out.store.entries.map((e) => [e.kind, e.text]), [["lesson", "Open the newest order first"], ["routine", "another"]]);
+  assert.equal(M.forgetRun(s, "").removed.length, 0);
+});
+
+test("a routine is filed under the site its steps ran on, not the tab the request was made from", () => {
+  assert.equal(L.startUrl(routed()), "https://news.example/today");
+  assert.equal(L.routineSite(routed()), "shop.example");
+  // Steps on the page the run began on stay with that page's site.
+  const here = run({ history: [{ step: 1, url: "https://www.shop.example/", actions: [{ text: "click", ok: true, result: "ok", way: 'press "Orders"' }] }] });
+  assert.equal(L.routineSite(here), "shop.example");
+  assert.equal(L.routineSite(run()), "", "no recorded step, no site");
+  // Asked again from an unrelated tab, the route that opens its own address is shown; an unlike request is not.
+  const routine = L.routineOf(routed());
+  const s = M.addEntry(M.empty(), { kind: "routine", text: routine.text, task: routine.task, steps: routine.steps, scope: L.routineSite(routed()), source: "run" }, 1).store;
+  assert.match(M.knownBlock(s, "mail.example", "check my orders on the shop", { startSite: "mail.example" }).site, /A request like this one was done on shop\.example before by: /);
+  assert.equal(M.knownBlock(s, "mail.example", "check my inbox", { startSite: "mail.example" }).site, "");
+  assert.match(M.knownBlock(s, "shop.example", "check my orders on the shop again").site, /done here before by: /);
+});
+
+test("the engine applies the thumbs through these decisions", () => {
+  const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "../../extension/engine.js"), "utf8");
+  assert.match(src, /LEARN\.feedbackMarks\(run, feedback,/);
+  assert.match(src, /op: "forget_run", runId: run\.id/);
+  assert.match(src, /LEARN\.routineOf\(run, feedback\)/);
+  assert.match(src, /LEARN\.routineSite\(run\)/);
+  assert.match(src, /origin: \{ runId: change\.routine\.runId \}/);
+});
