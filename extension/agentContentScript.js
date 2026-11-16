@@ -87,9 +87,6 @@
         'a', 'button', 'input', 'select', 'textarea', 'option'
     ]);
 
-    /** Form element tags that should receive a `change` event after click */
-    const FORM_TAGS = new Set(['input', 'select', 'textarea']);
-
     /**
      * Key metadata lookup, keyCode, code, and whether the key is printable.
      * @type {Object<string, {keyCode: number, code: string, printable: boolean}>}
@@ -668,7 +665,7 @@
             how.real = await pressRealKey(key, meta, {}, 1);
             if (how.real) return;
         }
-        const opts = { key, code: meta.code, keyCode: meta.keyCode, which: meta.keyCode, bubbles: true, cancelable: true, view: window };
+        const opts = { key, code: meta.code, keyCode: meta.keyCode, which: meta.keyCode, bubbles: true, cancelable: true, composed: true, view: window };
         el.dispatchEvent(new KeyboardEvent('keydown', opts));
         el.dispatchEvent(new KeyboardEvent('keyup', opts));
     }
@@ -2172,104 +2169,142 @@
     // Event Simulation Helpers
     // =========================================================================
 
-    /**
-     * Computes common pointer/mouse event init properties for an element.
-     * @param {Element} el
-     * @param {Object} [modifiers={}]
-     * @returns {Object}
-     */
-    function pointerEventDefaults(el, modifiers = {}) {
+    /** The middle of an element's box, in this frame's viewport. */
+    function centreOf(el) {
         const rect = el.getBoundingClientRect();
-        const clientX = rect.left + rect.width / 2;
-        const clientY = rect.top + rect.height / 2;
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    }
+
+    /**
+     * The fields of a pointer or mouse event made by script, as Chrome
+     * fills them for a real mouse: it crosses shadow boundaries (composed),
+     * it is the primary mouse pointer, and it says which button is held and
+     * how hard. Clicks, hovers and drags all take their fields from here,
+     * so a page sees the same pointer whichever of them it is.
+     * @param {{x: number, y: number}} point  in this frame's viewport
+     * @param {{held?: boolean, button?: number, detail?: number, related?: Element|null, modifiers?: Object}} [o]
+     */
+    function pointerInit(point, o = {}) {
+        const keys = o.modifiers || {};
+        const button = o.button || 0;
         return {
             bubbles: true,
             cancelable: true,
+            composed: true,
             view: window,
-            clientX,
-            clientY,
-            screenX: window.screenX + clientX,
-            screenY: window.screenY + clientY,
-            button: 0,
-            buttons: 1,
-            ctrlKey: !!modifiers.ctrlKey,
-            shiftKey: !!modifiers.shiftKey,
-            altKey: !!modifiers.altKey,
-            metaKey: !!modifiers.metaKey,
+            clientX: point.x,
+            clientY: point.y,
+            screenX: window.screenX + point.x,
+            screenY: window.screenY + point.y,
+            button,
+            buttons: o.held ? (button === 2 ? 2 : 1) : 0,
+            detail: o.detail || 0,
+            pointerId: 1,
+            pointerType: 'mouse',
+            isPrimary: true,
+            pressure: o.held ? 0.5 : 0,
+            relatedTarget: o.related || null,
+            ctrlKey: !!keys.ctrlKey,
+            shiftKey: !!keys.shiftKey,
+            altKey: !!keys.altKey,
+            metaKey: !!keys.metaKey,
         };
     }
 
+    // What the scripted pointer was last over, so its next move leaves it as a mouse would.
+    let pointerOver = null;
+
     /**
-     * Dispatches a full click event sequence (pointer + mouse events) on an element.
-     * Only dispatches `change` for form elements.
-     * @param {Element} targetEl
-     * @param {Object} [modifiers={}]
+     * Moves the scripted pointer onto `target`. What it was over hears it
+     * go, the target hears it arrive, and every box around either whose
+     * edge it crossed hears it leave or enter, as with a mouse: a menu that
+     * closes when the pointer leaves it closes, and a box that listens for
+     * the pointer entering it is told. Nothing is sent when the pointer is
+     * already there, unless `again` asks for the arrival to be said again.
      */
-    function dispatchClickEvents(control, modifiers = {}, point = null) {
-        const opts = pointerEventDefaults(control, modifiers);
-        // A press at a given point of the page (click_at) carries that point.
-        if (point) {
-            opts.clientX = point.x;
-            opts.clientY = point.y;
-            opts.screenX = window.screenX + point.x;
-            opts.screenY = window.screenY + point.y;
+    function movePointerTo(target, point, modifiers, again) {
+        const prev = pointerOver && pointerOver.isConnected && pointerOver !== target ? pointerOver : null;
+        const fresh = pointerOver !== target;
+        pointerOver = target;
+        if (!fresh && !again) return;
+        const holds = (box, n) => { for (let x = n; x; x = upOf(x)) if (x === box) return true; return false; };
+        const quiet = (init) => ({ ...init, bubbles: false, cancelable: false });
+        if (prev) {
+            const out = pointerInit(point, { modifiers, related: target });
+            prev.dispatchEvent(new PointerEvent('pointerout', out));
+            prev.dispatchEvent(new MouseEvent('mouseout', out));
+            for (let n = prev; n && n.nodeType === 1 && !holds(n, target); n = upOf(n)) {
+                n.dispatchEvent(new PointerEvent('pointerleave', quiet(out)));
+                n.dispatchEvent(new MouseEvent('mouseleave', quiet(out)));
+            }
         }
-        // A pointer's events go to the innermost thing drawn where it
-        // presses and travel up from there. A page may listen on a part
-        // inside the control (the link inside a tab), so the events start
-        // where a press at the control's middle would.
-        let targetEl = control;
-        try {
-            const hit = document.elementFromPoint(opts.clientX, opts.clientY);
-            if (hit && hit !== control && control.contains(hit)) targetEl = hit;
-        } catch (_) { /* a detached control has no point */ }
-
-        // Pointer sequence
-        targetEl.dispatchEvent(new PointerEvent('pointerover', opts));
-        targetEl.dispatchEvent(new PointerEvent('pointerenter', { ...opts, bubbles: false }));
-        targetEl.dispatchEvent(new PointerEvent('pointermove', opts));
-        targetEl.dispatchEvent(new PointerEvent('pointerdown', opts));
-
-        // Mouse sequence
-        targetEl.dispatchEvent(new MouseEvent('mouseover', opts));
-        targetEl.dispatchEvent(new MouseEvent('mouseenter', { ...opts, bubbles: false }));
-        targetEl.dispatchEvent(new MouseEvent('mousedown', opts));
-
-        focusField(control);
-
-        targetEl.dispatchEvent(new PointerEvent('pointerup', { ...opts, buttons: 0 }));
-        targetEl.dispatchEvent(new MouseEvent('mouseup', { ...opts, buttons: 0 }));
-        // False when the page cancelled the click (it handled it itself).
-        const went = targetEl.dispatchEvent(new MouseEvent('click', { ...opts, buttons: 0 }));
-
-        // Only dispatch change on form elements
-        const tag = control.tagName.toLowerCase();
-        if (FORM_TAGS.has(tag)) {
-            control.dispatchEvent(new Event('change', { bubbles: true }));
+        const over = pointerInit(point, { modifiers, related: prev });
+        target.dispatchEvent(new PointerEvent('pointerover', over));
+        target.dispatchEvent(new MouseEvent('mouseover', over));
+        // Outermost first, as the browser enters them.
+        const entered = [];
+        for (let n = target; n && n.nodeType === 1 && !(prev && holds(n, prev)); n = upOf(n)) entered.unshift(n);
+        for (const n of entered) {
+            n.dispatchEvent(new PointerEvent('pointerenter', quiet(over)));
+            n.dispatchEvent(new MouseEvent('mouseenter', quiet(over)));
         }
-        return went;
     }
 
     /**
-     * Dispatches hover-only events (no click) on an element.
-     * @param {Element} targetEl
-     * @param {Object} [modifiers={}]
+     * Where a pointer's events start: the innermost thing drawn at the
+     * point, when that is inside the control. A page may listen on a part
+     * inside the control (the link inside a tab), so the events start where
+     * a press at that point would and travel up from there.
+     */
+    function pointerTargetIn(control, point) {
+        try {
+            const hit = document.elementFromPoint(point.x, point.y);
+            if (hit && hit !== control && control.contains(hit)) return hit;
+        } catch (_) { /* a detached control has no point */ }
+        return control;
+    }
+
+    /**
+     * A click made by script, as a mouse makes one: the pointer arrives,
+     * presses, lets go, and the click follows. `point` is where, for a
+     * press at a given point of the page (click_at); the control's middle
+     * otherwise. `detail` is which click of a run this is (2 for the second
+     * of a double click). Returns false when the page cancelled the click.
+     */
+    function dispatchClickEvents(control, modifiers = {}, point = null, detail = 1) {
+        const at = point || centreOf(control);
+        const targetEl = pointerTargetIn(control, at);
+        movePointerTo(targetEl, at, modifiers);
+        const idle = pointerInit(at, { modifiers });
+        targetEl.dispatchEvent(new PointerEvent('pointermove', idle));
+        targetEl.dispatchEvent(new MouseEvent('mousemove', idle));
+
+        const down = pointerInit(at, { modifiers, held: true, detail });
+        targetEl.dispatchEvent(new PointerEvent('pointerdown', { ...down, detail: 0 }));
+        // A page that cancels mousedown keeps the focus and the selection
+        // where they are (the toolbar of a text editor does), so the focus
+        // moves only when the press was left to the browser.
+        if (targetEl.dispatchEvent(new MouseEvent('mousedown', down))) focusField(control);
+
+        const up = pointerInit(at, { modifiers, detail });
+        targetEl.dispatchEvent(new PointerEvent('pointerup', { ...up, detail: 0 }));
+        targetEl.dispatchEvent(new MouseEvent('mouseup', up));
+        // The browser itself sends the change of a box the click ticks; a
+        // second one made here would run the page's handler twice.
+        return targetEl.dispatchEvent(new PointerEvent('click', up));
+    }
+
+    /**
+     * Moves the scripted pointer over a control without pressing: the
+     * events start at what is drawn at the control's middle, as for a click.
      */
     function dispatchHoverEvents(control, modifiers = {}) {
-        // No button is held, and the events start at what is drawn at the
-        // control's middle, as for a click.
-        const opts = { ...pointerEventDefaults(control, modifiers), buttons: 0 };
-        let targetEl = control;
-        try {
-            const hit = document.elementFromPoint(opts.clientX, opts.clientY);
-            if (hit && hit !== control && control.contains(hit)) targetEl = hit;
-        } catch (_) { /* a detached control has no point */ }
-        targetEl.dispatchEvent(new PointerEvent('pointerover', opts));
-        targetEl.dispatchEvent(new PointerEvent('pointerenter', { ...opts, bubbles: false }));
-        targetEl.dispatchEvent(new MouseEvent('mouseover', opts));
-        targetEl.dispatchEvent(new MouseEvent('mouseenter', { ...opts, bubbles: false }));
-        targetEl.dispatchEvent(new PointerEvent('pointermove', opts));
-        targetEl.dispatchEvent(new MouseEvent('mousemove', opts));
+        const at = centreOf(control);
+        const targetEl = pointerTargetIn(control, at);
+        movePointerTo(targetEl, at, modifiers, true);
+        const idle = pointerInit(at, { modifiers });
+        targetEl.dispatchEvent(new PointerEvent('pointermove', idle));
+        targetEl.dispatchEvent(new MouseEvent('mousemove', idle));
     }
 
     // =========================================================================
@@ -2620,7 +2655,7 @@
         let source = null;
         let data = null;
         let over = null;
-        const at = (s, buttons) => ({ bubbles: true, cancelable: true, composed: true, view: window, clientX: s.x, clientY: s.y, screenX: window.screenX + s.x, screenY: window.screenY + s.y, button: 0, buttons, pointerId: 1, pointerType: 'mouse', isPrimary: true });
+        const at = (s, buttons) => pointerInit(s, { held: buttons === 1 });
         const draggable = el.closest('[draggable="true"]') || (el.closest('a[href], img') && el.closest('[draggable="false"]') === null ? el.closest('a[href], img') : null);
         for (const s of steps) {
             if (s.t === 'wait') { await (document.visibilityState === 'hidden' ? Promise.resolve() : delay(s.ms || 0)); continue; }
@@ -3203,34 +3238,27 @@
 
             // ----- double_click -----
             if (action === 'double_click') {
-                const opts = pointerEventDefaults(el, modifiers);
                 await moveAgentCursorToElement(el, "Double click");
                 await pulseAgentCursor("Double click");
-                // First click sequence
+                // Two clicks, the second counted as the second, then the double click.
                 dispatchClickEvents(el, modifiers);
-                // Second click sequence (detail=2)
-                dispatchClickEvents(el, modifiers);
-                // dblclick event
-                el.dispatchEvent(new MouseEvent('dblclick', { ...opts, buttons: 0, detail: 2 }));
+                dispatchClickEvents(el, modifiers, null, 2);
+                el.dispatchEvent(new MouseEvent('dblclick', pointerInit(centreOf(el), { modifiers, detail: 2 })));
                 return { success: true, message: `Double-clicked element [${id}].` };
             }
 
             // ----- right_click -----
             if (action === 'right_click') {
-                const opts = pointerEventDefaults(el, modifiers);
                 await moveAgentCursorToElement(el, "Right click");
                 await pulseAgentCursor("Right click");
-                opts.button = 2;
-                opts.buttons = 2;
-                el.dispatchEvent(new PointerEvent('pointerdown', opts));
-                el.dispatchEvent(new MouseEvent('mousedown', opts));
-                el.dispatchEvent(new PointerEvent('pointerup', { ...opts, buttons: 0 }));
-                el.dispatchEvent(new MouseEvent('mouseup', { ...opts, buttons: 0 }));
-                el.dispatchEvent(new MouseEvent('contextmenu', {
-                    ...opts,
-                    button: 2,
-                    buttons: 0,
-                }));
+                const at = centreOf(el);
+                const down = pointerInit(at, { modifiers, held: true, button: 2 });
+                const up = pointerInit(at, { modifiers, button: 2 });
+                el.dispatchEvent(new PointerEvent('pointerdown', down));
+                el.dispatchEvent(new MouseEvent('mousedown', down));
+                el.dispatchEvent(new PointerEvent('pointerup', up));
+                el.dispatchEvent(new MouseEvent('mouseup', up));
+                el.dispatchEvent(new MouseEvent('contextmenu', up));
                 return { success: true, message: `Right-clicked element [${id}].` };
             }
 
@@ -3803,6 +3831,7 @@
                     which: meta.keyCode,
                     bubbles: true,
                     cancelable: true,
+                    composed: true,
                     view: window,
                     ctrlKey: !!modifiers.ctrlKey,
                     shiftKey: !!modifiers.shiftKey,
