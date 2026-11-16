@@ -288,12 +288,41 @@ function savedHeld(until) {
   run.wait.tabId = 9;
   return { "agentSession:1": { turns: [], run: JSON.parse(JSON.stringify(RUN.toStored(run))), extras: {} } };
 }
+/**
+ * The worker of a user who agreed to send to OpenRouter and whose Chrome
+ * lets the extension reach it and the page: what a run started from the
+ * agent's page has behind it. `fetched` collects the requests a test plays.
+ */
+function worker(until, o = {}) {
+  const fetched = [];
+  const done = toolCall("step", { memory: "", goal: "g", actions: [{ do: "done", answer: "It is $19.", success: true }] });
+  const w = fakeWorker({
+    saved: savedHeld(until),
+    tabs: { 9: { id: 9, url: "https://shop.example/", title: "Shop", windowId: 1, active: true, status: "complete" } },
+    onTabMessage: (_id, m) => (m.action === "scan" ? { success: true, ...shop() } : { success: true }),
+    fetch: async (url, init) => { fetched.push({ url, body: JSON.parse(init.body) }); return reply(200, done, o.headers); },
+    ...o,
+    local: { agentOpenRouterKey: "sk-or-v1-test", agentDataConsent: { openrouter: 1 }, ...(o.local || {}) },
+    granted: ["https://openrouter.ai", "https://shop.example", ...(o.granted || [])],
+  });
+  return Object.assign(w, { fetched });
+}
+/** A setting saved the way a page saves it: stored, then announced. */
+async function saved(w, area, items) {
+  const changes = {};
+  for (const [k, v] of Object.entries(items)) { changes[k] = { oldValue: w[area][k], newValue: v }; w[area][k] = v; }
+  await w.fire("storage.onChanged", changes, area);
+  await settle(60);
+}
+// What the worker posts is made in its own realm: compared as plain data.
+const plain = (v) => JSON.parse(JSON.stringify(v));
+const needs = (port) => plain(port.posted.filter((m) => m.type === "hold_needs"));
 const waitingOn = (w) => { const s = w.engine.sessions.get(1); return s.run.status === "waiting" && s.run.wait ? s.run.wait : null; };
 const carriedOn = (w) => w.engine.sessions.get(1).run.journal.some((j) => j.k === "ask_done" && j.how === "pause_over");
 
 test("the worker wakes a held run at its reset by an alarm, and not at all when no time was named", async () => {
   const until = Date.now() + 8 * HOUR;
-  const w = fakeWorker({ saved: savedHeld(until) });
+  const w = worker(until);
   await w.connect(1).hello();
   await settle(40);
   assert.equal(waitingOn(w).hold, "limit");
@@ -301,11 +330,14 @@ test("the worker wakes a held run at its reset by an alarm, and not at all when 
   assert.ok(alarm, "an alarm is set");
   assert.equal(alarm.info.when, until);
   assert.equal(carriedOn(w), false);
+  // The model was changed in Settings while it waited: the call at the reset is made with it.
+  w.sync.agentModel = "x/y";
   await w.fire("alarms.onAlarm", { name: alarm.name });
-  await settle(60);
+  await settle(300);
   assert.equal(carriedOn(w), true, "the alarm carries the run on");
+  assert.equal(w.fetched[0].body.model, "x/y", "with the settings as they are now");
 
-  const open = fakeWorker({ saved: savedHeld(0) });
+  const open = worker(0);
   await open.connect(1).hello();
   await settle(40);
   assert.equal(waitingOn(open).hold, "limit");
@@ -314,29 +346,33 @@ test("the worker wakes a held run at its reset by an alarm, and not at all when 
 });
 
 test("a held run carries on when a backup is connected, when the user says try again, and ends when they say stop", async () => {
-  // A backup connected in Settings.
-  let w = fakeWorker({ saved: savedHeld(Date.now() + 8 * HOUR) });
+  // A backup connected in Settings, by a user who agreed to it there, while the main provider is spent.
+  let w = worker(Date.now() + 8 * HOUR, { local: { agentProviderPause: { provider: "openrouter", until: Date.now() + 8 * HOUR }, agentDataConsent: { openrouter: 1, gemini: 1 } }, granted: ["https://generativelanguage.googleapis.com"] });
   await w.connect(1).hello();
   await settle(40);
-  await w.fire("storage.onChanged", { agentCrossSessionMemory: { newValue: [] } }, "local");
-  await w.fire("storage.onChanged", { agentAllowance: { newValue: {} } }, "local");
-  await settle(40);
+  await saved(w, "local", { agentCrossSessionMemory: [] });
+  await saved(w, "local", { agentAllowance: {} });
   assert.equal(carriedOn(w), false, "a change that has nothing to do with the model leaves it held");
-  await w.fire("storage.onChanged", { agentBackupProvider: { newValue: "gemini" } }, "sync");
-  await settle(60);
+  await saved(w, "sync", { agentBackupProvider: "gemini" });
+  assert.equal(carriedOn(w), false, "a backup with no key yet is not one");
+  await saved(w, "local", { agentGeminiKey: "AIzaSy-test-key" });
+  await settle(300);
   assert.equal(carriedOn(w), true);
+  assert.match(w.fetched[0].url, /^https:\/\/generativelanguage\.googleapis\.com\//, "the next call goes to the backup");
+  assert.equal(w.fetched.some((f) => /openrouter/.test(f.url)), false);
 
   // Try again, from the card.
-  w = fakeWorker({ saved: savedHeld(0) });
+  w = worker(0);
   let port = w.connect(1);
   await port.hello();
   await settle(40);
   await port.post({ type: "try_again", id: waitingOn(w).id });
-  await settle(60);
+  await settle(300);
   assert.equal(carriedOn(w), true);
+  assert.match(w.fetched[0].url, /^https:\/\/openrouter\.ai\//);
 
   // Stop and answer with what it has.
-  w = fakeWorker({ saved: savedHeld(0) });
+  w = worker(0);
   port = w.connect(1);
   await port.hello();
   await settle(40);
@@ -345,6 +381,147 @@ test("a held run carries on when a backup is connected, when the user says try a
   const run = w.engine.sessions.get(1).run;
   assert.equal(run.outcome.state, "limit");
   assert.match(run.outcome.text, /What I had found:\nStep 1: Blue Widget is \$19\./);
+  assert.equal(w.fetched.length, 0);
+});
+
+test("a held run does not go on to a provider the user has not agreed to, or that Chrome does not let it reach", async () => {
+  // The path the hold card points to: a backup chosen and its key pasted in Settings. Nothing was agreed for it.
+  const w = worker(0, { local: { agentProviderPause: { provider: "openrouter", until: Date.now() + 8 * HOUR } } });
+  const port = w.connect(1);
+  await port.hello();
+  await settle(40);
+  await saved(w, "sync", { agentBackupProvider: "gemini" });
+  await saved(w, "local", { agentGeminiKey: "AIzaSy-test-key" });
+  await settle(200);
+  assert.equal(carriedOn(w), false, "the run stays held");
+  assert.equal(w.fetched.length, 0, "and nothing is sent");
+  assert.deepEqual(needs(port).at(-1), { type: "hold_needs", id: waitingOn(w).id, consent: ["gemini"], hosts: ["gemini"] });
+  // Try again from the card is checked the same way, as is the alarm.
+  await port.post({ type: "try_again", id: waitingOn(w).id });
+  await w.fire("alarms.onAlarm", { name: `agentResume:1:${waitingOn(w).id}` });
+  await settle(200);
+  assert.equal(carriedOn(w), false);
+  assert.equal(w.fetched.length, 0);
+  // Agreed to, but the host is not granted: still held, and the page is told which.
+  await saved(w, "local", { agentDataConsent: { openrouter: 1, gemini: 1 } });
+  await settle(200);
+  assert.equal(carriedOn(w), false);
+  assert.deepEqual(needs(port).at(-1), { type: "hold_needs", id: waitingOn(w).id, consent: [], hosts: ["gemini"] });
+  assert.equal(w.fetched.length, 0);
+  // Both given (the consent card's click asks for the host): the run goes on, on the backup.
+  w.granted.add("https://generativelanguage.googleapis.com");
+  await port.post({ type: "try_again", id: waitingOn(w).id });
+  await settle(300);
+  assert.equal(carriedOn(w), true);
+  assert.match(w.fetched[0].url, /^https:\/\/generativelanguage\.googleapis\.com\//);
+});
+
+test("agreeing where it was asked carries on a run that was kept held for it", async () => {
+  const w = worker(0, { granted: ["https://api.mistral.ai"] });
+  const port = w.connect(1);
+  await port.hello();
+  await settle(40);
+  // Another provider chosen in Settings while the run is held.
+  await saved(w, "local", { agentMistralKey: "mk-test-key" });
+  assert.equal(needs(port).length, 0, "a key for a provider not in use changes nothing for the held run");
+  assert.equal(carriedOn(w), false);
+  await saved(w, "sync", { agentActiveProvider: "mistral", agentModel: "mistral-small-latest" });
+  await settle(100);
+  assert.deepEqual(needs(port).at(-1).consent, ["mistral"]);
+  assert.equal(w.fetched.length, 0);
+  await saved(w, "local", { agentDataConsent: { openrouter: 1, mistral: 1 } });
+  await settle(300);
+  assert.equal(carriedOn(w), true);
+  assert.match(w.fetched[0].url, /^https:\/\/api\.mistral\.ai\//);
+  assert.equal(w.fetched[0].body.model, "mistral-small-latest");
+});
+
+test("a setting the next call would not be made with costs a held run no request", async () => {
+  const w = worker(Date.now() + 8 * HOUR);
+  const port = w.connect(1);
+  await port.hello();
+  await settle(40);
+  // Settings opened from the hold card picks a first backup before it has a key.
+  await saved(w, "sync", { agentBackupProvider: "mistral" });
+  // A key for a provider that is neither in use nor the backup.
+  await saved(w, "local", { agentGroqKey: "gsk_test" });
+  // The same value saved again.
+  await saved(w, "sync", { agentModel: "openrouter/free" });
+  await settle(100);
+  assert.equal(carriedOn(w), false);
+  assert.equal(w.fetched.length, 0);
+  assert.equal(needs(port).length, 0);
+  assert.ok(waitingOn(w).until, "the wait is as it was");
+});
+
+test("what the provider says is left is kept for the pill after a reply", async () => {
+  const day = Date.now() + 8 * HOUR;
+  const w = worker(0, { headers: { "x-ratelimit-limit": "50", "x-ratelimit-remaining": "37", "x-ratelimit-reset": String(day) } });
+  const port = w.connect(1);
+  await port.hello();
+  await settle(40);
+  await port.post({ type: "try_again", id: waitingOn(w).id });
+  await settle(300);
+  assert.ok(w.fetched.length >= 1);
+  const kept = w.calls.localSets.map((x) => x.agentAllowance).filter(Boolean);
+  assert.ok(kept.length >= 1, "written to local storage");
+  assert.deepEqual({ ...kept[0], at: 0 }, { provider: "openrouter", remaining: 37, limit: 50, resetAt: day, at: 0 });
+});
+
+test("a held run nobody comes back to ends after a day with what it found", async () => {
+  const w = worker(0);
+  await w.connect(1).hello();
+  await settle(40);
+  const wait = waitingOn(w);
+  const alarm = w.calls.alarms.find((a) => a.name === `agentHoldOver:1:${wait.id}`);
+  assert.ok(alarm, "an alarm outlives the worker");
+  assert.equal(alarm.info.when, wait.since + 24 * HOUR);
+  // One for another wait does nothing.
+  await w.fire("alarms.onAlarm", { name: "agentHoldOver:1:someone-else" });
+  await settle(40);
+  assert.equal(waitingOn(w).id, wait.id);
+  await w.fire("alarms.onAlarm", { name: alarm.name });
+  await settle(60);
+  const run = w.engine.sessions.get(1).run;
+  assert.equal(run.outcome.state, "limit");
+  assert.match(run.outcome.text, /What I had found:\nStep 1: Blue Widget is \$19\./);
+  assert.equal(w.fetched.length, 0);
+  // A hold with a reset is given a day past it.
+  const until = Date.now() + 8 * HOUR;
+  const timed = worker(until);
+  await timed.connect(1).hello();
+  await settle(40);
+  assert.equal(timed.calls.alarms.find((a) => a.name.startsWith("agentHoldOver:")).info.when, until + 24 * HOUR);
+});
+
+test("a new request at a hold that only the user can end is asked about, not added to the held run unseen", async () => {
+  const w = worker(0);
+  const port = w.connect(1);
+  await port.hello();
+  await settle(40);
+  const held = w.engine.sessions.get(1).run;
+  await port.post({ type: "send", text: "what is on this page?", tabId: 9, selection: { text: "Blue Widget" } });
+  await settle(60);
+  assert.deepEqual(plain(port.posted.filter((m) => m.type === "handoff_live").at(-1)), { type: "handoff_live", text: "what is on this page?", tabId: 9, selection: { text: "Blue Widget" } });
+  assert.equal(held.steers.length, 0, "the held run was not told");
+  assert.equal(waitingOn(w).hold, "limit");
+  // Stop it and start this: the held run ends as its own stop button ends it, and the new one starts.
+  await port.post({ type: "handoff", text: "what is on this page?", tabId: 9, choice: "replace", selection: { text: "Blue Widget" } });
+  await settle(300);
+  assert.equal(held.outcome.state, "limit");
+  assert.match(held.outcome.text, /What I had found:\nStep 1: Blue Widget is \$19\./);
+  const next = w.engine.sessions.get(1).run;
+  assert.notEqual(next.id, held.id);
+  assert.equal(next.task, "what is on this page?");
+  // A hold that carries on by itself still takes a word for when it does.
+  const timed = worker(Date.now() + 8 * HOUR);
+  const p2 = timed.connect(1);
+  await p2.hello();
+  await settle(40);
+  await p2.post({ type: "send", text: "also check the delivery time", tabId: 9 });
+  await settle(60);
+  assert.equal(p2.posted.some((m) => m.type === "handoff_live"), false);
+  assert.deepEqual(plain(timed.engine.sessions.get(1).run.steers), ["also check the delivery time"]);
 });
 
 test("a hold with nobody looking is told by a notice, once", async () => {
@@ -370,11 +547,26 @@ test("the hold card offers a backup, trying again and stopping with what was fou
   const agent = fs.readFileSync(path.join(EXT, "agent.js"), "utf8");
   assert.match(agent, /card\.dataset\.hold = wait\.hold/);
   assert.match(agent, /"hold-backup-btn [^"]+"/);
-  assert.match(agent, /"hold-retry-btn [^"]+", \(\) => enginePost\(\{ type: "try_again", id: wait\.id \}\)/);
-  assert.match(agent, /"Stop and answer with what you have", "hold-stop-btn [^"]+", \(\) => enginePost\(\{ type: "wrap_up", id: wait\.id \}\)/);
+  // Trying again may go to a provider the run did not start with: it is checked like a first request.
+  assert.match(agent, /"hold-retry-btn [^"]+", \(\) => tryHeldAgain\(wait\.id\)/);
+  assert.match(agent, /if \(backup\) tryHeldAgain\(wait\.id\);/);
+  assert.match(agent, /function tryHeldAgain\(id\) \{\s*const go = \(\) => enginePost\(\{ type: "try_again", id \}\);\s*if \(readyToSend\(go\)\) go\(\);\s*\}/);
+  assert.equal((agent.match(/type: "try_again"/g) || []).length, 2, "no button sends try_again past the check");
+  assert.match(agent, /if \(m\.type === "hold_needs"\) \{ holdNeeds\(m\); return; \}/);
+  assert.match(agent, /if \(!readyToSend\(\(\) => enginePost\(\{ type: "try_again", id: m\.id \}\)\)\) return;/);
+  // The stop on a hold ends the run with what it found (wrap_up), not with a plain stop.
+  const stopBtn = agent.split("\n").find((l) => l.includes('"hold-stop-btn '));
+  assert.match(stopBtn, /^\s*button\("Stop and answer with what you have", "hold-stop-btn [^"]+", \(\) => enginePost\(\{ type: "wrap_up", id: wait\.id \}\)\);$/);
+  // The pill: the model's name, then what is left.
+  assert.match(agent, /name\.textContent = left \? `\$\{pillBase\.text\} · \$\{left\.short\}` : pillBase\.text;/);
+  assert.match(agent, /if \(namespace === "local" && changes\.agentAllowance\) \{ allowance = changes\.agentAllowance\.newValue \|\| null; paintAllowance\(\); \}/);
+  // The count is the user's to clear, and is in the list of what is stored.
+  const reset = /const RESET_LOCAL_KEYS = \[([^\]]+)\]/.exec(fs.readFileSync(path.join(EXT, "options.js"), "utf8"))[1];
+  assert.ok(reset.split(",").map((k) => k.trim()).includes('"agentAllowance"'), "Reset clears it");
+  assert.match(fs.readFileSync(path.join(__dirname, "../../docs/privacy-disclosure.md"), "utf8"), /^\| `agentAllowance` \| local \| [^|]+ \| No \| [^|]*Reset[^|]* \|$/m);
   assert.match(agent, /SELECT_TO_AI_DEFAULTS\.allowanceLabel\(allowance, config\.agentActiveProvider, Date\.now\(\)\)/);
   // The count changes with every call and must not reload the whole page's settings.
   assert.match(agent, /every\(\(k\) => k === "agentAllowance" \|\|/);
   // The benchmark's stand-in user ends a held run, so a spent plan is still reported as one.
-  for (const f of ["run.js", "miniwob.js"]) assert.match(fs.readFileSync(path.join(__dirname, "../bench", f), "utf8"), /\.confirmation-bubble\[data-hold\] \.hold-stop-btn/);
+  for (const f of ["run.js", "miniwob.js"]) assert.match(fs.readFileSync(path.join(__dirname, "../bench", f), "utf8"), /const holdStop = document\.querySelector\("\.confirmation-bubble\[data-hold\] \.hold-stop-btn"\);\s*if \(holdStop\) holdStop\.click\(\);/);
 });
