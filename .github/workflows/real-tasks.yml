@@ -4,23 +4,28 @@ name: Real-task trial
 # Run by hand (Actions, "Real-task trial", Run workflow). How to run it and
 # how to read the results: docs/real-task-trial.md.
 #
-# Keys come from repository secrets only and are never printed:
-#   BENCH_API_KEY    the agent's provider key (required for a real run)
-#   BENCH_JUDGE_KEY  the judge's key (optional; BENCH_API_KEY is used without it)
-# and one optional repository variable, BENCH_JUDGE_URL, for a judge on
-# another OpenAI-compatible endpoint.
+# Keys come from repository secrets only and are never printed. Each key goes
+# to its own provider and nowhere else:
+#   provider anthropic  ->  ANTHROPIC_API_KEY, sent to api.anthropic.com
+#   provider openai     ->  OPENAI_API_KEY, sent to api.openai.com
+#   the judge           ->  always ANTHROPIC_API_KEY, on api.anthropic.com
+# The plan job fails for any other provider, for a model that is not that
+# provider's, and for a real run whose key is missing. run.js checks the
+# pairing again (BENCH_KEY_PROVIDER) and refuses a judge on another host.
 #
 # Dry mode needs no secret: the scripted model in tests/e2e/server.js plays
-# seven fixture tasks and the same artifacts and summary are produced. It runs
-# when the dry box is ticked, when BENCH_API_KEY is not set, and on every push
-# to the branch this workflow was written on, which never touches a secret.
+# the fixture tasks, a stub on the runner answers for the judge, and the same
+# artifacts and summary are produced. It runs when the dry box is ticked and
+# on every push to the branch this workflow was written on. It never reads a
+# secret. A manual run without the dry box is a real run or a failed one,
+# never a dry one.
 on:
   workflow_dispatch:
     inputs:
       suite:
-        description: "everyday: tests/bench/everyday-tasks.json (93 tasks). dev: tests/bench/smoke-tasks.json (12 tasks)"
+        description: "everyday: 93 tasks. dev: 12 smoke tasks. learn: 12 tasks run twice and 6 pairs of neighbours, learning on (tests/bench/learn-tasks.json)"
         type: choice
-        options: [everyday, dev]
+        options: [everyday, dev, learn]
         default: everyday
       arm:
         description: "shipped: the packed 4.0 build as it is (no debugger). debugger-on: the same build with the debugger permission added"
@@ -28,17 +33,30 @@ on:
         options: [shipped, debugger-on]
         default: shipped
       provider:
-        description: Provider id the agent runs on (extension/defaults.js PROVIDER_ENDPOINTS)
-        type: string
+        description: "The agent's provider. Its key is the repository secret of the same name and goes to that provider only"
+        type: choice
+        options: [anthropic, openai]
         default: anthropic
       model:
-        description: The agent's model
+        description: "The agent's model id. Empty: the provider's cheap one (anthropic claude-haiku-5-5, openai gpt-5.4-mini)"
         type: string
-        default: claude-haiku-5-5
+        default: ""
       judge_model:
-        description: The judge's model (a different one from the agent's)
+        description: The judge's model, a Claude model on Anthropic (a different one from the agent's)
         type: string
         default: claude-sonnet-5-5
+      learning:
+        description: "Learning on: tasks run one after another in one browser profile and keep what they learn. The learn suite is always on"
+        type: boolean
+        default: false
+      runs:
+        description: Runs per task (1 to 5). In the learn suite, runs per pair
+        type: string
+        default: "1"
+      recipes:
+        description: Save each passed run as a recipe and replay it once
+        type: boolean
+        default: false
       shards:
         description: Browsers in parallel, one job each (1 to 12)
         type: string
@@ -79,13 +97,19 @@ jobs:
       dry: ${{ steps.plan.outputs.dry }}
       suite: ${{ steps.plan.outputs.suite }}
       arm: ${{ steps.plan.outputs.arm }}
+      provider: ${{ steps.plan.outputs.provider }}
+      model: ${{ steps.plan.outputs.model }}
+      judge_model: ${{ steps.plan.outputs.judge_model }}
+      learn: ${{ steps.plan.outputs.learn }}
+      runs: ${{ steps.plan.outputs.runs }}
+      recipes: ${{ steps.plan.outputs.recipes }}
       tasks: ${{ steps.plan.outputs.tasks }}
       sample: ${{ steps.plan.outputs.sample }}
       shards: ${{ steps.plan.outputs.shards }}
       shard_count: ${{ steps.plan.outputs.shard_count }}
       cap_per_shard: ${{ steps.plan.outputs.cap_per_shard }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - id: plan
         name: Work out what to run
         # Inputs reach the script as environment values, never as script text.
@@ -94,43 +118,86 @@ jobs:
           IN_DRY: ${{ inputs.dry }}
           IN_SUITE: ${{ inputs.suite }}
           IN_ARM: ${{ inputs.arm }}
+          IN_PROVIDER: ${{ inputs.provider }}
+          IN_MODEL: ${{ inputs.model }}
+          IN_JUDGE_MODEL: ${{ inputs.judge_model }}
+          IN_LEARNING: ${{ inputs.learning }}
+          IN_RUNS: ${{ inputs.runs }}
+          IN_RECIPES: ${{ inputs.recipes }}
           IN_SHARDS: ${{ inputs.shards }}
           IN_LIMIT: ${{ inputs.limit }}
           IN_MAX_USD: ${{ inputs.max_usd }}
-          # Only asked whether it is set; the value is not used in this job.
-          HAS_KEY: ${{ secrets.BENCH_API_KEY != '' }}
+          # Only asked whether each is set; no value is used in this job.
+          HAS_ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          HAS_OPENAI_KEY: ${{ secrets.OPENAI_API_KEY != '' }}
         run: |
+          fail() { echo "::error::$1"; echo "$1" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
           dry=false
           why=""
           if [ "$EVENT" != "workflow_dispatch" ]; then dry=true; why="a push runs dry mode only"; fi
           if [ "$IN_DRY" = "true" ]; then dry=true; why="the dry box was ticked"; fi
-          if [ "$dry" = "false" ] && [ "$HAS_KEY" != "true" ]; then dry=true; why="the repository has no BENCH_API_KEY secret"; fi
 
           suite="${IN_SUITE:-everyday}"
           arm="${IN_ARM:-shipped}"
+          provider="${IN_PROVIDER:-anthropic}"
+          judge_model="${IN_JUDGE_MODEL:-claude-sonnet-5-5}"
+          runs="${IN_RUNS:-1}"
           shards="${IN_SHARDS:-6}"
           limit="${IN_LIMIT:-all}"
           cap="${IN_MAX_USD:-5}"
-          case "$suite" in everyday) tasks=tests/bench/everyday-tasks.json ;; dev) tasks=tests/bench/smoke-tasks.json ;; *) echo "suite must be everyday or dev"; exit 1 ;; esac
-          case "$arm" in shipped|debugger-on) ;; *) echo "arm must be shipped or debugger-on"; exit 1 ;; esac
-          echo "$shards" | grep -Eq '^[0-9]+$' || { echo "shards must be a whole number"; exit 1; }
-          if [ "$shards" -lt 1 ] || [ "$shards" -gt 12 ]; then echo "shards must be 1 to 12"; exit 1; fi
-          echo "$cap" | grep -Eq '^[0-9]+(\.[0-9]+)?$' || { echo "max_usd must be a number of US dollars"; exit 1; }
-          awk "BEGIN { exit !($cap > 0) }" || { echo "max_usd must be more than 0: a real run always has a cap"; exit 1; }
+          learn=""
+          case "$suite" in
+            everyday) tasks=tests/bench/everyday-tasks.json ;;
+            dev) tasks=tests/bench/smoke-tasks.json ;;
+            learn) tasks=tests/bench/learn-tasks.json; learn=pairs ;;
+            *) fail "suite must be everyday, dev or learn" ;;
+          esac
+          if [ -z "$learn" ] && [ "$IN_LEARNING" = "true" ]; then learn=on; fi
+          recipes=false
+          if [ "$IN_RECIPES" = "true" ]; then recipes=true; fi
+          case "$arm" in shipped|debugger-on) ;; *) fail "arm must be shipped or debugger-on" ;; esac
+
+          # The pairing of provider, key and endpoint is written out here and nowhere guessed.
+          case "$provider" in
+            anthropic) has_agent_key="$HAS_ANTHROPIC_KEY"; key_name=ANTHROPIC_API_KEY; cheap=claude-haiku-5-5; fits='^claude-' ;;
+            openai) has_agent_key="$HAS_OPENAI_KEY"; key_name=OPENAI_API_KEY; cheap=gpt-5.4-mini; fits='^(gpt-|o[0-9])' ;;
+            *) fail "provider must be anthropic or openai: no other provider has a key paired with it in this workflow" ;;
+          esac
+          model="${IN_MODEL:-$cheap}"
+          echo "$model" | grep -Eq '^[A-Za-z0-9._:/-]+$' || fail "model must be a model id"
+          echo "$model" | grep -Eq "$fits" || fail "model $model is not a $provider model, so the $provider key would be sent with another provider's model id"
+          echo "$judge_model" | grep -Eq '^claude-[A-Za-z0-9._-]+$' || fail "judge_model must be a Claude model: the judge always runs on Anthropic with ANTHROPIC_API_KEY"
+          if [ "$judge_model" = "$model" ]; then fail "the judge must be a different model from the agent's"; fi
+
+          # A manual run that is not dry is a real run. With a key missing it fails; it never turns into a dry run.
+          if [ "$dry" = "false" ]; then
+            if [ "$has_agent_key" != "true" ]; then fail "the repository has no $key_name secret, which provider $provider needs. Nothing was run. Tick dry for a dry run."; fi
+            if [ "$HAS_ANTHROPIC_KEY" != "true" ]; then fail "the repository has no ANTHROPIC_API_KEY secret, which the judge needs. Nothing was run. Tick dry for a dry run."; fi
+          fi
+
+          echo "$shards" | grep -Eq '^[0-9]+$' || fail "shards must be a whole number"
+          if [ "$shards" -lt 1 ] || [ "$shards" -gt 12 ]; then fail "shards must be 1 to 12"; fi
+          echo "$runs" | grep -Eq '^[1-5]$' || fail "runs must be 1 to 5"
+          echo "$cap" | grep -Eq '^[0-9]+(\.[0-9]+)?$' || fail "max_usd must be a number of US dollars"
+          awk "BEGIN { exit !($cap > 0) }" || fail "max_usd must be more than 0: a real run always has a cap"
           sample=0
           if [ "$limit" != "all" ]; then
-            echo "$limit" | grep -Eq '^[1-9][0-9]*$' || { echo "limit must be all or a whole number"; exit 1; }
+            echo "$limit" | grep -Eq '^[1-9][0-9]*$' || fail "limit must be all or a whole number"
             sample="$limit"
           fi
 
           if [ "$dry" = "true" ]; then
             suite=fixture
             tasks=tests/bench/fixture-tasks.json
+            learn=""
+            recipes=false
+            runs=1
             shards=2
             sample=0
             cap=2
           fi
-          total=$(node -e "console.log(require('./tests/bench/judge.js').normaliseTasks(require('./' + process.argv[1])).length)" "$tasks")
+          # A learn run is counted in pairs: the task that starts each one.
+          total=$(node -e "const T = require('./tests/bench/trial.js'); const all = require('./tests/bench/judge.js').normaliseTasks(require('./' + process.argv[1])); console.log(process.argv[2] === 'pairs' ? T.learnPlan(all).length : all.length)" "$tasks" "$learn")
           count="$total"
           if [ "$sample" -gt 0 ] && [ "$sample" -lt "$total" ]; then count="$sample"; fi
           if [ "$shards" -gt "$count" ]; then shards="$count"; fi
@@ -141,6 +208,12 @@ jobs:
             echo "dry=$dry"
             echo "suite=$suite"
             echo "arm=$arm"
+            echo "provider=$provider"
+            echo "model=$model"
+            echo "judge_model=$judge_model"
+            echo "learn=$learn"
+            echo "runs=$runs"
+            echo "recipes=$recipes"
             echo "tasks=$tasks"
             echo "sample=$sample"
             echo "shards=$list"
@@ -150,11 +223,16 @@ jobs:
           {
             echo "### Plan"
             echo ""
-            if [ "$dry" = "true" ]; then echo "Dry mode ($why): scripted model, fixture pages, no key is read and nothing is spent."; fi
-            echo "$count task(s) from \`$tasks\`, arm \`$arm\`, $shards shard(s), spend cap \$$cap (\$$per per shard)."
+            if [ "$dry" = "true" ]; then
+              echo "Dry mode ($why): scripted model, fixture pages, a stub for the judge. No key is read and nothing is spent."
+            else
+              echo "Real run. Agent: \`$provider\` / \`$model\`, key \`$key_name\`, sent to $provider only. Judge: \`$judge_model\` on Anthropic, key \`ANTHROPIC_API_KEY\`."
+            fi
+            echo "$count $([ "$learn" = "pairs" ] && echo "pair(s)" || echo "task(s)") from \`$tasks\`, $runs run(s) each, arm \`$arm\`, learning \`${learn:-off}\`, recipes \`$recipes\`, $shards shard(s), spend cap \$$cap (\$$per per shard)."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: The task files are sound
-        run: node tests/bench/trial.js validate tests/bench/everyday-tasks.json && node tests/bench/trial.js validate tests/bench/fixture-tasks.json
+        run: |
+          for f in everyday-tasks learn-tasks fixture-tasks fixture-learn-tasks; do node tests/bench/trial.js validate "tests/bench/$f.json"; done
 
   # The packed 4.0 zip, built and checked the way ci.yml's package-integrity job does it.
   build:
@@ -164,8 +242,8 @@ jobs:
     outputs:
       artifact: ${{ steps.meta.outputs.artifact }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - run: node scripts/package-extension.mjs
@@ -176,7 +254,7 @@ jobs:
           cp dist/select-to-ai-extension.zip "dist/${artifact}"
           echo "artifact=${artifact}" >> "$GITHUB_OUTPUT"
       - run: node scripts/check-package.mjs "dist/${{ steps.meta.outputs.artifact }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ steps.meta.outputs.artifact }}
           path: dist/${{ steps.meta.outputs.artifact }}
@@ -193,8 +271,8 @@ jobs:
       matrix:
         shard: ${{ fromJSON(needs.plan.outputs.shards) }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -204,7 +282,7 @@ jobs:
       - run: npx puppeteer browsers install chrome
       # Ubuntu 24.04 blocks the unprivileged user namespaces Chrome's sandbox needs.
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ${{ needs.build.outputs.artifact }}
       - run: mkdir -p build && unzip -q "${{ needs.build.outputs.artifact }}" -d build
@@ -219,16 +297,23 @@ jobs:
           BENCH_DEBUGGER: ${{ needs.plan.outputs.arm == 'debugger-on' && 'on' || '' }}
           BENCH_MAX_USD: ${{ needs.plan.outputs.cap_per_shard }}
           BENCH_TIMEOUT_S: ${{ needs.plan.outputs.dry == 'true' && '40' || '300' }}
-          BENCH_PROVIDER: ${{ inputs.provider || 'anthropic' }}
-          BENCH_MODEL: ${{ inputs.model || 'claude-haiku-5-5' }}
-          BENCH_JUDGE_MODEL: ${{ inputs.judge_model || 'claude-sonnet-5-5' }}
-          BENCH_JUDGE_URL: ${{ vars.BENCH_JUDGE_URL }}
-          # Dry mode is given no key at all.
-          BENCH_API_KEY: ${{ needs.plan.outputs.dry != 'true' && secrets.BENCH_API_KEY || '' }}
-          BENCH_JUDGE_KEY: ${{ needs.plan.outputs.dry != 'true' && secrets.BENCH_JUDGE_KEY || '' }}
+          BENCH_LEARN: ${{ needs.plan.outputs.learn }}
+          BENCH_RUNS: ${{ needs.plan.outputs.runs }}
+          BENCH_RECIPES: ${{ needs.plan.outputs.recipes == 'true' && '1' || '' }}
+          # The browser says what it is. A site that refuses an automated visit shows as blocked and leaves the task file.
+          BENCH_DISGUISE: "off"
+          BENCH_PROVIDER: ${{ needs.plan.outputs.provider }}
+          BENCH_MODEL: ${{ needs.plan.outputs.model }}
+          # The agent's key is the secret of its own provider, and run.js is told which provider that is.
+          BENCH_KEY_PROVIDER: ${{ needs.plan.outputs.provider }}
+          BENCH_API_KEY: ${{ needs.plan.outputs.dry != 'true' && (needs.plan.outputs.provider == 'anthropic' && secrets.ANTHROPIC_API_KEY || needs.plan.outputs.provider == 'openai' && secrets.OPENAI_API_KEY) || '' }}
+          # The judge: always Anthropic's endpoint with Anthropic's key. Dry mode is given no key at all.
+          BENCH_JUDGE_MODEL: ${{ needs.plan.outputs.judge_model }}
+          BENCH_JUDGE_URL: https://api.anthropic.com/v1/messages
+          BENCH_JUDGE_KEY: ${{ needs.plan.outputs.dry != 'true' && secrets.ANTHROPIC_API_KEY || '' }}
         run: node tests/bench/run.js
-      # Per task: run.json (steps, outcome, verdict, cost, time, failure, counters), log.txt and the screenshots.
-      - uses: actions/upload-artifact@v4
+      # Per task: run.json (steps, outcome, verdict, cost, time, failure, counters, form state), log.txt and the screenshots.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: trial-shard-${{ matrix.shard }}
@@ -243,11 +328,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: trial-shard-*
           path: tests/bench/out/trial
@@ -259,15 +344,87 @@ jobs:
           SUITE: ${{ needs.plan.outputs.suite }}
           ARM: ${{ needs.plan.outputs.arm }}
           DRY: ${{ needs.plan.outputs.dry }}
+          LEARN: ${{ needs.plan.outputs.learn }}
+          RUNS: ${{ needs.plan.outputs.runs }}
         run: |
           mkdir -p tests/bench/out/trial
           check=""
           if [ "$DRY" = "true" ]; then check="--check-dry"; fi
-          node tests/bench/trial.js summary tests/bench/out/trial --tasks "$TASKS" --sample "$SAMPLE" --suite "$SUITE" --arm "$ARM" --commit "$GITHUB_SHA" $check | tee -a "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+          # Fails when a shard's build is not the arm's, or the shipped arm made a real input event.
+          node tests/bench/trial.js summary tests/bench/out/trial --tasks "$TASKS" --sample "$SAMPLE" --suite "$SUITE" --arm "$ARM" --runs "$RUNS" --learn "$LEARN" --commit "$GITHUB_SHA" $check | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: trial-summary
           path: tests/bench/out/trial/trial-summary.json
           if-no-files-found: warn
           retention-days: 30
+
+  # Dry mode only: the paths the plain dry run does not reach. Each leg runs
+  # the fixtures one more way and fails unless that way left its mark.
+  dry-legs:
+    name: dry leg (${{ matrix.leg }})
+    needs: [plan, build]
+    if: ${{ needs.plan.outputs.dry == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The same build with the debugger permission: every shard must report chrome.debugger.
+          - { leg: debugger-on, arm: debugger-on, debugger: "on", tasks: tests/bench/fixture-tasks.json, cap: "2", learn: "", recipes: "", check: "" }
+          # A cap far below one run's priced tokens: the run must stop for it.
+          - { leg: spend-cap, arm: shipped, debugger: "", tasks: tests/bench/fixture-tasks.json, cap: "0.0005", learn: "", recipes: "", check: cap }
+          # Learning on, one task twice and one pair of neighbours in one profile each.
+          - { leg: learn, arm: shipped, debugger: "", tasks: tests/bench/fixture-learn-tasks.json, cap: "2", learn: pairs, recipes: "", check: learn }
+          # Each passed run saved as a recipe by the extension and replayed once.
+          - { leg: recipes, arm: shipped, debugger: "", tasks: tests/bench/fixture-tasks.json, cap: "2", learn: "", recipes: "1", check: recipes }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - run: npx puppeteer browsers install chrome
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+      - run: mkdir -p build && unzip -q "${{ needs.build.outputs.artifact }}" -d build
+      - name: Run the fixtures this way
+        env:
+          BENCH_DRY: "1"
+          BENCH_EXTENSION: build
+          BENCH_TASKS: ${{ matrix.tasks }}
+          BENCH_OUT: tests/bench/out/leg
+          BENCH_DEBUGGER: ${{ matrix.debugger }}
+          BENCH_MAX_USD: ${{ matrix.cap }}
+          BENCH_TIMEOUT_S: "40"
+          BENCH_LEARN: ${{ matrix.learn }}
+          BENCH_RECIPES: ${{ matrix.recipes }}
+          BENCH_DISGUISE: "off"
+        run: node tests/bench/run.js
+      - name: Check what it left
+        if: always()
+        env:
+          TASKS: ${{ matrix.tasks }}
+          ARM: ${{ matrix.arm }}
+          LEARN: ${{ matrix.learn }}
+          CHECK: ${{ matrix.check }}
+          LEG: ${{ matrix.leg }}
+        run: |
+          mkdir -p tests/bench/out/leg
+          check=""
+          if [ -n "$CHECK" ]; then check="--check $CHECK"; fi
+          node tests/bench/trial.js summary tests/bench/out/leg --tasks "$TASKS" --suite "fixture, dry leg $LEG" --arm "$ARM" --learn "$LEARN" --commit "$GITHUB_SHA" $check | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: trial-dry-leg-${{ matrix.leg }}
+          path: tests/bench/out/leg
+          if-no-files-found: warn
+          retention-days: 7
