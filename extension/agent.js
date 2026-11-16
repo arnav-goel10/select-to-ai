@@ -248,7 +248,8 @@
   // Enter sends. While the run works, what is typed goes to it as guidance
   // for its next step, and never stops it.
   taskInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    // Enter that confirms an IME word (Chinese, Japanese, Korean) is not a send.
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       if (engineStatus === "running") queueSteerMessage();
       else if (!engineBusy()) startAgent();
@@ -385,7 +386,7 @@
         row.addEventListener("click", reuse);
         row.addEventListener("keydown", (e) => {
           if (e.target !== row) return;
-          if (e.key === "Enter" || e.key === " ") {
+          if ((e.key === "Enter" || e.key === " ") && !e.isComposing) {
             e.preventDefault();
             reuse();
           }
@@ -447,7 +448,7 @@
         box.setAttribute("aria-label", "Edit this");
         let done = false;
         const save = () => { if (done) return; done = true; const v = box.value.trim(); if (v && v !== text) onEdit(v); else box.replaceWith(t); };
-        box.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); save(); } else if (e.key === "Escape") { e.stopPropagation(); done = true; box.replaceWith(t); } });
+        box.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); save(); } else if (e.key === "Escape") { e.stopPropagation(); done = true; box.replaceWith(t); } });
         box.addEventListener("blur", save);
         t.replaceWith(box);
         box.focus();
@@ -598,6 +599,14 @@
     const out = el("div", "recipe-run-out");
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
+      // A recipe that meets a changed page asks the model about it, so the
+      // same consent comes first.
+      const SETUP = window.SELECT_TO_AI_SETUP;
+      if (SETUP && SETUP.missingConsent(config.dataConsent, sendTargets().map((t) => t.id)).length) {
+        status.textContent = "Agree to what the agent sends first, in the conversation.";
+        readyToSend(() => form.requestSubmit());
+        return;
+      }
       go.disabled = true;
       out.textContent = "";
       const vars = Object.fromEntries(inputs.map((i) => [i.name, i.value]));
@@ -738,7 +747,17 @@
           img.height = 16;
           img.src = faviconFor(url);
           item.append(img, el("span", "grow", name), icon("external"));
-          item.addEventListener("click", () => { closeAssistants(); openAssistant(url, host); });
+          item.addEventListener("click", () => {
+            closeAssistants();
+            // claude.ai is optional in 4.0: Chrome asks on the first pick.
+            const G = window.SELECT_TO_AI_GRANTS;
+            if (host !== HOSTS.CLAUDE || !G) { openAssistant(url, host); return; }
+            G.requestHost(G.ASSISTANT_HOSTS.claude).then((ok) => {
+              if (!ok) { appendSimpleAssistantBubble("Chrome did not allow claude.ai, so Claude cannot open here."); return; }
+              G.registerAssistantScripts();
+              openAssistant(url, host);
+            });
+          });
           assistantsMenu.appendChild(item);
         }
         if (!sites.length) assistantsMenu.appendChild(el("div", "menu-label", "Turn assistants on in Settings."));
@@ -935,7 +954,7 @@
     chrome.storage.sync.get(
       [...CONFIG.STORAGE.SETTINGS, ...syncedKeys],
       (syncItems) => {
-        chrome.storage.local.get([...syncedKeys, "agentProviderPause", "chatgptAccount"], (localItems) => {
+        chrome.storage.local.get([...syncedKeys, "agentProviderPause", "chatgptAccount", "agentDataConsent"], (localItems) => {
           const migratedKeys = {};
           syncedKeys.forEach((key) => {
             if (!localItems[key] && syncItems[key]) migratedKeys[key] = syncItems[key];
@@ -965,6 +984,7 @@
 
       config.agentModel = items.agentModel || DEFAULTS.model;
       config.agentBackupProvider = items.agentBackupProvider || "";
+      config.dataConsent = items.agentDataConsent || {};
       applyProviderPause(items.agentProviderPause);
 
       connectEngine();
@@ -1551,6 +1571,11 @@
       return;
     }
 
+    // A word to a run already going was agreed to when that run started. A
+    // handed task always starts a new run, so it is checked like any other.
+    const steering = !handoff && (engineStatus === "running" || engineStatus === "waiting");
+    if (!steering && !readyToSend(() => startAgentWithLoadedSettings(handoff))) return;
+
     if (handoff) {
       taskInput.value = "";
       taskInput.style.height = "auto";
@@ -1558,6 +1583,104 @@
       return;
     }
     routeUserTurn(task);
+  }
+
+  // ---------- data consent and host access, before the first request ----------
+  // The providers this run may send to: the main one, and the backup when it
+  // has a key. Each has its own consent (setup.js) and its own host grant.
+  function sendTargets() {
+    const SETUP = window.SELECT_TO_AI_SETUP;
+    const main = config.agentActiveProvider;
+    const list = [{ provider: main, customUrl: main === "custom" ? config.agentCustomUrl : "" }];
+    const b = config.agentBackupProvider;
+    if (b && b !== main && b !== "custom" && hasProviderCredentials(b)) list.push({ provider: b, customUrl: "" });
+    return list.map((t) => ({ ...t, id: SETUP.consentId(t.provider, t.customUrl), origin: SETUP.providerOrigin(t.provider, t.customUrl) }));
+  }
+
+  let consentShown = null;
+  let hostsChecked = "";
+  /**
+   * True when the task can go now. Otherwise it shows what is needed (the
+   * consent card, or a button to let Chrome reach the provider), calls
+   * `again` once that is done, and returns false. Nothing is sent before.
+   */
+  function readyToSend(again) {
+    const SETUP = window.SELECT_TO_AI_SETUP;
+    const G = window.SELECT_TO_AI_GRANTS;
+    if (!SETUP) return true;
+    const targets = sendTargets();
+    const missing = SETUP.missingConsent(config.dataConsent, targets.map((t) => t.id));
+    const origins = targets.map((t) => t.origin).filter(Boolean);
+    if (missing.length) {
+      showConsent(targets, origins, again);
+      return false;
+    }
+    const key = origins.join(" ");
+    if (!G || !origins.length || hostsChecked === key) return true;
+    // Asked for in this gesture when it is one; else a button asks.
+    Promise.all(origins.map((o) => G.hasHost(o))).then((have) => {
+      if (have.every(Boolean)) { hostsChecked = key; again(); return; }
+      G.requestHost(origins).then((ok) => {
+        if (ok) { hostsChecked = key; again(); return; }
+        askForHosts(targets, origins, again);
+      });
+    });
+    return false;
+  }
+
+  function showConsent(targets, origins, again) {
+    const SETUP = window.SELECT_TO_AI_SETUP;
+    const G = window.SELECT_TO_AI_GRANTS;
+    if (consentShown && consentShown.isConnected) { consentShown.scrollIntoView({ block: "center" }); return; }
+    const main = targets[0];
+    const backup = targets[1];
+    const bubble = el("div", "message-bubble assistant consent-bubble");
+    const content = el("div", "bubble-content");
+    const card = SETUP.consentCard(document, {
+      provider: main.provider,
+      customUrl: main.customUrl,
+      backup: backup ? { provider: backup.provider } : null,
+      onAgree: () => {
+        // The host request goes first, while the click still counts.
+        const reached = G && origins.length ? G.requestHost(origins) : Promise.resolve(true);
+        return SETUP.recordConsent(chrome.storage.local, targets.map((t) => t.id)).then((c) => {
+          config.dataConsent = c;
+          return reached;
+        }).then((ok) => {
+          bubble.remove();
+          consentShown = null;
+          if (!ok) { askForHosts(targets, origins, again); return ""; }
+          hostsChecked = origins.join(" ");
+          again();
+          return "";
+        });
+      },
+      onCancel: () => { bubble.remove(); consentShown = null; appendSimpleAssistantBubble("Nothing was sent. Your task is still in the box."); },
+    });
+    content.appendChild(card);
+    bubble.appendChild(content);
+    chatContainer.appendChild(bubble);
+    consentShown = bubble;
+    scrollToBottom(true);
+  }
+
+  function askForHosts(targets, origins, again) {
+    const G = window.SELECT_TO_AI_GRANTS;
+    const names = targets.map((t) => friendlyProviderName(t.provider)).join(" and ");
+    const bubble = appendSimpleAssistantBubble(`Chrome has not let the extension reach ${names} yet, so nothing was sent.`);
+    const row = el("div", "confirm-actions");
+    const allow = el("button", "btn btn-primary", "Allow access");
+    allow.type = "button";
+    allow.addEventListener("click", () => {
+      G.requestHost(origins).then((ok) => {
+        if (!ok) return;
+        hostsChecked = origins.join(" ");
+        bubble.remove();
+        again();
+      });
+    });
+    row.appendChild(allow);
+    bubble.querySelector(".bubble-content").appendChild(row);
   }
 
   /**
@@ -1630,7 +1753,15 @@
     } catch (_e) { enginePort = null; return; }
     enginePort.onMessage.addListener(onEngineMessage);
     // The worker was restarted: connect again and be sent the run afresh.
-    enginePort.onDisconnect.addListener(() => { enginePort = null; setTimeout(connectEngine, 300); });
+    // A hidden page with no run under way waits until it is looked at (or
+    // sends something), so it does not keep waking the worker for nothing.
+    enginePort.onDisconnect.addListener(() => {
+      enginePort = null;
+      engineReady = false;
+      const live = engineStatus === "running" || engineStatus === "waiting";
+      if (document.hidden && !live) { reconnectWhenSeen = true; return; }
+      setTimeout(connectEngine, 300);
+    });
     engineReady = false;
     chrome.windows.getCurrent((w) => {
       void chrome.runtime.lastError;
@@ -1642,12 +1773,19 @@
     });
   }
 
+  let reconnectWhenSeen = false;
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden || !reconnectWhenSeen) return;
+    reconnectWhenSeen = false;
+    connectEngine();
+  });
+
   // Nothing is sent before the engine knows which window this view is for.
   let engineReady = false;
   let engineFreshDone = false;
   const engineQueue = [];
   function enginePost(message) {
-    if (!enginePort) connectEngine();
+    if (!enginePort) { reconnectWhenSeen = false; connectEngine(); }
     if (!engineReady) { engineQueue.push(message); return; }
     try { enginePort.postMessage(message); } catch (_e) { engineQueue.push(message); }
   }
@@ -2291,7 +2429,7 @@
       go.className = "feedback-send";
       go.textContent = "Send";
       go.addEventListener("click", () => send(false, why.value.trim()));
-      why.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); send(false, why.value.trim()); } });
+      why.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); e.stopPropagation(); send(false, why.value.trim()); } });
       row.append(why, go);
       why.focus();
     };
@@ -2473,7 +2611,7 @@
       change({ op: "add", entry: { kind: "context", text, scope: "global", source: "you_said" } });
       input.value = "";
     });
-    document.getElementById("knownWipe").addEventListener("click", () => { if (confirm("Forget everything the assistant knows about you and your sites?")) change({ op: "wipe" }); });
+    document.getElementById("knownWipe").addEventListener("click", () => { if (confirm("Forget everything the agent knows about you and your sites?")) change({ op: "wipe" }); });
     document.getElementById("knownExport").addEventListener("click", () => {
       if (!engineMemory) return;
       const url = URL.createObjectURL(new Blob([JSON.stringify(engineMemory, null, 2)], { type: "application/json" }));
@@ -2636,8 +2774,10 @@
       taskInput.value = handedTask.slice(0, 2000);
       taskInput.style.height = "auto";
       taskInput.style.height = taskInput.scrollHeight + "px";
-      if (params.get("autostart") === "1" && !isRunning) {
-        startAgent();
+      if (params.get("autostart") === "1") {
+        // A new task, whatever the window is doing. With a run live here the
+        // engine asks whether to stop it or queue this one; it never steers it.
+        startAgent(true);
       } else {
         taskInput.focus();
       }
