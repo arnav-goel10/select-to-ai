@@ -1,0 +1,19 @@
+{
+  "source": "Storage shapes written by Select to AI 2.0 (arnav-prak/select-to-ai at 2f1afab: background.js updateCache, popup.js and sidepanel.js). A user who chose the popup window and turned auto-send on, and never touched the assistant switches or auto-context, so those keys are absent (2.0 read absent showChatGPT, showGemini and showPerplexity as on, and absent autoContext as off).",
+  "sync": {
+    "openingMode": "sidebarWindow",
+    "sidebarMode": true,
+    "contextMode": "tokenSaving",
+    "autoSend": true
+  },
+  "local": {
+    "sidePanelState": {
+      "url": "https://gemini.google.com/app",
+      "selectedText": "",
+      "autoSend": false,
+      "timestamp": 1767443000000
+    }
+  },
+  "absent": ["showChatGPT", "showGemini", "showPerplexity", "autoContext"],
+  "legacy": ["sidebarMode", "contextMode"]
+}

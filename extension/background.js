@@ -5,6 +5,8 @@
 
 // Import shared configuration
 importScripts('config.js', 'defaults.js', 'security.js', 'commonWords.js', 'omnibox.js');
+// Optional permissions (notifications, optional hosts) go through one helper.
+importScripts('core/grants.js');
 // The agent's runs live in this worker (engine.js), not in the side panel.
 importScripts('publicSuffixes.js', 'agentTools.js', 'agentPrompt.js', 'usageLimits.js', 'pageSearch.js',
     'chatgptAuth.js', 'chatgptConnect.js',

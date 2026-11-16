@@ -80,7 +80,9 @@ test("free backups are real providers with endpoints and default models", () => 
     assert.ok(defaults.PROVIDER_FALLBACK_MODELS[b.provider].lite, b.provider);
   }
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../../extension/manifest.json"), "utf8"));
-  assert.ok(manifest.host_permissions.includes("https://api.cerebras.ai/*"));
+  // Provider hosts are optional in 4.0 and asked for in the click that needs them.
+  assert.ok(!manifest.host_permissions.includes("https://api.cerebras.ai/*"));
+  assert.ok(manifest.optional_host_permissions.includes("https://*/*"), "api.cerebras.ai can be granted");
 });
 
 test("new key formats are accepted and never stored as memories", () => {
