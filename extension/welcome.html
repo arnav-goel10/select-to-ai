@@ -61,14 +61,9 @@
 
         <div class="connect" id="connect">
           <h2>Turn on the agent</h2>
-          <p>It needs an AI model to think with. OpenRouter has free ones, <span id="chatgptMention">you can use your ChatGPT plan, </span>or use a key from OpenAI, Anthropic, Gemini, Groq or xAI.</p>
+          <p>It needs an AI model to think with. OpenRouter has free ones, or use a key from OpenAI, Anthropic, Gemini, Groq or xAI.</p>
           <button class="btn btn-primary btn-lg btn-block" id="connectOR" type="button">Continue with OpenRouter (free)</button>
           <p class="fine">Sign in or sign up in the window that opens. No card needed.</p>
-          <div id="chatgptWay">
-            <div class="or">or use your ChatGPT plan</div>
-            <div id="chatgptSlot"></div>
-            <p class="fine">Complete eligible AI requests with usage included in your ChatGPT plan or credits balance.</p>
-          </div>
           <div class="or">or paste a key you already have</div>
           <div class="paste">
             <input class="input mono" id="keyInput" type="password" autocomplete="off" spellcheck="false" placeholder="Paste an API key" aria-label="API key" />
@@ -94,8 +89,6 @@
     <script src="usageLimits.js"></script>
     <script src="core/grants.js"></script>
     <script src="setup.js"></script>
-    <script src="chatgptAuth.js"></script>
-    <script src="chatgptUi.js"></script>
     <script src="welcome.js"></script>
   </body>
 </html>

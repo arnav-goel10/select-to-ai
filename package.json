@@ -22,7 +22,6 @@
     "bench:split": "node tests/bench/split.js",
     "bench:matrix": "node tests/bench/matrix.js",
     "test:widgets": "node tests/e2e/widgets.js",
-    "test:chatgpt": "node tests/e2e/chatgpt-capture.js",
     "bench:chatgpt-login": "node tests/bench/chatgpt-profile.js",
     "bench:recipes": "node bench/recipes/run.js",
     "test:recipes": "node --test tests/recipes/*.test.js",

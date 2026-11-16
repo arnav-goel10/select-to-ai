@@ -733,8 +733,8 @@
     if (client) return client;
     client = LLM.createClient({
       fetch: (...a) => fetch(...a),
-      // The current access token for a user signed in with ChatGPT (chatgptConnect.js).
-      chatgptToken: (force) => root.SELECT_TO_AI_CHATGPT_CONNECT.accessToken(force),
+      // The access token for Sign in with ChatGPT, which the 4.0 package does not include.
+      chatgptToken: root.SELECT_TO_AI_CHATGPT_CONNECT ? (force) => root.SELECT_TO_AI_CHATGPT_CONNECT.accessToken(force) : undefined,
       sleep,
       now: () => Date.now(),
       // What the client did for itself (a re-ask, a retry that recovered)
