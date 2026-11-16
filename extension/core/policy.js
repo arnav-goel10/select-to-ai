@@ -354,7 +354,8 @@
    * model once the run is there, so a tab the run did not open, on a site
    * that is not part of the request, is the user's to allow: once per site.
    * When the user limits the agent to some sites, a tab elsewhere is
-   * refused. A tab not in the list is left to the engine, which says so.
+   * refused. A tab not in the list the run was shown is refused, unless the
+   * run opened it.
    */
   function decideSwitch(a, run, s, tabs) {
     const tab = (tabs || []).find((t) => t && t.id === a.tab);
