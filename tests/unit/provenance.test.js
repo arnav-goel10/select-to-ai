@@ -63,7 +63,9 @@ test("an address is traced to the user, a page, a front page, a trusted site, or
   assert.equal(from("https://help.example.org/returns?lang=en"), "task");
   assert.equal(from("https://blog.example.net/posts/42"), "seen");
   assert.equal(from("https://blog.example.net/search?q=teapot"), "written", "a plain link with query values the model chose");
-  assert.equal(T.addressOrigin("https://blog.example.net/search?q=teapot", ctx({ seenSearches: new Set(["https://blog.example.net/search"]) })), "seen", "where a search form sends, with other words");
+  const blogSearch = new Set(["https://blog.example.net/search"]);
+  assert.equal(T.addressOrigin("https://blog.example.net/search?q=teapot", ctx({ seenSearches: blogSearch, page: { innerText: "Teapot reviews", elements: [] } })), "seen", "where a search form sends, with words the page shows");
+  assert.equal(T.addressOrigin("https://blog.example.net/search?q=order+4411", ctx({ seenSearches: blogSearch, page: { innerText: "Teapot reviews", elements: [] } })), "written", "where a search form sends, with words from nowhere");
   assert.equal(from("https://example.io/"), "home");
   assert.equal(from("https://www.example.io/"), "home");
   assert.equal(from("https://anything.example.io/"), "written", "a name under a site can carry data in its labels");
@@ -74,10 +76,11 @@ test("an address is traced to the user, a page, a front page, a trusted site, or
   // where each search form sends to the seen addresses).
   assert.equal(from("https://www.google.com/search?q=kettle+reviews"), "written");
   const forms = ["https://search.naver.com/search.naver", "https://search.seznam.cz/", "https://www.baidu.com/s"];
-  const searched = (url) => T.addressOrigin(url, ctx({ seenUrls: new Set(forms), seenSearches: new Set(forms) }));
+  const searched = (url, asked = "find a 주전자, a konvice and a 水壶") => T.addressOrigin(url, ctx({ seenUrls: new Set(forms), seenSearches: new Set(forms), task: asked }));
   assert.equal(searched("https://search.naver.com/search.naver?query=%EC%A3%BC%EC%A0%84%EC%9E%90"), "seen");
   assert.equal(searched("https://search.seznam.cz/?q=konvice"), "seen");
   assert.equal(searched("https://www.baidu.com/s?wd=%E6%B0%B4%E5%A3%B6"), "seen");
+  assert.equal(searched("https://www.baidu.com/s?wd=%E6%B0%B4%E5%A3%B6", "find a kettle"), "written", "words neither the request nor the page holds");
   assert.equal(searched("https://www.baidu.com/collect?wd=x"), "written", "another path on the same site");
   assert.equal(from("https://blog.example.net/admin/export"), "written", "a path never seen, on a site that is not part of the task");
 });

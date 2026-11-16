@@ -1083,8 +1083,8 @@
    * Where a navigation address came from:
    *   "task"    the user wrote it
    *   "seen"    it was a link on a page read this run, exactly as shown, or
-   *             where a search form on such a page sends (with any query
-   *             values)
+   *             where a search form on such a page sends, with words from
+   *             the request or the current page
    *   "home"    a site's front page: nothing in it but the site's own name
    *             (or www. and it), or the name of a host already seen or
    *             trusted. Never an IP address or a local network name.
@@ -1096,7 +1096,7 @@
    * is the same act as typing into that form, which is not held anywhere.
    * A plain link with other query values is not: the values are the
    * model's, and a page can show a link only to have it filled in.
-   * ctx: {task, seenUrls, seenSearches, trustedSites}.
+   * ctx: {task, seenUrls, seenSearches, trustedSites, page}.
    */
   function addressOrigin(url, ctx) {
     const c = ctx || {};
@@ -1116,9 +1116,23 @@
     if (seen.some((known) => known === target || exactUrl(known) === exact)) return "seen";
     // The same search with other words ("?q=kettle" seen, "?q=teapot" asked
     // for) is typing into that site's search form, so it counts as seen.
-    if (c.seenSearches && [...c.seenSearches].some((known) => stripUrl(known) === bare)) return "seen";
+    // On a site that is not part of the task, the words are held as typing
+    // into that form would be: free only when they are the request's or the
+    // current page's own words (wordsKnownHere), since a page can declare a
+    // search form that sends anywhere.
     if (trusted) return "trusted";
+    const form = c.seenSearches ? [...c.seenSearches].find((known) => stripUrl(known) === bare) : null;
+    if (form && wordsKnownHere(queryWords(target, form), c.task, c.page)) return "seen";
     return "written";
+  }
+
+  /** The query values of `url` that the search form's own address does not already hold. */
+  function queryWords(url, form) {
+    let own;
+    try { own = new URL(form).searchParams; } catch (_e) { own = new URLSearchParams(); }
+    try {
+      return [...new URL(url).searchParams].filter(([k, v]) => own.get(k) !== v).map(([, v]) => v).join(" ");
+    } catch (_e) { return ""; }
   }
 
   /**
@@ -1324,7 +1338,7 @@
     const els = (page && page.elements) || [];
     const pageUrl = String((page && page.url) || "");
     if ((action.action === "navigate" || action.action === "open_tab") && action.url) {
-      return addressOrigin(action.url, ctx) === "written" ? { kind: "address", why: RISK_TEXT.address, target: clip(action.url, 200), url: action.url } : null;
+      return addressOrigin(action.url, { ...ctx, page }) === "written" ? { kind: "address", why: RISK_TEXT.address, target: clip(action.url, 200), url: action.url } : null;
     }
     // Typing on a site the user did not send the agent to. A search box is
     // left alone when what is searched for is the user's own words or
