@@ -8,30 +8,48 @@ importScripts('config.js', 'defaults.js', 'security.js', 'commonWords.js', 'omni
 // Optional permissions (notifications, optional hosts) go through one helper.
 importScripts('core/grants.js');
 // The agent's runs live in this worker (engine.js), not in the side panel.
-importScripts('publicSuffixes.js', 'agentTools.js', 'agentPrompt.js', 'usageLimits.js', 'pageSearch.js',
-    'chatgptAuth.js', 'chatgptConnect.js',
-    'core/step.js', 'core/observe.js', 'core/memory.js', 'core/context.js', 'core/policy.js', 'core/run.js', 'core/llm.js', 'core/learn.js', 'core/view.js', 'core/inject.js',
-    'recipes/vendor/recipes-core.js', 'recipes/driver.js', 'recipes/service.js', 'engine.js');
-// Saved runs ("recipes") and their replays, for the agent's page.
-if (self.SELECT_TO_AI_RECIPES) self.SELECT_TO_AI_RECIPES.install(chrome);
+// Loaded on its own: an error in any agent file must not stop the right-click
+// menu, which needs nothing below.
+let agentLoaded = false;
+try {
+    importScripts('publicSuffixes.js', 'agentTools.js', 'agentPrompt.js', 'usageLimits.js', 'pageSearch.js',
+        'chatgptAuth.js', 'chatgptConnect.js',
+        'core/step.js', 'core/observe.js', 'core/memory.js', 'core/context.js', 'core/policy.js', 'core/run.js', 'core/llm.js', 'core/learn.js', 'core/view.js', 'core/inject.js',
+        'recipes/vendor/recipes-core.js', 'recipes/driver.js', 'recipes/service.js', 'engine.js');
+    // Saved runs ("recipes") and their replays, for the agent's page.
+    if (self.SELECT_TO_AI_RECIPES) self.SELECT_TO_AI_RECIPES.install(chrome);
+    agentLoaded = true;
+} catch (e) {
+    console.error('Select to AI: the agent did not load, right-click sending still works.', e);
+}
 
 if (typeof CONFIG === 'undefined') {
     console.error("Select to AI: CONFIG failed to load in background.");
 }
 
-// Cached settings to minimize storage reads
-let cachedSettings = {
+const GRANTS = self.SELECT_TO_AI_GRANTS;
+const CLAUDE_ORIGIN = 'https://claude.ai/*';
+
+// What the worker assumes until the stored settings have been read.
+const DEFAULT_SETTINGS = Object.freeze({
     autoSend: false,
     autoContext: false,
     openingMode: 'sidePanel',
     showChatGPT: true,
     showGemini: true,
-    showPerplexity: false, // Default false
-    showClaude: true, // Default true
-    showAgent: false, // Default false
+    showPerplexity: false,
+    showClaude: true,
+    showAgent: false,
     agentCustomUrl: SELECT_TO_AI_DEFAULTS.AGENT_DEFAULTS.customUrl,
-    singleMode: false
-};
+});
+
+// Cached settings to minimize storage reads
+let cachedSettings = { ...DEFAULT_SETTINGS };
+
+// A woken worker runs a click before storage has answered, so anything that
+// reads the settings awaits this first. True once one read has landed.
+let settingsLoaded = false;
+let settingsReady = null;
 
 // --- Initialization ---
 
@@ -45,10 +63,6 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
     }
 });
 
-// Initialize context menus on install/startup. On a FRESH install also open
-// the options page so new users meet the onboarding wizard: it explains that
-// the browser agent exists, that it is off by default, and that it needs an
-// API key before it can run.
 /**
  * 3.4 migration: OpenCode's "-free" models only answer inside the OpenCode
  * app, so anyone saved on one (the old default) is moved to OpenRouter's
@@ -108,7 +122,7 @@ function installSidePanelFrameRule() {
             action: {
                 type: 'modifyHeaders',
                 responseHeaders: ['x-frame-options', 'frame-options', 'content-security-policy',
-                    'cross-origin-opener-policy', 'cross-origin-embedder-policy', 'permissions-policy', 'feature-policy']
+                    'cross-origin-opener-policy', 'cross-origin-embedder-policy']
                     .map((header) => ({ header, operation: 'remove' })),
             },
             condition: {
@@ -120,98 +134,214 @@ function installSidePanelFrameRule() {
     }, () => void chrome.runtime.lastError);
 }
 installSidePanelFrameRule();
-chrome.runtime.onStartup.addListener(installSidePanelFrameRule);
-
-chrome.runtime.onInstalled.addListener((details) => {
-    updateContextMenus();
-    if (details && details.reason === 'update') {
-        migrateAppOnlyFreeModels();
-        migrateFrozenSettings();
-    }
-    if (details && details.reason === 'install') {
-        chrome.tabs.create({ url: chrome.runtime.getURL('welcome.html') });
-    }
+chrome.runtime.onStartup.addListener(() => {
+    installSidePanelFrameRule();
+    if (GRANTS) GRANTS.registerAssistantScripts();
 });
 
+// A grant made on any page (Claude, perplexity.ai, notifications): the frame
+// rule only applies to hosts the extension holds, so it is put in again, the
+// assistant content script follows the grant, and the menu shows Claude.
+function onGrantsChanged() {
+    installSidePanelFrameRule();
+    if (GRANTS) GRANTS.registerAssistantScripts();
+    updateContextMenus();
+}
+if (chrome.permissions && chrome.permissions.onAdded) chrome.permissions.onAdded.addListener(onGrantsChanged);
+if (chrome.permissions && chrome.permissions.onRemoved) chrome.permissions.onRemoved.addListener(onGrantsChanged);
+
 /**
- * Updates the local settings cache from chrome.storage.sync.
- * Also triggers a context menu update if settings changed.
+ * The leading number of a version string ("2.0" -> 2, "3.3.1" -> 3), or
+ * NaN when there is none.
  */
-function updateCache() {
-    chrome.storage.sync.get(CONFIG.STORAGE.SETTINGS, (items) => {
-        cachedSettings.autoSend = items.autoSend === true;
-        cachedSettings.autoContext = items.autoContext !== false; // Default true
+function majorVersion(version) {
+    return parseInt(String(version || '').split('.')[0], 10);
+}
 
-        // Settings defaults
-        cachedSettings.showChatGPT = items.showChatGPT !== false;
-        cachedSettings.showGemini = items.showGemini !== false;
-        cachedSettings.showPerplexity = items.showPerplexity === true;
-        cachedSettings.showClaude = items.showClaude !== false;
-        cachedSettings.showAgent = items.showAgent === true;
-        cachedSettings.agentCustomUrl =
-            items.agentCustomUrl || SELECT_TO_AI_DEFAULTS.AGENT_DEFAULTS.customUrl;
-        cachedSettings.agentActiveProvider =
-            items.agentActiveProvider || SELECT_TO_AI_DEFAULTS.AGENT_DEFAULTS.activeProvider;
+/** -1, 0 or 1 for two dotted versions, missing parts read as 0. */
+function compareVersions(a, b) {
+    const pa = String(a || '0').split('.').map((n) => parseInt(n, 10) || 0);
+    const pb = String(b || '0').split('.').map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const d = (pa[i] || 0) - (pb[i] || 0);
+        if (d) return d < 0 ? -1 : 1;
+    }
+    return 0;
+}
 
-        // Opening Mode Migration Logic
-        let mode = items.openingMode;
-        if (!mode) mode = 'sidePanel';
-        // Fallback checks
-        if (!['tab', 'sidePanel'].includes(mode)) mode = 'sidePanel';
-        cachedSettings.openingMode = mode;
+const LEGACY_V2_SETTINGS = ['sidebarMode', 'contextMode'];
+// Read by the popup: shows a one-time "What is new" note. No tab is opened.
+const UPGRADE_NOTICE_KEY = 'upgradeNotice';
 
-        // Calculate Single Mode
-        const activeCount =
-            (cachedSettings.showChatGPT ? 1 : 0) +
-            (cachedSettings.showGemini ? 1 : 0) +
-            (cachedSettings.showPerplexity ? 1 : 0) +
-            (cachedSettings.showClaude ? 1 : 0) +
-            (cachedSettings.showAgent ? 1 : 0);
+/**
+ * 2.0 saved a setting only when its control was touched, and read the
+ * untouched ones differently from 4.0: Perplexity shown, the page address not
+ * added, and a popup-window mode 4.0 no longer has. This writes what 2.0 was
+ * showing, so the update changes nothing the user sees.
+ */
+function v2SettingsFix(items) {
+    const set = {};
+    if (items.showPerplexity === undefined) set.showPerplexity = true;
+    if (items.autoContext === undefined) set.autoContext = false;
+    if (items.openingMode !== 'tab' && items.openingMode !== 'sidePanel') set.openingMode = 'sidePanel';
+    return set;
+}
 
-        cachedSettings.singleMode = (activeCount === 1);
-
-        updateContextMenus();
+function migrateFromV2() {
+    return new Promise((resolve) => {
+        chrome.storage.sync.get(['showPerplexity', 'autoContext', 'openingMode', ...LEGACY_V2_SETTINGS], (items) => {
+            const set = v2SettingsFix(items || {});
+            const done = () => chrome.storage.sync.remove(LEGACY_V2_SETTINGS, () => { void chrome.runtime.lastError; resolve(set); });
+            if (Object.keys(set).length) chrome.storage.sync.set(set, done);
+            else done();
+        });
     });
 }
 
+// The menu is built at every worker start from the stored settings (see
+// updateCache), so onInstalled only migrates. A fresh install also opens the
+// welcome page; an update opens nothing.
+function onInstalledHandler(details) {
+    const reason = details && details.reason;
+    if (GRANTS) GRANTS.registerAssistantScripts();
+    if (reason === 'update') {
+        const previous = details.previousVersion;
+        if (majorVersion(previous) < 3) migrateFromV2();
+        if (previous && compareVersions(previous, '4.0.0') < 0) {
+            chrome.storage.local.set({ [UPGRADE_NOTICE_KEY]: { from: String(previous), at: Date.now() } });
+        }
+        migrateAppOnlyFreeModels();
+        migrateFrozenSettings();
+    }
+    if (reason === 'install') {
+        chrome.tabs.create({ url: chrome.runtime.getURL('welcome.html') });
+    }
+}
+chrome.runtime.onInstalled.addListener(onInstalledHandler);
+
+/** Puts stored settings into the cache, with the defaults for what is unset. */
+function applySettings(items) {
+    cachedSettings.autoSend = items.autoSend === true;
+    cachedSettings.autoContext = items.autoContext === true; // Off unless chosen
+    cachedSettings.showChatGPT = items.showChatGPT !== false;
+    cachedSettings.showGemini = items.showGemini !== false;
+    cachedSettings.showPerplexity = items.showPerplexity === true;
+    cachedSettings.showClaude = items.showClaude !== false;
+    cachedSettings.showAgent = items.showAgent === true;
+    cachedSettings.agentCustomUrl =
+        items.agentCustomUrl || SELECT_TO_AI_DEFAULTS.AGENT_DEFAULTS.customUrl;
+    cachedSettings.agentActiveProvider =
+        items.agentActiveProvider || SELECT_TO_AI_DEFAULTS.AGENT_DEFAULTS.activeProvider;
+    // Anything but a new tab (including 2.0's retired popup window) is the side panel.
+    cachedSettings.openingMode = items.openingMode === 'tab' ? 'tab' : 'sidePanel';
+}
+
 /**
- * Re-creates the context menu items based on current settings.
+ * Reads the settings into the cache and rebuilds the menu from them.
+ * settingsReady resolves once the cache holds the stored values.
+ */
+function updateCache() {
+    const read = new Promise((resolve) => {
+        chrome.storage.sync.get(CONFIG.STORAGE.SETTINGS, (items) => {
+            void chrome.runtime.lastError;
+            applySettings(items || {});
+            settingsLoaded = true;
+            resolve(cachedSettings);
+        });
+    });
+    settingsReady = read;
+    read.then(() => updateContextMenus());
+    return read;
+}
+
+/** The settings, once read: what every handler awaits before using them. */
+function whenSettings() {
+    return settingsReady || updateCache();
+}
+
+// --- Context menu ---
+
+// Menu ids carry how the click opens ("openChatGPT|tab"), so a click on a
+// worker that has just woken knows whether to open the side panel inside the
+// click's gesture without waiting for storage. Ids without the suffix (menus
+// built by an older version) mean the side panel.
+const MENU_SERVICES = {
+    openChatGPT: () => CONFIG.URLS.CHATGPT,
+    openGemini: () => CONFIG.URLS.GEMINI,
+    openPerplexity: () => CONFIG.URLS.PERPLEXITY,
+    openClaude: () => CONFIG.URLS.CLAUDE,
+    openAgent: () => CONFIG.URLS.AGENT,
+};
+const MODE_SUFFIX = { tab: 'tab', sidePanel: 'panel' };
+
+function menuId(name, mode) {
+    return `${name}|${MODE_SUFFIX[mode] || MODE_SUFFIX.sidePanel}`;
+}
+
+/** { name, mode } for a menu id, mode null when the id has no suffix. */
+function parseMenuId(id) {
+    const [name, suffix] = String(id || '').split('|');
+    if (!MENU_SERVICES[name]) return null;
+    const mode = suffix === MODE_SUFFIX.tab ? 'tab' : suffix === MODE_SUFFIX.sidePanel ? 'sidePanel' : null;
+    return { name, mode };
+}
+
+/** The items the menu shows, in order, for the given settings and grants. */
+function menuItems(settings, claudeGranted) {
+    const items = [];
+    if (settings.showChatGPT) items.push({ name: 'openChatGPT', title: 'Send to ChatGPT' });
+    if (settings.showGemini) items.push({ name: 'openGemini', title: 'Send to Gemini' });
+    if (settings.showPerplexity) items.push({ name: 'openPerplexity', title: 'Send to Perplexity' });
+    // claude.ai is optional in 4.0: the item appears once the user grants it.
+    if (settings.showClaude && claudeGranted) items.push({ name: 'openClaude', title: 'Send to Claude' });
+    if (settings.showAgent) items.push({ name: 'openAgent', title: 'Ask the agent about this' });
+    return items;
+}
+
+function removeAllMenus() {
+    return new Promise((resolve) => chrome.contextMenus.removeAll(() => { void chrome.runtime.lastError; resolve(); }));
+}
+
+async function buildContextMenus() {
+    const settings = await whenSettings();
+    const claudeGranted = GRANTS ? await GRANTS.hasHost(CLAUDE_ORIGIN) : false;
+    await removeAllMenus();
+    const items = menuItems(settings, claudeGranted);
+    const mode = settings.openingMode;
+    const create = (props) => {
+        chrome.contextMenus.create(props, () => {
+            if (chrome.runtime.lastError) console.log("Menu creation ignored:", chrome.runtime.lastError.message);
+        });
+    };
+    // Nothing turned on: no menu at all, rather than an empty "Select to AI".
+    if (!items.length) return;
+    if (items.length === 1) {
+        create({ id: menuId(items[0].name, mode), title: items[0].title, contexts: ["selection"] });
+        return;
+    }
+    create({ id: "parentFolder", title: "Select to AI", contexts: ["selection"] });
+    for (const item of items) {
+        create({ id: menuId(item.name, mode), parentId: "parentFolder", title: item.title, contexts: ["selection"] });
+    }
+}
+
+// One rebuild at a time: two overlapping removeAll and create passes leave
+// duplicate or missing items.
+let menuChain = Promise.resolve();
+let menuQueued = false;
+
+/**
+ * Re-creates the context menu items based on current settings. Calls made
+ * while a rebuild is waiting collapse into that one.
  */
 function updateContextMenus() {
-    chrome.contextMenus.removeAll(() => {
-        if (chrome.runtime.lastError) console.warn("Menu cleanup warn:", chrome.runtime.lastError);
-
-        const isSingleMode = cachedSettings.singleMode;
-
-        const create = (props) => {
-            chrome.contextMenus.create(props, () => {
-                if (chrome.runtime.lastError) console.log("Menu creation ignored:", chrome.runtime.lastError.message);
-            });
-        };
-
-        if (isSingleMode) {
-            // Flat menu for single service
-            if (cachedSettings.showChatGPT) {
-                create({ id: "openChatGPT", title: "Send to ChatGPT", contexts: ["selection"] });
-            } else if (cachedSettings.showGemini) {
-                create({ id: "openGemini", title: "Send to Gemini", contexts: ["selection"] });
-            } else if (cachedSettings.showPerplexity) {
-                create({ id: "openPerplexity", title: "Send to Perplexity", contexts: ["selection"] });
-            } else if (cachedSettings.showClaude) {
-                create({ id: "openClaude", title: "Send to Claude", contexts: ["selection"] });
-            } else if (cachedSettings.showAgent) {
-                create({ id: "openAgent", title: "Ask the agent about this", contexts: ["selection"] });
-            }
-        } else {
-            // Nested menu for multiple services
-            create({ id: "parentFolder", title: "Select to AI", contexts: ["selection"] });
-            if (cachedSettings.showChatGPT) create({ id: "openChatGPT", parentId: "parentFolder", title: "Send to ChatGPT", contexts: ["selection"] });
-            if (cachedSettings.showGemini) create({ id: "openGemini", parentId: "parentFolder", title: "Send to Gemini", contexts: ["selection"] });
-            if (cachedSettings.showPerplexity) create({ id: "openPerplexity", parentId: "parentFolder", title: "Send to Perplexity", contexts: ["selection"] });
-            if (cachedSettings.showClaude) create({ id: "openClaude", parentId: "parentFolder", title: "Send to Claude", contexts: ["selection"] });
-            if (cachedSettings.showAgent) create({ id: "openAgent", parentId: "parentFolder", title: "Ask the agent about this", contexts: ["selection"] });
-        }
-    });
+    if (menuQueued) return menuChain;
+    menuQueued = true;
+    menuChain = menuChain.then(() => {
+        menuQueued = false;
+        return buildContextMenus();
+    }).catch((e) => console.warn('Select to AI: menu rebuild failed:', e));
+    return menuChain;
 }
 
 /**
@@ -268,6 +398,11 @@ function resolveSessionUrlSync(baseUrl) {
  *  - the send is expected to submit (prefill URLs submit on load).
  * Returns the prefill URL, or null when the DOM path should be used.
  */
+// Past this many encoded characters the prompt goes in through the page
+// instead: long URLs are cut or refused by the sites (a whole article, or
+// about 900 CJK characters, already reaches it).
+const PREFILL_MAX_ENCODED = 2000;
+
 function buildPrefillUrl(finalUrl, serviceBaseUrl, text, willAutoSend) {
     if (!willAutoSend || !text) return null;
     if (finalUrl !== serviceBaseUrl) return null; // continue-session insert
@@ -276,8 +411,25 @@ function buildPrefillUrl(finalUrl, serviceBaseUrl, text, willAutoSend) {
     if (serviceBaseUrl === CONFIG.URLS.CHATGPT) template = prefillTemplates.CHATGPT;
     else if (serviceBaseUrl === CONFIG.URLS.PERPLEXITY) template = prefillTemplates.PERPLEXITY;
     if (!template) return null;
-    return template.replace('{query}', encodeURIComponent(text));
+    const encoded = encodeURIComponent(text);
+    if (encoded.length > PREFILL_MAX_ENCODED) return null;
+    return template.replace('{query}', encoded);
 }
+
+/** Opens the side panel. Must run inside the click, before any await. */
+function openSidePanel(windowId) {
+    try {
+        chrome.sidePanel.open({ windowId }, () => {
+            if (chrome.runtime.lastError) console.warn('Side panel did not open:', chrome.runtime.lastError.message);
+        });
+    } catch (e) {
+        console.warn('Side panel did not open:', e && e.message);
+    }
+}
+
+// A window the side panel can open in: a click outside a normal tab (a PDF
+// viewer, some browser pages) brings no tab or a tab without one.
+const hasWindow = (tab) => !!(tab && Number.isInteger(tab.windowId) && tab.windowId >= 0);
 
 // --- Interaction Handlers ---
 
@@ -293,90 +445,87 @@ const SELECTION_BUDGET = 900; // characters of passage around the selection
  * selectionPlace), for the composer to show and the run to be given.
  * The panel is opened first, inside the click's user gesture.
  */
-function askAgentAboutSelection(info, tab) {
-    if (!tab || !tab.id) return;
+function askAgentAboutSelection(info, tab, openingMode) {
+    if (!tab || !tab.id || tab.id < 0) return;
     const url = `${CONFIG.URLS.AGENT}?tabId=${tab.id}&about=selection`;
-    if (cachedSettings.openingMode === 'sidePanel') {
-        chrome.sidePanel.open({ windowId: tab.windowId }, () => {
-            if (chrome.runtime.lastError) console.warn('Side panel did not open:', chrome.runtime.lastError.message);
-        });
+    const mode = openingMode || cachedSettings.openingMode;
+    if (mode === 'sidePanel' && hasWindow(tab)) {
+        openSidePanel(tab.windowId);
         chrome.storage.local.set({ sidePanelState: { url, selectedText: "", autoSend: false, timestamp: Date.now() } });
     } else {
         chrome.tabs.create({ url }, () => void chrome.runtime.lastError);
     }
     const fallback = { text: String(info.selectionText || "").replace(/\s+/g, " ").trim().slice(0, 2000), title: tab.title || "", url: tab.url || "", heading: "", passage: "", row: "", column: "" };
     const keep = (place) => chrome.storage.session.set({ [SELECTION_KEY(tab.id)]: { ...(place && place.text ? place : fallback), tabId: tab.id, at: Date.now() } }).catch(() => {});
-    if (!chrome.scripting || !self.SELECT_TO_AI_TOOLS.selectionPlace) { keep(null); return; }
+    if (!chrome.scripting || !self.SELECT_TO_AI_TOOLS || !self.SELECT_TO_AI_TOOLS.selectionPlace) { keep(null); return; }
     chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: info.frameId ? [info.frameId] : [0] }, func: self.SELECT_TO_AI_TOOLS.selectionPlace, args: [SELECTION_BUDGET] })
         .then((r) => keep(r && r[0] && r[0].result), () => keep(null));
 }
 
-chrome.contextMenus.onClicked.addListener((info, tab) => {
-    let serviceBaseUrl = "";
-
-    // Map Menu ID to Service URL
-    switch (info.menuItemId) {
-        case "openChatGPT": serviceBaseUrl = CONFIG.URLS.CHATGPT; break;
-        case "openGemini": serviceBaseUrl = CONFIG.URLS.GEMINI; break;
-        case "openPerplexity": serviceBaseUrl = CONFIG.URLS.PERPLEXITY; break;
-        case "openClaude": serviceBaseUrl = CONFIG.URLS.CLAUDE; break;
-        case "openAgent": serviceBaseUrl = CONFIG.URLS.AGENT; break;
-        default: return; // Unknown menu item
-    }
-
-    if (info.menuItemId === "openAgent") { askAgentAboutSelection(info, tab); return; }
-    let finalUrl = resolveSessionUrlSync(serviceBaseUrl);
-    const selectedText = info.selectionText || "";
-
-    // Prepare content
-    // Auto-Context: Prepend URL if enabled
+/**
+ * What a right-click send does once the settings are known: the text (with
+ * the page address only if the user turned that on), always into a new
+ * conversation at the service's base URL, as 2.0 did.
+ */
+function deliverSelection(serviceBaseUrl, mode, info, tab, settings) {
+    const selectedText = (info && info.selectionText) || "";
     let finalText = selectedText;
-    if (cachedSettings.autoContext) {
+    if (settings.autoContext && tab && tab.url) {
         finalText = `Context: ${tab.url}\n\n${selectedText}`;
     }
 
     // New-conversation prefill: ChatGPT / Perplexity accept the prompt as a
     // URL parameter (which also submits), skipping DOM insertion entirely.
-    const prefillUrl = info.menuItemId === "openAgent"
-        ? null
-        : buildPrefillUrl(finalUrl, serviceBaseUrl, finalText, cachedSettings.autoSend);
+    let finalUrl = serviceBaseUrl;
+    const prefillUrl = buildPrefillUrl(finalUrl, serviceBaseUrl, finalText, settings.autoSend);
     if (prefillUrl) {
         finalUrl = prefillUrl;
         finalText = ""; // content script has nothing left to do
     }
 
-    // Handle Opening Mode
-    if (cachedSettings.openingMode === 'sidePanel') {
-        // SIDE PANEL MODE
-        // 1. Open Side Panel (Sync, requires user gesture usually, context menu provides it)
-        chrome.sidePanel.open({ windowId: tab.windowId }, () => {
-            if (chrome.runtime.lastError) console.warn('Side panel did not open:', chrome.runtime.lastError.message);
-        });
-
-        // 2. Set State (Content script listens for this)
+    if (mode === 'sidePanel') {
+        // The panel was opened in the click; the content script inside it
+        // picks this up.
         chrome.storage.local.set({
             sidePanelState: {
                 url: finalUrl,
                 selectedText: finalText,
-                autoSend: prefillUrl ? false : cachedSettings.autoSend,
+                autoSend: prefillUrl ? false : settings.autoSend,
                 timestamp: Date.now()
             }
         });
-
+    } else if (prefillUrl) {
+        // the URL itself carries the prompt, nothing to deliver afterwards
+        chrome.tabs.create({ url: finalUrl }, () => void chrome.runtime.lastError);
     } else {
-        // TAB MODE
-        if (prefillUrl) {
-            // the URL itself carries the prompt, nothing to deliver afterwards
-            chrome.tabs.create({ url: finalUrl }, () => void chrome.runtime.lastError);
-        } else {
-            createTabAndSend(finalUrl, {
-                selectedText: finalText,
-                autoSend: cachedSettings.autoSend,
-                timestamp: Date.now(),
-            });
-        }
+        createTabAndSend(finalUrl, {
+            selectedText: finalText,
+            autoSend: settings.autoSend,
+            timestamp: Date.now(),
+        });
     }
-});
+}
+
+/**
+ * The right-click handler. The side panel opens first, inside the click's
+ * user gesture, using the mode written into the menu id; everything that
+ * reads settings waits for them, so a click that woke the worker behaves as
+ * one on a warm worker.
+ */
+function onMenuClicked(info, tab) {
+    const parsed = parseMenuId(info && info.menuItemId);
+    if (!parsed) return; // Unknown menu item
+    let mode = parsed.mode || (settingsLoaded ? cachedSettings.openingMode : 'sidePanel');
+    if (mode === 'sidePanel' && !hasWindow(tab)) mode = 'tab';
+
+    if (parsed.name === "openAgent") { askAgentAboutSelection(info, tab, mode); return; }
+    if (mode === 'sidePanel') openSidePanel(tab.windowId);
+    const serviceBaseUrl = MENU_SERVICES[parsed.name]();
+    whenSettings()
+        .then((settings) => deliverSelection(serviceBaseUrl, mode, info, tab, settings))
+        .catch((e) => console.warn('Select to AI: the send did not go through:', e));
+}
+chrome.contextMenus.onClicked.addListener(onMenuClicked);
 
 // Keyboard Command Handler (Open Sidebar or Run Agent)
 /**
@@ -388,17 +537,16 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
  */
 function openCommandPalette(tab) {
     const tabId = tab && tab.id;
-    if (!tabId || !chrome.scripting) return;
+    if (!tabId || tabId < 0 || !chrome.scripting) return;
     chrome.scripting.executeScript(
         { target: { tabId }, files: ['commandPalette.js'] },
         () => {
             if (chrome.runtime.lastError) {
+                void chrome.runtime.lastError;
                 // Chrome blocks injection on its own pages and the Web Store.
-                chrome.notifications.create({
-                    type: 'basic',
-                    iconUrl: 'icon128.png',
-                    title: 'Select to AI',
-                    message: 'The command palette cannot open on this page. Try it on a normal website tab.',
+                // Shown only if the user granted notifications.
+                if (GRANTS) GRANTS.notify({
+                    message: 'The quick box cannot open on this page. Try it on a normal website tab.',
                 });
             }
         },
@@ -409,14 +557,15 @@ function openCommandPalette(tab) {
  * Starts the agent on what was typed in the palette, with any text the user
  * had highlighted when they opened it, on the tab it was opened on.
  */
-function runPaletteInput(rawText, rawSelection, originTabId) {
+async function runPaletteInput(rawText, rawSelection, originTabId) {
     const trimmed = String(rawText || '').slice(0, SELECT_TO_AI_OMNIBOX.LIMIT).trim();
     if (!trimmed) return;
-    if (!cachedSettings.showAgent) { notifyAgentDisabled(); return; }
     const selection = String(rawSelection || '').trim().slice(0, 4000);
     const task = selection
         ? trimmed + '\n\n--- selected text from the page ---\n' + selection
         : trimmed;
+    const settings = await whenSettings();
+    if (!settings.showAgent) { notifyAgentDisabled(task, originTabId); return; }
     // Pass the tab the palette was opened on. Without it the agent falls
     // back to the window's active tab, which can be a different page.
     const tabParam = originTabId != null ? `&tabId=${originTabId}` : '';
@@ -428,99 +577,102 @@ function runPaletteInput(rawText, rawSelection, originTabId) {
 
 chrome.runtime.onMessage.addListener((message, sender) => {
     if (message && message.type === 'SELECT_TO_AI_PALETTE_SUBMIT') {
-        runPaletteInput(message.text, message.selection, sender && sender.tab ? sender.tab.id : null);
+        runPaletteInput(message.text, message.selection, sender && sender.tab ? sender.tab.id : null)
+            .catch((e) => console.warn('Select to AI: the quick box request did not start:', e));
     }
 });
 
-chrome.commands.onCommand.addListener((command, tab) => {
-    if (command === CONFIG.COMMANDS.OPEN_PALETTE) {
-        openCommandPalette(tab);
+/** Opens the side panel in the tab's window, or the current one. */
+function openPanelFor(tab, onFail) {
+    const open = (windowId) => {
+        try {
+            chrome.sidePanel.open({ windowId }, () => {
+                const err = chrome.runtime.lastError;
+                if (err) { console.warn('Side panel did not open:', err.message); if (onFail) onFail(); }
+            });
+        } catch (e) {
+            console.warn('Side panel did not open:', e && e.message);
+            if (onFail) onFail();
+        }
+    };
+    if (hasWindow(tab)) { open(tab.windowId); return; }
+    chrome.windows.getCurrent((win) => {
+        if (chrome.runtime.lastError || !win) { void chrome.runtime.lastError; if (onFail) onFail(); return; }
+        open(win.id);
+    });
+}
+
+const tabQuery = (tab) => (tab && Number.isInteger(tab.id) && tab.id >= 0 ? `?tabId=${tab.id}` : '');
+
+function writePanelState(url) {
+    chrome.storage.local.set({
+        sidePanelState: { url, selectedText: '', autoSend: false, timestamp: Date.now() }
+    });
+}
+
+/** The open-sidebar shortcut: the panel at once, its page once settings are read. */
+function onOpenSidebarCommand(tab) {
+    openPanelFor(tab);
+    Promise.all([
+        whenSettings(),
+        new Promise((resolve) => chrome.storage.local.get([CONFIG.STORAGE.SIDE_PANEL_STATE], (r) => resolve((r || {})[CONFIG.STORAGE.SIDE_PANEL_STATE]))),
+    ]).then(([settings, existing]) => {
+        let targetBaseUrl = CONFIG.URLS.CHATGPT; // Absolute fallback
+        if (settings.showAgent) {
+            // With the agent on, the side panel opens on the agent; the
+            // assistant sites are a click away inside it.
+            targetBaseUrl = chrome.runtime.getURL('agent.html') + tabQuery(tab);
+        } else if (existing && existing.url) {
+            targetBaseUrl = existing.url; // Use last used
+        } else if (settings.showChatGPT) targetBaseUrl = CONFIG.URLS.CHATGPT;
+        else if (settings.showGemini) targetBaseUrl = CONFIG.URLS.GEMINI;
+        else if (settings.showPerplexity) targetBaseUrl = CONFIG.URLS.PERPLEXITY;
+        else if (settings.showClaude) targetBaseUrl = CONFIG.URLS.CLAUDE;
+        writePanelState(resolveSessionUrlSync(targetBaseUrl));
+    });
+}
+
+/**
+ * Alt+A. One coherent gate: "Enable AI Browser Agent" controls every agent
+ * entry point, and with it off the shortcut opens the setup. On a warm worker
+ * the panel opens inside the key press; on one the key press just woke, the
+ * settings are read first and the agent opens in a tab if the panel can no
+ * longer be opened.
+ */
+function onRunAgentCommand(tab) {
+    const agentUrl = () => chrome.runtime.getURL('agent.html') + tabQuery(tab);
+    const inTab = () => chrome.tabs.create({ url: agentUrl() }, () => void chrome.runtime.lastError);
+    if (settingsLoaded) {
+        if (!cachedSettings.showAgent) { notifyAgentDisabled(); return; }
+        openPanelFor(tab, inTab);
+        writePanelState(agentUrl());
         return;
     }
-    if (command === CONFIG.COMMANDS.OPEN_SIDEBAR) {
-        // 1. Open Side Panel
-        const openPanel = (winId) => {
-            chrome.sidePanel.open({ windowId: winId }, () => {
-                if (chrome.runtime.lastError) console.warn('Side panel did not open:', chrome.runtime.lastError.message);
-            });
-        };
+    whenSettings().then((settings) => {
+        if (!settings.showAgent) { notifyAgentDisabled(); return; }
+        openPanelFor(tab, inTab);
+        writePanelState(agentUrl());
+    });
+}
 
-        if (tab && tab.windowId) openPanel(tab.windowId);
-        else chrome.windows.getCurrent((win) => {
-            if (chrome.runtime.lastError || !win) { void chrome.runtime.lastError; return; }
-            openPanel(win.id);
-        });
-
-        // 2. Set State (Restore last used or default)
-        chrome.storage.local.get([CONFIG.STORAGE.SIDE_PANEL_STATE], (result) => {
-            let targetBaseUrl = CONFIG.URLS.CHATGPT; // Absolute fallback
-            const existing = result[CONFIG.STORAGE.SIDE_PANEL_STATE];
-
-            if (cachedSettings.showAgent) {
-                // With the agent on, the side panel opens on the agent; the
-                // assistant sites are a click away inside it.
-                targetBaseUrl = chrome.runtime.getURL('agent.html') + (tab && tab.id ? `?tabId=${tab.id}` : '');
-            } else if (existing && existing.url) {
-                targetBaseUrl = existing.url; // Use last used
-            } else {
-                // Determine default hierarchy relative to what is enabled
-                if (cachedSettings.showChatGPT) targetBaseUrl = CONFIG.URLS.CHATGPT;
-                else if (cachedSettings.showGemini) targetBaseUrl = CONFIG.URLS.GEMINI;
-                else if (cachedSettings.showPerplexity) targetBaseUrl = CONFIG.URLS.PERPLEXITY;
-                else if (cachedSettings.showClaude) targetBaseUrl = CONFIG.URLS.CLAUDE;
-                else if (cachedSettings.showAgent) targetBaseUrl = CONFIG.URLS.AGENT;
-            }
-
-            const finalUrl = resolveSessionUrlSync(targetBaseUrl);
-
-            chrome.storage.local.set({
-                sidePanelState: {
-                    url: finalUrl,
-                    selectedText: '', // Empty on open
-                    autoSend: false,
-                    timestamp: Date.now()
-                }
-            });
-        });
-    } else if (command === 'run-agent') {
-        // One coherent gate: "Enable AI Browser Agent" in Options controls
-        // EVERY agent entry point. When it is off, Alt+A routes the user to
-        // Options (where the switch lives) instead of opening the agent.
-        if (!cachedSettings.showAgent) {
-            notifyAgentDisabled();
-            return;
-        }
-        const openPanel = (winId) => {
-            chrome.sidePanel.open({ windowId: winId }, () => {
-                if (chrome.runtime.lastError) console.warn('Side panel did not open:', chrome.runtime.lastError.message);
-            });
-        };
-        if (tab && tab.windowId) openPanel(tab.windowId);
-        else chrome.windows.getCurrent((win) => openPanel(win.id));
-
-        const agentUrl = chrome.runtime.getURL('agent.html');
-        chrome.storage.local.set({
-            sidePanelState: {
-                url: agentUrl + (tab ? `?tabId=${tab.id}` : ''),
-                selectedText: '',
-                autoSend: false,
-                timestamp: Date.now()
-            }
-        });
-    }
+chrome.commands.onCommand.addListener((command, tab) => {
+    if (command === CONFIG.COMMANDS.OPEN_PALETTE) openCommandPalette(tab);
+    else if (command === CONFIG.COMMANDS.OPEN_SIDEBAR) onOpenSidebarCommand(tab);
+    else if (command === 'run-agent') onRunAgentCommand(tab);
 });
 
-/** Shared "agent is disabled" handling for gated entry points. */
 /**
  * Opens a tab and delivers the prompt once it has finished loading.
  *
- * Guards three failure paths the previous inline versions did not: a create
- * that fails leaves newTab undefined (reading newTab.id threw), a tab that
- * never reaches "complete" because it was closed or blocked left its
- * onUpdated listener attached for the life of the service worker, and
- * sendMessage into a tab with no content script raised an unchecked
- * lastError.
+ * Guards the failure paths: a create that fails leaves newTab undefined, a
+ * tab that never reaches "complete" (closed or blocked) must not keep its
+ * listeners for the life of the worker, and a message into a tab whose
+ * content script is not listening yet is tried again, every 300 ms up to 10
+ * times, inside the same 30 s limit. The content script drops repeats by
+ * timestamp, so a retry never pastes twice.
  */
+const DELIVERY_TRIES = 10;
+const DELIVERY_RETRY_MS = 300;
 function createTabAndSend(url, message) {
     chrome.tabs.create({ url }, (newTab) => {
         if (chrome.runtime.lastError || !newTab || !newTab.id) {
@@ -529,6 +681,8 @@ function createTabAndSend(url, message) {
         }
         const tabId = newTab.id;
         let finished = false;
+        let tries = 0;
+        let retry = null;
 
         const cleanup = () => {
             if (finished) return;
@@ -536,12 +690,23 @@ function createTabAndSend(url, message) {
             chrome.tabs.onUpdated.removeListener(onUpdated);
             chrome.tabs.onRemoved.removeListener(onRemoved);
             clearTimeout(timer);
+            clearTimeout(retry);
+        };
+        const attempt = () => {
+            if (finished) return;
+            tries += 1;
+            // The top frame only: the content script also runs in sub-frames.
+            chrome.tabs.sendMessage(tabId, message, { frameId: 0 }, (reply) => {
+                const failed = chrome.runtime.lastError || !reply || reply.status !== 'success';
+                if (!failed) { cleanup(); return; }
+                if (tries >= DELIVERY_TRIES) { cleanup(); return; }
+                retry = setTimeout(attempt, DELIVERY_RETRY_MS);
+            });
         };
         const onUpdated = (id, changeInfo) => {
             if (id !== tabId || changeInfo.status !== 'complete') return;
-            cleanup();
-            // The top frame only: the content script also runs in sub-frames.
-            chrome.tabs.sendMessage(tabId, message, { frameId: 0 }, () => void chrome.runtime.lastError);
+            chrome.tabs.onUpdated.removeListener(onUpdated);
+            attempt();
         };
         const onRemoved = (id) => { if (id === tabId) cleanup(); };
 
@@ -551,9 +716,18 @@ function createTabAndSend(url, message) {
     });
 }
 
-function notifyAgentDisabled() {
+// What was typed into the quick box while the agent was off, kept for the
+// setup page (session storage: only extension pages can read it).
+const PENDING_TASK_KEY = 'pendingAgentTask';
+
+/** Shared "agent is disabled" handling for gated entry points. */
+function notifyAgentDisabled(task, tabId) {
+    if (task) {
+        chrome.storage.session.set({ [PENDING_TASK_KEY]: { text: String(task), tabId: tabId != null ? tabId : null, at: Date.now() } })
+            .catch(() => {});
+    }
     // Straight to the one-step setup instead of a settings page to hunt through.
-    chrome.tabs.create({ url: chrome.runtime.getURL('welcome.html?step=connect') });
+    chrome.tabs.create({ url: chrome.runtime.getURL('welcome.html?step=connect') }, () => void chrome.runtime.lastError);
 }
 
 // --- CORS Bypassing Proxy Handlers ---
@@ -669,8 +843,19 @@ if (chrome.omnibox) {
     chrome.omnibox.onInputEntered.addListener((text, disposition) => {
         const plan = OMNI.planEntry(text, disposition);
         if (!plan) return;
-        // Same gate as Alt+A, the palette and the side panel.
-        if (!cachedSettings.showAgent) { notifyAgentDisabled(); return; }
-        OMNI.startRun(chrome, plan, omniboxWhere).catch((e) => console.warn('Select to AI: the address bar request did not start:', e));
+        // Same gate as Alt+A, the palette and the side panel. startRun opens
+        // the panel before awaiting anything, so it runs at once when the
+        // settings are already read.
+        const start = () => OMNI.startRun(chrome, plan, omniboxWhere)
+            .catch((e) => console.warn('Select to AI: the address bar request did not start:', e));
+        if (settingsLoaded) {
+            if (!cachedSettings.showAgent) { notifyAgentDisabled(); return; }
+            start();
+            return;
+        }
+        whenSettings().then((settings) => {
+            if (!settings.showAgent) { notifyAgentDisabled(); return; }
+            start();
+        });
     });
 }
