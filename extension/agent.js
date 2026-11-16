@@ -192,8 +192,10 @@
     } catch (_e) { return ""; }
   }
 
+  // 4.0 has no favicon permission, so _favicon URLs fail to load.
   function faviconFor(url) {
-    return chrome.runtime.getURL(`/_favicon/?pageUrl=${encodeURIComponent(url)}&size=32`);
+    const grants = self.SELECT_TO_AI_GRANTS;
+    return grants ? grants.faviconFor(url) : "";
   }
 
   function clockOf(ms) {
