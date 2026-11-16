@@ -15,7 +15,8 @@
 | Credentials synced across devices | Keys isolated in local storage; legacy sync values migrated and removed. |
 | Secrets copied into backup files | Exports contain preferences only. |
 | Malicious page invoking privileged proxy messages | Background worker accepts proxy/injection calls only from extension-page senders. |
-| Agent operating across the web without consent | Optional host permissions requested per origin. |
+| Agent operating across the web without consent | Optional host permissions requested per origin, inside the click that needs them. |
+| A silent update widening what the extension can do | The 4.0 manifest adds no install warning over 2.0: required hosts are the three 2.0 chat sites, `notifications` and every other host are optional, and there is no `debugger` or `favicon` permission. CI compares Chrome's warning strings for both manifests on every change (`permission-warning-diff`). |
 | Destructive or sensitive user action | Confirmation gate enabled by default plus domain, step, cost, and failure limits. |
 | Unbounded provider payload | GET/POST-only requests and a 2 MiB request limit. |
 | Insecure remote gateway | HTTPS required except for loopback development. |
@@ -24,7 +25,7 @@
 
 - Browser-local storage is not an encrypted vault; a compromised machine or browser profile can expose keys.
 - Page content can contain prompt-injection instructions. Human confirmation and bounded actions reduce, but do not eliminate, this class of risk.
-- The side panel embeds ChatGPT, Gemini, Perplexity and Claude, whose sites forbid framing. A session rule installed by `background.js` (`installSidePanelFrameRule`) removes `X-Frame-Options`, the full `Content-Security-Policy`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Embedder-Policy` and `Permissions-Policy`/`Feature-Policy` from `sub_frame` responses of those domains, and only for requests that belong to no tab (`tabIds: [TAB_ID_NONE]`), which is the side panel. Websites in ordinary tabs cannot frame those assistants because of it; before 3.4 a static rule applied to every iframe, which exposed signed-in users to clickjacking. While embedded in the side panel the assistants run without their own CSP, and upstream site changes can still break embeds.
+- The side panel embeds ChatGPT, Gemini, Perplexity and, once the user allows claude.ai, Claude, whose sites forbid framing. A session rule installed by `background.js` (`installSidePanelFrameRule`) removes `X-Frame-Options`, the full `Content-Security-Policy`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Embedder-Policy` and `Permissions-Policy`/`Feature-Policy` from `sub_frame` responses of those domains (Claude only after its host is granted, since the rule needs host access), and only for requests that belong to no tab (`tabIds: [TAB_ID_NONE]`), which is the side panel. Websites in ordinary tabs cannot frame those assistants because of it; before 3.4 a static rule applied to every iframe, which exposed signed-in users to clickjacking. While embedded in the side panel the assistants run without their own CSP, and upstream site changes can still break embeds.
 - AI providers receive the content required for a user-requested operation and apply their own retention policies.
 
 ## Verification

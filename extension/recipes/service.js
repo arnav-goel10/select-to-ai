@@ -12,9 +12,10 @@
  *
  * Replay: a saved recipe runs in a tab of its own with no model call; a
  * changed page is repaired under the step's contract with the user's
- * configured provider, on its cheap ("lite") model. A commit step (one that
- * submits, sends, pays or deletes) whose meaning changed stops the run and
- * is never pressed: no approver is given, so the core stops for a person.
+ * configured provider, on its cheap ("lite") model, or on the run's own
+ * model where the cheap one is a free router or a gateway's guess
+ * (tierFor). A commit step (one that submits, sends, pays or deletes)
+ * whose meaning changed stops the run and is never pressed: no approver is given, so the core stops for a person.
  *
  * The panel talks to this over a port named "recipesView".
  */
@@ -238,7 +239,19 @@
 
   /* ---------------------------------------------------------------- replay */
 
-  /** The user's configured provider, on its cheap model, as a recipes model client. */
+  /**
+   * The tier a repair or meaning check asks. Most providers have a cheap
+   * model of their own. On OpenRouter that cheap model is the free router,
+   * and on a custom gateway it is whatever the gateway serves, so a user
+   * who chose a paid model there gets the run's own model instead.
+   */
+  function tierFor(cfg) {
+    if (cfg.provider === "custom") return "pro";
+    const free = (m) => !m || m === "openrouter/free" || /:free$/.test(m);
+    return cfg.provider === "openrouter" && !free(cfg.model) ? "pro" : "lite";
+  }
+
+  /** The user's configured provider, on the model tierFor picks, as a recipes model client. */
   function modelFrom(cfg, deps) {
     const LLM = need("SELECT_TO_AI_LLM");
     if (!cfg || cfg.keyProblem || (!LLM && !deps.client)) return null;
@@ -249,13 +262,15 @@
       now: () => Date.now(),
       log: () => {},
     });
+    const tier = tierFor(cfg);
+    const asked = tier === "pro" ? cfg.model : cfg.liteModel;
     return {
       name: cfg.provider,
-      model: cfg.liteModel,
+      model: asked,
       async complete(req) {
-        const out = await client.call({ system: req.system, user: req.user, tool: { name: "answer", description: "Your answer, as the fields of this tool.", parameters: req.schema }, tier: "lite" }, cfg);
+        const out = await client.call({ system: req.system, user: req.user, tool: { name: "answer", description: "Your answer, as the fields of this tool.", parameters: req.schema }, tier }, cfg);
         const u = out.usage || {};
-        const usage = { provider: cfg.provider, model: u.model || out.model || cfg.liteModel, inTok: u.prompt || 0, outTok: u.completion || 0, usd: u.cost || 0 };
+        const usage = { provider: cfg.provider, model: u.model || out.model || asked, inTok: u.prompt || 0, outTok: u.completion || 0, usd: u.cost || 0 };
         if (!out.reply || typeof out.reply !== "object") throw Object.assign(new Error("the model gave no answer"), { usage });
         return { json: out.reply, usage };
       },
@@ -362,7 +377,7 @@
     });
   }
 
-  const api = Object.freeze({ begin, around, end, saveable, saveRun, runRecipe, summary, modelFrom, install, load, _recordings: recordings });
+  const api = Object.freeze({ begin, around, end, saveable, saveRun, runRecipe, summary, modelFrom, tierFor, install, load, _recordings: recordings });
   root.SELECT_TO_AI_RECIPES = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

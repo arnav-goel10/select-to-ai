@@ -80,16 +80,20 @@ test("free backups are real providers with endpoints and default models", () => 
     assert.ok(defaults.PROVIDER_FALLBACK_MODELS[b.provider].lite, b.provider);
   }
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../../extension/manifest.json"), "utf8"));
-  assert.ok(manifest.host_permissions.includes("https://api.cerebras.ai/*"));
+  // Provider hosts are optional in 4.0 and asked for in the click that needs them.
+  assert.ok(!manifest.host_permissions.includes("https://api.cerebras.ai/*"));
+  assert.ok(manifest.optional_host_permissions.includes("https://*/*"), "api.cerebras.ai can be granted");
 });
 
 test("new key formats are accepted and never stored as memories", () => {
   const agent = fs.readFileSync(path.join(__dirname, "../../extension/agent.js"), "utf8");
   // Google AI Studio issues "AQ." keys as well as "AIza" ones (Oct 2026).
   assert.match(agent, /provider === "gemini" && !\/\^\(AIza\|AQ\\\.\)\/\.test\(key\)/);
-  const welcome = fs.readFileSync(path.join(__dirname, "../../extension/welcome.js"), "utf8");
-  assert.match(welcome, /\[\/\^\(AIza\|AQ\\\.\)\/, \["gemini"\]\]/);
-  assert.match(welcome, /\[\/\^mstrl_\/, \["mistral"\]\]/);
+  // The welcome page reads the provider off the key with setup.js.
+  const SETUP = require("../../extension/setup.js");
+  assert.equal(SETUP.routeKey("AQ.Zz0Example-KeyForTests").provider, "gemini");
+  assert.equal(SETUP.routeKey("AIzaExampleKeyForTests").provider, "gemini");
+  assert.equal(SETUP.routeKey("mstrl_ExampleKeyForTests0000").provider, "mistral");
   const KNOWN = require("../../extension/core/memory.js");
   for (const secret of ["my key is AQ.Zz0Example-KeyForTests-0000000000-abcd", "csk-0000example0000test0000", "mstrl_ExampleKeyForTests0000", "nvapi-ExampleKeyForTests-00000"]) {
     assert.equal(KNOWN.isStorable(secret), false, secret.slice(0, 12));

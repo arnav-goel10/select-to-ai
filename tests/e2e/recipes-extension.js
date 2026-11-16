@@ -31,7 +31,8 @@ const path = require("node:path");
 const http = require("node:http");
 const assert = require("node:assert/strict");
 
-const EXT = path.resolve(__dirname, "../../extension");
+// The local test server is granted, as after Allow on the site-access card.
+const EXT = require("../helpers/granted-build.js").grantedBuild(path.resolve(__dirname, "../../extension"));
 const KEYS = path.join(os.homedir(), ".config/select-to-ai/keys.env");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -165,7 +166,8 @@ async function main() {
     const extensionId = new URL(worker.url()).host;
     const set = (area, items) => worker.evaluate(([a, i]) => chrome.storage[a].set(i), [area, items]);
     await set("sync", { agentActiveProvider: "custom", agentCustomUrl: `${base}/v1`, agentModel: "e2e-scripted-model", showAgent: true, agentRiskConfirmation: false, agentDomainAllowlist: "", openingMode: "tab", agentLearning: false });
-    await set("local", { onboardingComplete: true });
+    // The user already agreed to what the agent sends (setup.js consent).
+    await set("local", { onboardingComplete: true, agentDataConsent: { [`custom ${new URL(base).origin}`]: Date.now(), anthropic: Date.now() } });
 
     // 1. The agent saves a note; the run is saved as a recipe.
     const fixture = context.pages()[0] || (await context.newPage());

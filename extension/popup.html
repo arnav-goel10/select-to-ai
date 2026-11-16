@@ -32,6 +32,9 @@
       .menu { border-top: 1px solid var(--border); padding: 6px; }
       .menu .menu-item { min-height: 36px; font-size: var(--text-sm); }
       .menu .menu-item kbd { font-size: 10.5px; }
+      .news { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px 14px; margin-bottom: 10px; background: var(--surface-2); }
+      .news b { display: block; font-size: var(--text-sm); font-weight: var(--weight-semibold); margin-bottom: 4px; }
+      .news p { margin: 0 0 8px; color: var(--text-muted); font-size: var(--text-xs); line-height: var(--leading-snug); }
       .tip { border-top: 1px solid var(--border); padding: 10px 14px 12px; font-size: var(--text-xs); color: var(--text-subtle); line-height: var(--leading-snug); }
     </style>
   </head>
@@ -44,6 +47,11 @@
     </div>
 
     <div class="main">
+      <div class="news" id="whatsNew" role="status" hidden>
+        <b>What is new in 4.0</b>
+        <p>Right-click sending works as before. Assistants that opened in a separate window now open in the side panel. A new, optional agent can also do tasks on websites for you.</p>
+        <button class="btn btn-sm" id="whatsNewClose" type="button">Got it</button>
+      </div>
       <form class="task" id="taskForm" autocomplete="off" hidden>
         <textarea id="taskInput" placeholder="What should the agent do?" aria-label="Task for the browser agent"></textarea>
         <div class="bar">
@@ -75,9 +83,13 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7M21 3l-9 9"/><path d="M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/></svg>
         <span class="grow">Open the agent in a tab</span>
       </button>
-      <button class="menu-item" id="openPaletteBtn" type="button">
+      <button class="menu-item" id="openPaletteBtn" type="button" hidden>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
         <span class="grow">Quick box on any page</span><kbd id="kbdPalette">Alt K</kbd>
+      </button>
+      <button class="menu-item" id="rightClickSettingsBtn" type="button">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h7"/></svg>
+        <span class="grow">Right-click settings</span>
       </button>
     </div>
     <div class="tip">Tip: highlight text on a page, then right-click to ask about it.</div>

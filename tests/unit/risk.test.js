@@ -289,3 +289,241 @@ test("a link is judged by where it goes, a script link by what it says", () => {
   assert.equal(T.actionRisk({ action: "click", id: 1 }, page(link("Delete account", "#"))).kind, "delete", "a script link acts like a button");
   assert.equal(T.actionRisk({ action: "click", id: 1 }, page(link("Pay now", "/orders/12", { role: "button" }))).kind, "pay");
 });
+
+// ---------------------------------------------------------------------------
+// Sending, leaving and moving: the holds added for 4.0, each with the
+// ordinary step it must leave free.
+// ---------------------------------------------------------------------------
+const POLICY = require("../../extension/core/policy.js");
+const KNOWN = require("../../extension/core/memory.js");
+
+const chat = (box, url) => ({ url: url || "https://chat.example/c/general", innerText: "General channel", elements: [box], forms: [] });
+const enterIn = (box, url) => T.actionRisk({ action: "keypress", id: box.id, text: "Enter" }, chat(box, url));
+
+test("Enter in a message box with no form is an unsure send, settled by the page-blind check", () => {
+  const boxes = [
+    { id: 4, tagName: "textarea", accName: "Message #general", value: "" },
+    { id: 4, tagName: "div", isContentEditable: true, accName: "Type a message" },
+    { id: 4, tagName: "div", role: "textbox", accName: "Write a comment" },
+  ];
+  for (const box of boxes) {
+    const r = enterIn(box);
+    assert.ok(r, `${box.accName} is held`);
+    assert.equal(r.kind, "send", box.accName);
+    assert.ok(r.unsure, `${box.accName} is unsure, so a second opinion decides`);
+    assert.equal(r.unsure.host, "chat.example");
+    assert.equal(r.unsure.box, box.accName);
+    assert.equal(r.unsure.button, "");
+    assert.equal(r.unsure.to, "");
+    assert.equal(r.unsure.key, `chat.example|${box.accName}`);
+  }
+  // On a payment page the box is held as a payment, as before.
+  assert.equal(enterIn(boxes[0], "https://shop.example/checkout/review").kind, "pay");
+});
+
+test("Enter in a plain input, a search box or a search region with no form stays free", () => {
+  assert.equal(enterIn({ id: 4, tagName: "input", inputType: "text", accName: "Filter results" }), null);
+  assert.equal(enterIn({ id: 4, tagName: "input", inputType: "search", accName: "Search" }), null);
+  assert.equal(enterIn({ id: 4, tagName: "div", isContentEditable: true, role: "searchbox", accName: "Search messages" }), null);
+  assert.equal(enterIn({ id: 4, tagName: "textarea", role: "combobox", accName: "Search" }), null);
+  assert.equal(T.isMessageBox({ tagName: "input", inputType: "text" }), false);
+  assert.equal(T.isMessageBox({ tagName: "textarea" }), true);
+});
+
+test("a formless message box is asked about first; a multi-line note box the check calls a lookup goes through", () => {
+  const run = { task: "post 'standup at 10' in general", trust: { sites: ["chat.example"], urls: [] }, openedTabs: [], typed: { 4: "standup at 10" } };
+  const message = chat({ id: 4, tagName: "textarea", accName: "Message #general" });
+  const first = POLICY.decide({ do: "press", ref: 4, key: "Enter" }, message, run, {});
+  assert.equal(first.verdict, "confirm");
+  assert.equal(first.check.kind, "form");
+  assert.equal(first.check.key, "form|chat.example|Message #general");
+  assert.equal(first.check.text, "standup at 10", "the check is shown what the agent typed");
+  assert.equal(T.opinionMessages(first.check).user.includes("none named; Enter is pressed in the box"), true);
+  // The check says it posts for other people: the user approves it.
+  const sent = POLICY.decide({ do: "press", ref: 4, key: "Enter" }, message, { ...run, opinions: { [first.check.key]: { sends: true, why: "a chat message" } } }, {});
+  assert.equal(sent.verdict, "confirm");
+  assert.equal(sent.kind, "send");
+  // A notes box where Enter only adds a line: the check says it sends nothing to people, so nothing is held.
+  const notes = chat({ id: 4, tagName: "textarea", accName: "Notes" }, "https://notes.example/today");
+  const asked = POLICY.decide({ do: "press", ref: 4, key: "Enter" }, notes, { ...run, trust: { sites: ["notes.example"], urls: [] } }, {});
+  const freed = POLICY.decide({ do: "press", ref: 4, key: "Enter" }, notes, { ...run, trust: { sites: ["notes.example"], urls: [] }, opinions: { [asked.check.key]: { sends: false, why: "a private note" } } }, {});
+  assert.equal(freed.verdict, "allow");
+  // Typing into the box is not the send, and is not held on the task's own site.
+  assert.equal(POLICY.decide({ do: "fill", ref: 4, value: "standup at 10" }, message, run, {}).verdict, "allow");
+});
+
+test("'write it but don't send' refuses Enter in a formless message box, and leaves a formless search alone", () => {
+  const run = { task: "draft a reply to Sam but don't send it", trust: { sites: ["chat.example"], urls: [] }, openedTabs: [] };
+  const v = POLICY.decide({ do: "press", ref: 4, key: "Enter" }, chat({ id: 4, tagName: "div", isContentEditable: true, accName: "Message Sam" }), run, {});
+  assert.equal(v.verdict, "refuse");
+  assert.match(v.message, /Enter was not pressed/);
+  const search = POLICY.decide({ do: "press", ref: 4, key: "Enter" }, chat({ id: 4, tagName: "input", inputType: "text", accName: "Search messages" }), run, {});
+  assert.equal(search.verdict, "allow");
+});
+
+const addr = (url, extra) => T.addressOrigin(url, { task: "compare kettles", seenUrls: new Set(), trustedSites: new Set(), ...extra });
+
+test("a front page is a site's own name: never an IP address, a local name or an unseen sub-name", () => {
+  for (const url of ["http://192.168.1.1/", "http://10.0.0.5/", "http://93.184.216.34/", "http://[::1]/", "http://localhost/", "http://router/", "http://printer.local/", "http://nas.home.arpa/", "https://k3y-ada-example-com.evil.example/"]) {
+    assert.equal(addr(url), "written", url);
+  }
+  for (const url of ["https://www.bbc.com/", "https://bbc.co.uk/", "https://example.org"]) assert.equal(addr(url), "home", url);
+  // A sub-name the run has seen a link on, or one on a trusted site, is a front page too.
+  assert.equal(addr("https://docs.example.org/", { seenUrls: new Set(["https://docs.example.org/guide"]) }), "home");
+  assert.equal(addr("https://shop.example.com/", { trustedSites: new Set(["example.com"]) }), "home");
+  assert.equal(T.isPrivateHost("router.lan"), true);
+  assert.equal(T.isPrivateHost("www.example.com"), false);
+});
+
+test("a plain link keeps its own query: other values are the model's, a search form's address takes any", () => {
+  const seenUrls = new Set(["https://reviews.example.net/item?id=7", "https://reviews.example.net/search"]);
+  const seenSearches = new Set(["https://reviews.example.net/search"]);
+  // The link exactly as shown, and the same with a trailing slash, stay free.
+  assert.equal(addr("https://reviews.example.net/item?id=7", { seenUrls, seenSearches }), "seen");
+  assert.equal(addr("https://reviews.example.net/item/?id=7", { seenUrls, seenSearches }), "seen");
+  // Other values on that link are written by the model, and held.
+  assert.equal(addr("https://reviews.example.net/item?id=7&x=ada%40mail.example", { seenUrls, seenSearches }), "written");
+  assert.equal(addr("https://reviews.example.net/item?id=8", { seenUrls, seenSearches }), "written");
+  // A search form's results are what typing in the form gives: free for
+  // the request's words or the page's, held for words from nowhere.
+  assert.equal(addr("https://reviews.example.net/search?q=kettle", { seenUrls, seenSearches }), "seen");
+  assert.equal(addr("https://reviews.example.net/search?q=order+4411", { seenUrls, seenSearches }), "written");
+  // A page that declares a search form sending to a collector: navigating
+  // there with what the agent read is held, as typing it would be.
+  const collector = new Set(["https://collect.evil.test/s"]);
+  const reader = { url: "https://blog.example.net/post", innerText: "Kettle notes. Your order 4411 shipped.", elements: [], forms: [{ id: 0, search: true, action: "https://collect.evil.test/s" }] };
+  const go = (url, task, on = reader) => T.actionRisk({ action: "navigate", url }, on, { task, seenUrls: collector, seenSearches: collector, trustedSites: new Set() });
+  assert.equal(go("https://collect.evil.test/s?q=card+9921", "compare kettles").kind, "address", "words from nowhere");
+  assert.equal(go("https://collect.evil.test/s?q=kettle", "compare kettles"), null, "the request's words");
+  assert.equal(go("https://collect.evil.test/s?q=order+4411", "compare kettles"), null, "words the page shows, to a form that page declares");
+  // A form read on an earlier page does not take the current page's words:
+  // an inbox read after the attacker's page cannot be searched out to it.
+  const inbox = { url: "https://mail.example.com/inbox", innerText: "Your passcode 482913. Salary review.", elements: [], forms: [] };
+  assert.equal(go("https://collect.evil.test/s?q=passcode+482913+salary", "compare kettles", inbox).kind, "address", "page words to a form another page declared");
+  assert.equal(go("https://collect.evil.test/s?q=kettle", "compare kettles", inbox), null, "the request's words still go");
+  // The fragment is read by script on the page, so a new one is held.
+  assert.equal(go("https://collect.evil.test/s?q=kettle#card-9921", "compare kettles").kind, "address", "a fragment on a search address");
+  // A name or password before the host goes to the server too.
+  assert.equal(addr("https://x9921@reviews.example.net/item?id=7", { seenUrls, seenSearches }), "written", "userinfo on a seen link");
+  assert.equal(addr("https://x9921@reviews.example.net/search?q=kettle", { seenUrls, seenSearches }), "written", "userinfo on a search address");
+  assert.equal(addr("https://data9921@example.io/"), "written", "userinfo on a front page");
+  assert.equal(addr("https://a:b@reviews.example.net/item?id=8", { seenUrls, seenSearches, trustedSites: new Set(["example.net"]) }), "written", "userinfo on a trusted site");
+  // On a site that is part of the task, any address is the task's.
+  assert.equal(addr("https://reviews.example.net/item?id=8", { seenUrls, seenSearches, trustedSites: new Set(["example.net"]) }), "trusted");
+  // Held as an address in a run.
+  const held = T.actionRisk({ action: "navigate", url: "https://reviews.example.net/item?id=7&d=order+4411" }, { url: "https://reviews.example.net/item?id=7", elements: [] }, { task: "x", seenUrls, seenSearches, trustedSites: new Set() });
+  assert.equal(held.kind, "address");
+});
+
+test("a saved detail in any address is held, a seen link included; the same link without it is free", () => {
+  let store = KNOWN.empty();
+  store = KNOWN.setField(store, "email", "ada@example.com", "you_said", 1).store;
+  const seen = "https://reviews.example.net/item?id=7";
+  const run = { task: "find kettle reviews", trust: { sites: [], urls: [seen, "https://reviews.example.net/item?id=7&u=ada%40example.com"] }, openedTabs: [] };
+  const page = { url: seen, innerText: "Kettle reviews", elements: [] };
+  const v = POLICY.decide({ do: "navigate", url: "https://reviews.example.net/item?id=7&u=ada%40example.com" }, page, run, { riskConfirmation: true }, store);
+  assert.equal(v.verdict, "confirm");
+  assert.equal(v.kind, "address");
+  assert.equal(POLICY.decide({ do: "tabs", op: "open", url: "https://www.example.org/?e=ada@example.com" }, page, run, { riskConfirmation: true }, store).kind, "address", "a front page carrying it too");
+  assert.equal(POLICY.decide({ do: "navigate", url: seen }, page, run, { riskConfirmation: true }, store).verdict, "allow");
+});
+
+test("a search box on a site outside the task takes the request's words or the page's own, and holds words from elsewhere", () => {
+  const box = { id: 2, tagName: "input", inputType: "search", accName: "Search reviews", formId: 0 };
+  const page = { url: "https://reviews.other.test/", innerText: "Top rated electric kettles and toasters this month", elements: [box], forms: [{ id: 0, search: true, fields: 1 }] };
+  const ctx = (extra) => ({ task: "find a good kettle under $40", seenUrls: new Set(), trustedSites: new Set(["shop.example"]), ...extra });
+  const type = (text, c) => T.actionRisk({ action: "type", id: 2, text, submit: true }, page, c || ctx());
+  assert.equal(type("kettle"), null, "the request's word");
+  assert.equal(type("kettles under $40"), null, "with an ending, and its numbers");
+  assert.equal(type("kettle", ctx({ task: "find kettles" })), null, "without the request's ending");
+  assert.equal(type("ket", ctx({ task: "find kettles" })).kind, "site", "a stub of a word is not the word");
+  assert.equal(type("electric kettles"), null, "a word the page shows");
+  assert.equal(type("order 4411 card 9921").kind, "site", "words from nowhere on this page or in the request");
+  assert.equal(type("kettle ada@example.com", ctx({ details: ["ada@example.com"] })).kind, "site", "a saved detail");
+  // On a site that is part of the task nothing is held.
+  assert.equal(type("order 4411", ctx({ trustedSites: new Set(["other.test"]) })), null);
+});
+
+const tabsRun = (extra) => ({ task: "compare the two kettles", trust: { sites: ["shop.example"], urls: [] }, openedTabs: [7], ...extra });
+const tabList = [
+  { id: 1, current: true, url: "https://shop.example/kettle-a", title: "Kettle A" },
+  { id: 7, url: "https://reviews.example.net/kettle-a", title: "Kettle A review" },
+  { id: 8, url: "https://shop.example/kettle-b", title: "Kettle B" },
+  { id: 9, url: "https://mail.example.org/inbox", title: "Inbox (4)" },
+];
+const switchTo = (tab, run, settings) => POLICY.decide({ do: "tabs", op: "switch", tab }, { url: "https://shop.example/kettle-a", elements: [] }, run || tabsRun(), settings || { riskConfirmation: true }, KNOWN.empty(), tabList);
+
+test("switching into a tab the run did not open, on a site outside the task, asks once per site", () => {
+  const v = switchTo(9);
+  assert.equal(v.verdict, "confirm");
+  assert.equal(v.kind, "site");
+  assert.equal(v.site, "example.org");
+  // Once allowed, the site is part of the task for the rest of the run.
+  const run = tabsRun();
+  run.trust = POLICY.remember(run.trust, v);
+  assert.equal(switchTo(9, run).verdict, "allow");
+});
+
+test("switching to a tab the run opened, one on the task's site, or the current one is free", () => {
+  assert.equal(switchTo(7).verdict, "allow", "opened by the run");
+  assert.equal(switchTo(8).verdict, "allow", "on the task's own site");
+  assert.equal(switchTo(1).verdict, "allow", "the tab it is on");
+  assert.equal(switchTo(9, tabsRun(), { riskConfirmation: false }).verdict, "allow", "with approvals turned off");
+});
+
+test("a tab the run was not shown is refused, even with approvals off; one it opened since its last look is free", () => {
+  // Tab 42 is in another window, or was opened by someone else since the last look.
+  const v = switchTo(42);
+  assert.equal(v.verdict, "refuse");
+  assert.match(v.message, /no tab 42 in the tab list/);
+  assert.equal(switchTo(42, tabsRun(), { riskConfirmation: false }).verdict, "refuse");
+  assert.equal(switchTo(42, tabsRun(), { riskConfirmation: true, allowlist: "shop.example" }).verdict, "refuse");
+  assert.equal(switchTo(42, tabsRun({ openedTabs: [7, 42] })).verdict, "allow", "opened by the run");
+});
+
+test("a tab that is not a web page is asked about, unless it is empty or the run opened it", () => {
+  const odd = [
+    ...tabList,
+    { id: 11, url: "file:///Users/someone/notes.txt", title: "notes.txt" },
+    { id: 12, url: "", title: "Loading" },
+    { id: 13, url: "about:blank", title: "" },
+    { id: 14, url: "chrome://newtab/", title: "New Tab" },
+  ];
+  const go = (tab, run, settings) => POLICY.decide({ do: "tabs", op: "switch", tab }, { url: "https://shop.example/kettle-a", elements: [] }, run || tabsRun(), settings || { riskConfirmation: true }, KNOWN.empty(), odd);
+  assert.equal(go(11).verdict, "confirm", "a local file");
+  assert.equal(go(11).kind, "site");
+  assert.equal(go(12).verdict, "confirm", "a tab with no address yet");
+  assert.equal(go(13).verdict, "allow", "an empty tab");
+  assert.equal(go(14).verdict, "allow", "the new-tab page");
+  assert.equal(go(11, tabsRun({ openedTabs: [11] })).verdict, "allow", "opened by the run");
+  assert.equal(go(11, tabsRun(), { riskConfirmation: false }).verdict, "allow", "approvals off");
+});
+
+test("with an allowlist, a tab on another site is refused, even one the run opened", () => {
+  const only = { riskConfirmation: true, allowlist: "shop.example" };
+  assert.equal(switchTo(9, tabsRun(), only).verdict, "refuse");
+  assert.equal(switchTo(7, tabsRun(), only).verdict, "refuse");
+  assert.equal(switchTo(8, tabsRun(), only).verdict, "allow");
+});
+
+test("a link that says it deletes or sends is asked about, told where it goes; a link that says it pays is judged by its destination", () => {
+  const link = (text, href) => ({ id: 1, tagName: "a", text, href });
+  const page = (el, url) => ({ url: url || "https://www.shop.example/account", elements: [el], forms: [] });
+  const del = T.pressCheckOf({ action: "click", id: 1 }, page(link("Delete account", "/account/delete")));
+  assert.ok(del, "asked about");
+  assert.equal(del.linkTo, "/account/delete");
+  assert.match(T.opinionMessages({ ...del, task: "x" }).user, /It is a link to: "\/account\/delete"/);
+  assert.ok(T.pressCheckOf({ action: "click", id: 1 }, page(link("Unsubscribe", "https://mail.other.example/u/1"))).linkTo.startsWith("mail.other.example/"));
+  // In a run: asked first, then held only when the check says it deletes.
+  const run = { task: "check my account settings", trust: { sites: ["shop.example"], urls: [] }, openedTabs: [] };
+  const first = POLICY.decide({ do: "click", ref: 1 }, page(link("Delete account", "/account/delete")), run, {});
+  assert.equal(first.verdict, "allow");
+  assert.ok(first.check);
+  assert.equal(POLICY.decide({ do: "click", ref: 1 }, page(link("Delete account", "/account/delete")), { ...run, opinions: { [first.check.key]: { does: "delete", why: "deletes" } } }, {}).kind, "delete");
+  assert.equal(POLICY.decide({ do: "click", ref: 1 }, page(link("Delete account", "/account/delete")), { ...run, opinions: { [first.check.key]: { does: "none", why: "opens a page" } } }, {}).verdict, "allow");
+  // arXiv's Subscribe link, and ordinary links, are not asked about at all.
+  const arxiv = page(link("Subscribe to E-Mail Listings", "/help/subscribe"), "https://arxiv.org/help");
+  assert.equal(T.pressCheckOf({ action: "click", id: 1 }, arxiv), null);
+  assert.deepEqual(POLICY.decide({ do: "click", ref: 1 }, arxiv, { ...run, trust: { sites: ["arxiv.org"], urls: [] } }, {}), { verdict: "allow" });
+  assert.equal(T.pressCheckOf({ action: "click", id: 1 }, page(link("Reviews", "/reviews"))), null);
+});

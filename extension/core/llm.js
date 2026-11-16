@@ -25,7 +25,9 @@
   const DEFAULTS = need("SELECT_TO_AI_DEFAULTS", "../defaults.js");
   const LIMITS = need("SELECT_TO_AI_LIMITS", "../usageLimits.js");
   const SECURITY = need("SELECT_TO_AI_SECURITY", "../security.js");
-  const CHATGPT = need("SELECT_TO_AI_CHATGPT", "../chatgptAuth.js");
+  // Sign in with ChatGPT is not in the 4.0 package. Its module, when present
+  // in a development build, is picked up here; otherwise the provider is refused.
+  const CHATGPT = (() => { try { return need("SELECT_TO_AI_CHATGPT", "../chatgptAuth.js"); } catch (e) { return null; } })();
 
   const clip = (t, n) => { const v = String(t == null ? "" : t).replace(/\s+/g, " ").trim(); return v.length > n ? `${v.slice(0, n - 1)}…` : v; };
 
@@ -87,12 +89,13 @@
     const slugs = account && Array.isArray(account.models) ? account.models.map((m) => m.slug) : [];
     const problemOf = (provider) => {
       if (provider !== "chatgpt") return keyProblem(provider, detailsOf(provider).apiKey);
+      if (!CHATGPT) return "Sign in with ChatGPT is not in this version. Pick another provider in Settings.";
       if (!account || !account.signedIn) return "The agent needs you to sign in with ChatGPT first.";
       if (!account.planEnabled) return "ChatGPT plan use is not turned on for this sign-in. Turn it on in Settings with Continue with ChatGPT.";
       return "";
     };
     const detailsOf = (provider) => {
-      if (provider === "chatgpt") return { apiKey: "", baseUrl: CHATGPT.API_BASE };
+      if (provider === "chatgpt") return { apiKey: "", baseUrl: CHATGPT ? CHATGPT.API_BASE : "" };
       if (provider === "custom") return { apiKey: it.agentCustomKey || "", baseUrl: it.agentCustomUrl || A.customUrl };
       const entry = (DEFAULTS.PROVIDER_ENDPOINTS || {})[provider];
       return entry ? { apiKey: it[entry.keyName] || "", baseUrl: entry.baseUrl } : { apiKey: "", baseUrl: "" };
@@ -111,8 +114,8 @@
     const fallbacks = DEFAULTS.PROVIDER_FALLBACK_MODELS[provider] || DEFAULTS.PROVIDER_FALLBACK_MODELS.openrouter;
     // On ChatGPT a model has to be one the account lists.
     const listed = (m) => provider !== "chatgpt" || !slugs.length || slugs.includes(m);
-    const pro = modelFits(provider, model) && listed(model) ? model : provider === "chatgpt" ? CHATGPT.bestModel(account && account.models) || fallbacks.pro : fallbacks.pro;
-    const lite = provider === "custom" ? pro : provider === "chatgpt" ? CHATGPT.liteModel(account && account.models) || pro : fallbacks.lite || pro;
+    const pro = modelFits(provider, model) && listed(model) ? model : provider === "chatgpt" && CHATGPT ? CHATGPT.bestModel(account && account.models) || fallbacks.pro : fallbacks.pro;
+    const lite = provider === "custom" ? pro : provider === "chatgpt" ? (CHATGPT && CHATGPT.liteModel(account && account.models)) || pro : fallbacks.lite || pro;
     const d = detailsOf(provider);
     // A stronger model on the same provider and key. A backup standing in has none.
     const helper = String(it.agentHelperModel || "").trim();
@@ -234,10 +237,7 @@
       }
     } else {
       if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
-      if (cfg.provider === "openrouter") {
-        headers["HTTP-Referer"] = "https://selecttoai.github.io";
-        headers["X-Title"] = "Select to AI Browser Agent";
-      }
+      if (cfg.provider === "openrouter") Object.assign(headers, DEFAULTS.OPENROUTER_ATTRIBUTION);
       const sys = explicitCaching(cfg, model) ? [{ type: "text", text: system, cache_control: { type: "ephemeral" } }] : system;
       body = {
         model,
@@ -254,10 +254,17 @@
         if (!tool) body.response_format = { type: "json_object" };
         body.stream_options = { include_usage: true };
       }
-      if (cfg.provider === "openrouter") Object.assign(body, DEFAULTS.openRouterOptions(model, !!tool));
+      if (cfg.provider === "openrouter") Object.assign(body, DEFAULTS.openRouterOptions(model, !!tool, !!mode.bareFree));
       if (!mode.noEffort) Object.assign(body, effortFields(cfg, model, req.effort));
     }
     return { endpoint, headers, body };
+  }
+
+  /** True when an error message is about the model id itself: unknown, retired, or with nothing serving it. */
+  function namesModel(message) {
+    const m = String(message || "");
+    if (/not a valid model|invalid model|unknown model|no endpoints|no allowed providers|model[^.]{0,80}(not found|does not exist|not exist|not available|unavailable|deprecated|retired|no longer)/i.test(m)) return true;
+    return (DEFAULTS.OPENROUTER_FREE_CHAIN || []).some((id) => id !== "openrouter/free" && m.includes(id));
   }
 
   /** The provider's own words from an error reply, without the JSON around them. */
@@ -508,6 +515,16 @@
 
         const status = res.status;
         const message = errorText(res.raw, status);
+        // "openrouter/free" goes out as a list of named free models
+        // (defaults.js OPENROUTER_FREE_CHAIN). A free model is retired or
+        // renamed without notice, and a refusal that names a model means the
+        // list itself is the problem: the bare router is asked once instead,
+        // and this connection keeps asking it from then on.
+        if (provider === "openrouter" && model === "openrouter/free" && !mode.bareFree && (status === 400 || status === 404) && namesModel(message)) {
+          mode.bareFree = true;
+          log("Compatibility", `OpenRouter refused a free model by name (${clip(message, 120)}). Asking its free router directly on this connection.`, { quiet: true });
+          continue;
+        }
         // A provider that does not take a say in the model's effort, or not
         // together with tools (an earlier project found one that rejected
         // reasoning_effort whenever tools were sent): it is left out on this

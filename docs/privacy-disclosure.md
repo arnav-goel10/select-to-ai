@@ -1,6 +1,6 @@
 # Privacy disclosure for 4.0.0
 
-What version 4.0.0 sends and stores, read from the code under `extension/` on 10 Nov 2026, and the answers this means for the Chrome Web Store "Privacy practices" tab. The user-facing version is [PRIVACY_POLICY.md](../PRIVACY_POLICY.md).
+What version 4.0.0 sends and stores, read from the code under `extension/` on 10 Nov 2026 and updated on 16 Nov 2026 for the release manifest, in which notifications and every host beyond the three 2.0 chat sites are optional and asked at first use, and the answers this means for the Chrome Web Store "Privacy practices" tab. The user-facing version is [PRIVACY_POLICY.md](../PRIVACY_POLICY.md).
 
 The store listing for 2.0 says the extension collects no user data. That was close to true for 2.0. It is false for 4.0.0: the agent sends page content, tab titles and addresses, screenshots and memory to the AI service the user picked, and stores personal details and API keys on the device.
 
@@ -10,18 +10,17 @@ There is no developer server. No request in the code goes to a host the develope
 
 | # | Destination | What is sent | When | Code |
 |---|---|---|---|---|
-| 1 | The chosen AI service (11 providers in `host_permissions`) or the user's custom gateway | Task text, selected text (up to 800 chars), the current page's text and control list, excerpts of earlier pages in the task, titles and URLs of every tab in the window, excerpts of up to 4 other tabs (900 chars each) when the task is about them, a JPEG screenshot when the model calls `look` on a vision model, memory notes and preferences, a saved detail's value when the model calls `recall`, the API key | Every step of an agent run | `engine.js` model and observe paths; `core/context.js` (prompt assembly, tabs at the "Open tabs" line); `core/llm.js` `buildRequest`; every URL checked by `security.js` `validateProviderUrl` |
+| 1 | The chosen AI service (11 providers, each an optional host permission asked when the user connects it) or the user's custom gateway | Task text, selected text (up to 800 chars), the current page's text and control list, excerpts of earlier pages in the task, titles and URLs of every tab in the window, excerpts of up to 4 other tabs (900 chars each) when the task is about them, a JPEG screenshot when the model calls `look` on a vision model, memory notes and preferences, a saved detail's value when the model calls `recall`, the API key | Every step of an agent run | `engine.js` model and observe paths; `core/context.js` (prompt assembly, tabs at the "Open tabs" line); `core/llm.js` `buildRequest`; every URL checked by `security.js` `validateProviderUrl` |
 | 2 | Same service | Run summary and existing memory, to decide what to keep | After a run, unless learning is off | `engine.js` learning step |
 | 3 | Same service, cheaper model | The changed step's description and the page's controls | Recipe replay when the page changed | `recipes/service.js` `modelFrom` |
 | 4 | Same service | The API key and the word "Hi", one token | Testing a pasted key on the welcome page | `welcome.js` `testKey` |
 | 5 | Same service, through the worker | Connection test or model list, with the API key | Settings page | `background.js` `fetchProxy` |
 | 6 | openrouter.ai (sign-in window, then `POST /api/v1/auth/keys`) | PKCE code; an API key comes back | "Continue with OpenRouter" | `welcome.js`, `chrome.identity.launchWebAuthFlow` |
-| 7 | auth.openai.com, api.openai.com | OAuth code and tokens | Sign in with ChatGPT. **Off in 4.0.0** (`FEATURES.chatgptSignIn = false` in `defaults.js`; the worker refuses it) | `chatgptAuth.js`, `chatgptConnect.js` |
-| 8 | chatgpt.com/?q=, perplexity.ai/search?q= | Selected text in the URL, plus the page address if "Include the page link" is on | Right-click send | `background.js`, `config.js` URL templates |
-| 9 | chatgpt.com, claude.ai, gemini.google.com, perplexity.ai pages | Selected text (and page address) typed into the chat box by the content script | Right-click send, side panel | `contentScript.js`, `background.js` |
-| 10 | Any site the agent opens | What the task needs, for example search words | During a run | the agent's own actions |
+| 7 | chatgpt.com/?q=, perplexity.ai/search?q= | Selected text in the URL when it is short, plus the page address only if "Include the page link" is on (off by default). Each send opens a new chat | Right-click send | `background.js`, `config.js` URL templates |
+| 8 | chatgpt.com, gemini.google.com, www.perplexity.ai pages, and claude.ai or perplexity.ai once the user allows them | Selected text (and page address, if the switch is on) typed into the chat box by the content script | Right-click send, side panel | `contentScript.js`, `background.js` |
+| 9 | Any site the agent opens | What the task needs, for example search words | During a run | the agent's own actions |
 
-Not a request: a session `declarativeNetRequest` rule removes `X-Frame-Options`, CSP and related headers on the four chat sites, only for the side panel's frames, so those sites can show inside the panel (`background.js`). The extension's own files (`tokens.css`, `chrome-extension://_favicon`) load locally.
+Not a request: a session `declarativeNetRequest` rule removes `X-Frame-Options`, CSP and related headers on the chat sites, only for the side panel's frames, so those sites can show inside the panel (`background.js`). It takes effect on claude.ai only after the user allows that host. The extension's own files (`tokens.css`) load locally. Site icons next to a task's pages are the tab's own icon address (`tab.favIconUrl`), or a generic icon; there is no `favicon` permission in 4.0.0.
 
 ## Every stored item
 
@@ -32,20 +31,19 @@ Not a request: a session `declarativeNetRequest` rule removes `X-Frame-Options`,
 | `agentUserMemory`, `agentSkills` | local | Pre-v4 memory, moved into `agentKnown` on first run | No | Reset |
 | `agentCrossSessionMemory` | local | Last 20 tasks: the words typed and the outcome | No | Reset |
 | `recipesStore` | local | Up to 50 recipes: URLs, control names and nearby words, example values, last 5 results | No | Recipe delete, Reset |
-| `sessionUrl_<service>` | local | Last conversation URL on each chat site | No | Reset |
+| `sessionUrl_<service>` | local | Last conversation URL on each chat site, recorded only while the site is open inside the side panel | No | Reset |
 | `sidePanelState` | local | The panel's URL and text being handed to it | No | Overwritten, Reset |
-| `chatgptCredentials`, `chatgptAccount`, `chatgptHostId` | local | ChatGPT tokens (encrypted), account email and model list, an install ID. Empty in 4.0.0 while the feature is off | Tokens only | Sign out, Reset |
 | `agentProviderPause`, `onboardingComplete` | local | State flags | No | Reset (pause flag) |
 | `agentSession:<windowId>` | session | Last 12 turns and the run in progress, with the text it has read and other tabs' excerpts. The text of pages the run read is cleared from the record when the run ends (`core/run.js` `toStored`); the other tabs' excerpts and the selection stay until the browser closes | No | Browser close |
-| `agentSelection:<tab>`, `agentHandoff`, `chatgptPending`, `chatgptSignIn` | session | Selection with nearby text, a task handed from the address bar, sign-in attempt state | No | Browser close |
+| `agentSelection:<tab>` | session | Selection with nearby text | No | Browser close |
 | Settings (`CONFIG.STORAGE.SETTINGS`) | sync | Preferences, allow-list, extra instructions | No | Reset |
-| IndexedDB `select-to-ai` / `keys` | IndexedDB | The AES keys for memory and ChatGPT tokens | n/a | Uninstall |
+| IndexedDB `select-to-ai` / `keys` | IndexedDB | The AES key for memory | n/a | Uninstall |
 
-Fixed in this release, found while writing this: a finished run kept up to 800,000 characters of page text in session storage because `toStored` cleared a field name that does not exist; and Reset left recipes, chat URLs and the ChatGPT install ID behind.
+Fixed in this release, found while writing this: a finished run kept up to 800,000 characters of page text in session storage because `toStored` cleared a field name that does not exist; and Reset left recipes and chat URLs behind.
 
 ## Store dashboard answers (Privacy practices tab)
 
-**Single purpose.** Select to AI helps you use AI on the page you are reading: send selected text to an AI chat, or ask an AI agent to read and act on websites for you in your own browser.
+**Single purpose.** Using AI on the web page you are reading. Select to AI sends text you select to the AI chat you pick, and its agent reads and acts on the pages you allow, in your own browser, for a task you asked for.
 
 **Data usage: tick these.**
 
@@ -61,8 +59,8 @@ Fixed in this release, found while writing this: a finished run kept up to 800,0
 | User activity | Yes | Selected text, typing and clicks the agent makes are part of a run and of saved recipes |
 | Website content | Yes | Page text and screenshots go to the AI service |
 
-**Certifications: tick all three.** The data is not sold or transferred to third parties outside the approved use (it goes only to the AI service the user chose, to do what the user asked); it is not used for anything unrelated to the single purpose; it is not used for creditworthiness or lending.
+**Certifications: tick all three, including Limited Use.** The policy states it in its Limited Use section. The data is not sold or transferred to third parties outside the approved use (it goes only to the AI service the user chose, to do what the user asked); it is not used for anything unrelated to the single purpose; it is not used for creditworthiness or lending.
 
 **Remote code.** No. All code is in the package. Recipes are JSON data replayed by packaged code, not code.
 
-**Privacy policy URL.** `https://github.com/arnav-goel10/select-to-ai/blob/main/PRIVACY_POLICY.md` (live only once 4.0.0 is pushed to public main; until then it shows the 3.3.1 policy).
+**Privacy policy URL.** `https://github.com/arnav-goel10/select-to-ai/blob/main/PRIVACY_POLICY.md` (live only once the repository is public and 4.0.0 is on main; open it signed out and check it loads before pasting it).

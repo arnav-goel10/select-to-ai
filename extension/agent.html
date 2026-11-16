@@ -106,6 +106,9 @@
 
             <div class="console-pinned-bottom">
                 <div class="console-wrapper">
+                    <!-- The data consent, above the composer, so a redraw of the
+                         conversation never takes it away (setup.js). -->
+                    <div id="consentSlot"></div>
                     <!-- No model connected yet. -->
                     <div id="credentialsWarning" class="warning-card" role="alert">
                         <span class="warning-icon" aria-hidden="true">
@@ -162,7 +165,7 @@
                 </button>
             </div>
             <div class="memory-body" id="memoryKnown">
-                <p class="memory-lede">What the assistant knows about you, so you never tell it twice. It stays in this browser, encrypted. Your details are put into forms by the extension itself; your AI provider is only sent one when the assistant has to write with it, and you are shown when that happens.</p>
+                <p class="memory-lede">What the agent knows about you, so you never tell it twice. It stays in this browser, encrypted. Your details are put into forms by the extension itself; your AI provider is only sent one when the agent has to write with it, and you are shown when that happens.</p>
                 <label class="memory-toggle"><span class="switch"><input type="checkbox" id="knownPaused" /><span></span></span><span>Pause memory: use and learn nothing until this is off</span></label>
                 <section>
                     <h3>Your details</h3>
@@ -208,11 +211,12 @@
 
     <script src="config.js"></script>
     <script src="defaults.js"></script>
-    <script src="chatgptAuth.js"></script>
     <script src="answerFormat.js"></script>
     <script src="core/memory.js"></script>
     <script src="core/runlog.js"></script>
     <script src="omnibox.js"></script>
+    <script src="core/grants.js"></script>
+    <script src="setup.js"></script>
     <script src="agent.js"></script>
 </body>
 

@@ -1061,19 +1061,46 @@
   }
 
   const stripUrl = (url) => { try { const u = new URL(url); return `${u.origin}${u.pathname.replace(/\/+$/, "")}`.toLowerCase(); } catch (_e) { return ""; } };
+  // The whole address, compared the way stripUrl compares the page part:
+  // the query and the fragment must be the same too.
+  const exactUrl = (url) => { try { const u = new URL(url); return `${stripUrl(url)}${u.search}${u.hash}`; } catch (_e) { return ""; } };
+  const hostOf = (url) => { try { return new URL(url).hostname.toLowerCase().replace(/\.$/, ""); } catch (_e) { return ""; } };
+
+  /**
+   * True for a host that is an address and not a name (any IP literal), or
+   * a name that only means something inside a network: one label
+   * ("localhost", "router") or an ending kept for local use.
+   */
+  function isPrivateHost(host) {
+    const h = String(host || "").toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+    if (!h) return true;
+    if (h.includes(":") || /^[\d.]+$/.test(h)) return true;
+    if (!h.includes(".")) return true;
+    return /\.(?:local|localhost|localdomain|internal|intranet|lan|home\.arpa|corp|private)$/.test(h);
+  }
 
   /**
    * Where a navigation address came from:
    *   "task"    the user wrote it
-   *   "seen"    it was a link on a page read this run, or where a search form
-   *             on such a page sends (with any query values)
-   *   "home"    a site's front page: nothing in it but the site's name
+   *   "seen"    it was a link on a page read this run, exactly as shown, or
+   *             where a search form on such a page sends, with no new
+   *             fragment and with words from the request, or from the
+   *             current page when that page declares the form or shares
+   *             its site
+   *   "home"    a site's front page: nothing in it but the site's own name
+   *             (or www. and it), or the name of a host already seen or
+   *             trusted. Never an IP address or a local network name.
    *   "trusted" any address on a site that is part of the task
    *   "written" none of those: the model composed it
    * Only a "written" address can carry what the agent has read to a place
    * the user never chose, so only that one is held for the user to see.
+   * An address with a name or password before the host is always
+   * "written" unless the user wrote it.
    * A search's results address on a site whose search form has been read
    * is the same act as typing into that form, which is not held anywhere.
+   * A plain link with other query values is not: the values are the
+   * model's, and a page can show a link only to have it filled in.
+   * ctx: {task, seenUrls, seenSearches, trustedSites, page}.
    */
   function addressOrigin(url, ctx) {
     const c = ctx || {};
@@ -1083,13 +1110,49 @@
     const bare = stripUrl(target);
     const task = String(c.task || "").toLowerCase();
     if (task.includes(target.toLowerCase().replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, ""))) return "task";
-    if ((u.pathname === "/" || u.pathname === "") && !u.search && !u.hash) return "home";
-    const seen = c.seenUrls;
-    // The same page with other query values ("?q=kettle" seen, "?q=teapot"
-    // asked for) is the page's own search or filter, so it counts as seen.
-    if (seen && (seen.has(target) || [...seen].some((known) => stripUrl(known) === bare))) return "seen";
-    if (c.trustedSites && c.trustedSites.has(siteOf(target))) return "trusted";
+    // A name and password before the host go to the server with the request
+    // (a server that asks for them gets them), so they are a channel too.
+    if (u.username || u.password) return "written";
+    const seen = c.seenUrls ? [...c.seenUrls] : [];
+    const host = hostOf(target);
+    const site = siteOf(target);
+    const trusted = !!(c.trustedSites && c.trustedSites.has(site));
+    if ((u.pathname === "/" || u.pathname === "") && !u.search && !u.hash && !isPrivateHost(host)
+      && (host === site || host === `www.${site}` || trusted || seen.some((known) => hostOf(known) === host))) return "home";
+    const exact = exactUrl(target);
+    if (seen.some((known) => known === target || exactUrl(known) === exact)) return "seen";
+    // The same search with other words ("?q=kettle" seen, "?q=teapot" asked
+    // for) is typing into that site's search form, so it counts as seen.
+    // On a site that is not part of the task, the words are held as typing
+    // into that form would be: free only when they are the request's or the
+    // current page's own words (wordsKnownHere), since a page can declare a
+    // search form that sends anywhere.
+    if (trusted) return "trusted";
+    const form = c.seenSearches ? [...c.seenSearches].find((known) => stripUrl(known) === bare) : null;
+    if (form && sameHash(target, form)) {
+      // The current page's words may go only where that page itself
+      // searches: a form it declares, or one on its own site. A form read
+      // on an earlier page could send this page's text anywhere.
+      const pageUrl = String((c.page && c.page.url) || "");
+      const ownForm = ((c.page && c.page.forms) || []).some((f) => f && f.search && f.action && stripUrl(f.action) === bare)
+        || (!!pageUrl && !!siteOf(pageUrl) && siteOf(pageUrl) === site);
+      if (wordsKnownHere(queryWords(target, form), c.task, ownForm ? c.page : null)) return "seen";
+    }
     return "written";
+  }
+
+  /** True when `url` has no fragment, or the same one as the search form's address. A fragment is read by script on the page. */
+  function sameHash(url, form) {
+    try { return !new URL(url).hash || new URL(url).hash === new URL(form).hash; } catch (_e) { return false; }
+  }
+
+  /** The query values of `url` that the search form's own address does not already hold. */
+  function queryWords(url, form) {
+    let own;
+    try { own = new URL(form).searchParams; } catch (_e) { own = new URLSearchParams(); }
+    try {
+      return [...new URL(url).searchParams].filter(([k, v]) => own.get(k) !== v).map(([, v]) => v).join(" ");
+    } catch (_e) { return ""; }
   }
 
   /**
@@ -1123,6 +1186,12 @@
   const wordsOf = (text) => String(text || "").toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
 
   /**
+   * A test for whether a word is one of `asked` (a set of words), or one of
+   * them with an ending ("laptops" for "laptop").
+   */
+  const wordFrom = (asked) => (w) => asked.has(w) || (w.length >= 4 && [...asked].some((a) => a.length >= 3 && !/^\d+$/.test(a) && w.startsWith(a) && w.length - a.length <= 3));
+
+  /**
    * True when an address is a search engine's results for words the user's
    * request already holds: the same as the person typing their own words
    * into that engine's box. Every word searched for is a word of the request
@@ -1136,8 +1205,7 @@
     if (!SEARCH_HOST.test(u.hostname)) return false;
     if (u.hash && u.hash !== "#") return false;
     if (!u.pathname.split("/").every((part) => SEARCH_PATH_PARTS.has(part.toLowerCase()))) return false;
-    const asked = new Set(wordsOf(task));
-    const fromRequest = (w) => asked.has(w) || (w.length >= 4 && [...asked].some((a) => a.length >= 3 && !/^\d+$/.test(a) && w.startsWith(a) && w.length - a.length <= 3));
+    const fromRequest = wordFrom(new Set(wordsOf(task)));
     let searched = 0;
     for (const [name, value] of u.searchParams) {
       const key = name.toLowerCase();
@@ -1230,6 +1298,19 @@
     return CHOICE_ROLES[String(el.role || "").toLowerCase()] || null;
   }
 
+  /**
+   * A box people write messages in: a textarea, an editable region or a
+   * control with the textbox role. A search box is not one, whatever its
+   * shape: its type or role says it searches.
+   */
+  function isMessageBox(el) {
+    if (!el || el.sensitive) return false;
+    const tag = String(el.tagName || "").toLowerCase();
+    const role = String(el.role || "").toLowerCase();
+    if (String(el.inputType || "").toLowerCase() === "search" || role === "searchbox" || role === "combobox") return false;
+    return tag === "textarea" || el.isContentEditable === true || role === "textbox";
+  }
+
   function labelRisk(el) {
     const label = [el.accName, el.text, el.label, el.value, el.title].filter(Boolean).join(" ");
     if (!label || RISK_LABEL_HARMLESS.test(label)) return null;
@@ -1277,25 +1358,54 @@
     const els = (page && page.elements) || [];
     const pageUrl = String((page && page.url) || "");
     if ((action.action === "navigate" || action.action === "open_tab") && action.url) {
-      return addressOrigin(action.url, ctx) === "written" ? { kind: "address", why: RISK_TEXT.address, target: clip(action.url, 200), url: action.url } : null;
+      return addressOrigin(action.url, { ...ctx, page }) === "written" ? { kind: "address", why: RISK_TEXT.address, target: clip(action.url, 200), url: action.url } : null;
     }
     // Typing on a site the user did not send the agent to. A search box is
-    // left alone: a search reads, and most tasks pass through one.
-    const typed = action.action === "type" ? [action.id] : action.action === "fill_form" ? (action.fields || []).map((f) => f.id) : [];
+    // left alone when what is searched for is the user's own words or
+    // words this page already shows: a search reads, and most tasks pass
+    // through one. Words from anywhere else (another page, another tab, the
+    // user's saved details) would leave for a site the user never chose, so
+    // they are held like any other typing there.
+    const typed = action.action === "type" ? [{ id: action.id, text: action.text }] : action.action === "fill_form" ? (action.fields || []).map((f) => ({ id: f.id, text: f.text })) : [];
     if (typed.length && /^https?:/.test(pageUrl)) {
       const site = siteOf(pageUrl);
-      const forms = (page && page.forms) || [];
-      const inSearch = typed.every((id) => {
-        const field = els.find((e) => e.id === id);
-        if (!field) return false;
-        const form = field.formId !== undefined ? forms.find((f) => f.id === field.formId) : null;
-        return (form && form.search) || field.inputType === "search" || field.role === "searchbox" || field.role === "combobox";
-      });
-      if (!inSearch && site && ctx.trustedSites && !ctx.trustedSites.has(site)) {
-        return { kind: "site", why: RISK_TEXT.site, target: site, site };
+      if (site && ctx.trustedSites && !ctx.trustedSites.has(site)) {
+        const forms = (page && page.forms) || [];
+        const inSearch = typed.every(({ id }) => {
+          const field = els.find((e) => e.id === id);
+          if (!field) return false;
+          const form = field.formId !== undefined ? forms.find((f) => f.id === field.formId) : null;
+          return (form && form.search) || field.inputType === "search" || field.role === "searchbox" || field.role === "combobox";
+        });
+        const known = inSearch && !typed.some(({ text }) => carriesDetail(text, ctx.details, ctx.task)) && wordsKnownHere(typed.map((t) => t.text).join(" "), ctx.task, page);
+        if (!known) return { kind: "site", why: RISK_TEXT.site, target: site, site };
       }
     }
     return null;
+  }
+
+  /**
+   * True when every word of `text` is a word of the user's request (or that
+   * word with an ending), or a word the page itself shows in its text or
+   * on its controls: typing those into the page's own search box sends the
+   * site nothing it did not have.
+   */
+  function wordsKnownHere(text, task, page) {
+    const words = wordsOf(text);
+    if (!words.length) return true;
+    const asked = new Set(wordsOf(task));
+    const withEnding = wordFrom(asked);
+    // Either way round: "kettle" searched for when the request says "kettles".
+    const fromRequest = (w) => withEnding(w) || (w.length >= 3 && !/^\d+$/.test(w) && [...asked].some((a) => a.startsWith(w) && a.length - w.length <= 3));
+    let shown = null;
+    return words.every((w) => {
+      if (fromRequest(w)) return true;
+      if (!shown) {
+        const labels = ((page && page.elements) || []).map((e) => [e.accName, e.text, e.label, e.placeholder, e.title].filter(Boolean).join(" ")).join(" ");
+        shown = new Set(wordsOf(`${(page && page.innerText) || ""} ${labels}`));
+      }
+      return shown.has(w);
+    });
   }
 
   function contentRisk(action, page) {
@@ -1355,6 +1465,15 @@
       };
       return r;
     };
+    // The same for a message box that has no form: no action, no button.
+    const formlessSend = (box) => {
+      const r = risk("send", box);
+      let host = "";
+      try { host = new URL(String((page && page.url) || "")).hostname; } catch (_e) { /* no address */ }
+      const boxName = clip(box.accName || box.label || box.placeholder || box.title || box.name || box.htmlId || "", 70);
+      r.unsure = { host, to: "", box: boxName, button: "", boxRef: box.id, text: clip(box.value || "", 300), key: `${host}|${boxName}` };
+      return r;
+    };
 
     if (["click", "double_click"].includes(action.action) && el) {
       // A link to another page is judged by where it goes: "Subscribe to
@@ -1394,6 +1513,12 @@
           if (buttons.some((c) => labelRisk(c))) return risk("send", el);
           return { ...unsureSend(form, buttons[0], el), target: elementLabel(el) };
         }
+        // A message box with no form around it: chat and comment boxes send
+        // on Enter by script, so the page's structure cannot tell a message
+        // from a note. It is an unsure send, settled by the same page-blind
+        // check as a form of one box. A plain text input stays free, since
+        // most formless inputs are searches and filters.
+        if (!form && isMessageBox(el) && !RISK_URL.test(String((page && page.url) || ""))) return formlessSend(el);
       }
       return RISK_URL.test(String((page && page.url) || "")) ? risk("pay", el) : null;
     }
@@ -1459,10 +1584,21 @@
     // pays, sends or deletes would carry; otherwise choosing is moving about.
     const choice = choiceOf(el);
     if (choice && !labelRisk(el)) return null;
-    if ((!isButton && !choice) || !label) return null;
+    // A link that says it deletes or sends may do it at once (a one-click
+    // unsubscribe, a link the site runs as a request), so it is asked about,
+    // told where it goes. A link that says it pays is still judged by its
+    // destination alone: "Subscribe to e-mail listings" opens a help page.
+    let linkTo = "";
+    if (!isButton && tag === "a" && href && ["delete", "send"].includes(labelRisk(el))) {
+      try {
+        const u = new URL(href, (page && page.url) || undefined);
+        linkTo = clip(`${u.hostname === hostOf((page && page.url) || "") ? "" : u.hostname}${u.pathname || "/"}`, 120);
+      } catch (_e) { linkTo = clip(href, 120); }
+    }
+    if ((!isButton && !choice && !linkTo) || !label) return null;
     const form = el.formId !== undefined ? ((page && page.forms) || []).find((f) => f.id === el.formId) : null;
     const sendsForm = !!(el.submits && form && !form.search);
-    if (!sendsForm && !choice && readsPlainly(label)) return null;
+    if (!sendsForm && !choice && !linkTo && readsPlainly(label)) return null;
     const fields = form
       ? els.filter((e) => e.formId === form.id && e.id !== el.id && !e.submits && /^(input|textarea|select)$/.test(String(e.tagName || "").toLowerCase()))
         .map((e) => clip(e.accName || e.label || e.placeholder || e.title || e.name || "", 60)).filter(Boolean).slice(0, 8)
@@ -1473,7 +1609,7 @@
     // An answer holds for this control on this page and in this form: the
     // same words on another step of a site can do something else.
     const formKey = form ? `${form.action || ""}#${form.id}` : "";
-    return { kind: "press", key: `press|${siteOf((page && page.url) || "")}|${where}|${formKey}|${label}`, host, label, fields, ...(choice ? { choice } : {}) };
+    return { kind: "press", key: `press|${siteOf((page && page.url) || "")}|${where}|${formKey}|${label}${linkTo ? `|${linkTo}` : ""}`, host, label, fields, ...(choice ? { choice } : {}), ...(linkTo ? { linkTo } : {}) };
   }
 
   const PRESS_TOOL = Object.freeze({
@@ -1526,6 +1662,7 @@
     }
     lines.push(`The control: ${said(c.label, 70)}`);
     if (c.choice) lines.push(`What kind of control it is, from the page's structure: ${c.choice}.`);
+    if (c.linkTo) lines.push(`It is a link to: ${said(c.linkTo, 120)}`);
     if (c.fields) lines.push(c.fields.length ? `It submits a form with these boxes: ${c.fields.map((f) => said(f, 60)).join(", ")}` : "It submits a form with no boxes to fill.");
     lines.push("", "Would pressing it commit the user to something that is hard to undo? Does it pay, send (including signing up), delete, or nothing of the kind?");
     return { system: OPINION_SYSTEM, user: lines.join("\n"), tool: PRESS_TOOL };
@@ -1663,6 +1800,9 @@
     sitesNamedIn,
     knownSiteUrl,
     addressOrigin,
+    isPrivateHost,
+    isMessageBox,
+    wordsKnownHere,
     startPageKind,
     searchOfRequest,
     carriesDetail,

@@ -187,6 +187,8 @@
    * @param run      the run: task, trust {sites, urls}, openedTabs,
    *                 opinions (second opinions by key), typed (text put in boxes this step, by ref)
    * @param settings {riskConfirmation, allowlist}
+   * @param store    the user's memory (saved details, consents)
+   * @param tabs     the tab list the run is shown: [{id, url, current}]
    */
   /**
    * The user's own words for the run. A sub-task's instruction was written
@@ -195,7 +197,7 @@
    */
   const requestOf = (run) => String((run && (run.request || run.task)) || "");
 
-  function decide(a, page, run, settings, store) {
+  function decide(a, page, run, settings, store, tabs) {
     const s = settings || {};
     const els = (page && page.elements) || [];
     const el = a.ref !== undefined ? els.find((e) => e.id === a.ref) : null;
@@ -208,6 +210,7 @@
     if (a.do === "tabs" && a.op === "close" && !(run.openedTabs || []).includes(a.tab)) {
       return { verdict: "refuse", message: "That tab was not opened in this run, so it stays open. To leave a page, use back or navigate." };
     }
+    if (a.do === "tabs" && a.op === "switch") return decideSwitch(a, run, s, tabs);
     // The user's own details go into a site's form only with their say-so:
     // once per site, or once and for all for that site.
     if (a.do === "drag" || a.do === "click_at") return decidePointer(a, page, run, s, store);
@@ -249,19 +252,26 @@
     const held = keptFromSending(a, el, page, run);
     if (held) return held;
     if (s.riskConfirmation === false) return ALLOW;
+    // An address that carries one of the user's saved details, wherever the
+    // address came from: a link on a page can be made to carry them too.
+    const targetUrl = a.do === "navigate" || (a.do === "tabs" && a.op === "open") ? a.url : "";
+    if (targetUrl && TOOLS.carriesDetail(targetUrl, storedDetails(store), requestOf(run))) {
+      return { verdict: "confirm", kind: "address", why: "This address carries one of your saved details, which your request did not mention.", detail: [`Address: ${String(targetUrl).slice(0, 200)}`], url: targetUrl };
+    }
     const fromNothing = firstAddress(a, run, store);
     if (fromNothing) return fromNothing;
 
     const trust = run.trust || {};
     const KNOWN = need("SELECT_TO_AI_KNOWN", "./memory.js");
-    const targetUrl = a.do === "navigate" || (a.do === "tabs" && a.op === "open") ? a.url : "";
     const contextSites = store && !store.paused && KNOWN && KNOWN.knownSites && (!targetUrl || !TOOLS.carriesDetail(targetUrl, storedDetails(store), requestOf(run)))
       ? KNOWN.knownSites(store).flatMap((h) => [h, TOOLS.siteOf(`https://${h}/`)].filter(Boolean))
       : [];
     let risk = TOOLS.actionRisk(risky, page, {
       task: requestOf(run),
       seenUrls: new Set(trust.urls || []),
+      seenSearches: new Set(trust.searches || []),
       trustedSites: new Set([...(trust.sites || []), ...contextSites]),
+      details: storedDetails(store),
     });
     // What the run's second opinions said, by site and control or form.
     const opinions = run.opinions || {};
@@ -331,10 +341,45 @@
     const form = el.formId !== undefined ? ((page && page.forms) || []).find((f) => f.id === el.formId) : null;
     if (form && form.search) return null;
     const clicks = (a.do === "click" || (a.do === "press" && pressesControl(el, a.key))) && !!TOOLS.guardNoSubmit({ action: "click", id: el.id }, requestOf(run), page);
-    const enters = a.do === "press" && !pressesControl(el, a.key) && ENTER_KEY.test(String(a.key || "")) && !!form && form.fields > 0;
+    // Enter in a message box with no form sends it as surely as in a form.
+    const enters = a.do === "press" && !pressesControl(el, a.key) && ENTER_KEY.test(String(a.key || ""))
+      && ((!!form && form.fields > 0) || (!form && TOOLS.isMessageBox(el)));
     if (!clicks && !enters) return null;
     const what = clicks ? `"${TOOLS.elementLabel(el) || "that button"}"` : "Enter";
     return { verdict: "refuse", message: `The user asked for this to be filled in but not sent, so ${what} was not pressed: it would submit the form. Finish now and tell the user it is ready for them to check and send.` };
+  }
+
+  /**
+   * Moving the run into another tab. The tab's page is read and sent to the
+   * model once the run is there, so a tab the run did not open, on a site
+   * that is not part of the request, is the user's to allow: once per site.
+   * When the user limits the agent to some sites, a tab elsewhere is
+   * refused. A tab not in the list the run was shown is refused, unless the
+   * run opened it.
+   */
+  function decideSwitch(a, run, s, tabs) {
+    const tab = (tabs || []).find((t) => t && t.id === a.tab);
+    // A tab the run was not shown (another window, or opened since the
+    // last look) is not one it can name: the engine would find it anyway.
+    // A tab the run opened itself was already judged when it was opened.
+    if (!tab) return (run.openedTabs || []).includes(a.tab) ? ALLOW : { verdict: "refuse", message: `There is no tab ${a.tab} in the tab list. Use a number from the list.` };
+    if (tab.current) return ALLOW;
+    const url = String(tab.url || "");
+    if (s.allowlist && !SECURITY.isUrlAllowedByDomains(url, s.allowlist)) {
+      return { verdict: "refuse", message: `That tab is on a site outside the sites the user allows the agent to use (${String(s.allowlist).slice(0, 120)}).` };
+    }
+    if ((run.openedTabs || []).includes(a.tab) || s.riskConfirmation === false) return ALLOW;
+    const site = TOOLS.siteOf(url);
+    if (!/^https?:/i.test(url) || !site) {
+      // An empty tab or the browser's new-tab page holds nothing to read.
+      // Anything else that is not a web page (a local file, a tab still
+      // loading with no address yet) is the user's to allow.
+      const kind = url ? TOOLS.startPageKind(url) : "";
+      if (kind === "blank" || kind === "newtab") return ALLOW;
+      return { verdict: "confirm", kind: "site", why: "This moves the agent into one of your own tabs that is not a web page it can name. What is in that tab would be read and sent to the model.", detail: [`Tab: ${String(tab.title || url || "a tab with no address yet").slice(0, 120)}`], site: "" };
+    }
+    if (((run.trust && run.trust.sites) || []).includes(site)) return ALLOW;
+    return { verdict: "confirm", kind: "site", why: `This moves the agent into one of your own tabs, on ${site}. What is on that page would be read and sent to the model.`, detail: [`Tab: ${String(tab.title || url).slice(0, 120)}`], site };
   }
 
   /**
@@ -369,13 +414,13 @@
 
   /** What an approval also settles for the rest of the run. */
   function remember(trust, confirm) {
-    const t = { ...trust, sites: [...(trust.sites || [])], urls: [...(trust.urls || [])] };
+    const t = { ...trust, sites: [...(trust.sites || [])], urls: [...(trust.urls || [])], ...(trust.searches ? { searches: [...trust.searches] } : {}) };
     if (confirm.kind === "site" && confirm.site && !t.sites.includes(confirm.site)) t.sites.push(confirm.site);
     if (confirm.kind === "address" && confirm.url && !t.urls.includes(confirm.url)) t.urls.push(confirm.url);
     return t;
   }
 
-  const api = Object.freeze({ decide, blockersOf, remember, asRiskAction, keptFromSending, pressesControl, pressLandsOn, firstAddress, pointTarget, dropPoint, HANDOVER });
+  const api = Object.freeze({ decide, decideSwitch, blockersOf, remember, asRiskAction, keptFromSending, pressesControl, pressLandsOn, firstAddress, pointTarget, dropPoint, HANDOVER });
   root.SELECT_TO_AI_POLICY = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
