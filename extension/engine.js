@@ -764,6 +764,16 @@
     return client;
   }
 
+  // What the provider last said is left of the key's requests, kept where
+  // the agent's page reads it for the model pill. Written only when it changes.
+  let allowance = null;
+  function noteAllowance(provider, left) {
+    if (!provider || !left) return;
+    if (allowance && allowance.provider === provider && allowance.remaining === left.remaining && allowance.limit === left.limit && allowance.resetAt === left.resetAt) return;
+    allowance = { provider, remaining: left.remaining, limit: left.limit, resetAt: left.resetAt };
+    quiet(chrome.storage.local.set({ agentAllowance: { ...allowance, at: Date.now() } }));
+  }
+
   async function model(session, fx, back) {
     const run = session.run;
     const startedAt = Date.now();
@@ -777,11 +787,15 @@
         onText: (text) => { const t = Date.now(); if (!session.parent && t - last > 150) { last = t; post(session, { type: "stream", runId: run.id, text: String(text).slice(-6000) }); } },
       }, session.cfg);
       if (!session.parent) post(session, { type: "stream", runId: run.id, text: "" });
+      if (out.left) noteAllowance(out.provider, out.left);
       back({ type: "model_replied", purpose: fx.purpose, reply: out.reply, usage: out.usage, ms: Date.now() - startedAt });
     } catch (e) {
       if (!session.parent) post(session, { type: "stream", runId: run.id, text: "" });
       if (e && e.kind === "aborted") return;
-      back({ type: "model_failed", purpose: fx.purpose, kind: (e && e.kind) || "model", message: (e && e.message) || "The model request failed.", usage: (e && e.usage) || null, waitMs: (e && e.waitMs) || 0, ms: Date.now() - startedAt });
+      // A spent allowance: when it comes back, for the run to be held until then.
+      const limit = e && e.kind === "limit" && e.limit ? { kind: e.limit.kind || "", resetAt: e.limit.resetAt || 0, short: e.limit.short || "" } : null;
+      if (limit && limit.resetAt && e.provider) noteAllowance(e.provider, { remaining: 0, limit: e.limit.limit || 0, resetAt: limit.resetAt });
+      back({ type: "model_failed", purpose: fx.purpose, kind: (e && e.kind) || "model", message: (e && e.message) || "The model request failed.", usage: (e && e.usage) || null, waitMs: (e && e.waitMs) || 0, ...(limit ? { limit } : {}), ms: Date.now() - startedAt });
     } finally {
       session.calling = false;
     }
@@ -1212,6 +1226,8 @@
   // worker. Each wait has its own: a sub-task's pause is its own.
   const RESUME = (windowId, waitId) => `agentResume:${windowId}:${waitId}`;
   function wakeAt(session, wait) {
+    // A hold with no time named is ended by the user or by a backup being connected.
+    if (!wait.until) return;
     if (wait.until <= Date.now() + 1000 || !chrome.alarms) { enqueue(session, { type: "pause_over", id: wait.id }); return; }
     quiet(chrome.alarms.create(RESUME(session.windowId, wait.id), { when: wait.until }));
   }
@@ -1225,7 +1241,15 @@
   async function attention(session, wait, again) {
     keepAwake();
     // Nothing for the user to do: the run carries on by itself when the time is up.
-    if (wait.kind === "pause") { session.attending.set(wait.id, wait); wakeAt(session, wait); return; }
+    if (wait.kind === "pause") {
+      session.attending.set(wait.id, wait);
+      wakeAt(session, wait);
+      // A held run has a choice for the user: with no page of the agent's open, a notice says so.
+      if (wait.hold && !again && !session.ports.size) {
+        quiet(notice(`agent-wait:${session.windowId}`, { type: "basic", iconUrl: "icon128.png", title: wait.hold === "limit" ? "Task on hold: usage limit reached" : "Task on hold: the model is busy", message: String(wait.question || "").slice(0, 240) }));
+      }
+      return;
+    }
     const tabId = wait.tabId;
     const watched = WATCHED.has(wait.kind) && tabId !== null && tabId !== undefined;
     session.attending.set(wait.id, wait);
@@ -1961,6 +1985,26 @@
   // While a run is working, the worker must not be put to sleep between a
   // request and its reply: a cheap call every 20 seconds keeps it up. A
   // waiting run needs nothing and lets the worker rest.
+  /**
+   * A held run (a spent allowance, a model that stayed crowded) is tried
+   * again: the user said so, or the settings it calls with changed (a
+   * backup connected, another model or provider chosen). The settings are
+   * read again first, so the call goes to what is connected now.
+   */
+  async function resumeHeld(session, waitId) {
+    const held = waitsOf(session.run).filter((w) => w.kind === "pause" && w.hold && (!waitId || w.id === waitId));
+    if (!held.length) return false;
+    await loadSettings(session);
+    for (const w of held) enqueue(session, { type: "pause_over", id: w.id, by: "user" });
+    return true;
+  }
+  // The settings a model call is made with: the providers, their keys, the model.
+  const CALL_SETTING = /^agent(?:ActiveProvider|BackupProvider|Model|HelperModel|CustomUrl|[A-Za-z]+Key)$/;
+  if (chrome.storage && chrome.storage.onChanged) chrome.storage.onChanged.addListener((changes) => {
+    if (!Object.keys(changes || {}).some((k) => CALL_SETTING.test(k))) return;
+    for (const s of sessions.values()) resumeHeld(s).catch((e) => console.error("Select to AI engine:", e));
+  });
+
   let awake = null;
   function keepAwake() {
     const busy = [...sessions.values()].some((s) => s.run && s.run.status === "running");
@@ -1978,7 +2022,10 @@
       restore().then(() => {
         const session = sessions.get(Number(windowId));
         const wait = session && waitsOf(session.run).find((w) => w.kind === "pause" && (!waitId || w.id === waitId));
-        if (wait) enqueue(session, { type: "pause_over", id: wait.id });
+        if (!wait) return;
+        // A held run may have had its settings changed while it waited.
+        if (wait.hold) loadSettings(session).then(() => enqueue(session, { type: "pause_over", id: wait.id }));
+        else enqueue(session, { type: "pause_over", id: wait.id });
       });
       return;
     }
@@ -2152,6 +2199,7 @@
       else if (m.type === "done" && live) enqueue(session, { type: "user_done", id: m.id });
       else if (m.type === "skip" && live) enqueue(session, { type: "skipped", id: m.id });
       else if ((m.type === "keep_going" || m.type === "wrap_up") && live) enqueue(session, { type: m.type, id: m.id });
+      else if (m.type === "try_again" && live) await resumeHeld(session, m.id);
       else if (m.type === "stop") stop(session, m.text);
       else if (m.type === "feedback" && run && run.id === m.runId && !live && !run.feedback) {
         run.feedback = { up: !!m.up, reason: String(m.reason || "").slice(0, 400) };
@@ -2229,6 +2277,6 @@
     return restore();
   }
 
-  // release is exported for the scripted tests, as wake is.
-  root.SELECT_TO_AI_ENGINE = Object.freeze({ sessions, effectOf, wake, loadMemory, changeMemory, release, joinFrame, scan });
+  // release and attention are exported for the scripted tests, as wake is.
+  root.SELECT_TO_AI_ENGINE = Object.freeze({ sessions, effectOf, wake, loadMemory, changeMemory, release, joinFrame, scan, attention });
 })(typeof globalThis !== "undefined" ? globalThis : this);
