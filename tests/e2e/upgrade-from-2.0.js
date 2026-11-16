@@ -118,6 +118,14 @@ async function main() {
     check("worker starts after the update, under the same id", s.worker, s.worker ? "" : "no service worker for this id within 20 s");
     if (!s.worker) { await s.browser.close(); return report(checks); }
     await sleep(2500); // onInstalled and the migrations run
+    // Which script the worker is running: the build's background.js or the
+    // 2.0 stand-in's empty one left over from the old registration.
+    const workers = s.browser.targets().filter((t) => t.type() === "service_worker" && t.url().startsWith(`chrome-extension://${id}/`));
+    for (const t of workers) {
+      const w = await t.worker();
+      const info = await w.evaluate(async () => ({ build: typeof updateContextMenus === "function", script: (await (await fetch(chrome.runtime.getURL("background.js"))).text()).length })).catch((e) => ({ error: e.message }));
+      console.log(`worker ${t.url()}: ${JSON.stringify(info)}`);
+    }
     const running = await s.worker.evaluate(() => chrome.runtime.getManifest().version);
     check(`running version is the build (${version})`, running === version, `running ${running}`);
     // What the updated build was granted, so a missing API in the worker
