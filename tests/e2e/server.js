@@ -561,6 +561,18 @@ const FIXTURES = {
 
   // A link to a site the agent was never let onto (any *.localhost name
   // reaches this server, and only 127.0.0.1 and localhost are granted).
+  // A link to the second site (localhost), for a run allowed only on 127.0.0.1.
+  "/offlist-start": (base) => pageShell(
+    "Shops",
+    `<h1>Shops</h1>
+     <p><a id="second" href="${base.replace("127.0.0.1", "localhost")}/offlist-prices">Second shop price list</a></p>`,
+  ),
+  "/offlist-prices": pageShell(
+    "Price list",
+    `<h1>Price list</h1>
+     <p id="secret">Kettle: $77 (members only)</p>`,
+  ),
+
   "/declined-link": (base) => pageShell(
     "Elsewhere",
     `<h1>Where to look</h1>
@@ -1009,16 +1021,16 @@ function buildStepPolicies(baseUrl) {
     },
     // Told no for one site, the run reads the same thing on a site it may use.
     declinedSite(ctx) {
-      if (/did not let the agent onto this site/.test(ctx.userText)) return step("Use the page on this site instead", [{ do: "navigate", url: url("/item-b") }]);
       if (ctx.url.startsWith(baseUrl) && ctx.url.includes("/item-b")) return done("Item B costs **$18**.", ["Price: $18"]);
+      if (/did not let the agent onto this site/.test(ctx.userText)) return step("Use the page on this site instead", [{ do: "navigate", url: url("/item-b") }]);
       return step("Open Item B on the other site", [{ do: "navigate", url: `${baseUrl.replace("127.0.0.1", "declined.localhost")}/item-b` }]);
     },
     // "Only use these sites" set to 127.0.0.1: a link to the second shop lands
     // on a page the run may not read.
     offList(ctx) {
       if (/outside the sites you allow the agent to use/.test(ctx.userText)) return done("That page is outside the sites you allow, so I did not read it.", [], false);
-      if (ctx.url.includes("localhost")) return done(/Price: \$18/.test(ctx.userText) ? "Item B costs **$18**." : "I could not read the page.", /Price: \$18/.test(ctx.userText) ? ["Price: $18"] : [], /Price: \$18/.test(ctx.userText));
-      return step("Open Item B at the second shop", [{ do: "click", ref: named(ctx, /item b, at the second shop/i).id }]);
+      if (/Kettle: \$77/.test(ctx.userText)) return done("The kettle costs **$77**.", ["Kettle: $77"]);
+      return step("Open the second shop's price list", [{ do: "click", ref: named(ctx, /second shop price list/i).id }]);
     },
   };
 }
@@ -1131,7 +1143,7 @@ function createE2EServer(port = 8907) {
   scenarios.codePlain = { task: "What was the total of order 4411?" };
   scenarios.handoffRepeat = { task: "What is my account balance on this site?" };
   scenarios.declinedSite = { task: "How much is Item B?" };
-  scenarios.offList = { task: "How much is Item B at the second shop?" };
+  scenarios.offList = { task: "How much is the kettle at the second shop?" };
   scenarios.payPress = { task: "Order this for Ada Lovelace." };
   scenarios.helper = { task: "How much is Item B?" };
   scenarios.ledger = { task: "Add up the amounts on every page of the ledger, pages 1 to 30." };

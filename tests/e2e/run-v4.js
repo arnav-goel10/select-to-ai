@@ -1128,9 +1128,9 @@ async function main() {
         return r.answer.includes("$18") ? null : `the run did not carry on elsewhere: ${JSON.stringify(r.answer)}`;
       }],
       // "Only use these sites": a link off the list lands on a page that is not read.
-      ["offList", "/stores", approve, async (r) => {
+      ["offList", "/offlist-start", approve, async (r) => {
         await allowOnly("");
-        if (/Price: \$18/.test(r.prompts.join("\n"))) return "the off-list page was read and sent to the model";
+        if (/Kettle: \$77/.test(r.prompts.join("\n"))) return "the off-list page was read and sent to the model";
         if (!r.prompts.some((p) => /outside the sites you allow the agent to use/.test(p))) return "the model was not told the page is outside the allowed sites";
         return /outside the sites you allow/.test(r.answer) ? null : `answer: ${JSON.stringify(r.answer)}`;
       }, "offList", { before: () => allowOnly("127.0.0.1") }],
