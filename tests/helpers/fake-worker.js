@@ -37,7 +37,7 @@ function fakeWorker(o = {}) {
     get: (t, k) => (k === "then" ? undefined : typeof k === "string" && k.startsWith("on") ? event(k) : anything()),
     apply: () => Promise.resolve(undefined),
   });
-  const later = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref(); });
+  const later = (ms) => new Promise((r) => setTimeout(r, ms));
   const tabs = o.tabs || { 9: { id: 9, url: "https://shop.example/account", title: "Account", windowId: 1, active: true } };
   const granted = new Set(o.granted || []);
   const chrome = new Proxy({
