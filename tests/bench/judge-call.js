@@ -152,6 +152,8 @@ async function judgeRun(run, cfg = judgeConfig()) {
   let lastReply = "";
   let degenerated = false;
   for (let attempt = 0; attempt < 4; attempt++) {
+    // Under a spend cap the caller says when another call would pass it (cfg.stopRetry, given what the calls so far used).
+    if (judgeUsage.calls && cfg.stopRetry && cfg.stopRetry(judgeUsage)) return { success: false, reason: "the judge gave no readable verdict, and the spend cap left no room to ask again", judgeFailed: true, judgeReply: lastReply, judgeUsage };
     const endpoint = isAnthropic
       ? (/\/v1\/messages$/.test(cfg.url) ? cfg.url : `${cfg.url.replace(/\/v1$/, "")}/v1/messages`)
       : `${cfg.url}/chat/completions`;
