@@ -694,7 +694,9 @@
             if (r.args && r.how) { reply = r.args; mended = r.how; }
           }
           if (reply && mended) log("Call Mended", `The model's ${req.tool.name} call was ${mended}. It was read as it stood, without asking again.`, { quiet: true });
-          if (reply || !req.tool) return { reply: reply || null, text: res.text, usage: spent, model: res.served || model, ms: res.ms, firstByteMs: res.firstByteMs };
+          // What the provider says is left of the key's requests, when it says.
+          const left = LIMITS && LIMITS.readAllowance ? LIMITS.readAllowance(res.headers, now()) : null;
+          if (reply || !req.tool) return { reply: reply || null, text: res.text, usage: spent, model: res.served || model, ms: res.ms, firstByteMs: res.firstByteMs, provider, ...(left ? { left } : {}) };
           // No tool call. Cut off while thinking: give it room. Otherwise say
           // plainly what is wanted and ask again.
           if (res.finish === "length" && maxTokens < 12000) {
@@ -831,7 +833,7 @@
             const next = await deps.onSwitch(provider, cfg.backup, until, limit);
             if (next && !providersTried.includes(next.provider)) { providersTried.push(next.provider); cfg = next; model = modelFor(req.tier, cfg); retries = 0; continue; }
           }
-          throw new ModelError("limit", limit.message, { limit, usage: spent });
+          throw new ModelError("limit", limit.message, { limit, usage: spent, provider });
         }
         if (status === 400 && req.tool && !mode.noTools) {
           // A forced tool is refused by some models: offer it instead. Tools

@@ -162,6 +162,36 @@
     Object.freeze({ provider: "groq", model: "openai/gpt-oss-120b", note: "Free: 1,000 requests a day, but only 8,000 tokens a minute, so better for questions than long tasks." }),
   ]);
 
+  // What a free path allows in a day, said where the user picks it and not
+  // first when it runs out. OpenRouter: 50 requests a day on free models,
+  // 1,000 once the account has bought $10 of credit (the figures its own
+  // 429 and usageLimits.js already state). The reply headers carry the real
+  // figure for a key, which is shown in its place once known.
+  const FREE_CAPS = Object.freeze({
+    openrouter: Object.freeze({ daily: 50, raised: 1000, credit: 10 }),
+  });
+
+  /** One plain sentence on a provider's free daily cap, or "" when it has none on file. */
+  function freeCapNote(provider) {
+    const cap = FREE_CAPS[provider];
+    if (!cap) return "";
+    return `The free models take ${cap.daily} requests a day (${cap.raised.toLocaleString("en-US")} after adding $${cap.credit} of credit once), and one task uses several.`;
+  }
+
+  /**
+   * What is left of an allowance, in the words the model pill shows:
+   * {short, title}, or null when there is nothing current to show.
+   * @param a {provider, remaining, limit, resetAt} as the engine kept it
+   */
+  function allowanceLabel(a, provider, now) {
+    if (!a || a.provider !== provider || !(a.resetAt > now) || !Number.isFinite(a.remaining)) return null;
+    let clock = "";
+    try { clock = new Date(a.resetAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); } catch (_e) { /* no Intl */ }
+    const count = a.remaining.toLocaleString("en-US");
+    const of = a.limit > 0 ? ` of ${a.limit.toLocaleString("en-US")}` : "";
+    return { short: `${count} left`, title: `${count}${of} requests left${clock ? `, back to full at ${clock}` : ""}.` };
+  }
+
   // What "openrouter/free" is sent as. The free router picks at random
   // among every free model that accepts the request, which has meant a 2.6B
   // model, a note-taking preview and a content-safety classifier. These are
@@ -445,6 +475,9 @@
     OPENROUTER_ATTRIBUTION,
     openRouterOptions,
     outgoingModel,
+    FREE_CAPS,
+    freeCapNote,
+    allowanceLabel,
     MODEL_SIBLINGS,
     siblingModel,
     modelProfile,

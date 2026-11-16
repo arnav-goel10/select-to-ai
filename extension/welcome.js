@@ -27,6 +27,9 @@
     });
   }
 
+  // The free path's daily cap, said beside the button that picks it.
+  $("freeCapNote").textContent = D.freeCapNote("openrouter");
+
   // ---- one screen, plus the "done" state ----
   function show(id) {
     for (const s of ["intro", "done"]) $(s).hidden = s !== id;
@@ -247,7 +250,7 @@
   function showDone(provider) {
     const free = provider === "openrouter";
     $("doneLede").textContent = (free
-      ? "You're on OpenRouter's free models."
+      ? `You're on OpenRouter's free models. ${D.freeCapNote("openrouter")}`
       : provider === "chatgpt" ? "You're using your ChatGPT plan." : `You're on ${name(provider)}.`) +
       " Try a first task. Chrome will ask once to let the agent use websites, and you can stop it at any time.";
     const list = $("tries");
