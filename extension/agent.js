@@ -841,7 +841,7 @@
       manage.type = "button";
       manage.className = "notice-btn btn btn-sm";
       manage.textContent = "Manage usage";
-      manage.onclick = () => chrome.tabs.create({ url: SELECT_TO_AI_CHATGPT.USAGE_URL });
+      manage.onclick = () => chrome.tabs.create({ url: "https://chatgpt.com/settings/usage" });
       row.appendChild(manage);
       if (hasBackup) { box.appendChild(row); return; }
     }
@@ -1005,7 +1005,7 @@
         PROVIDER_NAMES[provider] || provider.charAt(0).toUpperCase() + provider.slice(1);
       const chatgptModels = (config.chatgptAccount && config.chatgptAccount.models) || [];
       const resolvedModel = provider === "chatgpt"
-        ? (chatgptModels.some((m) => m.slug === config.agentModel) ? config.agentModel : SELECT_TO_AI_CHATGPT.bestModel(chatgptModels) || getProviderFallbackModels(provider).pro)
+        ? (chatgptModels.some((m) => m.slug === config.agentModel) ? config.agentModel : (globalThis.SELECT_TO_AI_CHATGPT && globalThis.SELECT_TO_AI_CHATGPT.bestModel(chatgptModels)) || getProviderFallbackModels(provider).pro)
         : isModelCompatibleWithProvider(
           provider,
           config.agentModel,

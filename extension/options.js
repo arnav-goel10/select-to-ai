@@ -36,16 +36,16 @@
     custom: { name: "your own server", keyUrl: "", placeholder: "Optional" },
   };
 
-  const CG = SELECT_TO_AI_CHATGPT;
-  const CG_UI = SELECT_TO_AI_CHATGPT_UI;
+  const CG = globalThis.SELECT_TO_AI_CHATGPT || null;
+  const CG_UI = globalThis.SELECT_TO_AI_CHATGPT_UI || null;
   // ChatGPT has no key: it is signed in to instead (chatgptConnect.js).
   const keyNameFor = (provider) =>
     provider === "chatgpt" ? null : provider === "custom" ? "agentCustomKey" : D.PROVIDER_ENDPOINTS[provider].keyName;
   const defaultModelFor = (provider) =>
-    provider === "chatgpt" ? CG.bestModel(chatgpt && chatgpt.models) || D.PROVIDER_FALLBACK_MODELS.chatgpt.pro
+    provider === "chatgpt" ? (CG && CG.bestModel(chatgpt && chatgpt.models)) || D.PROVIDER_FALLBACK_MODELS.chatgpt.pro
       : provider === AGENT.activeProvider ? AGENT.model : D.PROVIDER_FALLBACK_MODELS[provider].lite;
   const baseUrlFor = (provider, customUrl) =>
-    provider === "chatgpt" ? CG.API_BASE : provider === "custom" ? customUrl || AGENT.customUrl : D.PROVIDER_ENDPOINTS[provider].baseUrl;
+    provider === "chatgpt" ? (CG ? CG.API_BASE : "") : provider === "custom" ? customUrl || AGENT.customUrl : D.PROVIDER_ENDPOINTS[provider].baseUrl;
 
   let settings = {};
   let keys = {};
@@ -135,7 +135,7 @@
       $("agentStatus").textContent = p === "chatgpt" ? `Signed in to ChatGPT${chatgpt.email ? ` as ${chatgpt.email}` : ""}` : `Connected to ${PROVIDERS[p].name}`;
       const detail = $("agentStatusDetail");
       detail.textContent = model() === "openrouter/free" ? "Using free models. Ready on any tab." : `Using ${modelLabel(model())}.`;
-      if (p === "chatgpt") { detail.append(" "); detail.appendChild(CG_UI.usageLine()); }
+      if (p === "chatgpt" && CG_UI) { detail.append(" "); detail.appendChild(CG_UI.usageLine()); }
       $("connectBtn").hidden = true;
       $("changeBtn").textContent = panelOpen ? "Done" : "Change";
     } else if (hasKey && !on) {
@@ -281,7 +281,6 @@
     $("provider").value = p;
     $("urlField").hidden = p !== "custom";
     $("keyField").hidden = p === "chatgpt";
-    $("chatgptField").hidden = p !== "chatgpt";
     renderChatGPT();
     $("customUrl").value = settings.agentCustomUrl || "";
     $("keyLabel").textContent = p === "custom" ? "API key (optional)" : `${info.name} API key`;
@@ -308,48 +307,9 @@
     }
   }
 
-  // ---------- ChatGPT sign-in ----------
-  const chatgptSignInBtn = CG_UI.button();
-  $("chatgptSignInSlot").appendChild(chatgptSignInBtn);
-  function chatgptNote(text, kind) {
-    $("chatgptNote").textContent = text || "";
-    $("chatgptNote").className = `note${kind ? ` ${kind}` : ""}`;
-  }
-  function renderChatGPT() {
-    const signedIn = !!(chatgpt && chatgpt.signedIn);
-    const ready = chatgptReady();
-    $("chatgptPitch").hidden = ready;
-    $("chatgptWho").hidden = !signedIn;
-    $("chatgptWho").textContent = signedIn ? `Signed in as ${chatgpt.email || "your ChatGPT account"}.${chatgpt.planEnabled ? "" : " ChatGPT plan use is off for this sign-in."}` : "";
-    const slot = $("chatgptPlanSlot");
-    slot.hidden = !ready;
-    slot.textContent = "";
-    if (ready) slot.appendChild(CG_UI.usageLine());
-    chatgptSignInBtn.hidden = ready;
-    $("chatgptSwitch").hidden = !signedIn;
-    $("chatgptSignOut").hidden = !signedIn;
-  }
-  async function chatgptSignIn(opts) {
-    chatgptSignInBtn.disabled = true;
-    $("chatgptSwitch").disabled = true;
-    try {
-      const r = await CG_UI.signIn({ ...opts, use: true }, (text) => chatgptNote(text, "inline"));
-      chatgptNote(r.message, r.state === "ok" ? "ok" : r.state === "no_plan" ? "warn" : "err");
-      if (r.state === "ok") await CG_UI.welcomeOnce();
-    } finally {
-      chatgptSignInBtn.disabled = false;
-      $("chatgptSwitch").disabled = false;
-    }
-  }
-  // Signed in without plan use: asking again asks for consent again.
-  chatgptSignInBtn.onclick = () => chatgptSignIn({ consent: !!(chatgpt && chatgpt.signedIn && !chatgpt.planEnabled) });
-  $("chatgptSwitch").onclick = () => chatgptSignIn({ fresh: true });
-  $("chatgptSignOut").onclick = async () => {
-    $("chatgptSignOut").disabled = true;
-    const r = await CG_UI.signOut();
-    $("chatgptSignOut").disabled = false;
-    chatgptNote(r.ok && r.revoked ? "Signed out of ChatGPT." : "Signed out here. ChatGPT did not confirm the sign-out, so you can also disconnect Select to AI in ChatGPT settings.", r.ok && r.revoked ? "ok" : "warn");
-  };
+  // Sign in with ChatGPT is not in the 4.0 package (no sign-in controls).
+  function renderChatGPT() {}
+  function chatgptNote() {}
 
   $("provider").onchange = (e) => {
     const p = e.target.value;
@@ -509,7 +469,7 @@
     if (!S.hasConsent(consent, S.consentId(p, settings.agentCustomUrl || AGENT.customUrl))) return;
     liveModels = [];
     if (p === "chatgpt") {
-      if (!chatgptReady()) return;
+      if (!chatgptReady() || !CG_UI) return;
       const r = await CG_UI.refreshModels();
       if (r.ok) liveModels = r.models.map((m) => m.slug);
       return;
@@ -650,7 +610,7 @@
 
   $("resetBtn").onclick = async () => {
     if (!confirm("Reset every setting and remove your saved API keys, memory, task history and recipes?")) return;
-    if (chatgpt && chatgpt.signedIn) await CG_UI.signOut();
+    if (chatgpt && chatgpt.signedIn && CG_UI) await CG_UI.signOut();
     chrome.storage.sync.remove(STORAGE.SETTINGS, () =>
       chrome.storage.local.get(null, (all) => {
         // Everything the extension keeps about the user, as the privacy policy lists it.

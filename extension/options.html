@@ -80,7 +80,6 @@
               <label for="provider">Provider</label>
               <select class="input" id="provider">
                 <option value="openrouter">OpenRouter (free models available)</option>
-                <option value="chatgpt">ChatGPT (use your Plus or Pro plan)</option>
                 <option value="openai">OpenAI</option>
                 <option value="anthropic">Anthropic</option>
                 <option value="gemini">Google Gemini</option>
@@ -98,18 +97,6 @@
               <label for="customUrl">Server address</label>
               <input class="input mono" id="customUrl" placeholder="http://localhost:11434/v1" spellcheck="false" />
               <span class="hint">HTTPS, or a server on this computer (localhost).</span>
-            </div>
-            <div class="field" id="chatgptField" hidden>
-              <label>Use your ChatGPT plan</label>
-              <span class="hint" id="chatgptPitch">Complete eligible AI requests in this app with usage included in your ChatGPT plan or credits balance. Needs ChatGPT Plus or Pro; a free account can sign in but cannot share its usage.</span>
-              <span id="chatgptWho" hidden></span>
-              <span id="chatgptPlanSlot" hidden></span>
-              <div class="inline" id="chatgptActions">
-                <span id="chatgptSignInSlot"></span>
-                <button class="btn" id="chatgptSwitch" type="button" hidden>Use a different account</button>
-                <button class="btn btn-ghost" id="chatgptSignOut" type="button" hidden>Sign out</button>
-              </div>
-              <span class="note" id="chatgptNote" role="status" aria-live="polite"></span>
             </div>
             <div class="field" id="keyField">
               <label for="apiKey"><span id="keyLabel">API key</span><a id="keyLink" class="hint" href="https://openrouter.ai/keys" target="_blank" rel="noopener">Get a key</a></label>
@@ -288,8 +275,6 @@
     <script src="usageLimits.js"></script>
     <script src="core/grants.js"></script>
     <script src="setup.js"></script>
-    <script src="chatgptAuth.js"></script>
-    <script src="chatgptUi.js"></script>
     <script src="options.js"></script>
   </body>
 </html>
