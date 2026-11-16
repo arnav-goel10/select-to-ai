@@ -21,7 +21,8 @@ const { createE2EServer } = require("./server.js");
 const TOOLS = require("../../extension/agentTools.js");
 
 const PORT = parseInt(process.env.E2E_PORT || "8917", 10);
-const EXT = path.resolve(process.env.E2E_EXT || path.join(__dirname, "../../extension"));
+// The local test server is granted, as after Allow on the site-access card.
+const EXT = require("../helpers/granted-build.js").grantedBuild(path.resolve(process.env.E2E_EXT || path.join(__dirname, "../../extension")));
 const ONLY = (process.env.E2E_ONLY || "").split(",").filter(Boolean);
 // Scenarios that do not apply to the build under test, with the reason, from a checked-in file.
 const NOT_APPLICABLE = process.env.E2E_NOT_APPLICABLE ? require(path.resolve(process.env.E2E_NOT_APPLICABLE)) : { scenarios: [] };
@@ -186,7 +187,9 @@ async function main() {
       return /Flight 101|note is shown/.test(r.answer) ? null : `answer: ${JSON.stringify(r.answer)}`;
     };
     // Plays the user closing the debugging bar before it opens: the connection is refused.
+    // A build without the debugger permission (4.0) has nothing to refuse.
     const refuseDebugger = (on) => worker.evaluate((refuse) => {
+      if (!chrome.debugger) return true;
       if (refuse) { self.__attach = self.__attach || chrome.debugger.attach; chrome.debugger.attach = () => Promise.reject(new Error("refused for the test")); }
       else if (self.__attach) chrome.debugger.attach = self.__attach;
       return true;
@@ -196,6 +199,7 @@ async function main() {
     // A tab is still held when the extension cannot attach to it again.
     const attachedTabs = () => worker.evaluate(async () => {
       const held = [];
+      if (!chrome.debugger) return held;
       for (const t of await chrome.tabs.query({})) {
         if (!/^https?:/.test(t.url || "")) continue;
         try { await chrome.debugger.attach({ tabId: t.id }, "1.3"); await chrome.debugger.detach({ tabId: t.id }); } catch (e) { if (/already attached/i.test(String((e && e.message) || e))) held.push(t.url); }

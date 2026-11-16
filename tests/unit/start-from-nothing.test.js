@@ -15,9 +15,11 @@ const KNOWN = require("../../extension/core/memory.js");
 
 // ------------------------------------------------------------ suggestions
 
-test("the manifest's keyword is ai", () => {
+test("4.0 ships no address-bar keyword (ai took ordinary searches)", () => {
   const manifest = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../extension/manifest.json"), "utf8"));
-  assert.equal(manifest.omnibox.keyword, "ai");
+  assert.equal(manifest.omnibox, undefined);
+  const bg = fs.readFileSync(path.resolve(__dirname, "../../extension/background.js"), "utf8");
+  assert.match(bg, /if \(chrome\.omnibox\) \{/, "the omnibox code stays guarded for a later keyword");
 });
 
 test("Enter asks Select to AI, and the rows under it are earlier requests that fit", () => {

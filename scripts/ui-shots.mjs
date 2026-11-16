@@ -23,7 +23,8 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { createE2EServer } = require("../tests/e2e/server.js");
 
-const EXT = path.resolve(process.env.EXT || "extension");
+// The local test server is granted, as after Allow on the site-access card.
+const EXT = require("../tests/helpers/granted-build.js").grantedBuild(path.resolve(process.env.EXT || "extension"));
 const OUT = path.resolve(process.argv[2] || "store-screens");
 const W = 1280;
 const H = 800;

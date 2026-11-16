@@ -31,7 +31,8 @@ const path = require("node:path");
 const http = require("node:http");
 const assert = require("node:assert/strict");
 
-const EXT = path.resolve(__dirname, "../../extension");
+// The local test server is granted, as after Allow on the site-access card.
+const EXT = require("../helpers/granted-build.js").grantedBuild(path.resolve(__dirname, "../../extension"));
 const KEYS = path.join(os.homedir(), ".config/select-to-ai/keys.env");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
