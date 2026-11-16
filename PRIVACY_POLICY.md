@@ -1,6 +1,6 @@
 # Privacy Policy for Select to AI
 
-Last updated: November 10, 2026 (version 4.0.0)
+Last updated: November 16, 2026 (version 4.0.0)
 
 Select to AI has no server of its own. It does not use analytics, advertising, error reporting or telemetry, and it does not sell or share data with anyone. What it reads from your pages goes to one place: the AI service you chose in Settings (or your own gateway), so that service can answer you or do the task you gave it. That service's own terms and privacy policy apply to what it receives.
 
@@ -23,7 +23,7 @@ A full list of every request the extension makes and every item it stores, with 
 
 If you set a **backup provider** (Settings > Browser agent > Backup when limits run out), the same requests go to that provider while your main one is out of quota. Each switch is shown in the conversation. Some free tiers, such as Google Gemini's outside the EU and UK, may use prompts to improve their products.
 
-**To ChatGPT, Claude, Gemini or Perplexity**, when you right-click selected text and send it there: the selected text, and the page address if "Include the page link" is on. For ChatGPT and Perplexity the text is put in the address that opens their page (`?q=`), so it can appear in that site's history.
+**To ChatGPT, Claude, Gemini or Perplexity**, when you right-click selected text and send it there: the selected text, and the page address only if you turned on "Include the page link" in Settings. That switch is off unless you turn it on. Each send opens a new chat. For ChatGPT and Perplexity a short selection is put in the address that opens their page (`?q=`), so it can appear in that site's history. Claude is listed only after you allow claude.ai.
 
 **To OpenRouter**, when you click "Continue with OpenRouter" on the welcome page: OpenRouter's own sign-in runs in a Chrome window (OAuth with PKCE) and returns an API key. The extension never sees your OpenRouter password.
 
@@ -41,7 +41,7 @@ Nothing below leaves your browser except as listed above.
 | Your last 20 tasks: the words you typed (including any text you selected for the quick box) and whether each worked | `chrome.storage.local` | Until Reset |
 | Recipes you saved: addresses, the names of the controls used and the words near them, the example values you typed, the last five results | `chrome.storage.local` | Until you delete the recipe, or Reset |
 | The task in progress: its steps, what it read and the excerpts of other tabs it used, so it can carry on if Chrome pauses the extension | `chrome.storage.session`, which Chrome keeps in memory and clears when the browser closes. The text of the pages it read is dropped as soon as the task ends. The excerpts of other tabs and your selection stay until the browser closes | Until the browser closes |
-| The last conversation address on ChatGPT, Claude, Gemini and Perplexity, so the side panel reopens it | `chrome.storage.local` | Until Reset |
+| The address of your last conversation on ChatGPT, Claude, Gemini or Perplexity, recorded only while that site is open inside the side panel (never from an ordinary tab), so opening the side panel takes you back to it | `chrome.storage.local` | Until Reset |
 
 Memory refuses anything that looks like a password, one-time code, card number (any run of 13 to 19 digits), social security number, passport or ID number, or API key. Recipes never keep passwords, codes or card numbers: a recipe asks for them each time it runs. A task that used your saved details cannot be saved as a recipe.
 
@@ -49,10 +49,11 @@ Storage in your browser profile is protected by Chrome, but apart from Memory it
 
 ## Permissions that touch your data
 
-- **Access to websites** is optional. Chrome asks before the agent works on a site, for that site or for all sites, your choice.
-- **Debugger** lets the agent press, type and take screenshots in a tab the way a person would, including tabs behind the one you are looking at. Chrome shows a bar saying the extension is debugging the browser while it is attached.
+Right-click sending works exactly as before and needs no new permission. Everything the agent adds is optional, and Chrome asks you the first time a feature needs it.
+
+- **Access to websites** is optional. Chrome asks before the agent works on a site, for that site or for all sites, your choice. Claude, perplexity.ai without www, your AI service's address, OpenRouter and a model on your own computer are asked for the same way, when you pick them.
 - **Tabs** lets the agent see the titles and addresses of your tabs, and open and switch tabs for a task.
-- **Notifications** shows the outcome of a task you left running. The text stays on your device.
+- **Notifications** is optional and asked when you set up the agent. It shows the outcome of a task you left running. The text stays on your device.
 
 ## Deleting your data
 
@@ -67,6 +68,10 @@ Storage in your browser profile is protected by Chrome, but apart from Memory it
 - Settings exports leave out API keys.
 
 See [SECURITY.md](SECURITY.md) for the threat model and how to report a vulnerability.
+
+## Limited Use
+
+Select to AI's use of the information it handles complies with the Chrome Web Store User Data Policy, including the [Limited Use](https://developer.chrome.com/docs/webstore/program-policies/limited-use) requirements. It is used only to provide the features described here. It is sent only to the AI service you chose, to do what you asked. It is never sold, never used for advertising, and never used to judge creditworthiness or for lending.
 
 ## Contact
 
