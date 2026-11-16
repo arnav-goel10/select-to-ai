@@ -1,0 +1,19 @@
+# Owner checklist for the 4.0 release
+
+These steps are for the owner only. They are outward, paid or hard to undo, so no agent does them. Do them in this order.
+
+1. **Answer three questions** and write one line for each in [decisions-4.0.md](decisions-4.0.md). Are Recipes public? The engine package, benchmark, calibration log and held-out results are already on main, and making the repository public cannot be undone. Do you confirm dropping the debugger permission for 4.0? This reverses your 10 Nov note. Was the 10 Nov zip ever uploaded to the store dashboard? That decides 4.0.0 or 4.0.1. If Recipes are not public, say so before anything else, because main's history must be replaced, or a fresh repository used, before the flip.
+2. **Check the publisher account.** Make sure you can sign in, with 2-step verification, to the Chrome Web Store publisher account that owns the item (the account named as the developer on the live listing). If a co-developer or a group publisher shares that account, get their agreement to the 4.0 update, the new data disclosures and the repository link moving to arnav-goel10.
+3. **Add provider keys as GitHub Actions secrets** on the repository, so the provider-smoke job can run. Use throwaway keys with a spending cap. You enter the keys yourself. An agent never does.
+4. **Approve closing PRs 1, 2 and 3** with a one-line note, and deleting the remote branches phase-1, phase-2 and phase-3.
+5. **Approve pushing local-only work** (v4 and recipes-engine-next) to the private remote, so the real history is not only on this Mac.
+6. **Make the repository public**, only after release-4.0 is green and merged to main. In practice this cannot be undone. Then turn on Issues and Private vulnerability reporting in the repository settings.
+7. **Check the public links.** Run the link-check job, or open the repository, the PRIVACY_POLICY.md page on main and the Issues page in a signed-out window. Each must load (HTTP 200).
+8. **Optional, recommended: try the update yourself** on a machine other than this Mac, or in a throwaway Chrome profile. Install the packed 2.0 build, update it to the new build with the same key, and check that Chrome does not ask you to re-enable it. Also check by hand that chatgpt.com/?q= and perplexity.ai/search?q= still send the text when the page loads.
+9. **Replace the old release folder.** Move the old select-to-ai-4.0 folder on the Desktop to a dated Trash folder. In its place, download two CI artifacts: select-to-ai-4.0.0.zip and store-screens.
+10. **Store dashboard, Package tab.** Upload the CI zip.
+11. **Store listing tab.** Paste the long description from [docs/store-listing.md](../store-listing.md). Keep the title and the category. Upload the five 1280x800 screenshots from the CI artifact, with right-click send first.
+12. **Privacy practices tab.** Paste the single purpose text and the permission justifications (there is no debugger line). Set Remote code to No. Tick these data types: Personally identifiable information, Authentication information, Personal communications, Web history, User activity and Website content. Leave Health, Financial and Location unticked. Tick all three certifications, including Limited Use. Set the privacy policy URL to the public PRIVACY_POLICY.md link on main. Set the same URL and a support link at account level, and check the trader declaration.
+13. **Test instructions tab.** Paste the reviewer steps from [docs/store-listing.md](../store-listing.md).
+14. **Distribution tab.** Untick automatic publishing, so you choose when it goes live. Then press Submit for review.
+15. **When it is approved**, press Publish. Then approve the v4.0.0 tag and the GitHub release with the same zip. Keep the 2.0 zip at hand in case you need to roll back.
