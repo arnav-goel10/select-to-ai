@@ -165,7 +165,7 @@ jobs:
           esac
           model="${IN_MODEL:-$cheap}"
           echo "$model" | grep -Eq '^[A-Za-z0-9._:/-]+$' || fail "model must be a model id"
-          echo "$model" | grep -Eq "$fits" || fail "model $model is not a $provider model, so the $provider key would be sent with another provider's model id"
+          echo "$model" | grep -Eq "$fits" || fail "model $model is not a model of provider $provider: the $provider key would be sent with another provider's model id"
           echo "$judge_model" | grep -Eq '^claude-[A-Za-z0-9._-]+$' || fail "judge_model must be a Claude model: the judge always runs on Anthropic with ANTHROPIC_API_KEY"
           if [ "$judge_model" = "$model" ]; then fail "the judge must be a different model from the agent's"; fi
 

@@ -109,8 +109,8 @@ function patternVerdict(task, run) {
   const hit = patternMatch(task, run.answer);
   const success = hit === true && !blocked && /^(finished|answered without acting)$/.test(String(run.ending || ""));
   const reason = blocked ? "the run stopped at a human check and waited for the user"
-    : success ? "the answer matches the task's pattern (no judge in dry mode)"
-      : hit === null ? "the task has no pattern, and dry mode has no judge"
+    : success ? "the answer matches the task's pattern (dry mode: the judge stub answers with this)"
+      : hit === null ? "the task has no pattern, and dry mode has only a stub for the judge"
         : hit ? `the answer matches the pattern, but the run ended as: ${run.ending}` : "the answer does not match the task's pattern";
   return { success, blocked, reason, keyPoints: [], met: [] };
 }
@@ -328,6 +328,8 @@ function familyTable(rows, tasks) {
 }
 
 const usd = (x) => `$${Number(x || 0).toFixed(4)}`;
+// A cap, in cents unless it is smaller than one.
+const capText = (x) => `$${Number(x) >= 0.01 ? Number(x).toFixed(2) : Number(x).toFixed(4)}`;
 
 /** The table and its notes as Markdown, for a job summary. */
 function markdown(table, meta = {}) {
@@ -358,7 +360,7 @@ function markdown(table, meta = {}) {
   const scored = t.passed + t.failed + t.timedOut;
   out.push(`Passed ${t.passed} of ${scored} scored runs${scored ? ` (${(100 * t.passed / scored).toFixed(1)}%)` : ""}; with blocked, lost and not-run tasks counted as failures, ${t.passed} of ${t.tasks}${t.tasks ? ` (${(100 * t.passed / t.tasks).toFixed(1)}%)` : ""}.`);
   const spend = t.agentUSD + t.judgeUSD + (t.replayUSD || 0);
-  out.push(`${meta.dry ? "Priced tokens of the scripted model and the judge stub, nothing spent" : "Model spend"}: ${usd(spend)} (agent ${usd(t.agentUSD)}, judge ${usd(t.judgeUSD)}${t.replayUSD ? `, recipe replays ${usd(t.replayUSD)}` : ""})${meta.capUSD ? `, cap $${Number(meta.capUSD).toFixed(2)}` : ""}.${meta.capReached ? " The spend cap stopped the run: the tasks under \"not run\" were never started." : ""}`);
+  out.push(`${meta.dry ? "Priced tokens of the scripted model and the judge stub, nothing spent" : "Model spend"}: ${usd(spend)} (agent ${usd(t.agentUSD)}, judge ${usd(t.judgeUSD)}${t.replayUSD ? `, recipe replays ${usd(t.replayUSD)}` : ""})${meta.capUSD ? `, cap ${capText(meta.capUSD)}` : ""}.${meta.capReached ? " The spend cap stopped the run: the tasks under \"not run\" were never started." : ""}`);
   if (meta.spentUSD !== undefined && Math.abs(meta.spentUSD - spend) > 0.00005) out.push(`The shards counted ${usd(meta.spentUSD)} against the cap; the table adds up to ${usd(spend)}.`);
   if (t.patternDisagrees) out.push(`In ${t.patternDisagrees} run(s) the judge and the task's answer pattern disagree: read those first (trial-summary.json lists them).`);
   if (t.ungrounded) out.push(`${t.ungrounded} passed run(s) state numbers of which none is in any captured page: read those too.`);

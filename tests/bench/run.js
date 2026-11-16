@@ -564,7 +564,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   // BENCH_MAX_USD: what this process has spent on models: the agent's runs (lost ones too), the judge's calls, replays.
   let spent = 0;
   let capReached = false;
-  const capStop = () => { capReached = true; stoppedEarly = `the spend cap of $${MAX_USD.toFixed(2)} was reached ($${spent.toFixed(4)} spent); the remaining tasks were not started.`; };
+  const capStop = () => { capReached = true; stoppedEarly = `the spend cap of $${MAX_USD >= 0.01 ? MAX_USD.toFixed(2) : MAX_USD.toFixed(4)} was reached ($${spent.toFixed(4)} spent); the remaining tasks were not started.`; };
   /** Gives the next run what is left under the cap as its own cost budget. */
   const setRunBudget = async (left) => {
     const worker = await BENCH_PROFILE_LIB.workerOf(session.browser, session.extensionId);

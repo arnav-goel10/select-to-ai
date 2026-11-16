@@ -95,6 +95,8 @@ test("the family table sorts every run into one column and counts what never ran
   assert.match(text, /\| Developer tasks \| 3 \| 1 \| 1 \| 1 \| 0 \| 0 \| 0 \| 40 \| \$0\.0500 \| \$0\.0200 \| 4 \| 0 \| 0 \| 2 \|/);
   assert.match(text, /Passed 1 of 3 scored runs/);
   assert.match(text, /spend cap stopped the run/);
+  assert.match(text, /cap \$5\.00/);
+  assert.match(T.markdown({ lines, total }, { capUSD: 0.0005 }), /cap \$0\.0005/);
   assert.ok(!text.includes("\u2014"));
 });
 
