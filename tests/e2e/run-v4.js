@@ -21,7 +21,8 @@ const { createE2EServer } = require("./server.js");
 const TOOLS = require("../../extension/agentTools.js");
 
 const PORT = parseInt(process.env.E2E_PORT || "8917", 10);
-const EXT = path.resolve(process.env.E2E_EXT || path.join(__dirname, "../../extension"));
+// The local test server is granted, as after Allow on the site-access card.
+const EXT = require("../helpers/granted-build.js").grantedBuild(path.resolve(process.env.E2E_EXT || path.join(__dirname, "../../extension")));
 const ONLY = (process.env.E2E_ONLY || "").split(",").filter(Boolean);
 // Scenarios that do not apply to the build under test, with the reason, from a checked-in file.
 const NOT_APPLICABLE = process.env.E2E_NOT_APPLICABLE ? require(path.resolve(process.env.E2E_NOT_APPLICABLE)) : { scenarios: [] };
