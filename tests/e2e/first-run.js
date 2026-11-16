@@ -137,7 +137,8 @@ async function launch(extDir, profile) {
 
 const useGateway = (worker) => Promise.all([
   worker.evaluate((base) => chrome.storage.sync.set({ agentActiveProvider: "custom", agentCustomUrl: `${base}/v1`, agentModel: "first-run-scripted", showAgent: true, agentRiskConfirmation: true, agentLearning: false, openingMode: "tab" }), `http://127.0.0.1:${PORT}`),
-  worker.evaluate(() => chrome.storage.local.set({ onboardingComplete: true })),
+  // The user already agreed to what the agent sends to this server.
+  worker.evaluate((base) => chrome.storage.local.set({ onboardingComplete: true, agentDataConsent: { [`custom ${base}`]: Date.now() } }), `http://127.0.0.1:${PORT}`),
 ]);
 
 const tabIdOf = (worker, prefix) => worker.evaluate(async (p) => ((await chrome.tabs.query({})).find((t) => (t.url || "").startsWith(p)) || {}).id, prefix);

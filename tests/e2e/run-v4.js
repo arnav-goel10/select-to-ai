@@ -65,7 +65,8 @@ async function main() {
       // E2E_DEBUGGER=off runs every scenario as a build without the debugger would.
       ...(process.env.E2E_DEBUGGER === "off" ? { agentDebuggerMode: "off" } : {}),
     });
-    await worker.evaluate(() => new Promise((r) => chrome.storage.local.set({ onboardingComplete: true }, r)));
+    // The user already agreed to what the agent sends to this server (setup.js consent).
+    await worker.evaluate((origin) => new Promise((r) => chrome.storage.local.set({ onboardingComplete: true, agentDataConsent: { [`custom ${origin}`]: Date.now() } }, r)), new URL(server.baseUrl).origin);
     const control = (p, options) => fetch(`${server.baseUrl}${p}`, options).then((r) => r.json());
     const agentUrl = (task) => `chrome-extension://${extensionId}/agent.html${task ? `?task=${encodeURIComponent(task)}&autostart=1&fresh=1` : ""}`;
 
