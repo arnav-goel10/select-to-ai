@@ -10,9 +10,9 @@
  *      (tests/fixtures/v2.0/manifest.json), so the extension gets a fixed id;
  *   2. loads that 2.0 stand-in in a fresh profile and writes the 2.0 storage
  *      shapes from tests/fixtures/v2.0/storage-seed.json;
- *   3. closes Chrome, replaces the directory with the 4.0 build carrying the
- *      same key, and opens the same profile again, which Chrome treats as an
- *      update of the same extension;
+ *   3. replaces the directory with the 4.0 build carrying the same key and
+ *      has the running extension reload itself, which Chrome treats as an
+ *      update of the same extension (onInstalled reason "update");
  *   4. checks what a 2.0 user meets: the worker runs, the three right-click
  *      items exist, settings are migrated and kept, legacy keys are gone and
  *      no tab opened.
@@ -82,14 +82,19 @@ async function open(puppeteer, extDir, profile, id) {
       }
     });
   }
-  const target = await browser.waitForTarget((t) => t.type() === "service_worker" && t.url().startsWith(`chrome-extension://${id}/`), { timeout: 20000 })
+  return { browser, errors, ...(await attach(browser, id, errors)) };
+}
+
+// The extension's service worker, other than `previous` (the one a reload
+// replaces), with uncaught exceptions collected from the moment it is found.
+async function attach(browser, id, errors, previous) {
+  const target = await browser.waitForTarget((t) => t !== previous && t.type() === "service_worker" && t.url().startsWith(`chrome-extension://${id}/`), { timeout: 20000 })
     .catch(() => null);
-  if (target) {
-    const cdp = await target.createCDPSession();
-    cdp.on("Runtime.exceptionThrown", (e) => errors.push((e.exceptionDetails.exception && e.exceptionDetails.exception.description) || e.exceptionDetails.text));
-    await cdp.send("Runtime.enable");
-  }
-  return { browser, target, worker: target ? await target.worker() : null, errors };
+  if (!target) return { target: null, worker: null };
+  const cdp = await target.createCDPSession();
+  cdp.on("Runtime.exceptionThrown", (e) => errors.push((e.exceptionDetails.exception && e.exceptionDetails.exception.description) || e.exceptionDetails.text));
+  await cdp.send("Runtime.enable");
+  return { target, worker: await target.worker() };
 }
 
 async function main() {
@@ -109,23 +114,20 @@ async function main() {
     await s.worker.evaluate((data) => Promise.all([chrome.storage.sync.set(data.sync), chrome.storage.local.set(data.local)]), seed);
     const v2 = await s.worker.evaluate(() => chrome.runtime.getManifest().version);
     console.log(`2.0 stand-in running as ${id}, version ${v2}, storage seeded`);
-    await s.browser.close();
-    await sleep(500);
 
-    // 3: the update.
+    // 3: the update. The directory now holds the build, and the running
+    // extension reloads itself from disk, so Chrome installs it over 2.0 in
+    // the same profile and fires onInstalled with reason "update". (Closing
+    // Chrome and relaunching on the changed directory is not enough: the
+    // relaunched worker kept running the stand-in's cached script.)
     const version = writeBuild(extDir, key);
-    s = await open(puppeteer, extDir, profile, id);
-    check("worker starts after the update, under the same id", s.worker, s.worker ? "" : "no service worker for this id within 20 s");
+    await s.worker.evaluate(() => { setTimeout(() => chrome.runtime.reload(), 50); }).catch(() => {});
+    Object.assign(s, await attach(s.browser, id, s.errors, s.target));
+    check("worker starts after the update, under the same id", s.worker, s.worker ? "" : "no new service worker for this id within 20 s");
     if (!s.worker) { await s.browser.close(); return report(checks); }
     await sleep(2500); // onInstalled and the migrations run
-    // Which script the worker is running: the build's background.js or the
-    // 2.0 stand-in's empty one left over from the old registration.
-    const workers = s.browser.targets().filter((t) => t.type() === "service_worker" && t.url().startsWith(`chrome-extension://${id}/`));
-    for (const t of workers) {
-      const w = await t.worker();
-      const info = await w.evaluate(async () => ({ build: typeof updateContextMenus === "function", script: (await (await fetch(chrome.runtime.getURL("background.js"))).text()).length })).catch((e) => ({ error: e.message }));
-      console.log(`worker ${t.url()}: ${JSON.stringify(info)}`);
-    }
+    const script = await s.worker.evaluate(() => typeof updateContextMenus).catch((e) => `error: ${e.message}`);
+    check("the worker runs the build's background.js", script === "function", `typeof updateContextMenus is ${script}`);
     const running = await s.worker.evaluate(() => chrome.runtime.getManifest().version);
     check(`running version is the build (${version})`, running === version, `running ${running}`);
     // What the updated build was granted, so a missing API in the worker
