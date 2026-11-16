@@ -194,3 +194,11 @@ test("only the last few runs are kept, and no typed secret is among what is kept
   assert.deepEqual(kept.map((d) => d.runId), ids.slice(-4).reverse());
   assert.ok(kept.every((d) => !("secrets" in d) && !("vars" in d)), "only the compiled recipe is kept");
 });
+
+test("the agent page shows why a run cannot be saved instead of dropping the line", () => {
+  const src = require("node:fs").readFileSync(`${EXT}/agent.js`, "utf8");
+  const draw = src.slice(src.indexOf("function drawSaveRecipe("), src.indexOf("const RECEIPT_STATES"));
+  assert.match(draw, /This run cannot be saved as a recipe: \$\{can\.why/);
+  assert.match(draw, /can\.nothing \|\| can\.pending/, "only a run with nothing to repeat, or one still going, stays quiet");
+  assert.ok(!/if \(!can \|\| !can\.ok\) return;/.test(draw), "a run that cannot be saved is not passed over in silence");
+});
