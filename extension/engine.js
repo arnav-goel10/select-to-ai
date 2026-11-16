@@ -2057,7 +2057,13 @@
     // The agent's page open as a tab of its own: a run it starts is followed
     // from that tab. In the side panel the view has no tab.
     const home = port.sender && port.sender.tab && Number.isInteger(port.sender.tab.id) ? port.sender.tab.id : null;
-    port.onMessage.addListener(async (m) => {
+    // One message at a time, in the order sent: a task queued right after
+    // hello is handled once restoring is over, not dropped while it runs.
+    let queue = Promise.resolve();
+    port.onMessage.addListener((m) => {
+      queue = queue.then(() => fromView(m)).catch((e) => console.error("Select to AI port:", e));
+    });
+    async function fromView(m) {
       if (!m || typeof m !== "object") return;
       if (m.type === "hello") {
         await restore();
@@ -2123,8 +2129,7 @@
         await save(session);
         port.postMessage(snapshot(session));
       }
-
-    });
+    }
     port.onDisconnect.addListener(() => { if (session) session.ports.delete(port); });
   }
 
