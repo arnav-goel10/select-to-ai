@@ -21,6 +21,7 @@ const selector = document.getElementById('serviceSelector');
 const redoBtn = document.getElementById('redoContextBtn');
 const bar = document.getElementById('spBar');
 const backBtn = document.getElementById('backToAgentBtn');
+const emptyState = document.getElementById('emptyState');
 
 // A hand-off written this long ago or less is a request to show that page now.
 const FRESH_MS = 15000;
@@ -45,6 +46,8 @@ const agentUrl = () => chrome.runtime.getURL('agent.html');
 
 /** Shows a page in the frame; the bar is there only for an assistant site. */
 function show(url) {
+    emptyState.hidden = true;
+    iframe.hidden = false;
     if (iframe.src !== url && iframe.getAttribute('src') !== url) iframe.src = url;
     const agent = isAgentUrl(url);
     bar.hidden = agent;
@@ -59,6 +62,30 @@ function syncSelector(url) {
     else if (url.includes(HOSTS.PERPLEXITY)) selector.value = URLS.PERPLEXITY;
     else if (url.includes(HOSTS.CLAUDE)) selector.value = URLS.CLAUDE;
 }
+
+/** Nothing to show: every assistant is off and so is the agent. */
+function showEmpty() {
+    bar.hidden = true;
+    iframe.hidden = true;
+    if (iframe.getAttribute('src') !== 'about:blank') iframe.src = 'about:blank';
+    emptyState.hidden = false;
+}
+
+// claude.ai is optional in 4.0: until it is granted the panel cannot load it.
+function hasClaude() {
+    return new Promise((resolve) => {
+        try {
+            chrome.permissions.contains({ origins: ['https://claude.ai/*'] }, (ok) => {
+                void chrome.runtime.lastError;
+                resolve(ok === true);
+            });
+        } catch (e) {
+            resolve(false);
+        }
+    });
+}
+
+document.getElementById('emptyStateSettings').addEventListener('click', () => chrome.runtime.openOptionsPage());
 
 // --- Event Listeners ---
 
@@ -133,8 +160,9 @@ function updateState(state) {
 
 Promise.all([
     new Promise(resolve => chrome.storage.sync.get(['showChatGPT', 'showGemini', 'showPerplexity', 'showClaude', 'showAgent'], resolve)),
-    new Promise(resolve => chrome.storage.local.get([STORAGE.SIDE_PANEL_STATE], resolve))
-]).then(([settings, items]) => {
+    new Promise(resolve => chrome.storage.local.get([STORAGE.SIDE_PANEL_STATE], resolve)),
+    hasClaude()
+]).then(([settings, items, claudeGranted]) => {
     agentOn = settings.showAgent === true;
 
     // 1. The assistant picker
@@ -148,7 +176,7 @@ Promise.all([
 
     if (settings.showChatGPT !== false) addOption(URLS.CHATGPT, "ChatGPT");
     if (settings.showGemini !== false) addOption(URLS.GEMINI, "Gemini");
-    if (settings.showClaude !== false) addOption(URLS.CLAUDE, "Claude");
+    if (settings.showClaude !== false && claudeGranted) addOption(URLS.CLAUDE, "Claude");
     if (settings.showPerplexity === true) addOption(URLS.PERPLEXITY, "Perplexity");
 
     // 2. What to show. A hand-off that was just written (a right-click,
@@ -157,22 +185,22 @@ Promise.all([
     const state = items[STORAGE.SIDE_PANEL_STATE];
     const fresh = !!(state && state.url && Date.now() - (state.timestamp || 0) < FRESH_MS);
     const agentState = !!(state && isAgentUrl(state.url));
+    if (!agentOn && selector.options.length === 0 && !fresh) { showEmpty(); return; }
     if (state && state.url && (agentOn ? fresh || agentState : !agentState)) { updateState(state); return; }
     if (agentOn) { show(agentUrl()); return; }
 
     // Default load (direct open): the first assistant, at its saved conversation.
-    if (selector.options.length > 0) {
-        const defaultUrl = selector.value;
-        let hostname = "";
-        if (defaultUrl.includes(HOSTS.CHATGPT)) hostname = HOSTS.CHATGPT;
-        else if (defaultUrl.includes(HOSTS.GEMINI)) hostname = HOSTS.GEMINI;
-        else if (defaultUrl.includes(HOSTS.PERPLEXITY)) hostname = HOSTS.PERPLEXITY_WWW;
-        else if (defaultUrl.includes(HOSTS.CLAUDE)) hostname = HOSTS.CLAUDE;
+    if (selector.options.length === 0) { showEmpty(); return; }
+    const defaultUrl = selector.value;
+    let hostname = "";
+    if (defaultUrl.includes(HOSTS.CHATGPT)) hostname = HOSTS.CHATGPT;
+    else if (defaultUrl.includes(HOSTS.GEMINI)) hostname = HOSTS.GEMINI;
+    else if (defaultUrl.includes(HOSTS.PERPLEXITY)) hostname = HOSTS.PERPLEXITY_WWW;
+    else if (defaultUrl.includes(HOSTS.CLAUDE)) hostname = HOSTS.CLAUDE;
 
-        const storageKey = `sessionUrl_${hostname}`;
-        chrome.storage.local.get([storageKey], (res) => {
-            const savedUrl = res[storageKey];
-            show(savedUrl && savedUrl.includes(hostname) ? savedUrl : defaultUrl);
-        });
-    }
+    const storageKey = `sessionUrl_${hostname}`;
+    chrome.storage.local.get([storageKey], (res) => {
+        const savedUrl = res[storageKey];
+        show(savedUrl && savedUrl.includes(hostname) ? savedUrl : defaultUrl);
+    });
 });

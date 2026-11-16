@@ -41,6 +41,37 @@
             padding-left: 12px;
         }
 
+        .sp-empty {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            padding: 24px 16px;
+            text-align: center;
+            color: var(--text-muted, var(--text));
+            background: var(--bg);
+        }
+
+        .sp-empty[hidden] { display: none; }
+
+        .sp-empty h1 {
+            margin: 0;
+            font-size: 15px;
+            font-weight: var(--weight-medium);
+            color: var(--text);
+        }
+
+        .sp-empty p {
+            margin: 0;
+            max-width: 280px;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        iframe[hidden] { display: none; }
+
         iframe {
             flex: 1;
             width: 100%;
@@ -62,6 +93,11 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
         </button>
     </header>
+    <section class="sp-empty" id="emptyState" hidden aria-live="polite">
+        <h1>No assistant is turned on</h1>
+        <p>Turn on ChatGPT, Gemini, Perplexity or Claude in Settings, and the side panel shows it here.</p>
+        <button type="button" class="btn btn-primary btn-sm" id="emptyStateSettings">Open Settings</button>
+    </section>
     <iframe id="contentFrame" src="about:blank" title="Select to AI"></iframe>
     <script src="config.js"></script>
     <script src="sidepanel.js"></script>
