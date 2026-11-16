@@ -571,6 +571,8 @@
         try { origin = new URL(tab.url).origin; } catch (_e) { /* no address */ }
         const granted = origin ? await quiet(chrome.permissions.contains({ origins: [`${origin}/*`] })) : false;
         if (granted) return unreadable(tab, "This page failed to load, or does not let extensions in.");
+        // The user already said no to this site in this run: the run goes on without it.
+        if (origin && (run.declinedSites || []).includes(origin)) return unreadable(tab, "The user did not let the agent onto this site.");
         // The user has not let the agent onto this site yet: theirs to decide.
         back({ type: "blocked", kind: "site_access", question: `Let the agent use ${new URL(tab.url).hostname}?`, detail: [tab.url] });
         return null;
