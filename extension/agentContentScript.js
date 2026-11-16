@@ -3902,6 +3902,15 @@
         if (shown('input[type="password"], input[autocomplete~="current-password"]').length) out.push({ kind: 'sign_in' });
         if (shown('input[autocomplete~="one-time-code"]').length) out.push({ kind: 'code' });
         if (shown('input[autocomplete~="cc-number"], input[autocomplete~="cc-csc"], input[autocomplete~="cc-exp"]').length) out.push({ kind: 'payment' });
+        // Fields the policy judges by their names and labels too (sensitiveKind):
+        // a code box or card field with no autocomplete is still one.
+        const kinds = new Set(out.map((b) => b.kind));
+        for (const el of shown('input:not([type="hidden"]), textarea')) {
+            if (kinds.has('code') && kinds.has('payment') && kinds.has('sign_in')) break;
+            const k = sensitiveKind(el);
+            const kind = k === 'password' ? 'sign_in' : k === 'code' || k === 'payment' ? k : '';
+            if (kind && !kinds.has(kind)) { kinds.add(kind); out.push({ kind }); }
+        }
         // A widget a person can act on: the small badge of a background check is not one.
         const widgets = shown(HUMAN_CHECK_WIDGETS).filter((el) => { const r = el.getBoundingClientRect(); return r.width >= 60 && r.height >= 40 && !el.closest('.grecaptcha-badge'); });
         const text = document.body ? (document.body.innerText || '') : '';
@@ -3958,6 +3967,12 @@
      * Shows the banner and watches for what was in the way to go: twice in
      * a row with it gone, and the extension is told. Only the structure is
      * looked at while the user works; nothing they type is read.
+     *
+     * A blocker is only said to be gone once it was seen on this page. A
+     * sign-in that asks for the email first has no password box yet, and a
+     * hand-off the model chose may name a blocker the structure never shows:
+     * such a wait ends with the user's "I'm done", an answer in the panel, or
+     * a new page that shows the blocker and then loses it.
      */
     function waitForUser(kind, text, pressId) {
         removeNeedsYou();
@@ -3969,6 +3984,10 @@
             target.scrollIntoView({ behavior: 'instant', block: 'center' });
         }
         const startUrl = location.href;
+        const present = () => detectBlockers().some((b) => b.kind === kind);
+        let had = !!pressId || present();
+        const seen = () => { try { chrome.runtime.sendMessage({ action: 'agentBlockerSeen', kind }); } catch (_) { /* extension reloaded */ } };
+        if (had && !pressId) seen();
         let clear = 0;
         // A button the user was asked to press: their own click is the signal.
         let pressed = false;
@@ -3976,7 +3995,10 @@
         const check = () => {
             const still = pressId
                 ? !pressed && !!(target && target.isConnected && location.href === startUrl)
-                : detectBlockers().some((b) => b.kind === kind);
+                : present();
+            if (still && !had) { had = true; seen(); }
+            // Never seen: nothing here can say it is gone.
+            if (!had) return;
             clear = still ? 0 : clear + 1;
             if (clear >= 2) {
                 removeNeedsYou();

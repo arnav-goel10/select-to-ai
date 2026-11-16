@@ -32,6 +32,19 @@
   // Recipes (recipes/service.js): a run's page actions are recorded so a
   // successful run can be saved and repeated. Recording only watches.
   const RECIPES = root.SELECT_TO_AI_RECIPES || null;
+  // Desktop notifications are optional (core/grants.js): without the grant
+  // chrome.notifications does not exist, and every notice is skipped.
+  const GRANTS = root.SELECT_TO_AI_GRANTS || null;
+  const notice = (id, options) => {
+    if (GRANTS) return GRANTS.notify(id, options);
+    const n = typeof chrome !== "undefined" && chrome.notifications;
+    try { return n ? (typeof id === "string" ? n.create(id, options) : n.create(id)) : Promise.resolve(null); } catch (_e) { return Promise.resolve(null); }
+  };
+  const unnotice = (id) => {
+    if (GRANTS) return GRANTS.clearNotice(id);
+    const n = typeof chrome !== "undefined" && chrome.notifications;
+    try { return n ? n.clear(id) : Promise.resolve(false); } catch (_e) { return Promise.resolve(false); }
+  };
 
   /**
    * What the user sees of a run (core/view.js): home, the agent page's tab
@@ -161,12 +174,25 @@
     await quiet(chrome.storage.session.set({ [KEY(session.windowId)]: { turns: session.turns.slice(-12), run: run ? RUN.toStored(run) : null, touched, spawned: session.spawned || {}, view: session.view || newView(null), extras: { selection: session.extras.selection || "", selectionPlace: session.extras.selectionPlace || null, selectionCaptured: !!session.extras.selectionCaptured, openTabPages: session.extras.openTabPages || [] } } }));
   }
 
+  // Waits whose blocker the page was seen to show (agentContentScript.js
+  // waitForUser). Kept in session storage, so a worker that wakes up again
+  // still knows a sign-in page it watched was there.
+  const SEEN_KEY = "agentSeenWaits";
+  let seenWaits = new Set();
+  function markSeen(waitId) {
+    if (!waitId || seenWaits.has(waitId)) return;
+    seenWaits.add(waitId);
+    while (seenWaits.size > 50) seenWaits.delete(seenWaits.values().next().value);
+    quiet(chrome.storage.session.set({ [SEEN_KEY]: [...seenWaits] }));
+  }
+
   /** Brings back what was saved before the worker was stopped. */
   let restored = null;
   function restore() {
     if (restored) return restored;
     restored = (async () => {
       const all = (await quiet(chrome.storage.session.get(null))) || {};
+      if (Array.isArray(all[SEEN_KEY])) seenWaits = new Set([...all[SEEN_KEY], ...seenWaits]);
       for (const [k, v] of Object.entries(all)) {
         if (!k.startsWith("agentSession:") || !v) continue;
         const windowId = Number(k.slice("agentSession:".length));
@@ -396,7 +422,7 @@
     if (fx.type === "observe") observe(session, fx, back).catch((e) => back({ type: "model_failed", kind: "page", message: `The page could not be read: ${e && e.message ? e.message : e}` })).finally(() => timed("observe"));
     else if (fx.type === "model") model(session, fx, back).finally(() => timed("model"));
     else if (fx.type === "act") toFront(session, fx.action).then(() => (RECIPES ? RECIPES.around(session, fx.action, () => act(session, fx.action)) : act(session, fx.action))).then(settledFor).then(pointed).then((result) => lookAgain(session, result, back)).then((result) => back({ type: "acted", result }), (e) => back({ type: "acted", result: { ok: false, message: String((e && e.message) || e) } })).finally(() => timed("act"));
-    else if (fx.type === "attention") attention(rootOf(session), fx.wait).catch((e) => console.error("Select to AI attention:", e));
+    else if (fx.type === "attention") attention(rootOf(session), fx.wait, !!fx.again).catch((e) => console.error("Select to AI attention:", e));
     else if (fx.type === "memory") changeMemory(fx).catch((e) => console.error("Select to AI memory:", e));
     else if (fx.type === "end") finished(session);
   }
@@ -469,19 +495,36 @@
       const box = await send(tab.id, { action: "frameBox", token: f.token });
       const placed = framePlaces(box, got);
       if (box && box.found) for (const area of page.frameAreas || []) if (area.x === box.area.x && area.y === box.area.y && area.w === box.area.w && area.h === box.area.h) area.read = true;
-      for (const el of got.elements) {
-        page.elements.push({
-          ...el, ...placed(el), id: k * FRAME_BASE + el.id, frame: k, position: f.position || el.position,
-          ...(f.onTop ? { onTop: true } : {}),
-          groupKey: `f${k}:${el.groupKey || 0}`, groupKind: el.groupKind || "frame", group: el.group ? `${name} > ${el.group}` : name,
-        });
-      }
+      joinFrame(page, got, k, f, name, placed);
       const text = String(got.innerText || "").trim();
       if (text) page.innerText = `${page.innerText || ""}\n\n[In the ${name} on this page]\n${text.slice(0, 3000)}`;
       if ((got.unseen || []).length) page.unseen = [...(page.unseen || []), ...got.unseen].slice(0, 8);
       for (const b of got.blockers || []) (page.blockers = page.blockers || []).push({ ...b, whole: false });
       if (f.onTop) for (const o of page.overlays || []) if (o.framed && !o.controls) { o.framed = false; o.controls = got.elements.length; break; }
     }
+  }
+
+  /**
+   * Adds frame k's controls and forms to the page's listing. Both are
+   * numbered after the page's own: frame 1's control 12 is [100012], and
+   * its form 0 is form 100000, since form numbers are counted per document
+   * and a frame's form 0 is not the page's. A control is judged against
+   * the form it is in (agentTools.js contentRisk, policy.js).
+   */
+  function joinFrame(page, got, k, f, name, placed) {
+    const at = placed || (() => ({}));
+    for (const el of got.elements || []) {
+      page.elements.push({
+        ...el, ...at(el), id: k * FRAME_BASE + el.id, frame: k, position: f.position || el.position,
+        formId: el.formId !== undefined && el.formId !== null ? k * FRAME_BASE + el.formId : undefined,
+        ...(f.onTop ? { onTop: true } : {}),
+        groupKey: `f${k}:${el.groupKey || 0}`, groupKind: el.groupKind || "frame", group: el.group ? `${name} > ${el.group}` : name,
+      });
+    }
+    if (Array.isArray(got.forms) && got.forms.length) {
+      page.forms = [...(page.forms || []), ...got.forms.map((form) => ({ ...form, id: k * FRAME_BASE + form.id, frame: k }))];
+    }
+    return page;
   }
 
   /**
@@ -507,6 +550,10 @@
     touch(session, tab.id);
     if (!isWeb(tab.url) && run.fromNothing && !run.fromNothing.left) return unreadable(tab, "No site is open in this tab yet.");
     if (!isWeb(tab.url)) return unreadable(tab, "This tab is a browser page that extensions cannot read.");
+    // "Only use these sites" holds for every page the run lands on, however
+    // it got there (a link, a tab, the start tab): nothing off the list is read.
+    const allowlist = (session.settings && session.settings.allowlist) || "";
+    if (allowlist && !root.SELECT_TO_AI_SECURITY.isUrlAllowedByDomains(tab.url, allowlist)) return unreadable(tab, "This page is outside the sites you allow the agent to use.");
     // Every control on the page, wherever it is; core/observe.js fits the
     // listing to the model's budget.
     // (agentObserve: "near" keeps the older listing of what is near the
@@ -524,6 +571,8 @@
         try { origin = new URL(tab.url).origin; } catch (_e) { /* no address */ }
         const granted = origin ? await quiet(chrome.permissions.contains({ origins: [`${origin}/*`] })) : false;
         if (granted) return unreadable(tab, "This page failed to load, or does not let extensions in.");
+        // The user already said no to this site in this run: the run goes on without it.
+        if (origin && (run.declinedSites || []).includes(origin)) return unreadable(tab, "The user did not let the agent onto this site.");
         // The user has not let the agent onto this site yet: theirs to decide.
         back({ type: "blocked", kind: "site_access", question: `Let the agent use ${new URL(tab.url).hostname}?`, detail: [tab.url] });
         return null;
@@ -542,7 +591,7 @@
   }
 
   /** What the user had selected and the other tabs their words point at. */
-  async function gatherContext(task, tab) {
+  async function gatherContext(task, tab, allowlist) {
     const out = { selection: "", openTabPages: [] };
     const work = (async () => {
       if (isWeb(tab.url)) {
@@ -552,7 +601,9 @@
       const all = (await quiet(chrome.tabs.query({ windowId: tab.windowId }))) || [];
       // Chosen from titles and addresses alone: a tab the request is not
       // about is never opened, read or sent anywhere.
-      const others = TOOLS.pickContextTabs(task, tab, all.filter((t) => t.id !== tab.id && isWeb(t.url)), 4);
+      // A tab outside "Only use these sites" is not read for context either.
+      const usable = all.filter((t) => t.id !== tab.id && isWeb(t.url) && (!allowlist || root.SELECT_TO_AI_SECURITY.isUrlAllowedByDomains(t.url, allowlist)));
+      const others = TOOLS.pickContextTabs(task, tab, usable, 4);
       out.openTabPages = await Promise.all(others.map(async (t) => {
         await quiet(inject({ tabId: t.id }, { files: ["agentTools.js", "agentContentScript.js"] }));
         const res = await send(t.id, { action: "readText" });
@@ -577,7 +628,7 @@
     let moved = null;
     // A sub-task's tab is its own: the user's selection and other tabs are the run's.
     if (fx.first && !session.parent) {
-      const ctx = await gatherContext(run.task, tab);
+      const ctx = await gatherContext(run.task, tab, (session.settings && session.settings.allowlist) || "");
       if (!session.extras.selectionCaptured) { session.extras.selection = ctx.selection; session.extras.selectionPlace = null; }
       session.extras.openTabPages = ctx.openTabPages;
       for (const t of ctx.openTabPages) { const site = TOOLS.siteOf(t.url); if (site && !run.trust.sites.includes(site)) run.trust.sites.push(site); }
@@ -1165,7 +1216,13 @@
     quiet(chrome.alarms.create(RESUME(session.windowId, wait.id), { when: wait.until }));
   }
 
-  async function attention(session, wait) {
+  /**
+   * The run waits: the page, the badge and, where the user is not looking,
+   * a notice tell them. `again` is the same wait brought back after the
+   * worker restarted: the user was told already, and its one reminder alarm
+   * outlives the worker, so only the watch and the badge are put back.
+   */
+  async function attention(session, wait, again) {
     keepAwake();
     // Nothing for the user to do: the run carries on by itself when the time is up.
     if (wait.kind === "pause") { session.attending.set(wait.id, wait); wakeAt(session, wait); return; }
@@ -1174,11 +1231,12 @@
     session.attending.set(wait.id, wait);
     if (watched) await watchPage(wait);
     // What is asked on the agent's page takes the user back there (core/view.js).
-    await settleView(session, wait.kind).catch((e) => console.error("Select to AI view:", e));
+    if (!again) await settleView(session, wait.kind).catch((e) => console.error("Select to AI view:", e));
     const badge = watched ? { tabId } : {};
     quiet(chrome.action.setBadgeText({ ...badge, text: "!" }));
     quiet(chrome.action.setBadgeBackgroundColor({ ...badge, color: "#c2410c" }));
     quiet(chrome.action.setTitle({ ...badge, title: `Select to AI needs you: ${String(wait.question || "").slice(0, 80)}` }));
+    if (again) return;
 
     // Where the user is decides how loudly they are told.
     const tab = tabId !== null && tabId !== undefined ? await quiet(chrome.tabs.get(tabId)) : null;
@@ -1189,7 +1247,7 @@
     if (tab && !onTheTab) quiet(chrome.windows.update(tab.windowId, { drawAttention: true }));
     const panelOpen = session.ports.size > 0;
     if (!chromeInFront || idle !== "active" || (!panelOpen && !onTheTab)) {
-      quiet(chrome.notifications && chrome.notifications.create(`agent-wait:${session.windowId}`, {
+      quiet(notice(`agent-wait:${session.windowId}`, {
         type: "basic", iconUrl: "icon128.png", title: "Select to AI needs you",
         message: String(wait.question || "Open the side panel to continue.").slice(0, 240),
         buttons: tab ? [{ title: "Go to tab" }] : undefined,
@@ -1210,7 +1268,7 @@
     }
     // The notice and its reminder stay while another wait of this session is open.
     if (![...session.attending.values()].some((w) => w.kind !== "pause")) {
-      quiet(chrome.notifications && chrome.notifications.clear(`agent-wait:${session.windowId}`));
+      quiet(unnotice(`agent-wait:${session.windowId}`));
       if (chrome.alarms) quiet(chrome.alarms.clear(`agentRemind:${session.windowId}`));
     }
     if (chrome.alarms && wait.kind === "pause") quiet(chrome.alarms.clear(RESUME(session.windowId, wait.id)));
@@ -1477,6 +1535,12 @@
       if (hellos.size > 200) hellos.delete(hellos.keys().next().value);
       return false;
     }
+    // The page waited on showed its blocker: from now on it going away means the user got past it.
+    if (message.action === "agentBlockerSeen") {
+      if (sender.frameId) return false;
+      restore().then(() => { const on = waitingOn(sender.tab.id); if (on && on.wait.kind === message.kind) markSeen(on.wait.id); });
+      return false;
+    }
     if (message.action !== "agentBlockerCleared" && message.action !== "agentWaitDone") return false;
     restore().then(() => {
       const on = waitingOn(sender.tab.id);
@@ -1487,6 +1551,9 @@
 
   // The waited-on tab loaded a new page: the watch went with the old one.
   // Look only at whether the blocker is still there, and watch again if so.
+  // A blocker that was never seen (an email-first sign-in, a hand-off the
+  // structure does not show) is not said to be gone by a page without it:
+  // the page is watched again, and the user's "I'm done" ends the wait.
   chrome.tabs.onUpdated.addListener((tabId, info) => {
     if (info.status !== "complete") return;
     restore().then(async () => {
@@ -1497,7 +1564,9 @@
       const res = await send(tabId, { action: "probe" });
       if (!waitsOf(session.run).some((w) => w.id === wait.id)) return;
       // A button the user was to press is gone with the page it was on.
-      const gone = wait.press ? true : !!res && !(res.blockers || []).some((b) => b.kind === wait.kind);
+      const there = !!res && (res.blockers || []).some((b) => b.kind === wait.kind);
+      if (there) markSeen(wait.id);
+      const gone = wait.press ? true : !!res && !there && seenWaits.has(wait.id);
       if (gone) enqueue(session, { type: "cleared", id: wait.id });
       else if (res) watchPage(wait);
     });
@@ -1511,13 +1580,17 @@
       const tab = await quiet(chrome.tabs.update(wait.tabId, { active: true }));
       if (tab) quiet(chrome.windows.update(tab.windowId, { focused: true }));
     }
-    quiet(chrome.notifications && chrome.notifications.clear(`agent-wait:${windowId}`));
+    quiet(unnotice(`agent-wait:${windowId}`));
   };
   // notifications is optional: without the grant chrome.notifications is
   // undefined, and touching it here would stop the whole worker from loading.
-  if (chrome.notifications) {
-    chrome.notifications.onClicked.addListener((id) => { if (id.startsWith("agent-wait:")) goToWait(Number(id.slice(11))); });
-    chrome.notifications.onButtonClicked.addListener((id) => { if (id.startsWith("agent-wait:")) goToWait(Number(id.slice(11))); });
+  // grants.js attaches the click listeners now when granted, or as soon as
+  // the user grants notifications.
+  const onWaitNotice = (id) => { if (typeof id === "string" && id.startsWith("agent-wait:")) goToWait(Number(id.slice(11))); };
+  if (GRANTS) GRANTS.onNoticeClicked(onWaitNotice);
+  else if (chrome.notifications) {
+    chrome.notifications.onClicked.addListener(onWaitNotice);
+    chrome.notifications.onButtonClicked.addListener(onWaitNotice);
   }
 
   // -------------------------------------------------------------- the view
@@ -1770,7 +1843,7 @@
     for (const r of session.runners.values()) release(r);
     release(session);
     if (!session.ports.size && run.outcome && ["success", "unconfirmed", "error", "limit"].includes(run.outcome.state)) {
-      quiet(chrome.notifications && chrome.notifications.create({ type: "basic", iconUrl: "icon128.png", title: run.outcome.state === "success" ? "Task done" : run.outcome.state === "unconfirmed" ? "Task done, not confirmed" : run.outcome.state === "limit" ? "Usage limit reached" : "Task stopped", message: String(run.outcome.text || "").replace(/[*_`#>]/g, "").slice(0, 240) }));
+      quiet(notice({ type: "basic", iconUrl: "icon128.png", title: run.outcome.state === "success" ? "Task done" : run.outcome.state === "unconfirmed" ? "Task done, not confirmed" : run.outcome.state === "limit" ? "Usage limit reached" : "Task stopped", message: String(run.outcome.text || "").replace(/[*_`#>]/g, "").slice(0, 240) }));
     }
     calm();
     save(session);
@@ -1915,7 +1988,7 @@
       const session = sessions.get(windowId);
       const wait = session && waitsOf(session.run).find((w) => w.kind !== "pause");
       if (!wait) return;
-      quiet(chrome.notifications && chrome.notifications.create(`agent-wait:${windowId}`, { type: "basic", iconUrl: "icon128.png", title: "Select to AI is still waiting for you", message: String(wait.question || "").slice(0, 240), buttons: wait.tabId !== null && wait.tabId !== undefined ? [{ title: "Go to tab" }] : undefined }));
+      quiet(notice(`agent-wait:${windowId}`, { type: "basic", iconUrl: "icon128.png", title: "Select to AI is still waiting for you", message: String(wait.question || "").slice(0, 240), buttons: wait.tabId !== null && wait.tabId !== undefined ? [{ title: "Go to tab" }] : undefined }));
     });
   });
 
@@ -2033,7 +2106,14 @@
     // The agent's page open as a tab of its own: a run it starts is followed
     // from that tab. In the side panel the view has no tab.
     const home = port.sender && port.sender.tab && Number.isInteger(port.sender.tab.id) ? port.sender.tab.id : null;
-    port.onMessage.addListener(async (m) => {
+    // One message at a time, in the order sent: a task queued right after
+    // hello is handled once restoring is over, not dropped while it runs.
+    let queue = Promise.resolve();
+    port.onMessage.addListener((m) => {
+      queue = queue.then(() => fromView(m)).catch((e) => console.error("Select to AI port:", e));
+      return queue;
+    });
+    async function fromView(m) {
       if (!m || typeof m !== "object") return;
       if (m.type === "hello") {
         await restore();
@@ -2099,8 +2179,7 @@
         await save(session);
         port.postMessage(snapshot(session));
       }
-
-    });
+    }
     port.onDisconnect.addListener(() => { if (session) session.ports.delete(port); });
   }
 
@@ -2151,5 +2230,5 @@
   }
 
   // release is exported for the scripted tests, as wake is.
-  root.SELECT_TO_AI_ENGINE = Object.freeze({ sessions, effectOf, wake, loadMemory, changeMemory, release });
+  root.SELECT_TO_AI_ENGINE = Object.freeze({ sessions, effectOf, wake, loadMemory, changeMemory, release, joinFrame, scan });
 })(typeof globalThis !== "undefined" ? globalThis : this);
