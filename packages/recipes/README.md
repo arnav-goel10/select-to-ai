@@ -171,7 +171,7 @@ What these numbers don't show:
 - **Small denominators.** The coverage interval on v3 is 42–68%, and 0 of 46 is not a guarantee.
 - **One model.** Other models are untested.
 
-Full reports: [held-out v1](https://github.com/OWNER/REPO/blob/main/docs/results-heldout-v1.md), [v2](https://github.com/OWNER/REPO/blob/main/docs/results-heldout-v2.md), [v3](https://github.com/OWNER/REPO/blob/main/docs/results-heldout-v3.md).
+Full reports: [held-out v1](https://github.com/arnav-goel10/select-to-ai/blob/main/docs/results-heldout-v1.md), [v2](https://github.com/arnav-goel10/select-to-ai/blob/main/docs/results-heldout-v2.md), [v3](https://github.com/arnav-goel10/select-to-ai/blob/main/docs/results-heldout-v3.md).
 
 ## Compared with
 
