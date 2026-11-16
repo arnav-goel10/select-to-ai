@@ -88,7 +88,7 @@ function validateTasks(list) {
       else if (hostOf(next.url) !== hostOf(t.url)) problems.push(`${name}: "then" must name a task on the same site (${hostOf(t.url)}, not ${hostOf(next.url)})`);
       else if (next.then !== undefined) problems.push(`${name}: "then" names ${t.then}, which starts a pair of its own`);
     }
-    if (/—/.test(JSON.stringify(t))) problems.push(`${name}: has an em dash`);
+    if (/\u2014/.test(JSON.stringify(t))) problems.push(`${name}: has an em dash`);
   }
   return problems;
 }
@@ -377,10 +377,12 @@ function markdown(table, meta = {}) {
  * and no run made a real input event. Debugger-on: every shard's build has
  * it. Problems as sentences; empty when the arm holds.
  */
-function armProblems(arm, shards, rows) {
+function armProblems(arm, shards, rows, expected = 0) {
   const problems = [];
   if (arm !== "shipped" && arm !== "debugger-on") return problems;
   const want = arm === "debugger-on";
+  // A shard that left no results file ran on a build nobody can vouch for.
+  if (expected && shards.length !== expected) problems.push(`${shards.length} of ${expected} shard(s) left a results file, so the build the others loaded cannot be checked.`);
   shards.forEach((s, i) => {
     const got = s.agent ? s.agent.debuggerAvailable : undefined;
     const name = s.shard || `shard ${i + 1}`;
@@ -643,7 +645,7 @@ function main(argv) {
       stopped: shards.map((s) => s.stoppedEarly).filter(Boolean),
       blockedSites: [...sites.values()].filter((e) => e.blocked).sort((a, b) => b.blocked - a.blocked),
       armChecked: shards.length > 0,
-      armProblems: armProblems(arm, shards, rows),
+      armProblems: armProblems(arm, shards, rows, parseInt(flag("--shards") || "0", 10)),
     };
     const table = familyTable(rows, planned);
     const learn = learnTable(rows);
@@ -668,7 +670,7 @@ function main(argv) {
     if (flag("--check")) console.error(`\nDry leg check (${flag("--check")}): passed.`);
     return;
   }
-  console.error("Usage: node tests/bench/trial.js validate <tasks.json> | summary <out dir> --tasks <tasks.json> [--sample N] [--runs N] [--learn on|pairs] [--arm shipped|debugger-on] [--check-dry] [--check cap|learn|recipes]");
+  console.error("Usage: node tests/bench/trial.js validate <tasks.json> | summary <out dir> --tasks <tasks.json> [--sample N] [--runs N] [--learn on|pairs] [--arm shipped|debugger-on] [--shards N] [--check-dry] [--check cap|learn|recipes]");
   process.exit(1);
 }
 

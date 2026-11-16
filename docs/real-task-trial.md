@@ -8,7 +8,7 @@ Why it exists: every real-site number in [agent-v4-status.md](agent-v4-status.md
 
 | File | What it is |
 |---|---|
-| `tests/bench/everyday-tasks.json` | 93 tasks in 11 families. Each has a start page, the request as a person would type it, and `expect`: what a right result holds, given to the judge. 64 also have `pattern`, a regular expression the answer should match. |
+| `tests/bench/everyday-tasks.json` | 93 tasks in 11 families. Each has a start page, the request as a person would type it, and `expect`: what a right result holds, given to the judge. 63 also have `pattern`, a regular expression the answer should match. |
 | `tests/bench/learn-tasks.json` | The learn suite: 12 tasks that each run twice in one browser profile, and 6 pairs (a task, then a neighbour task on the same site). 24 tasks in all, taken from the everyday file. |
 | `tests/bench/fixture-tasks.json`, `tests/bench/fixture-learn-tasks.json` | Tasks on the local fixture pages, for dry mode. |
 | `tests/bench/trial.js` | Checks a task file, and turns a folder of results into the tables. |
@@ -141,7 +141,7 @@ The job summary has one table, a line per family:
 
 Under the table: the pass rate over scored runs (passed, failed, timed out), and the stricter rate with blocked, lost and not-run tasks counted as failures. Quote both.
 
-The arm check. The summary job fails when any shard loaded a build that is not the arm's (the shipped arm must have no `chrome.debugger`, the debugger-on arm must have it), and when any run in the shipped arm made a real input event. A summary that passed says so in one line.
+The arm check. The summary job fails when any shard loaded a build that is not the arm's (the shipped arm must have no `chrome.debugger`, the debugger-on arm must have it), when a shard left no results file to check, and when any run in the shipped arm made a real input event. A summary that passed says so in one line.
 
 Form tasks. At the end of every run the bench reads every form control on the final page, frames included: its label or name, its value, whether it is ticked, which option is chosen. A password field's text is never read, only its length. The list is in `run.json` as `formState` and the judge is given it, with the instruction to judge a form's values from it before the action list and the screenshots. A fill the agent reported as done that did not stay in the page shows as an empty field.
 

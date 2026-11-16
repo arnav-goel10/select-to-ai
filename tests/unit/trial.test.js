@@ -187,6 +187,9 @@ test("the arm is enforced: every shard's build must be the arm's, and the shippe
   assert.match(T.armProblems("debugger-on", [off, on], [])[0], /shard 1 of 2 loaded a build without chrome\.debugger/);
   assert.match(T.armProblems("shipped", [off, { agent: {} }], [])[0], /did not record/);
   assert.match(T.armProblems("shipped", [off], [{ id: "a", counters: { realInputs: 2 } }, { id: "b", counters: { realInputs: 0 } }])[0], /1 run\(s\) made real input events in the shipped arm.*a \(2\)/);
+  // A shard that left no results file cannot be vouched for.
+  assert.deepEqual(T.armProblems("shipped", [off, off], [], 2), []);
+  assert.match(T.armProblems("debugger-on", [on], [], 2)[0], /1 of 2 shard\(s\) left a results file/);
   const text = T.markdown(T.familyTable([], []), { arm: "shipped", armChecked: true, armProblems: ["shard 2 of 2 loaded a build with chrome.debugger in the shipped arm."] });
   assert.match(text, /Arm check failed/);
 });
@@ -352,6 +355,10 @@ test("the tightened patterns take the right answer and turn away a near miss", (
   assert.equal(hit("nav-w3c-wcag22", "Some time in 2023 or 2024."), false);
   assert.equal(hit("doc-rfc9110-418", "418 is (Unused): it is reserved."), true);
   assert.equal(hit("doc-rfc9110-418", "It says I'm a teapot; no section is reserved for it."), false);
+  assert.equal(hit("lang-zh-forbidden-city", "故宫于1420年建成。"), true);
+  assert.equal(hit("lang-zh-forbidden-city", "面积约为714200平方米。"), false);
+  // A status word says nothing: a run that could not read the page uses the same words.
+  assert.equal(by["map-tfl-victoria-line"].pattern, undefined);
   // No rubric lets an empty or blocked page pass.
   for (const t of Object.values(by)) assert.ok(!/out of season|no games have been played/i.test(t.expect), t.id);
   for (const t of Object.values(by).filter((x) => x.level === "form-fill")) assert.match(t.expect, /harness's list of the final page's form controls/, t.id);

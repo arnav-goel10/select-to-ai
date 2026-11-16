@@ -346,12 +346,13 @@ jobs:
           DRY: ${{ needs.plan.outputs.dry }}
           LEARN: ${{ needs.plan.outputs.learn }}
           RUNS: ${{ needs.plan.outputs.runs }}
+          SHARDS: ${{ needs.plan.outputs.shard_count }}
         run: |
           mkdir -p tests/bench/out/trial
           check=""
           if [ "$DRY" = "true" ]; then check="--check-dry"; fi
-          # Fails when a shard's build is not the arm's, or the shipped arm made a real input event.
-          node tests/bench/trial.js summary tests/bench/out/trial --tasks "$TASKS" --sample "$SAMPLE" --suite "$SUITE" --arm "$ARM" --runs "$RUNS" --learn "$LEARN" --commit "$GITHUB_SHA" $check | tee -a "$GITHUB_STEP_SUMMARY"
+          # Fails when a shard's build is not the arm's, a shard left no results file, or the shipped arm made a real input event.
+          node tests/bench/trial.js summary tests/bench/out/trial --tasks "$TASKS" --sample "$SAMPLE" --suite "$SUITE" --arm "$ARM" --runs "$RUNS" --learn "$LEARN" --shards "$SHARDS" --commit "$GITHUB_SHA" $check | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

@@ -475,7 +475,7 @@
   "url": "https://zh.wikipedia.org/wiki/%E5%8C%97%E4%BA%AC%E6%95%85%E5%AE%AB",
   "task": "故宫是哪一年建成的？",
   "expect": "1420 (construction ran from 1406 to 1420). The answer is in Chinese.",
-  "pattern": "1420",
+  "pattern": "(?<!\\d)1420(?!\\d)",
   "lang": "zh"
  },
  {
@@ -647,8 +647,7 @@
   "level": "maps-transit",
   "url": "https://tfl.gov.uk/tube-dlr-overground/status/",
   "task": "Is the Victoria line running a good service right now?",
-  "expect": "The Victoria line's current status as the TfL status page shows it. The value changes over time: judge it against what the pages in the run show, not against memory. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass.",
-  "pattern": "good service|delay|suspended|closure|closed|disruption"
+  "expect": "The Victoria line's current status as the TfL status page shows it. The value changes over time: judge it against what the pages in the run show, not against memory. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
  },
  {
   "id": "map-mta-times-square",
