@@ -3290,11 +3290,21 @@
         const dnd = (type, target, s, extra) => target.dispatchEvent(new DragEvent(type, { ...at(s, /^(drop|dragend)$/.test(type) ? 0 : 1), dataTransfer: data, ...(extra || {}) }));
         // What the browser offers a place before it says whether it takes the
         // drop, from what the dragged thing allows; the place may change it.
+        // A DataTransfer made by script is not one of the browser's own drags,
+        // and Chrome ignores a drop effect set on it: it then reads "none"
+        // whatever is offered. The offer is kept here too, and the
+        // DataTransfer's own is read only where setting it holds.
+        let offered = 'none';
+        let settable = false;
         const offer = () => {
             if (!data) return;
             const allowed = String(data.effectAllowed || 'uninitialized');
-            try { data.dropEffect = /^(move|linkMove)$/.test(allowed) ? 'move' : allowed === 'link' ? 'link' : allowed === 'none' ? 'none' : 'copy'; } catch (_) { /* kept as it is */ }
+            offered = /^(move|linkMove)$/.test(allowed) ? 'move' : allowed === 'link' ? 'link' : allowed === 'none' ? 'none' : 'copy';
+            try { data.dropEffect = offered; } catch (_) { /* kept as it is */ }
+            settable = data.dropEffect === offered;
         };
+        // The drop effect the place chose, by the last dragover.
+        let chosen = 'none';
         const draggableOf = (n) => {
             if (!n || !n.closest) return null;
             const marked = n.closest('[draggable]');
@@ -3338,6 +3348,7 @@
                     // A place takes the drop by cancelling dragover.
                     offer();
                     taken = !dnd('dragover', target, s);
+                    chosen = !data ? 'copy' : settable ? String(data.dropEffect) : offered;
                 } else {
                     movePointerTo(target, s, {});
                     const init = at(s, held ? 1 : 0);
@@ -3347,7 +3358,7 @@
             } else if (s.t === 'up') {
                 report.target = target;
                 if (source) {
-                    if (taken && (!data || data.dropEffect !== 'none')) {
+                    if (taken && chosen !== 'none') {
                         dnd('drop', target, s);
                         report.dropped = true;
                     } else {

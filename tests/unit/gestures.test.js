@@ -576,3 +576,33 @@ test("only a drawing is listed with a size, and a drawing the page marks as only
   // A label over the middle of a chart covers only the middle.
   assert.equal(make(base, { elementFromPoint: (x, y) => (x === 300 && y === 200 ? cover : c) })(c), true);
 });
+
+test("a drop is made where the page takes it though the browser ignores a drop effect set on a DataTransfer made by script", async () => {
+  // As Chrome makes one with `new DataTransfer()`: not the browser's own drag, so its drop effect stays "none".
+  class ScriptDataTransfer {
+    constructor() { this.store = {}; this.allowed = "uninitialized"; }
+    get dropEffect() { return "none"; }
+    set dropEffect(_v) { /* ignored */ }
+    get effectAllowed() { return this.allowed; }
+    set effectAllowed(_v) { /* ignored */ }
+    setData(k, v) { this.store[k] = v; }
+    getData(k) { return this.store[k] || ""; }
+  }
+  const p = page({ scope: { DataTransfer: ScriptDataTransfer } });
+  let got = "";
+  const trays = p.node("trays", null, [0, 0, 800, 600]);
+  const china = p.node("china", trays, [300, 0, 200, 200], { dragover: () => false, drop: (e) => { got = e.init.dataTransfer.getData("text/plain"); } });
+  const cup = p.node("cup", trays, [100, 400, 100, 40], { dragstart: (e) => { e.init.dataTransfer.setData("text/plain", "china:Teacup"); e.init.dataTransfer.effectAllowed = "move"; } });
+  cup.attrs.draggable = "true";
+  const r = await p.syntheticDrag(cup, p.scriptedDragSteps({ x: 150, y: 420 }, { x: 400, y: 100 }));
+  assert.deepEqual([r.dnd, r.dropped, r.refused], [true, true, false]);
+  assert.equal(got, "china:Teacup");
+  // A place that does not cancel dragover still does not get the drop.
+  const q = page({ scope: { DataTransfer: ScriptDataTransfer } });
+  const shelf = q.node("shelf", null, [0, 0, 800, 600]);
+  const chip = q.node("chip", shelf, [10, 10, 60, 20]);
+  chip.attrs.draggable = "true";
+  const s = await q.syntheticDrag(chip, q.scriptedDragSteps({ x: 20, y: 20 }, { x: 400, y: 300 }));
+  assert.deepEqual([s.dnd, s.dropped, s.refused], [true, false, true]);
+  void china;
+});
