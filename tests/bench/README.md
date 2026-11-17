@@ -20,7 +20,7 @@ What is in it: 50 tasks, none on a site any other suite uses (`node tests/bench/
 
 The repository holds the tasks encrypted only, at `tests/bench/holdout-tasks.json.enc`, so that nobody working in the repository reads them by accident. The workflow decrypts them with the repository secret `HOLDOUT_KEY` before it plans, to `tests/bench/holdout-tasks.json`, which git ignores. The plain file and the passphrase are kept outside the repository, on the owner's machine (`~/Documents/s2a-heldout/real-task-holdout/holdout-tasks.json` and `~/Documents/s2a-heldout/holdout-key.txt`). Unit tests that need the plain tasks skip when it is not there; the overlap and shape checks run in the workflow, after decryption.
 
-Git history still holds the first draft of the file in plain text (commit 85cd008). That is acceptable because the tasks changed when it was encrypted: twelve were replaced, three were corrected, and the rest were reworded and reordered, so the history copy is not the live set. Never commit the plain file again.
+Git history still holds the first draft of the file in plain text (commit 85cd008). That is acceptable because the tasks changed when it was encrypted: thirteen were replaced, four were corrected, and the rest were reworded and reordered, so the history copy is not the live set. Never commit the plain file again.
 
 To edit the tasks:
 
