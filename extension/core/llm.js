@@ -76,6 +76,17 @@
   }
 
   /**
+   * The name the reply's length limit goes under on an OpenAI-style
+   * endpoint. OpenAI's own current models take only max_completion_tokens;
+   * other providers that speak the same format still expect max_tokens.
+   * `mode.tokenLimit` is what a refusal taught this connection.
+   */
+  function tokenLimitName(cfg, mode) {
+    if (mode && mode.tokenLimit) return mode.tokenLimit;
+    return cfg && cfg.provider === "openai" ? "max_completion_tokens" : "max_tokens";
+  }
+
+  /**
    * The provider settings in use, from what is in storage.
    * @param items every stored setting and key (sync and local merged)
    * @param now   the clock, to tell whether a backup is standing in
@@ -243,7 +254,7 @@
       body = {
         model,
         messages: [{ role: "system", content: sys }, { role: "user", content: req.image ? [{ type: "text", text: user }, { type: "image_url", image_url: { url: req.image } }] : user }],
-        max_tokens: mode.maxTokens,
+        [tokenLimitName(cfg, mode)]: mode.maxTokens,
         stream: true,
       };
       if (temperature !== null && !mode.noTemperature) body.temperature = temperature;
@@ -783,6 +794,15 @@
         // reasoning_effort whenever tools were sent): it is left out on this
         // connection from then on. Checked before the tool rejection below,
         // so a refusal that names both does not cost the connection its tools.
+        // The limit on the reply's length has two names on OpenAI-style
+        // endpoints. A model that refuses the one sent gets the other, on
+        // this connection from then on.
+        if (status === 400 && !mode.tokenLimitSwapped && provider !== "anthropic" && provider !== "gemini" && provider !== "chatgpt" && /max_tokens|max_completion_tokens/i.test(message)) {
+          mode.tokenLimitSwapped = true;
+          mode.tokenLimit = tokenLimitName(cfg, mode) === "max_tokens" ? "max_completion_tokens" : "max_tokens";
+          log("Compatibility", "The model takes the reply limit under another name. Retrying with it on this connection.", { quiet: true });
+          continue;
+        }
         const effortSent = !mode.noEffort && Object.keys(effortFields(cfg, model, req.effort)).length > 0;
         const namesOther = /response_format|json_object|json_mode|stream_options|tool_choice/i.test(message);
         if (status === 400 && effortSent && (/effort|reasoning|thinking|output_config/i.test(message) || (!namesOther && !/tool|function/i.test(message) && /unsupported|unrecognized|not supported|extra inputs|unknown (?:field|parameter|argument)/i.test(message)))) {
