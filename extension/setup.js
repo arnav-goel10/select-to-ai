@@ -95,14 +95,17 @@
   }
 
   /**
-   * The one small request that proves a key works: max_tokens 1 and "Hi".
+   * The one small request that proves a key works: a tiny reply limit and "Hi".
    * It only ever names the provider it is given.
    */
   function testRequest(provider, key, model, customUrl) {
     const D = defaults();
     const base = provider === "custom" ? customUrl : ((D.PROVIDER_ENDPOINTS || {})[provider] || {}).baseUrl;
     if (!base) return null;
-    const body = { model, max_tokens: 1, messages: [{ role: "user", content: "Hi" }] };
+    // OpenAI's current models refuse max_tokens and want room to answer at all.
+    const body = provider === "openai"
+      ? { model, max_completion_tokens: 16, messages: [{ role: "user", content: "Hi" }] }
+      : { model, max_tokens: 1, messages: [{ role: "user", content: "Hi" }] };
     if (provider === "anthropic") {
       const headers = { "content-type": "application/json", "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" };
       if (key) headers["x-api-key"] = key;
