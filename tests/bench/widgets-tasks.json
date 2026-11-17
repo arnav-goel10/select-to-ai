@@ -1,0 +1,317 @@
+{
+ "rule": "PRACTICE SET, open. Read the runs, the transcripts and the failures of this file freely and tune the agent on them. It is the open counterpart of the holdout suite's widgets family: no task here is on a site any other suite uses, the holdout included (node tests/bench/trial.js suite-check widgets). Every task ends in a state the judge can see on the final page and hands nothing in.",
+ "tasks": [
+  {
+   "id": "widget-hover-chart-tooltip",
+   "level": "widgets",
+   "widget": "hover",
+   "source": "library-demo",
+   "difficulty": "medium",
+   "url": "https://www.highcharts.com/demo/highcharts/line-chart",
+   "task": "On the line chart of application users, hover over the highest point of the Users line and tell me the two values the tooltip shows, and the hour range in its heading.",
+   "expect": "The tooltip at the peak shows Users 10089 and Average 3089, for the hour 14:00 to 14:59. The final page or a screenshot should show the tooltip open; values read only from the page's code, with no hover, are a failure.",
+   "pattern": "(?=[\\s\\S]*10[,. ]?089)(?=[\\s\\S]*3[,. ]?089)"
+  },
+  {
+   "id": "widget-modal-static-escape",
+   "level": "widgets",
+   "widget": "modal",
+   "source": "library-demo",
+   "difficulty": "medium",
+   "url": "https://getbootstrap.com/docs/5.3/components/modal/",
+   "task": "Open the static backdrop modal demo, press Escape once, and tell me whether the dialog closed and what its body text says. Leave it as it is after that.",
+   "expect": "The static backdrop dialog does not close on Escape. Its body says it will not close on a click outside it and to not even try the escape key. The final page shows the dialog still open.",
+   "pattern": "(?=[\\s\\S]*(not|didn't|did not|stay(s|ed)?) (close|open))(?=[\\s\\S]*escape)"
+  },
+  {
+   "id": "widget-range-native-step",
+   "level": "widgets",
+   "widget": "slider",
+   "source": "library-demo",
+   "difficulty": "easy",
+   "url": "https://getbootstrap.com/docs/5.3/forms/range/",
+   "task": "In the Steps example (a range from 0 to 5 in steps of 0.5), set the slider to 3.5 and tell me its value.",
+   "expect": "The range input of the Steps example (id range3) holds 3.5. Judge the value from the harness's list of the final page's form controls."
+  },
+  {
+   "id": "widget-drag-between-lists",
+   "level": "widgets",
+   "widget": "drag",
+   "source": "library-demo",
+   "difficulty": "medium",
+   "url": "https://bevacqua.github.io/dragula/",
+   "task": "In the first example (two containers side by side), drag the item \"Moving them anywhere else isn't quite possible\" from the left container into the right one, as the first item there. Tell me the first two items of the right container afterward.",
+   "expect": "In the first example on the final page, the right container starts with \"Moving them anywhere else isn't quite possible\" and the left container no longer holds it. Judge from the page text and the screenshots."
+  },
+  {
+   "id": "widget-drag-kanban-card",
+   "level": "widgets",
+   "widget": "drag-kanban",
+   "source": "library-demo",
+   "difficulty": "hard",
+   "url": "https://ej2.syncfusion.com/demos/#/tailwind3/kanban/overview.html",
+   "task": "On the Kanban board demo, drag the first card of the To Do column into the In Progress column. Tell me that card's ID and title, and the column it is in now.",
+   "expect": "The card that was first under To Do is now in the In Progress column of the final page, and the answer names that card's ID and title as the board shows them. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+  },
+  {
+   "id": "widget-dropzone-dustbin",
+   "level": "widgets",
+   "widget": "dropzone",
+   "source": "library-demo",
+   "difficulty": "medium",
+   "url": "https://react-dnd.github.io/react-dnd/examples/dustbin/multiple-targets",
+   "task": "Drag the Banana box into the dustbin that accepts food. Tell me what that dustbin shows as last dropped.",
+   "expect": "The food dustbin on the final page shows Banana as the last item dropped into it."
+  },
+  {
+   "id": "widget-slider-two-thumbs",
+   "level": "widgets",
+   "widget": "slider",
+   "source": "library-demo",
+   "difficulty": "medium",
+   "url": "https://mui.com/material-ui/react-slider/",
+   "task": "In the Range slider demo, which has two thumbs, set the range to 30 to 60.",
+   "expect": "The two thumbs of the Range slider demo hold 30 and 60. Judge the values from the harness's list of the final page's form controls (the sliders' values)."
+  },
+  {
+   "id": "widget-date-picker-year",
+   "level": "widgets",
+   "widget": "date-time",
+   "source": "library-demo",
+   "difficulty": "medium",
+   "url": "https://mui.com/x/react-date-pickers/date-picker/",
+   "task": "In the first demo on the page (Basic date picker), use its calendar to pick 14 February 2030. Tell me what the field then shows.",
+   "expect": "The Basic date picker field holds 02/14/2030. Judge the value from the harness's list of the final page's form controls.",
+   "pattern": "02/14/2030"
+  },
+  {
+   "id": "widget-date-range-picker",
+   "level": "widgets",
+   "widget": "date-time",
+   "source": "library-demo",
+   "difficulty": "medium",
+   "url": "https://ant.design/components/date-picker",
+   "task": "In the Range Picker demo, select a range from the 10th to the 20th of the month after the current one, using the calendar. Tell me the start and end dates the fields show.",
+   "expect": "The Range Picker demo's two fields hold the 10th and the 20th of the month after the run's current month, as YYYY-MM-10 and YYYY-MM-20. Judge the values from the harness's list of the final page's form controls.",
+   "pattern": "(?=[\\s\\S]*\\d{4}-\\d{2}-10)(?=[\\s\\S]*\\d{4}-\\d{2}-20)"
+  },
+  {
+   "id": "widget-time-picker-seconds",
+   "level": "widgets",
+   "widget": "date-time",
+   "source": "library-demo",
+   "difficulty": "medium",
+   "url": "https://ant.design/components/time-picker",
+   "task": "In the first demo (Basic), set the time to 14:35:20 with the picker and tell me what the field shows.",
+   "expect": "The Basic demo's time field holds 14:35:20. Judge the value from the harness's list of the final page's form controls."
+  },
+  {
+   "id": "widget-date-leap-day",
+   "level": "widgets",
+   "widget": "date-time",
+   "source": "library-demo",
+   "difficulty": "medium",
+   "url": "https://element-plus.org/en-US/component/date-picker.html",
+   "task": "In the first demo (Default, \"Pick a day\"), use the calendar to pick 29 February 2028. Tell me what the field shows.",
+   "expect": "The Default demo's field holds 2028-02-29. Judge the value from the harness's list of the final page's form controls.",
+   "pattern": "2028-02-29"
+  },
+  {
+   "id": "widget-keys-listbox",
+   "level": "widgets",
+   "widget": "keyboard",
+   "source": "library-demo",
+   "difficulty": "medium",
+   "url": "https://headlessui.com/react/listbox",
+   "task": "Using only the keyboard (focus the listbox of the first demo, then arrow keys and Enter), choose the third option in its list. Tell me the name it then shows.",
+   "expect": "The first demo's listbox button shows the third option of its list, and the answer names it. Judge from the final page; each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+  },
+  {
+   "id": "widget-keys-combobox-typeahead",
+   "level": "widgets",
+   "widget": "keyboard",
+   "source": "library-demo",
+   "difficulty": "medium",
+   "url": "https://headlessui.com/react/combobox",
+   "task": "In the first demo's combobox, type \"ar\", then choose the first suggestion with the arrow keys and Enter. Tell me what the input holds.",
+   "expect": "The first demo's combobox input holds the full name of the first option that matched \"ar\", and the answer names it. Judge from the harness's list of the final page's form controls."
+  },
+  {
+   "id": "widget-multi-select-colours",
+   "level": "widgets",
+   "widget": "multi-select",
+   "source": "library-demo",
+   "difficulty": "medium",
+   "url": "https://react-select.com/home",
+   "task": "In the Multi example, make the select hold exactly two colours, Ocean and Forest, and nothing else.",
+   "expect": "The Multi example's select shows exactly the two chips Ocean and Forest on the final page, with any default colours removed. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+  },
+  {
+   "id": "widget-autocomplete-dictionary",
+   "level": "widgets",
+   "widget": "autocomplete",
+   "source": "real-site",
+   "difficulty": "medium",
+   "url": "https://www.wordreference.com/",
+   "task": "Type \"serendip\" into the dictionary search box and choose the suggestion \"serendipity\" from the list that drops down. Tell me which word's entry opens.",
+   "expect": "The final page is the WordReference entry for serendipity, reached by choosing it from the search suggestions, not by typing the whole word and pressing Enter."
+  },
+  {
+   "id": "widget-accordion-faq",
+   "level": "widgets",
+   "widget": "disclosure",
+   "source": "real-site",
+   "difficulty": "easy",
+   "url": "https://kagi.com/pricing",
+   "task": "In the questions near the bottom of the pricing page, open the one about the limitations of the Trial plan and tell me the limits it gives.",
+   "expect": "The Trial plan question's panel is open on the final page, and the answer gives the limits that panel states (100 searches and 100 interactions with Kagi Assistant when this was written). Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+  },
+  {
+   "id": "widget-tabs-install-command",
+   "level": "widgets",
+   "widget": "disclosure",
+   "source": "real-site",
+   "difficulty": "easy",
+   "url": "https://docs.astral.sh/uv/getting-started/installation/",
+   "task": "In the Standalone installer section, switch to the Windows tab and tell me the command it shows for installing uv.",
+   "expect": "The Windows tab is selected on the final page and the answer gives its PowerShell command, which runs install.ps1 from astral.sh.",
+   "pattern": "install\\.ps1"
+  },
+  {
+   "id": "widget-iframe-nested-button",
+   "level": "widgets",
+   "widget": "iframe",
+   "source": "library-demo",
+   "difficulty": "medium",
+   "url": "https://www.leafground.com/frame.xhtml",
+   "task": "Click the button that sits inside the nested frame (a frame within a frame), and tell me what the button says afterward.",
+   "expect": "The button in the nested frame reads \"Hurray! You Clicked Me.\" on the final page.",
+   "pattern": "hurray"
+  },
+  {
+   "id": "widget-iframe-storybook-slider",
+   "level": "widgets",
+   "widget": "iframe",
+   "source": "library-demo",
+   "difficulty": "hard",
+   "url": "https://react.carbondesignsystem.com/?path=/story/components-slider--default",
+   "task": "The slider story is shown in a frame inside the page. Set that slider to 75 and tell me what the number box beside it shows.",
+   "expect": "The slider in the story's frame holds 75 and the number input beside it shows 75. Judge from the harness's list of the final page's form controls, frames included."
+  },
+  {
+   "id": "widget-shadow-rating",
+   "level": "widgets",
+   "widget": "toggle-rating",
+   "source": "library-demo",
+   "difficulty": "easy",
+   "url": "https://shoelace.style/components/rating",
+   "task": "Give the first rating on the page 4 stars and tell me its value.",
+   "expect": "The first rating component holds 4. It lives in shadow DOM; judge from the harness's list of the final page's form controls (its value) or a screenshot showing four stars lit."
+  },
+  {
+   "id": "widget-shadow-switch",
+   "level": "widgets",
+   "widget": "shadow-dom",
+   "source": "library-demo",
+   "difficulty": "easy",
+   "url": "https://shoelace.style/components/switch",
+   "task": "Turn on the first switch on the page and tell me whether it is now on.",
+   "expect": "The first switch is checked. It lives in shadow DOM; judge from the harness's list of the final page's form controls (a checked switch) or a screenshot."
+  },
+  {
+   "id": "widget-drag-chess-piece",
+   "level": "widgets",
+   "widget": "drag",
+   "source": "real-site",
+   "difficulty": "hard",
+   "url": "https://lichess.org/editor",
+   "task": "On the board editor, drag the white pawn from e2 to e4 on the board, leaving White to move. Tell me the FEN the editor then shows.",
+   "expect": "The editor's FEN field reads rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq followed by its counters, with White (w) to move. Judge from the harness's list of the final page's form controls and the run's actions: the actions must show the pawn dragged on the board. A FEN typed into the field, or a position picked from the openings list (which sets Black to move), is a failure.",
+   "pattern": "4P3/8/PPPP1PPP/RNBQKBNR w "
+  },
+  {
+   "id": "widget-canvas-pie-legend",
+   "level": "widgets",
+   "widget": "canvas-svg",
+   "source": "library-demo",
+   "difficulty": "hard",
+   "url": "https://www.chartjs.org/docs/latest/samples/legend/events.html",
+   "task": "On the pie chart, click the legend entries to hide the Red and the Blue slices. Then hover over the largest slice left and tell me its label and value.",
+   "expect": "Red and Blue are struck through in the chart's legend in the final screenshot and the largest slice left is Green with 5 votes. The chart is a canvas: judge from the screenshots.",
+   "pattern": "green[\\s\\S]{0,40}\\b5\\b"
+  },
+  {
+   "id": "widget-context-menu-tree",
+   "level": "widgets",
+   "widget": "context-menu",
+   "source": "library-demo",
+   "difficulty": "hard",
+   "url": "https://www.jstree.com/demo/",
+   "task": "In the first tree demo, right-click a root node and use its context menu to create a new node under it named \"Practice node\".",
+   "expect": "The first tree on the final page has a node named Practice node, made from the right-click menu. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+  },
+  {
+   "id": "widget-double-click-cell",
+   "level": "widgets",
+   "widget": "double-click",
+   "source": "library-demo",
+   "difficulty": "hard",
+   "url": "https://handsontable.com/datagrid/demos/",
+   "task": "In the data grid demo, double-click a cell in the first data row that holds text, change its text to \"Practice\" and confirm the edit with Enter. Tell me which column that cell is in.",
+   "expect": "A cell in the first data row of the grid shows Practice on the final page, and the answer names its column. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+  },
+  {
+   "id": "widget-long-press-button",
+   "level": "widgets",
+   "widget": "long-press",
+   "source": "library-demo",
+   "difficulty": "medium",
+   "url": "https://react-aria.adobe.com/useLongPress",
+   "task": "In the example at the top, press and hold the button for about a second (a long press, not a click). Tell me what the button says afterward and what the event log beside it shows.",
+   "expect": "After a long press the example's button reads Hyper speed and its event log lists a long press. A short click leaves it at Normal speed, which is a failure.",
+   "pattern": "hyper speed"
+  },
+  {
+   "id": "widget-infinite-scroll-page-four",
+   "level": "widgets",
+   "widget": "infinite-scroll",
+   "source": "library-demo",
+   "difficulty": "medium",
+   "url": "https://infinite-scroll.com/demo/full-page/",
+   "task": "Scroll down this page until the articles of page 4 have loaded, and tell me the title of article 4a.",
+   "expect": "Article 4a is titled \"Huebee: 1-click color picker\", loaded on the same page by scrolling.",
+   "pattern": "huebee"
+  },
+  {
+   "id": "widget-sort-table-land-area",
+   "level": "widgets",
+   "widget": "sortable-table",
+   "source": "real-site",
+   "difficulty": "medium",
+   "url": "https://www.worldometers.info/world-population/population-by-country/",
+   "task": "Sort the country table by land area, largest first, by clicking its column heading, and tell me the first three countries.",
+   "expect": "Sorted by land area (Km²) from largest, the table starts Russia, China, United States, and the final page shows the table in that order.",
+   "pattern": "russia[\\s\\S]{0,80}china[\\s\\S]{0,80}united states"
+  },
+  {
+   "id": "widget-rich-text-bold",
+   "level": "widgets",
+   "widget": "rich-text",
+   "source": "library-demo",
+   "difficulty": "medium",
+   "url": "https://prosemirror.net/",
+   "task": "In the editor at the top of the page, add a new paragraph at the end that reads \"Practice line\", and make the word Practice bold.",
+   "expect": "The editor on the final page ends with a paragraph reading Practice line, with Practice in bold. Judge from the harness's list of the final page's form controls (the editable area's text) and the screenshots."
+  },
+  {
+   "id": "widget-tags-new-option",
+   "level": "widgets",
+   "widget": "multi-select",
+   "source": "library-demo",
+   "difficulty": "medium",
+   "url": "https://select2.org/tagging",
+   "task": "In the example under \"Tagging with multi-value select boxes\", remove purple, keep orange, and add a new tag \"teal\", which is not one of the options. Tell me what the select holds.",
+   "expect": "The multi-value tagging example's select holds exactly orange and teal, with purple no longer selected (the page starts with orange and purple selected). Judge from the harness's list of the final page's form controls (the selected options)."
+  }
+ ]
+}

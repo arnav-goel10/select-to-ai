@@ -75,7 +75,7 @@ test("the plain holdout file is sound and shaped as its rule says, and holdout-c
 
 test("no holdout task uses a site that any other suite uses", needsPlain, () => {
   const { holdout, ...others } = T.readSuites(ROOT);
-  assert.deepEqual(Object.keys(others).sort(), ["dev", "everyday", "learn", "reading-pdf", "reading-wild"]);
+  assert.deepEqual(Object.keys(others).sort(), ["dev", "everyday", "learn", "reading-pdf", "reading-wild", "widgets"]);
   assert.deepEqual(T.holdoutProblems(holdout, others), []);
   const used = new Set(Object.values(others).flat().flatMap(T.taskSites));
   assert.ok(used.has("wikipedia.org") && used.has("nasa.gov"), "subdomains fold into their registrable domain");
@@ -384,7 +384,7 @@ test("the workflow decrypts the holdout tasks before planning and checks them th
   assert.ok(jobText("summary").indexOf(decrypt) < jobText("summary").indexOf("node tests/bench/trial.js summary"));
   assert.ok(!jobText("dry-legs").includes(decrypt), "the dry legs play fixtures and never decrypt");
   // The open validate loop no longer prints the holdout file's problems; holdout-check prints counts only.
-  assert.match(y, /for f in everyday-tasks learn-tasks fixture-tasks fixture-learn-tasks; do/);
+  assert.match(y, /for f in everyday-tasks learn-tasks widgets-tasks fixture-tasks fixture-learn-tasks; do/);
   assert.ok(!y.includes("\u2014"));
 
   const here = fs.existsSync(path.join(ROOT, T.SUITES.holdout));
@@ -397,11 +397,14 @@ test("the workflow decrypts the holdout tasks before planning and checks them th
     assert.match(h.said, /is not there: the step before this one decrypts it/);
   }
   assert.equal(plan({ IN_SUITE: "everyday" }).outputs.sealed, "false");
+  const w = plan({ IN_SUITE: "widgets" });
+  assert.equal(w.status, 0, w.said);
+  assert.deepEqual([w.outputs.tasks, w.outputs.sealed, w.outputs.learn], ["tests/bench/widgets-tasks.json", "false", ""], "the widgets practice suite is open and runs without learning unless asked");
   assert.equal(plan({ IN_SUITE: "holdout", IN_DRY: "true" }).outputs.sealed, "false", "a dry run plays the fixtures, not the holdout");
   assert.match(plan({ IN_SUITE: "holdout", IN_LEARNING: "true" }).said, /runs without learning/);
   assert.match(plan({ IN_SUITE: "holdout", IN_LIMIT: "2" }).said, /needs a limit of 3 or more/);
 
-  assert.match(y, /options: \[everyday, dev, learn, holdout\]/);
+  assert.match(y, /options: \[everyday, dev, learn, widgets, holdout\]/);
   assert.match(y, /BENCH_QUIET: \$\{\{ needs\.plan\.outputs\.sealed == 'true' && 'sealed' \|\| '' \}\}/);
   assert.match(y, /format\('holdout-SEALED-per-task-do-not-open-shard-\{0\}', matrix\.shard\) \|\| format\('trial-shard-\{0\}', matrix\.shard\)/);
   assert.match(y, /retention-days: \$\{\{ needs\.plan\.outputs\.sealed == 'true' && 1 \|\| 30 \}\}/);

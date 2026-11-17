@@ -10,6 +10,7 @@ Why it exists: every real-site number in [agent-v4-status.md](agent-v4-status.md
 |---|---|
 | `tests/bench/everyday-tasks.json` | 93 tasks in 11 families. Each has a start page, the request as a person would type it, and `expect`: what a right result holds, given to the judge. 63 also have `pattern`, a regular expression the answer should match. |
 | `tests/bench/learn-tasks.json` | The learn suite: 12 tasks that each run twice in one browser profile, and 6 pairs (a task, then a neighbour task on the same site). 24 tasks in all, taken from the everyday file. |
+| `tests/bench/widgets-tasks.json` | The widgets suite: 30 open practice tasks on interactive widgets, on sites no other suite uses. Read and tune on them freely. Below. |
 | `tests/bench/holdout-tasks.json.enc` | The holdout suite, encrypted: 50 held-out tasks on sites that no other suite uses, reported as numbers only. The workflow decrypts it with the `HOLDOUT_KEY` secret. Nobody tunes the agent on it. The rule, and how to edit it: [tests/bench/README.md](../tests/bench/README.md). |
 | `tests/bench/fixture-tasks.json`, `tests/bench/fixture-learn-tasks.json` | Tasks on the local fixture pages, for dry mode. |
 | `tests/bench/trial.js` | Checks a task file, and turns a folder of results into the tables. |
@@ -26,6 +27,37 @@ These tasks were written for this trial. They are a dev set: read the transcript
 The everyday tasks are a development set now: their failures were read and the agent was changed to fix them. `suite: holdout` runs 50 other tasks, written blind to the agent's behaviour, mostly on widely used real sites none of the other suites use, with a difficulty (easy, medium, hard) on each and a `widgets` family for the interactions only practice pages offer. The tasks are committed encrypted and the workflow decrypts them with the `HOLDOUT_KEY` secret. Its summary shows totals, pass rates, median seconds, spend and counts by family and difficulty, no line of fewer than 3 tasks, and nothing that names a task or carries a failure's text. The per-task files go to artifacts named `holdout-SEALED-per-task-do-not-open-shard-N`, kept one day. Nobody tunes the agent on this suite, its results are read as numbers only, and a task whose site changes is replaced, not worked around. The full rule: [tests/bench/README.md](../tests/bench/README.md).
 
 `gh workflow run real-tasks.yml --ref rel40-real-tasks -f suite=holdout -f max_usd=5`. A dry leg (`sealed`) on every push checks that the sealed path prints no task, in the shard log and in the summary.
+
+## The widgets suite
+
+The holdout numbers say the agent is weak on interactive widgets, and nobody may read which held-out tasks failed. `suite: widgets` is the open set to work on instead: 30 tasks in `tests/bench/widgets-tasks.json`, all in the `widgets` family, each with a difficulty, the kind of interaction it practises (`widget`) and where it runs (`source`). Read its runs, transcripts and failures freely and change the agent on them.
+
+| Kind (`widget`) | Tasks |
+|---|---|
+| hover menus and tooltips (an SVG chart's tooltip) | 1 |
+| dragging in a list or a board (two lists, a chess board editor) | 2 |
+| a card between kanban columns | 1 |
+| a drop zone, no file | 1 |
+| sliders: a native range input and a custom two-thumb one | 2 |
+| date and time pickers of three libraries (a year view, a leap day, a range, a time with seconds) | 4 |
+| keyboard-driven widgets: a listbox by arrow keys, a type-ahead combobox | 2 |
+| autocomplete on a real site | 1 |
+| accordions and tabs | 2 |
+| a modal and Escape | 1 |
+| a nested frame, and a story in a Storybook frame | 2 |
+| shadow DOM: a switch (and a rating, below) | 1 |
+| a canvas chart's legend and tooltip | 1 |
+| a context menu, a double click, a long press, infinite scroll, a sortable table, a rich text editor | 1 each |
+| multi-select and a tag input | 2 |
+| toggles and star ratings | 1 |
+
+25 are on the public demo pages of widely used UI libraries (Bootstrap, MUI, Ant Design, Element Plus, Headless UI, React Select, Shoelace, Carbon, Highcharts, Chart.js and others) and 5 on real sites (a dictionary, a streaming service's FAQ, a docs site's tabs, a chess board editor and a population table). No task signs in or hands anything in, and each ends in a state the judge can see on the final page: a value in a field (read from the harness's list of form controls, frames and shadow roots included), an order of items, a selected date, an open panel. Twenty also have an answer pattern.
+
+No task shares a registrable domain with any other suite, the holdout included. `node tests/bench/trial.js suite-check widgets` checks the file's shape (every kind practised, 24 to 30 tasks, at least 5 real sites, at most 3 tasks a site) and the overlap. It reads the holdout from its plain file when one is there (the workflow decrypts it on every push, and `HOLDOUT_TASKS` points at a copy elsewhere), and a clash with the holdout prints only a count, because the workflow log is public and naming the practice task or its site would point at a held-out site. To see which practice task clashes, run `suite-check widgets --detail` on your own machine with `HOLDOUT_TASKS` set. Never paste that output anywhere public. `holdout-check` counts the widgets suite as another suite too. When a site here changes or starts turning the runners away, replace the task with one on a site that passes `suite-check`.
+
+Every start page answered a plain `curl` with its page, not a bot check, on 18 Nov 2026. The fixed values in the rubrics (a chart's peak, a list's order, the countries with the most land) were read in the pages' own HTML or data that day. Values that depend on the run's date (a range next month) or on a demo's live data (a kanban card, a grid cell) are judged from the final page.
+
+`gh workflow run real-tasks.yml --ref rel40-real-tasks -f suite=widgets -f max_usd=2`. The summary adds a table by kind of interaction under the family table.
 
 ## Keys
 
@@ -51,7 +83,7 @@ The workflow does not have to be on the default branch first. GitHub registered 
 
 | Input | Default | Meaning |
 |---|---|---|
-| `suite` | `everyday` | `everyday` is the 93 tasks. `dev` is `tests/bench/smoke-tasks.json`, the 12 read-only tasks that were already checked in. `learn` is the learn suite, below. `holdout` is the sealed holdout suite, above. The WebVoyager dev split is not tracked in the repository, so it cannot run here. |
+| `suite` | `everyday` | `everyday` is the 93 tasks. `dev` is `tests/bench/smoke-tasks.json`, the 12 read-only tasks that were already checked in. `learn` is the learn suite, below. `widgets` is the widgets practice suite, above. `holdout` is the sealed holdout suite, above. The WebVoyager dev split is not tracked in the repository, so it cannot run here. |
 | `arm` | `shipped` | `shipped` loads the packed zip with no `chrome.debugger`: scripted input. `debugger-on` loads the same zip with the `debugger` permission added to the loaded copy, so the same code uses real input events. Run both to see what the permission is worth on real sites. |
 | `provider` | `anthropic` | `anthropic` or `openai`. |
 | `model` | empty | The agent's model id. Empty takes the provider's cheap one, below. |
