@@ -377,3 +377,19 @@ test("the PDF reader ships in the worker with no new permission", () => {
   assert.ok(!manifest.permissions.includes("debugger"));
   assert.deepEqual(manifest.host_permissions, ["https://chatgpt.com/*", "https://gemini.google.com/*", "https://www.perplexity.ai/*"]);
 });
+
+test("loading the file again in the same tab joins the reading already going", async () => {
+  const vm = require("node:vm");
+  const src = fs.readFileSync(path.join(EXT, "pdfText.js"), "utf8");
+  let fetches = 0;
+  const ctx = vm.createContext({
+    location: { href: "https://example.test/slow.pdf" },
+    fetch: () => { fetches += 1; return new Promise(() => {}); },
+  });
+  vm.runInContext(src, ctx);
+  const first = vm.runInContext("SELECT_TO_AI_PDF.readHere()", ctx);
+  vm.runInContext(src, ctx);
+  const second = vm.runInContext("SELECT_TO_AI_PDF.readHere()", ctx);
+  assert.equal(fetches, 1);
+  assert.equal(first, second);
+});

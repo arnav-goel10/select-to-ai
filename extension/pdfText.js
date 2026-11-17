@@ -1032,7 +1032,9 @@
   // Address -> the reading of it, in this document. One reading per file:
   // a later look while the first is still going waits for that one, and a
   // file that could not be read is not fetched again.
-  const kept = new Map();
+  // Injecting this file again into the same tab must join the reading
+  // already going there, so the map of readings outlives a reload of the file.
+  const kept = (root.SELECT_TO_AI_PDF && root.SELECT_TO_AI_PDF.kept instanceof Map) ? root.SELECT_TO_AI_PDF.kept : new Map();
 
   async function readOnce(url, opts) {
     try {
@@ -1058,7 +1060,7 @@
     return kept.get(at);
   }
 
-  const api = { extract, asPageText, isPdfPage, pdfAddress, withPdfText, readHere, parseCMap, glyphText, md5, rc4, LIMITS };
+  const api = { kept, extract, asPageText, isPdfPage, pdfAddress, withPdfText, readHere, parseCMap, glyphText, md5, rc4, LIMITS };
   root.SELECT_TO_AI_PDF = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
