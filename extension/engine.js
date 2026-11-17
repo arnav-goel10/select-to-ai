@@ -436,8 +436,16 @@
    * Throws {late: true} when the page does not take it at all.
    */
   const inject = (target, what) => INJECT.inject(chrome, target, what);
-  // To the page itself (frame 0), or to one of its frames by number.
-  const send = (tabId, message, frameId) => chrome.tabs.sendMessage(tabId, frameId ? { ...message, inFrame: true } : message, { frameId: frameId || 0 }).catch(() => null);
+  // To the page itself (frame 0), or to one of its frames by number. Every
+  // wait for a page's answer is bounded (core/inject.js ask): a page held
+  // by a browser dialog, or by a script that never ends, never answers.
+  // An action is given long enough for its whole wait in the page (the
+  // settle ceiling and the other ways a press is made); anything else is
+  // given SEND_MS.
+  const SEND_MS = 15000;
+  const ACT_MS = 60000;
+  const ask = (tabId, message, frameId, ms) => INJECT.ask(chrome, tabId, frameId ? { ...message, inFrame: true } : message, { frameId: frameId || 0 }, ms || SEND_MS);
+  const send = (tabId, message, frameId, ms) => ask(tabId, message, frameId, ms).then((r) => r.reply);
 
   // Controls inside a frame are numbered after the page's own: frame 1's
   // control 12 is [100012].
@@ -541,8 +549,12 @@
     });
   }
 
-  /** Starts the count of a page's own requests, in the page's world. It runs at once: there is nothing in the page it waits for. */
-  const countRequests = (tabId, name) => (INJECT.NET_EVENT.test(String(name || "")) ? INJECT.injectNow(chrome, { tabId }, { world: "MAIN", func: INJECT.netShim, args: [name] }) : Promise.resolve(null));
+  /**
+   * Starts, in the page's world, the count of its own requests and the
+   * answering of its dialogs, whichever it does not have yet (core/inject.js
+   * pageShim). It runs at once: there is nothing in the page it waits for.
+   */
+  const shimPage = (tabId, name, want) => (INJECT.NET_EVENT.test(String(name || "")) ? INJECT.injectNow(chrome, { tabId }, { world: "MAIN", func: INJECT.pageShim, args: [name, want] }) : Promise.resolve(null));
 
   /** A page that cannot be read still has an address and a title, and can be left. */
   const unreadable = (tab, why) => ({ url: tab.url || "", title: tab.title || "", elements: [], innerText: `[${why}]`, visibleText: "", protectedPage: true });
@@ -562,7 +574,11 @@
     // screen, for measuring one against the other.)
     const near = session.items && session.items.agentObserve === "near";
     const request = near ? { action: "scan", limit: 60, task: run.task } : { action: "scan", limit: 500, task: run.task, whole: true };
-    let res = await send(tab.id, request);
+    const first = await ask(tab.id, request);
+    // A page that does not answer at all is said to be held, not loading:
+    // trying the script again would wait on it the same way.
+    if (first.late) return { ...unreadable(tab, "This page did not answer when it was read."), protectedPage: false, held: { ms: SEND_MS } };
+    let res = first.reply;
     if (!res) {
       try {
         await inject({ tabId: tab.id }, { files: ["agentTools.js", "agentContentScript.js"] });
@@ -585,12 +601,18 @@
     }
     // Things to press that only a script listener marks join the listing.
     // (agentPressables: "off" leaves them out, for measuring with and without.)
+    const dialogs = Array.isArray(res.dialogs) ? res.dialogs : [];
     if (!near && !(session.items && session.items.agentPressables === "off") && await pressables(tab.id)) res = (await send(tab.id, request)) || res;
     if (!Array.isArray(res.elements)) res.elements = [];
+    // Dialogs the page opened since the last look, from either reading.
+    res.dialogs = [...dialogs, ...(Array.isArray(res.dialogs) && res.dialogs !== dialogs ? res.dialogs : [])];
     // With no debugger connection to show the tab's requests, the page's own
     // world is asked to count them (core/inject.js), so the wait after an
-    // action can tell a page still waiting for an answer from a finished one.
-    if (!res.netView && !nets.has(tab.id)) countRequests(tab.id, res.netEvent);
+    // action can tell a page still waiting for an answer from a finished
+    // one. Its dialogs are answered there too, with or without a debugger,
+    // so one never holds a step.
+    const want = { net: !res.netView && !nets.has(tab.id), dialogs: !res.dialogView };
+    if (want.net || want.dialogs) shimPage(tab.id, res.netEvent, want);
     session.frames = [];
     if (!near && res.frames) { try { await readFrames(session, tab, res); } catch (_e) { session.frames = []; } }
     if (PDF && PDF.isPdfPage(res)) return PDF.withPdfText(res, await pdfTextOf(run, tab, PDF.pdfAddress({ ...res, url: res.url || tab.url })));
@@ -911,10 +933,13 @@
     if (tab && isWeb(tab.url)) await connected(tabId);
     const net = nets.get(tabId);
     if (net) net.begin();
-    const waits = { ms: 0 };
+    const waits = { ms: 0, dialogs: [] };
     try {
       const r = await interactOnce(session, data, navigates, started, waits);
-      return { ...r, settleMs: waits.ms };
+      // A dialog the action set off is said with what it did (core/context.js).
+      const said = CONTEXT.dialogsNote(waits.dialogs);
+      // It comes first: the rest of a long result is cut when a step is told again.
+      return { ...r, ...(said ? { message: [said, r.message].filter(Boolean).join(" "), dialogs: waits.dialogs } : {}), settleMs: waits.ms };
     } finally {
       if (net) net.end();
     }
@@ -937,7 +962,18 @@
     // A control inside a frame is acted on in that frame, under its own number there.
     const at = inFrame(session, data.id !== undefined ? data.id : data.intoView !== undefined ? data.intoView : 0);
     const local = at.k ? { ...data, ...(data.id !== undefined ? { id: at.id } : {}), ...(data.intoView !== undefined ? { intoView: at.id } : {}), ...(data.to !== undefined ? { to: Number(data.to) % FRAME_BASE } : {}) } : data;
-    try { res = await send(tabId, { action: "interact", data: local }, at.frameId); } finally { chrome.tabs.onCreated.removeListener(onNew); }
+    let late = false;
+    try {
+      const got = await ask(tabId, { action: "interact", data: local }, at.frameId, ACT_MS);
+      res = got.reply;
+      late = !!got.late;
+    } finally { chrome.tabs.onCreated.removeListener(onNew); }
+    if (res && Array.isArray(res.dialogs)) waits.dialogs.push(...res.dialogs);
+    // The page stopped answering under the action: it is said, and the run goes on.
+    if (late && !opened) {
+      waits.ms += ACT_MS;
+      return { ok: false, unanswered: true, message: CONTEXT.unansweredNote(ACT_MS, "action") };
+    }
     // What it says about controls is said in the page's numbering.
     if (res && at.k) for (const f of ["message", "error"]) if (typeof res[f] === "string") res[f] = res[f].replace(/\[(\d+)\]/g, (_m, n) => `[${at.k * FRAME_BASE + Number(n)}]`);
     // A real click on a link that opens in a new tab may have opened it, as
@@ -2441,5 +2477,5 @@
   }
 
   // release and attention are exported for the scripted tests, as wake is.
-  root.SELECT_TO_AI_ENGINE = Object.freeze({ sessions, effectOf, wake, loadMemory, changeMemory, release, joinFrame, scan, attention });
+  root.SELECT_TO_AI_ENGINE = Object.freeze({ sessions, effectOf, wake, loadMemory, changeMemory, release, joinFrame, scan, interact, attention });
 })(typeof globalThis !== "undefined" ? globalThis : this);

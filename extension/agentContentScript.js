@@ -762,6 +762,122 @@
 
     const BOILERPLATE = 'nav, header, footer, aside, [role="navigation"], [role="banner"], [role="contentinfo"], [role="complementary"], [aria-hidden="true"]';
     const MAIN_SELECTORS = ['main', '[role="main"]', 'article', '#mw-content-text', '#content', '#main', '.main-content', '#main-content'];
+    // How much of a page's text is kept for find and read. Long documents
+    // (a specification, a manual) run to half a million characters, and a
+    // section past the cap could be seen in its table of contents but never read.
+    const PAGE_TEXT_LIMIT = 700000;
+
+    /**
+     * The page's main content area. A page that marks one with <main> or
+     * role="main" says so itself. The other selectors are guesses from
+     * common names, and a guess must hold a fair share of the page's text:
+     * a document whose sections take their ids from their titles has a
+     * section called "Content" (id="content"), and a listing has one
+     * <article> per card. Taking that one part as the page hid the rest.
+     */
+    function pickMain(doc) {
+        const bodyLength = ((doc.body && doc.body.innerText) || '').trim().length;
+        for (const sel of MAIN_SELECTORS) {
+            const cand = doc.querySelector(sel);
+            if (!cand) continue;
+            const length = (cand.innerText || '').trim().length;
+            if (length <= 200) continue;
+            const declared = sel === 'main' || sel === '[role="main"]';
+            if (declared || length >= bodyLength * 0.3) return cand;
+        }
+        return null;
+    }
+
+    /**
+     * Text a page draws inside open shadow roots (web components). innerText
+     * does not reach into them, so a reading built on it misses whatever a
+     * component renders: a usage figure, a price, a status line.
+     */
+    function shadowText(root) {
+        const out = [];
+        const seenRoots = new Set();
+        const visit = (scope, depth) => {
+            if (depth > 6 || out.length > 400) return;
+            for (const el of scope.querySelectorAll('*')) {
+                const sr = el.shadowRoot;
+                if (!sr || seenRoots.has(sr)) continue;
+                seenRoots.add(sr);
+                for (const kid of sr.children) {
+                    if (/^(STYLE|SCRIPT|TEMPLATE|SLOT)$/.test(kid.tagName)) continue;
+                    const t = seenText(kid).replace(/[ \t ]+/g, ' ').trim();
+                    if (t) out.push(t);
+                }
+                visit(sr, depth + 1);
+            }
+        };
+        visit(root, 0);
+        return out.join('\n');
+    }
+
+    /**
+     * What an element with no words of its own says through its attributes.
+     * Star ratings, levels and scores are often drawn as icons, with the value
+     * only in an attribute: aria-label="4 out of 5", title="Supported", or a
+     * class like "star-rating Three" or "rating-45" that the page's style turns
+     * into stars. Controls are left out: they are listed with their names.
+     */
+    const RATING_WORD = /^(?:rating|ratings|rated|stars?|score)$/i;
+    const VALUE_WORD = /^(?:\d+|zero|one|two|three|four|five|six|seven|eight|nine|ten|half|full|empty)$/i;
+    /**
+     * True when a class list carries a rating's value: a rating word with a
+     * value after it in the same class ("a-star-4-5", "rating-45"), or a
+     * rating class beside a class that is only a value ("star-rating Three").
+     * A value elsewhere ("score-panel mt-2") is layout, not a rating.
+     */
+    function ratingClass(cls) {
+        const tokens = String(cls || '').split(/\s+/).filter(Boolean);
+        const parts = tokens.map((t) => t.split(/[_-]+/));
+        let rated = false;
+        for (const p of parts) {
+            const at = p.findIndex((x) => RATING_WORD.test(x));
+            if (at < 0) continue;
+            rated = true;
+            if (p.slice(at + 1).some((x) => VALUE_WORD.test(x))) return true;
+        }
+        return rated && tokens.some((t) => VALUE_WORD.test(t));
+    }
+    function markedMeaning(el) {
+        if (!el || el.nodeType !== 1) return '';
+        // Controls are listed with their names; pictures and frames are read as media.
+        if (/^(A|BUTTON|INPUT|SELECT|TEXTAREA|OPTION|LABEL|SUMMARY|IMG|VIDEO|CANVAS|SVG|IFRAME|PICTURE)$/i.test(el.tagName)) return '';
+        const role = el.getAttribute('role') || '';
+        if (/^(button|link|menuitem|tab|checkbox|radio|switch|option|textbox|combobox|slider)$/.test(role)) return '';
+        // Attributes first: they are cheap, and most elements have none of these.
+        const said = el.getAttribute('aria-hidden') === 'true' ? '' : (el.getAttribute('aria-label') || el.getAttribute('title') || '').replace(/\s+/g, ' ').trim();
+        const cls = (typeof el.className === 'string' ? el.className : (el.getAttribute('class') || '')).replace(/\s+/g, ' ').trim();
+        const byClass = cls && ratingClass(cls) ? `class "${cls.slice(0, 80)}"` : '';
+        if (!said && !byClass) return '';
+        // Only an element with no words of its own: otherwise its words say it.
+        if ((el.innerText || el.textContent || '').trim()) return '';
+        return said ? said.slice(0, 120) : byClass;
+    }
+
+    /**
+     * The heading of the part of the page the address points to (#fragment):
+     * the heading itself, or the first heading in the section it names.
+     * The text under it is found in the page's reading by this heading.
+     */
+    function anchorHeading(doc, hash) {
+        const id = String(hash || '').replace(/^#/, '');
+        if (!id) return '';
+        let target = null;
+        try { target = doc.getElementById(decodeURIComponent(id)); } catch (_e) { target = doc.getElementById(id); }
+        if (!target && doc.getElementsByName) target = doc.getElementsByName(id)[0] || null;
+        if (!target) return '';
+        const isHeading = (n) => n && /^H[1-6]$/.test(n.tagName);
+        let heading = isHeading(target) ? target : (target.querySelector && target.querySelector('h1, h2, h3, h4, h5, h6'));
+        if (!heading && target.closest) {
+            const section = target.closest('section');
+            heading = section && section.querySelector('h1, h2, h3, h4, h5, h6');
+        }
+        if (!isHeading(heading)) return '';
+        return String(heading.innerText || heading.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+    }
 
     function tidyText(t) {
         return String(t || '')
@@ -921,6 +1037,26 @@
         const inlineText = (el) => seenText(el)
             .replace(/\[\d+\]|\[citation needed\]|\[edit\]/gi, '')
             .replace(/[ \t ]+/g, ' ').replace(/\s*\n\s*/g, ' ').trim();
+        // Elements inside one read as a line that say what they mean only
+        // through attributes: a listing card's empty star-rating paragraph
+        // sits beside its title and price, and inline text never shows it.
+        const marksIn = (el) => {
+            const found = [];
+            if (!el.querySelectorAll) return found;
+            for (const d of el.querySelectorAll('[class], [aria-label], [title]')) {
+                if (found.length >= 8) break;
+                if (found.some((f) => f.el.contains(d))) continue;
+                if (d.closest && d.closest('button, [role="button"]')) continue;
+                const m = markedMeaning(d);
+                if (m && !hidden(d)) found.push({ el: d, m });
+            }
+            return found.map((f) => `[${f.m}]`);
+        };
+        const inlineOrMarked = (el) => {
+            const t = inlineText(el);
+            if (!t) { const m = markedMeaning(el); if (m) return `[${m}]`; }
+            return [t, ...marksIn(el)].filter(Boolean).join(' ');
+        };
         const hidden = (el) => {
             if (el.hidden || boxUnseeable(el)) return true;
             // aria-hidden marks decoration (icons, a price repeated for screen
@@ -950,9 +1086,17 @@
             const role = el.getAttribute('role');
             if (role === 'navigation' || role === 'banner' || role === 'contentinfo' || role === 'complementary') return;
             if (hidden(el)) return;
+            // An element with no words whose attributes carry its meaning (a star rating drawn from a class).
+            // Its content is still read when it has any: pictures inside it,
+            // or a web component's shadow root, which innerText does not see.
+            const marked = markedMeaning(el);
+            if (marked) {
+                push(`[${marked}]`);
+                if (!el.firstElementChild && !el.shadowRoot) return;
+            }
             if (/^H[1-6]$/.test(tag)) { const t = inlineText(el); if (t) push(`${'#'.repeat(Number(tag[1]))} ${t}`); return; }
             if (tag === 'P' || tag === 'BLOCKQUOTE' || tag === 'FIGCAPTION' || tag === 'DT' || tag === 'DD') {
-                const t = inlineText(el);
+                const t = marked ? '' : inlineOrMarked(el);
                 if (t) push(tag === 'BLOCKQUOTE' ? `> ${t}` : t);
                 el.querySelectorAll('img').forEach((img) => walk(img, depth + 1));
                 return;
@@ -960,7 +1104,7 @@
             if (tag === 'LI') {
                 const readable = !textUnseeable(el);
                 const own = [...el.childNodes].filter((n) => !(n.nodeType === 1 && /^(UL|OL)$/.test(n.tagName)))
-                    .map((n) => (n.nodeType === 3 ? (readable ? n.textContent : '') : (n.nodeType === 1 && !hidden(n) ? inlineText(n) : ''))).join(' ').replace(/\s+/g, ' ').replace(/\[\d+\]/g, '').trim();
+                    .map((n) => (n.nodeType === 3 ? (readable ? n.textContent : '') : (n.nodeType === 1 && !hidden(n) ? inlineOrMarked(n) : ''))).join(' ').replace(/\s+/g, ' ').replace(/\[\d+\]/g, '').trim();
                 if (own) push(`${'  '.repeat(Math.max(0, depth))}- ${own}`);
                 el.querySelectorAll(':scope > ul, :scope > ol').forEach((sub) => walk(sub, depth + 1));
                 return;
@@ -972,7 +1116,7 @@
                 // page budget and part-by-part reading bound the size, not a row cap.
                 const rows = [...el.rows].slice(0, 400);
                 rows.forEach((r, i) => {
-                    const cells = [...r.cells].map((c) => inlineText(c).slice(0, 600));
+                    const cells = [...r.cells].map((c) => inlineOrMarked(c).slice(0, 600));
                     if (cells.some(Boolean)) push(`| ${cells.join(' | ')} |`);
                     if (i === 0) push(`|${cells.map(() => ' --- ').join('|')}|`);
                 });
@@ -1011,7 +1155,7 @@
                 if (child.nodeType !== 1) continue;
                 if (runsInline(child)) {
                     if ((SKIP_TAGS.has(child.tagName) && !isDisclosure(child)) || hidden(child)) continue;
-                    line.push(inlineText(child));
+                    line.push(inlineOrMarked(child));
                     continue;
                 }
                 flush();
@@ -1031,19 +1175,38 @@
         return { markdown: out.join('\n').replace(/\n{3,}/g, '\n\n'), media };
     }
 
+    // Parts of a page the Markdown walk leaves out by design (SKIP_TAGS and roles).
+    const WALK_SKIPS = 'nav, footer, [role="navigation"], [role="contentinfo"]';
+
+    /**
+     * The share of the plain reading's words that the Markdown reading
+     * kept, leaving out the words of the parts the walk skips on purpose
+     * (`skipped`, their text). Asides are not left out: a page may put real
+     * content in one, and then the plain reading should win.
+     */
+    function keptShare(markdown, plain, skipped) {
+        let yard = String(plain || '');
+        for (const chunk of skipped || []) if (chunk && chunk.length > 20) yard = yard.split(chunk).join('\n');
+        const wordsOf = (s) => String(s).toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) || [];
+        const mdWords = new Set(wordsOf(markdown));
+        const plainWords = wordsOf(yard);
+        return plainWords.length ? plainWords.filter((w) => mdWords.has(w)).length / plainWords.length : 1;
+    }
+
     function extractPageContent() {
         const vh = window.innerHeight || document.documentElement.clientHeight;
-        let mainEl = null;
-        for (const sel of MAIN_SELECTORS) {
-            const cand = document.querySelector(sel);
-            if (cand && (cand.innerText || '').trim().length > 200) { mainEl = cand; break; }
-        }
+        const mainEl = pickMain(document);
         // The plain reading is both the fallback and the yardstick the
         // structured one is held to, so it leaves out unseeable text too:
         // otherwise a page could stuff itself with hidden words to force
         // the fallback and get them read.
         leftOut = new Set();
         let text = tidyText(seenText(mainEl || document.body));
+        // Web components' own text, which innerText leaves out. Without it
+        // the plain reading (the fallback, and the yardstick for the
+        // structured one) has none of what a component draws.
+        const inShadow = shadowText(mainEl || document.body);
+        if (inShadow) text = tidyText(`${text}\n${inShadow}`);
         const unseen = unseenPassages(leftOut);
         leftOut = null;
         if (!mainEl) {
@@ -1083,19 +1246,21 @@
         });
 
         let md = { markdown: '', media: { images: 0, videos: 0, charts: 0, tables: 0, imageAlts: [] } };
-        try { md = extractMarkdown(mainEl || document.body, 80000); } catch (_e) { /* plain text stays */ }
+        try { md = extractMarkdown(mainEl || document.body, PAGE_TEXT_LIMIT); } catch (_e) { /* plain text stays */ }
         // Markdown when it kept the page's words; plain text when a site's
         // markup hides content from the walk. Judged by words kept, not by
         // length: a structured version missing every price is not "long enough".
-        const wordsOf = (s) => String(s).toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) || [];
-        const mdWords = new Set(wordsOf(md.markdown));
-        const plainWords = wordsOf(text);
-        const kept = plainWords.length ? plainWords.filter((w) => mdWords.has(w)).length / plainWords.length : 1;
-        const useMarkdown = md.markdown.length > 0 && kept >= 0.85;
+        // Menus and the footer are left out of the walk on purpose, so their
+        // words are not counted against it: a guessed main area that wraps
+        // the whole page (caniuse's div#main) would otherwise lose the walk
+        // to a plain reading that is mostly menu and footer.
+        const skipped = [...(mainEl || document.body).querySelectorAll(WALK_SKIPS)].map((b) => tidyText(b.innerText || ''));
+        const useMarkdown = md.markdown.length > 0 && keptShare(md.markdown, text, skipped) >= 0.85;
         const forms = document.querySelectorAll('form, input:not([type="hidden"]), textarea, select').length;
         return {
-            text: (useMarkdown ? md.markdown : text).slice(0, 80000),
+            text: (useMarkdown ? md.markdown : text).slice(0, PAGE_TEXT_LIMIT),
             format: useMarkdown ? 'markdown' : 'text',
+            anchor: (() => { try { return anchorHeading(document, location.hash); } catch (_e) { return ''; } })(),
             outline,
             visibleText: onScreen.join('\n').slice(0, 1800),
             unseen,
@@ -2472,11 +2637,15 @@
         return { point: null };
     }
 
-    /** The result when what was aimed at is covered: said, and nothing pressed. */
+    /**
+     * The result when what was aimed at is covered: said, and nothing
+     * pressed. No pointer was used, real or made by script, so the result
+     * names none: the trace and the count of real presses leave it out.
+     */
     function coveredResult(id, what, hovering) {
         const who = /^\d+$/.test(String(id)) ? `[${id}]` : String(id);
         return {
-            success: false, covered: true, pointer: 'real',
+            success: false, covered: true,
             error: `${who} is covered: ${what} is drawn over it where it is on screen, so the ${hovering ? 'pointer' : 'press'} would reach that instead. Nothing was ${hovering ? 'moved over it' : 'pressed'}.`,
         };
     }
@@ -4191,12 +4360,41 @@
     // When the page last began a request of any kind, its background ones too.
     let pageNetLastStart = 0;
 
+    // The page's browser dialogs (alert, confirm, prompt), said by the same
+    // function in the page's world. From the agent's first look or action
+    // on the page until the run hands it to the user (needsYou) or lets it
+    // go (clear), a dialog is answered as closing it would answer it, and
+    // kept here to tell the agent; at any other time the page's own dialog
+    // opens for the user as it always did. A step can take minutes with a
+    // slow model, so the hold is not timed by the step: DIALOG_HOLD_MS is
+    // only a cap for a run that ended without saying so (its worker
+    // stopped), after which the page's dialogs are the user's again. The
+    // check before leaving a page is never answered here (core/inject.js).
+    let pageDialogsAlive = false;
+    let pageDialogs = [];
+    let dialogsHeldUntil = 0;
+    const DIALOG_HOLD_MS = 180000;
+
     /** One thing the page's world said about its requests. Anything else a page sends under that name is left alone. */
     function onPageNet(e) {
         let said = null;
         try { said = JSON.parse(String(e.detail || '')); } catch (_) { return; }
-        if (!pageNet || !said || typeof said !== 'object') return;
-        if (said.t === 'hello') { pageNetAlive = true; return; }
+        if (!said || typeof said !== 'object') return;
+        if (said.t === 'hello') {
+            // Said even with no count to keep here, so the count is not sent again on every look.
+            if (said.net !== false) pageNetAlive = true;
+            if (said.dialogs) pageDialogsAlive = true;
+            return;
+        }
+        if (said.t === 'dialog') {
+            const kind = ['alert', 'confirm', 'prompt'].includes(said.kind) ? said.kind : '';
+            if (!kind || !(actingSince > 0 || Date.now() < dialogsHeldUntil)) return;
+            // Cancelled: the page's world closes it as a person closing it would.
+            try { e.preventDefault(); } catch (_) { return; }
+            if (pageDialogs.length < 10) pageDialogs.push({ kind, text: String(said.text || '').slice(0, 300), at: Date.now() });
+            return;
+        }
+        if (!pageNet) return;
         const id = String(said.id || '').slice(0, 40);
         if (!id) return;
         if (said.t === 'start' && (said.kind === 'Fetch' || said.kind === 'XHR') && pageNetOpen.size < 200) {
@@ -4208,6 +4406,18 @@
         } else if (said.t === 'end' && pageNetOpen.delete(id)) {
             pageNet.ended(id, Date.now());
         }
+    }
+
+    /** The dialogs the page opened since they were last told, which are then let go. */
+    function takeDialogs() {
+        const out = pageDialogs;
+        pageDialogs = [];
+        return out;
+    }
+
+    /** The agent is working on the page: its dialogs are answered for the next DIALOG_HOLD_MS. 0 gives them back to the user. */
+    function holdDialogs(ms) {
+        dialogsHeldUntil = ms > 0 ? Date.now() + ms : 0;
     }
 
     /**
@@ -4228,6 +4438,9 @@
      * its background from the first action on.
      */
     function watchRequests() {
+        // The page's dialogs come under the same name, so the listener is
+        // there even when there is no count of requests to keep.
+        document.addEventListener(NET_EVENT, onPageNet, true);
         if (!pageNet) return;
         try {
             for (const r of performance.getEntriesByType('resource')) {
@@ -4237,7 +4450,6 @@
                 pageNet.ended(id, performance.timeOrigin + (r.responseEnd || r.startTime));
             }
         } catch (_) { /* no record: the count starts now */ }
-        document.addEventListener(NET_EVENT, onPageNet, true);
     }
 
     /** An element the page changes over and over by itself: a clock, a feed, a rotating panel. */
@@ -4809,6 +5021,7 @@
         }
         if (request.action === 'scan') {
             lastScanRequest = { limit: request.limit, task: request.task, whole: !!request.whole };
+            holdDialogs(DIALOG_HOLD_MS);
             try {
                 const list = scanInteractiveElements(request.limit || 80, request.task || "", { whole: !!request.whole });
                 justFound.clear();
@@ -4825,7 +5038,10 @@
                     // Whether the page's own world is counting its requests yet (the engine starts that).
                     netView: pageNetAlive,
                     // The name the page's world is to say them under.
-                    netEvent: pageNet ? NET_EVENT : '',
+                    netEvent: NET_EVENT,
+                    // Whether that function answers the page's dialogs yet, and the ones it answered since the last look or action.
+                    dialogView: pageDialogsAlive,
+                    dialogs: takeDialogs(),
                     whole: !!request.whole,
                     // A tab behind another is not drawn: its animations stand still.
                     inBackground: document.visibilityState === 'hidden',
@@ -4842,6 +5058,7 @@
                     })(),
                     innerText: content.text,
                     textFormat: content.format,
+                    anchor: content.anchor,
                     media: content.media,
                     outline: content.outline,
                     visibleText: content.visibleText,
@@ -4872,7 +5089,14 @@
             // the user's own clicks, keys and scrolls (agentBar.js) leaves
             // them out by this mark, kept a moment past the action.
             window.__selectToAiActingUntil = Infinity;
-            const sendResponse = (r) => { window.__selectToAiActingUntil = Date.now() + 300; reply(r); };
+            holdDialogs(DIALOG_HOLD_MS);
+            // A dialog the action set off is said with its result, whatever the result is.
+            const sendResponse = (r) => {
+                window.__selectToAiActingUntil = Date.now() + 300;
+                holdDialogs(DIALOG_HOLD_MS);
+                const dialogs = takeDialogs();
+                reply(r && typeof r === 'object' && dialogs.length ? { ...r, dialogs } : r);
+            };
             // Async, must return true to keep the message channel open
             (async () => {
                 try {
@@ -5067,6 +5291,8 @@
             // What is in the way on this page, and nothing else about it.
             try { sendResponse({ success: true, blockers: detectBlockers(), url: location.href }); } catch (err) { sendResponse({ success: false, error: err.message || String(err) }); }
         } else if (request.action === 'needsYou') {
+            // The user's turn: the page's dialogs are theirs again.
+            holdDialogs(0);
             try { waitForUser(request.kind, request.text, request.press); sendResponse({ success: true }); } catch (err) { sendResponse({ success: false, error: err.message || String(err) }); }
         } else if (request.action === 'needsYouDone') {
             removeNeedsYou();
@@ -5075,6 +5301,7 @@
         } else if (request.action === 'clear') {
             // Stop/reset: also cancel any in-flight simulated typing.
             cancelRequested = true;
+            holdDialogs(0);
             clearOverlay();
             sendResponse({ success: true });
         } else if (request.action === 'waitForElement') {

@@ -39,7 +39,7 @@
    * around it and the section it sits in; keyword ranking only as a fallback.
    */
   function findInText(text, query, opts) {
-    const o = Object.assign({ maxHits: 5, window: 360, budget: 2600 }, opts || {});
+    const o = Object.assign({ maxHits: 5, window: 360, section: 1600, budget: 2600 }, opts || {});
     const body = String(text || "");
     const lower = body.toLowerCase();
     if (!body.trim()) return [];
@@ -94,12 +94,28 @@
     const starts = new Set();
     for (const p of picked) {
       if (used > o.budget) break;
-      const start = Math.max(0, p.c - half, body.lastIndexOf("\n", Math.max(0, p.c - half)) + 1);
-      if (starts.has(start)) continue;
+      // A hit on a heading is a hit on its section: the text under it is
+      // what was looked for, so it comes with the heading, up to the next
+      // heading of the same or a higher level (and a bound on its length).
+      // Only a heading that has every word looked for: one that shares a
+      // word with the query ("Garden Supplies" for "Garden Hose") is not it.
+      const lineStart = body.lastIndexOf("\n", Math.max(0, p.c - 1)) + 1;
+      const lineEnd = body.indexOf("\n", lineStart);
+      const headingLine = lower.slice(lineStart, lineEnd < 0 ? body.length : lineEnd);
+      const heading = /^#{1,6}\s/.test(headingLine) && terms.every((t) => headingLine.includes(t)) ? secs.find((s) => s.start === lineStart && s.level > 0) : null;
+      let start = Math.max(0, p.c - half, body.lastIndexOf("\n", Math.max(0, p.c - half)) + 1);
+      let end = Math.min(body.length, start + o.window);
+      if (heading) {
+        const next = secs.find((s) => s.start > lineStart && s.level > 0 && s.level <= heading.level);
+        start = lineStart;
+        end = Math.min(next ? next.start : body.length, lineStart + Math.max(o.window, o.section));
+      }
+      // A hit inside a section already given whole adds nothing.
+      if (starts.has(start) || kept.some((k) => p.c >= k.start && p.c < k.end)) continue;
       starts.add(start);
-      const end = Math.min(body.length, start + o.window);
-      const piece = `${sectionAt(p.c) ? `[in "${sectionAt(p.c)}"] ` : ""}${start > 0 && body[start - 1] !== "\n" ? "…" : ""}${body.slice(start, end).trim()}${end < body.length ? "…" : ""}`;
-      kept.push({ c: p.c, piece });
+      const whole = heading && (end === body.length || /^#{1,6}\s/.test(body.slice(end, end + 7)));
+      const piece = `${sectionAt(p.c) ? `[in "${sectionAt(p.c)}"] ` : ""}${start > 0 && body[start - 1] !== "\n" ? "…" : ""}${body.slice(start, end).trim()}${end < body.length && !whole ? "…" : ""}`;
+      kept.push({ c: p.c, start, end, piece });
       used += piece.length;
     }
     return kept.sort((a, b) => a.c - b.c).map((k) => k.piece);

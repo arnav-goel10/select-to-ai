@@ -44,20 +44,45 @@ const HTML = `<!doctype html><html><body>
   <p style="color:#777">Grey small print that is still readable</p>
   <div class="carousel"><div class="slide">Council approves the new cross-island tram line today</div><div class="slide" aria-hidden="true">Harbour festival returns after five years with fireworks</div><div class="slide clone" aria-hidden="true">Council approves the new cross-island tram line today</div></div>
   <pre>${Array.from({ length: 120 }, (_, i) => `line ${i + 1} of a long plain-text readme`).join("\n")}</pre>
+  <ol class="row"><li class="col-xs-6"><article class="product_pod"><div class="image_container"><a href="/b1"><img alt="A Light in the Attic" width="60" height="90"></a></div><p class="star-rating Three"><i class="icon-star"></i><i class="icon-star"></i><i class="icon-star"></i></p><h3><a href="/b1">A Light in the Attic</a></h3><div class="product_price"><p class="price_color">£51.77</p><p class="instock availability">In stock</p></div></article></li></ol>
+  <div aria-label="Product images"><img alt="Front cover of the guide" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Crect width='200' height='200' fill='%23468'/%3E%3C/svg%3E" width="200" height="200"></div>
   <table><tr><th>Feature</th><th>Starter</th></tr>${Array.from({ length: 60 }, (_, i) => `<tr><td>Feature ${i + 1}</td><td>Included</td></tr>`).join("")}</table>
 </main>
 <footer>Footer links and copyright</footer>
 </body></html>`;
 
-(async () => {
-  const browser = await puppeteer.launch({ headless: true });
+// Shaped like caniuse.com/css-has in the 17 Nov trial: a wrapper div#main
+// holds the header menu, the main area and a long footer, and the feature
+// (with its global usage figure) is drawn inside nested web components.
+const COMPONENTS = `<!doctype html><html><body>
+<div id="main">
+  <header><nav><ul><li><a href="/">Home</a></li><li><a href="/news">News</a></li><li><a href="/compare">Compare browsers</a></li><li><a href="/about">About</a></li></ul><a href="/news/1">March 5, 2026 - New feature: Lazy loading via attribute for video and audio</a></nav>
+  <section><a href="/">Can I use</a> <form><input name="search"></form> ? <button>Settings</button></section></header>
+  <main><x-feature></x-feature></main>
+  <footer><h3>Can I use...</h3><p>Browser support tables for modern web technologies</p><p>Created and maintained by a small team, design by another person.</p><p>Support data contributions by the GitHub community.</p><p>Usage share statistics by StatCounter GlobalStats for October, 2026</p><p>Location detection provided by an IP lookup service.</p><p>Become a patron to support the site and disable ads for only one dollar a month!</p><h4>Site links</h4><ul><li>Home</li><li>Feature index</li><li>Browser usage table</li><li>Feature suggestion list</li><li>Data on GitHub</li></ul><h4>Legend</h4><ul><li>Green = Supported</li><li>Red = Not supported</li><li>Greenish yellow = Partial support</li><li>Gray = Support unknown</li></ul></footer>
+</div>
+<script>
+customElements.define("x-feature-usage", class extends HTMLElement { connectedCallback() { if (this.shadowRoot) return; this.attachShadow({ mode: "open" }).innerHTML = '<header>Usage <label>% of all users</label></header><ul><li class="support-stats"><h4><span class="usage-title">Global</span></h4><span class="support" title="96.09% Supported">96.09%</span></li></ul>'; } });
+customElements.define("x-feature", class extends HTMLElement { connectedCallback() { if (this.shadowRoot) return; this.attachShadow({ mode: "open" }).innerHTML = '<header><div class="about"><h3 class="title">:has() CSS relational pseudo-class</h3><p class="description">Select elements containing specific content.</p></div><x-feature-usage></x-feature-usage></header>'; } });
+</script>
+</body></html>`;
+
+async function scanOf(browser, html) {
   const page = await browser.newPage();
   await page.evaluateOnNewDocument(() => {
     window.chrome = { runtime: { onMessage: { addListener: (fn) => { window.__l = fn; } }, sendMessage() {}, getURL: (x) => x } };
   });
-  await page.goto("data:text/html;charset=utf-8," + encodeURIComponent(HTML));
+  await page.goto("data:text/html;charset=utf-8," + encodeURIComponent(html));
   for (const f of ["agentTools.js", "agentContentScript.js"]) await page.addScriptTag({ content: fs.readFileSync(path.join(EXT, f), "utf8") });
   const scan = await page.evaluate(() => new Promise((r) => window.__l({ action: "scan", limit: 40, task: "" }, {}, r)));
+  await page.close();
+  return scan;
+}
+
+(async () => {
+  const browser = await puppeteer.launch({ headless: true });
+  const scan = await scanOf(browser, HTML);
+  const comp = await scanOf(browser, COMPONENTS);
   await browser.close();
   const text = scan.innerText;
   // Unseeable text must stay out of every reading of the page, not only the main one.
@@ -92,9 +117,13 @@ const HTML = `<!doctype html><html><body>
     ["cloned slide not repeated", (text.match(/cross-island tram line/g) || []).length === 1],
     ["long preformatted block read in full", /line 120 of a long plain-text readme/.test(text)],
     ["menu and footer left out", !/Menu item that is navigation|Footer links/.test(text)],
+    ["a listing card's star rating is on the card's line", text.split("\n").some((l) => /A Light in the Attic/.test(l) && /star-rating Three/.test(l) && /51\.77/.test(l))],
+    ["a labelled box of pictures keeps its label and its pictures", /\[Product images\]/.test(text) && /\[image: Front cover of the guide\]/.test(text)],
+    ["web components: the structured reading wins over a plain one full of menu and footer", comp.textFormat === "markdown"],
+    ["web components: the global usage figure is read where it is drawn", /Global 96\.09%/.test(comp.innerText)],
   ];
   let failed = 0;
   for (const [name, ok] of checks) { console.log(`  ${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) failed++; }
-  if (failed) { console.log("\n" + text); process.exit(1); }
+  if (failed) { console.log("\n" + text + "\n\n----- web components page -----\n" + comp.innerText); process.exit(1); }
   console.log("\nALL LAYOUT CHECKS PASSED");
 })().catch((e) => { console.error(e); process.exit(1); });

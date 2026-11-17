@@ -1546,6 +1546,37 @@ test("a quote from a page whose text was let go to make room is said to be unche
   assert.match(m.user, /could not be checked/);
 });
 
+test("one very long page keeps its start and what the run was shown, not its whole text", () => {
+  const big = (n) => shop({ url: `https://shop.example/review/${n}`, title: `Review ${n}`, innerText: `Review ${n} says the widget lasts ${n} years. ${"Filler text about widgets. ".repeat(4000)}` });
+  const deep = "15.5.19. 418 (Unused). The 418 status code is reserved in the IANA HTTP Status Code Registry.";
+  const spec = shop({ url: "https://shop.example/docs/rfc9110.html", title: "RFC 9110", innerText: `HTTP Semantics. ${"Paragraph about message semantics and content. ".repeat(14000)}\n${deep}\n${"Closing text of the document. ".repeat(500)}` });
+  assert.ok(spec.innerText.length > 650000);
+  const { run } = begin("what does RFC 9110 say about status 418?", big(1));
+  for (const n of [1, 2]) {
+    reply(run, big(n), [{ do: "navigate", url: `https://shop.example/review/${n + 1}` }]);
+    RUN.advance(run, { type: "acted", result: { ok: true, message: "Opened.", pageChanged: true } }, env(big(n)));
+    RUN.advance(run, { type: "observed", page: big(n + 1) }, env(big(n + 1)));
+  }
+  reply(run, big(3), [{ do: "navigate", url: spec.url }]);
+  RUN.advance(run, { type: "acted", result: { ok: true, message: "Opened.", pageChanged: true } }, env(big(3)));
+  RUN.advance(run, { type: "observed", page: spec }, env(spec));
+  // A find on the long page shows its section 15.5.19, far past the kept start.
+  reply(run, spec, [{ do: "find", query: "418 (Unused)" }]);
+  RUN.advance(run, { type: "acted", result: { ok: true, message: "Found.", pageChanged: true, read: { url: spec.url, label: 'find "418 (Unused)"', text: deep } } }, env(spec));
+  RUN.advance(run, { type: "observed", page: spec }, env(spec));
+  const kept = run.seen.find((p) => p.url === spec.url);
+  assert.ok(kept.text.length <= 200000, `one page keeps at most a quarter of the budget (${kept.text.length})`);
+  assert.ok(kept.text.includes(deep), "what find showed of it is kept");
+  assert.deepEqual(run.dropped || [], [], "the pages read before it are not let go for it");
+  // Leave it: the quote from its far section still checks, and so does one from the first page.
+  reply(run, spec, [{ do: "navigate", url: "https://shop.example/" }]);
+  RUN.advance(run, { type: "acted", result: { ok: true, message: "Opened.", pageChanged: true } }, env(spec));
+  RUN.advance(run, { type: "observed", page: shop() }, env(shop()));
+  assert.ok(run.seen.find((p) => p.url === spec.url).text.includes(deep), "kept after the run moves on");
+  reply(run, shop(), [{ do: "done", success: true, answer: "418 is reserved; review 1 says 1 year.", evidence: ["The 418 status code is reserved in the IANA HTTP Status Code Registry", "Review 1 says the widget lasts 1 years"] }]);
+  assert.equal(run.pendingDone.missing.length, 0, JSON.stringify(run.pendingDone.missing));
+});
+
 // One step taken: the model's reply with a note, its action done, the page looked at again.
 const noted = (run, page, fields) => {
   RUN.advance(run, { type: "model_replied", reply: { goal: "g", do: "click", ref: 3, ...fields }, usage: {} }, env(page));
