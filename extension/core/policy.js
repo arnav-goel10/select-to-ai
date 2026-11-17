@@ -124,7 +124,8 @@
 
   /** The same action in the shape the risk checks in agentTools.js read. */
   function asRiskAction(a, el) {
-    if (a.do === "click") return { action: "click", id: a.ref };
+    // A double click, a right click and a long press are presses on the control.
+    if (["click", "double_click", "right_click", "hold"].includes(a.do)) return { action: "click", id: a.ref };
     if (a.do === "fill") return { action: "type", id: a.ref, text: a.value };
     // A key that presses the control it lands on is a click on it.
     if (a.do === "press" && pressesControl(el, a.key)) return { action: "click", id: el.id };
@@ -185,11 +186,19 @@
    * frame the agent cannot read could be anything there, so it is the
    * user's to allow.
    */
-  function decidePointer(a, page, run, settings, store) {
+  function decidePointer(a, page0, run, settings, store) {
     const refs = [];
     let blind = false;
+    let page = page0;
     if (a.do === "drag") refs.push(a.ref);
-    const at = a.do === "click_at" ? { x: a.x, y: a.y } : a.to_ref !== undefined ? null : dropPoint(a, page);
+    // A place to let go named by its words is decided as a press on a
+    // control with those words: a bin that says "Delete forever" is a delete.
+    if (a.do === "drag" && a.to_text !== undefined) {
+      const named = { id: -1, tagName: "div", text: String(a.to_text), accName: String(a.to_text) };
+      page = { ...(page0 || {}), elements: [...((page0 && page0.elements) || []), named] };
+      refs.push(named.id);
+    }
+    const at = a.do === "click_at" ? { x: a.x, y: a.y } : a.to_ref !== undefined || a.to_text !== undefined ? null : dropPoint(a, page);
     if (a.do === "drag" && a.to_ref !== undefined) refs.push(a.to_ref);
     if (at) {
       const hit = pointTarget(page, at.x, at.y);

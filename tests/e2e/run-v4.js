@@ -729,6 +729,20 @@ async function main() {
         if (at.counted !== "Count: 1" || /Order: Apples/.test(at.order)) return `by script: ${JSON.stringify(at)}`;
         return pointers(r, ["synthetic", "synthetic"]);
       }, "pointerNoDebugger", { before: () => refuseDebugger(true) }],
+      // Every whole gesture made by script, as a build without the debugger makes them.
+      ["gestures", "/gestures", async () => false, async (r) => {
+        await refuseDebugger(false);
+        await mainModel("e2e-scripted-model");
+        const at = await r.fixture.evaluate(() => Object.fromEntries(["s-cell", "s-menu", "s-press", "s-legend", "s-order", "s-bin", "s-token"].map((id) => [id, document.getElementById(id).textContent])));
+        const want = { "s-cell": "Cell: editing", "s-menu": "Menu: open", "s-press": "Button: activated by a long press", "s-legend": "Red: hidden", "s-order": "Order: Gamma, Alpha, Beta", "s-bin": "Dropped: Banana in food", "s-token": "Token: moved by touch" };
+        const wrong = Object.keys(want).filter((k) => at[k] !== want[k]);
+        if (wrong.length) return `the page shows ${JSON.stringify(at)}: ${String(r.log).replace(/\s+/g, " ").slice(0, 900)}`;
+        const told = (re, what) => (r.prompts.some((p) => re.test(p)) ? null : `the model was not told ${what}`);
+        return told(/Text that appeared on screen: "[^"]*08:00 to 09:00 Users 1204/, "the tooltip the hover brought up")
+          || told(/A picture of \[\d+\] \(a canvas, drawn 300 by 150 pixels\) is attached/, "that the drawing's own picture was attached")
+          || told(/The page took it as a drag and drop, and it was dropped on /, "that the banana was dropped")
+          || told(/it was made again as a touch, and the page answered that/, "that the token answered only a touch");
+      }, "gestures", { before: async () => { await refuseDebugger(true); await mainModel("e2e-vision-model"); } }],
       ["pointerCanvas", "/pointer-canvas", async () => false, async (r) => {
         const at = await r.fixture.evaluate(() => ({ spot: window.spot || null, under: !!window.underPressed }));
         if (!at.spot || Math.abs(at.spot[0] - 190) > 1 || Math.abs(at.spot[1] - 55) > 1 || at.spot[2] !== true) return `the drawing was not pressed at 190,55 by a real press: ${JSON.stringify(at.spot)} ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;

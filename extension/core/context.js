@@ -99,7 +99,7 @@ The user asks whether the recipe on the page is vegetarian. The page text lists 
   // real pointer and keys there is nothing to say.
   const SCRIPTED = `
 # How your actions reach the page
-In this browser your pointer and your keys are made by script: the page is sent the events a mouse and a keyboard send, and most pages take them as a person's. A few things answer only the real ones: a menu that opens only while the mouse is over it, a drag the page follows by holding on to the pointer, a key the browser itself acts on (Tab to move to the next field, Escape to close a browser dialog), a file chooser, copying to the clipboard, and a control built to ignore scripted presses. A result says when no change was seen after a press. The same thing can often be reached another way (its link, the listing, find, fill), and the user can press one control for you: ask_user with kind "press" and its ref.
+In this browser your pointer and your keys are made by script: the page is sent the whole run of events a mouse, a finger and a keyboard send, and most pages take them as a person's. Each gesture is an action of its own: double_click, right_click (for a page's own context menu), hold (a long press), hover (the pointer stays where it is until your next action) and drag (the pointer, mouse, drag and drop and touch events a page listens for). fx and fy aim any of them at a spot inside a control, such as a point of a chart or a square of a board, and look with its ref shows you that control's picture to choose the spot. A result says what changed after each gesture, and says so plainly when nothing did. A few things answer only the real ones: a control or a board built to ignore scripted input, a key the browser itself acts on (Tab to move to the next field, Escape to close a browser dialog), the browser's own right-click menu, a file chooser, and copying to the clipboard. When a gesture changed nothing, the same thing can often be reached another way (its link, the listing, find, fill, a key), and the user can do one press or gesture for you: ask_user with kind "press" and its ref.
 
 `;
 
@@ -406,7 +406,7 @@ In this browser your pointer and your keys are made by script: the page is sent 
       facts.push(shown.truncated ? "Only part of this page's text is shown." : "The whole text of this page is shown.");
     }
     // A picture was refused on this tab, and would be again.
-    if (ctx.noPictures) facts.push(`No picture of the page can be taken on this tab. ${ctx.noPictures} look fails the same way each time: what is on the page is known from its text and its controls.`);
+    if (ctx.noPictures) facts.push(`No picture of the page can be taken on this tab. ${ctx.noPictures} look fails the same way each time: what is on the page is known from its text and its controls. look with the ref of a chart, a drawing or a board still gives that control's own picture.`);
     own.push(`Facts from the browser:\n${facts.map((f) => `- ${f}`).join("\n")}`);
     if (run.notice) own.push(`About your last step:\n${run.notice}`);
 

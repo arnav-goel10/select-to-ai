@@ -1062,6 +1062,11 @@
     return got && got.data ? { image: `data:image/jpeg;base64,${got.data}` } : { why: "" };
   }
 
+  /** Where inside a control a gesture is aimed, as the page is told it: fractions of its box. */
+  const spotOf = (a) => (a.fx !== undefined ? { fx: a.fx, fy: a.fy } : {});
+  /** Where on the target a drag lets go: before or after it, or a spot of its box. */
+  const dropSpot = (a) => ({ ...(a.place ? { place: a.place } : {}), ...(a.to_fx !== undefined ? { toFx: a.to_fx, toFy: a.to_fy } : {}) });
+
   async function act(session, a, keys) {
     const run = session.run;
     const tabId = run.tabId;
@@ -1071,8 +1076,12 @@
     switch (a.do) {
       // A press the user approved is made once: the page is not pressed another way when it shows no answer.
       // Any other is made with Enter or Space too only where those keys were allowed on it (keys).
-      case "click": return interact(session, a, { action: "click", id: a.ref, ...(a.approved !== undefined ? { once: true } : keys ? { keys: true } : {}) }, true);
-      case "hover": return interact(session, a, { action: "hover", id: a.ref }, false);
+      case "click": return interact(session, a, { action: "click", id: a.ref, ...spotOf(a), ...(a.approved !== undefined ? { once: true } : keys ? { keys: true } : {}) }, true);
+      case "hover": return interact(session, a, { action: "hover", id: a.ref, ...spotOf(a) }, false);
+      // The other whole gestures on a control: each is the page's own sequence of events (agentContentScript.js).
+      case "double_click": return interact(session, a, { action: "double_click", id: a.ref, ...spotOf(a) }, true);
+      case "right_click": return interact(session, a, { action: "right_click", id: a.ref, ...spotOf(a) }, false);
+      case "hold": return interact(session, a, { action: "hold", id: a.ref, seconds: a.seconds, ...spotOf(a) }, true);
       case "click_at": {
         // What is at the point, as the decision on it saw it: the page
         // checks it is still that before it presses.
@@ -1087,6 +1096,8 @@
         const from = inFrame(session, a.ref);
         const apart = `[${a.ref}] is in ${from.k ? "a frame" : "the page itself"} and where it would be let go is not, and a drag cannot go from one to the other.`;
         let expect;
+        // Words on the place to let go: found on the page, and checked there as a press on it is (core/policy.js).
+        if (a.to_text !== undefined) return interact(session, a, { action: "drag", id: a.ref, toText: a.to_text, ...spotOf(a), ...dropSpot(a) }, true);
         if (a.to_ref !== undefined) {
           const to = inFrame(session, a.to_ref);
           if (to.k !== from.k) return { ok: false, message: apart };
@@ -1097,7 +1108,7 @@
           if (hit.el && (hit.el.frame || 0) !== from.k) return { ok: false, message: apart };
           expect = { ref: hit.el ? inFrame(session, hit.el.id).id : null, frame: false };
         }
-        return interact(session, a, { action: "drag", id: a.ref, ...(a.to_ref !== undefined ? { to: a.to_ref } : { direction: a.direction, distance: a.distance }), expect }, true);
+        return interact(session, a, { action: "drag", id: a.ref, ...(a.to_ref !== undefined ? { to: a.to_ref, ...dropSpot(a) } : { direction: a.direction, distance: a.distance }), ...spotOf(a), expect }, true);
       }
       case "fill": {
         if (!a.from) return interact(session, a, { action: "fill", id: a.ref, value: a.value }, false);
@@ -1205,6 +1216,15 @@
         return now ? { ok: true, pageChanged: true, closedTab: a.tab, tabId: now.id, message: `Closed tab ${a.tab}. Now on tab ${now.id}: ${now.title || now.url}` } : { ok: false, message: "Closed the tab, and no other tab is open to work in." };
       }
       case "look": {
+        // One control's own picture, drawn by the page itself: it needs no
+        // picture of the tab, which the browser may refuse.
+        let own = "";
+        if (a.ref !== undefined) {
+          const at = inFrame(session, a.ref);
+          const got = await quiet(send(tabId, { action: "picture", id: at.id }, at.frameId));
+          if (got && got.success && got.image) return { ok: true, pageChanged: true, image: got.image, message: String(got.message || "").replace(/\[(\d+)\]/g, (_m, n) => `[${at.k ? at.k * FRAME_BASE + Number(n) : n}]`) };
+          own = got && got.error ? String(got.error) : "";
+        }
         const shot = await capture(tabId);
         if (shot.image) {
           // A picture was taken after all (the user opened the extension on this tab): the refusal is no longer a fact here.
@@ -1221,7 +1241,7 @@
           session.noPictures = { run: run.id, tabId, why: shot.why };
           if (!noted) run.journal.push({ k: "note", text: "Chrome did not let the agent take a picture of this page, so it is working from the page's text and controls only. Maps, charts and images may be read less well." });
         }
-        return { ok: false, message: `A picture of this tab could not be taken.${shot.why ? ` ${shot.why}` : ""}` };
+        return { ok: false, message: `${own ? `${own} ` : ""}A picture of this tab could not be taken.${shot.why ? ` ${shot.why}` : ""}` };
       }
       case "read": {
         const page = session.page || {};

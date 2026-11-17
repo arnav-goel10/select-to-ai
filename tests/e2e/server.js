@@ -494,6 +494,89 @@ const FIXTURES = {
        zone.addEventListener('drop', (e) => { e.preventDefault(); zone.appendChild(chip); document.getElementById('dropped').textContent = 'Dropped: ' + e.dataTransfer.getData('text/plain'); });
      </script>`,
   ),
+  // Whole gestures made by script, each on plain HTML that listens the way
+  // pages do: a cell that edits on a double click, a node with a menu of its
+  // own, a button that acts on a long press, a drawn chart whose tooltip
+  // follows the pointer, a drawn legend pressed at a spot, a list that
+  // starts a drag only after a held press and moves its items by where the
+  // pointer is, bins that take the browser's drag and drop and have no
+  // number of their own, and a token that answers only a finger.
+  "/gestures": pageShell(
+    "Gestures",
+    `<style>.bin{display:inline-block;width:150px;height:70px;border:2px dashed #888;margin-right:10px} #sortable{list-style:none;padding:0;width:220px} #sortable li{padding:6px;margin:4px 0;background:#eef;user-select:none}</style>
+     <h1>Gestures</h1>
+     <p id="s-cell">Cell: not editing</p>
+     <table><tr><td id="cell" tabindex="0" aria-label="Order SO-1" style="padding:6px;border:1px solid #999">SO-1</td></tr></table>
+     <p id="s-menu">Menu: closed</p>
+     <span id="node" tabindex="0" aria-label="Root node" style="padding:4px;border:1px solid #999">Root node</span>
+     <div id="menu" role="menu" hidden><button type="button" role="menuitem">Create node</button></div>
+     <p id="s-press">Button: Activate</p>
+     <button type="button" id="press">Activate</button>
+     <svg id="chart" aria-label="Users chart" width="400" height="200" style="display:block;border:1px solid #ccc;margin-top:12px">
+       <polyline points="20,180 120,150 220,40 320,120" fill="none" stroke="#36c" stroke-width="2"></polyline>
+       <g id="tip" visibility="hidden"><rect x="240" y="10" width="150" height="24" fill="#fff" stroke="#333"></rect><text id="tip-text" x="246" y="27" font-size="12"></text></g>
+     </svg>
+     <p id="s-legend">Red: shown</p>
+     <canvas id="pie" aria-label="Pie chart" width="300" height="150" style="display:block;border:1px solid #000"></canvas>
+     <p id="s-order">Order: Alpha, Beta, Gamma</p>
+     <ul id="sortable"><li tabindex="0" aria-label="Alpha">Alpha</li><li tabindex="0" aria-label="Beta">Beta</li><li tabindex="0" aria-label="Gamma">Gamma</li></ul>
+     <p id="s-bin">Dropped: nothing</p>
+     <div><div class="bin" data-accepts="glass">This bin accepts: glass</div><div class="bin" data-accepts="food">This bin accepts: food</div></div>
+     <div id="banana" draggable="true" style="display:inline-block;padding:6px;margin-top:8px;background:#fd5">Banana</div>
+     <p id="s-token">Token: at start</p>
+     <div style="position:relative;width:320px;height:40px;background:#eee"><div id="token" tabindex="0" aria-label="Token" style="position:absolute;left:0;top:0;width:40px;height:40px;background:#c63;touch-action:none"></div></div>
+     <script>
+       const $ = (id) => document.getElementById(id);
+       $('cell').addEventListener('dblclick', () => { $('s-cell').textContent = 'Cell: editing'; });
+       $('node').addEventListener('contextmenu', (e) => { if (e.button !== 2) return; e.preventDefault(); $('menu').hidden = false; $('s-menu').textContent = 'Menu: open'; });
+       let timer = null;
+       $('press').addEventListener('pointerdown', (e) => { if (e.button !== 0) return; timer = setTimeout(() => { timer = null; $('s-press').textContent = 'Button: activated by a long press'; }, 600); });
+       $('press').addEventListener('pointerup', () => { if (timer) { clearTimeout(timer); timer = null; $('s-press').textContent = 'Button: too short a press'; } });
+       const points = [[20, 180, '06:00 to 07:00', 310], [120, 150, '07:00 to 08:00', 512], [220, 40, '08:00 to 09:00', 1204], [320, 120, '09:00 to 10:00', 640]];
+       $('chart').addEventListener('mousemove', (e) => {
+         const r = $('chart').getBoundingClientRect();
+         const x = e.clientX - r.left, y = e.clientY - r.top;
+         let best = null;
+         for (const p of points) { const d = Math.hypot(p[0] - x, p[1] - y); if (d < 30 && (!best || d < best.d)) best = { p, d }; }
+         if (!best) return;
+         $('tip-text').textContent = best.p[2] + ' Users ' + best.p[3];
+         $('tip').setAttribute('visibility', 'visible');
+       });
+       $('chart').addEventListener('mouseleave', () => $('tip').setAttribute('visibility', 'hidden'));
+       const g = $('pie').getContext('2d');
+       g.fillStyle = '#c33'; g.fillRect(20, 10, 16, 16); g.fillStyle = '#000'; g.fillText('Red', 42, 22);
+       g.fillStyle = '#36c'; g.fillRect(100, 10, 16, 16); g.fillStyle = '#000'; g.fillText('Blue', 122, 22);
+       g.fillStyle = '#c33'; g.beginPath(); g.moveTo(150, 95); g.arc(150, 95, 45, 0, 4); g.fill();
+       $('pie').addEventListener('click', (e) => { if (e.offsetX >= 18 && e.offsetX <= 70 && e.offsetY >= 6 && e.offsetY <= 32) $('s-legend').textContent = 'Red: hidden'; });
+       let press = null, lifted = null;
+       const list = $('sortable');
+       list.addEventListener('pointerdown', (e) => { const li = e.target.closest('li'); if (li && e.button === 0) press = { li, x: e.clientX, y: e.clientY, at: performance.now(), id: e.pointerId }; });
+       document.addEventListener('pointermove', (e) => {
+         if (!press || e.pointerId !== press.id) return;
+         if (!lifted) {
+           const far = Math.hypot(e.clientX - press.x, e.clientY - press.y);
+           // A drag starts only after a held press: moving first is a scroll, and ends it.
+           if (performance.now() - press.at < 120) { if (far >= 5) press = null; return; }
+           if (far < 5) return;
+           lifted = press.li;
+         }
+         const over = [...list.children].find((li) => { const r = li.getBoundingClientRect(); return e.clientY >= r.top && e.clientY < r.bottom; });
+         if (!over || over === lifted) return;
+         const r = over.getBoundingClientRect();
+         list.insertBefore(lifted, e.clientY < r.top + r.height / 2 ? over : over.nextSibling);
+       });
+       document.addEventListener('pointerup', () => { if (lifted) $('s-order').textContent = 'Order: ' + [...list.children].map((li) => li.textContent).join(', '); press = null; lifted = null; });
+       $('banana').addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', 'food:Banana'); e.dataTransfer.effectAllowed = 'move'; });
+       for (const bin of document.querySelectorAll('.bin')) {
+         bin.addEventListener('dragover', (e) => { if (bin.dataset.accepts === 'food') e.preventDefault(); });
+         bin.addEventListener('drop', (e) => { e.preventDefault(); const [, name] = e.dataTransfer.getData('text/plain').split(':'); $('s-bin').textContent = 'Dropped: ' + name + ' in ' + bin.dataset.accepts; });
+       }
+       let touch = null;
+       $('token').addEventListener('touchstart', (e) => { touch = { x: e.touches[0].clientX, left: $('token').offsetLeft }; e.preventDefault(); }, { passive: false });
+       $('token').addEventListener('touchmove', (e) => { if (touch) $('token').style.left = Math.max(0, Math.min(280, touch.left + e.touches[0].clientX - touch.x)) + 'px'; });
+       $('token').addEventListener('touchend', () => { if (touch && $('token').offsetLeft > 100) $('s-token').textContent = 'Token: moved by touch'; touch = null; });
+     </script>`,
+  ),
   // Controls that do not answer a click made by script, each in its own
   // way: the run has no debugger, so its pointer and keys are scripted.
   // This one takes a real mouse press, or Enter with the focus on it.
@@ -1162,6 +1245,20 @@ function buildStepPolicies(baseUrl) {
       if (!/Dropped: invoice/.test(ctx.userText)) return step("Attach the invoice", [{ do: "drag", ref: named(ctx, /^invoice\.pdf$/i).id, to_ref: named(ctx, /^attachments$/i).id }]);
       return done("Done: volume up, Apples moved last, invoice attached.", ["Dropped: invoice"]);
     },
+    // Every whole gesture by script, one a step, each told apart by its line in the history.
+    gestures(ctx) {
+      const did = (re) => re.test(ctx.userText);
+      if (!did(/double_click \[\d+\]/)) return step("Open the cell for editing", [{ do: "double_click", ref: named(ctx, /^order so-1$/i).id }]);
+      if (!did(/right_click \[\d+\]/)) return step("Open the node's own menu", [{ do: "right_click", ref: named(ctx, /^root node$/i).id }]);
+      if (!did(/hold \[\d+\]/)) return step("Long-press the button", [{ do: "hold", ref: named(ctx, /^activate$/i).id, seconds: 2 }]);
+      if (!did(/hover \[\d+\] at /)) return step("Point at the highest point of the line", [{ do: "hover", ref: named(ctx, /^users chart$/i).id, fx: 0.55, fy: 0.2 }]);
+      if (!did(/look \[\d+\]/)) return step("See the pie chart", [{ do: "look", ref: named(ctx, /^pie chart$/i).id }]);
+      if (!did(/click \[\d+\] at 0\.167/)) return step("Hide Red in the legend", [{ do: "click", ref: named(ctx, /^pie chart$/i).id, fx: 0.167, fy: 0.133 }]);
+      if (!did(/drag \[\d+\][^\n]* before \[/)) return step("Put Gamma first", [{ do: "drag", ref: named(ctx, /^gamma$/i).id, to_ref: named(ctx, /^alpha$/i).id, place: "before" }]);
+      if (!did(/drag \[\d+\][^\n]* onto "/)) return step("Put the banana in the food bin", [{ do: "drag", ref: named(ctx, /^banana$/i).id, to_text: "This bin accepts: food" }]);
+      if (!did(/drag \[\d+\][^\n]* right 200px/)) return step("Slide the token", [{ do: "drag", ref: named(ctx, /^token$/i).id, direction: "right", distance: 200 }]);
+      return done("Each gesture was made.", ["Dropped: Banana in food"]);
+    },
     // The same page with the debugger refused: a click and a drag by script.
     pointerNoDebugger(ctx) {
       if (/Count: 0/.test(ctx.userText)) return step("Count once", [{ do: "click", ref: named(ctx, /^count$/i).id }]);
@@ -1447,6 +1544,7 @@ function createE2EServer(port = 8907) {
   scenarios.pointerFrame = { task: "Pick seat 12A.", stepDelayMs: 1200 };
   scenarios.pointerDrag = { task: "Turn the volume up, move Apples to the end of the list, and attach the invoice." };
   scenarios.pointerNoDebugger = { task: "Count once and move Apples to the end of the list." };
+  scenarios.gestures = { task: "Edit the cell, open the node's menu, long-press the button, read the chart's highest point, hide Red, put Gamma first, bin the banana as food and slide the token." };
   scenarios.pointerCanvas = { task: "Press the drawing a little right of its middle, then press the hidden button." };
   scenarios.pointerRisk = { task: "Tidy up my account." };
   scenarios.hoverScripted = { task: "Choose Pricing from the Products menu." };

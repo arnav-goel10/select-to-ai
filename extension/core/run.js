@@ -1676,7 +1676,7 @@
         status(run, "executor", `Step ${run.step}…`);
         // What the user approved, by the control's words: the driver runs it
         // only while the control still says that.
-        const approved = a.ref !== undefined && ["click", "fill", "press"].includes(a.do) && run.labels[a.ref] !== undefined ? { ...a, approved: run.labels[a.ref] } : a;
+        const approved = a.ref !== undefined && ["click", "double_click", "right_click", "hold", "fill", "press"].includes(a.do) && run.labels[a.ref] !== undefined ? { ...a, approved: run.labels[a.ref] } : a;
         if (approved !== a) run.queue = [approved, ...run.queue.slice(1)];
         fx.push({ type: "act", action: approved });
         return fx;
