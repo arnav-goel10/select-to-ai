@@ -441,3 +441,55 @@ test("the plan step fails a real run with a missing key or a pairing that is not
   const more = plan({ IN_LEARNING: "true", IN_RUNS: "2", IN_RECIPES: "true", IN_MAX_USD: "3", IN_SHARDS: "6" });
   assert.deepEqual([more.outputs.learn, more.outputs.runs, more.outputs.recipes, more.outputs.cap_per_shard], ["on", "2", "true", "0.5000"]);
 });
+
+// A books page as the harness's innerText sees it (no ratings) and as the engine read it (the class-carried rating shown).
+function booksRun() {
+  const filler = Array.from({ length: 400 }, (_, i) => `Filler book ${i} £${(30 + (i % 50)).toFixed(2)} In stock Add to basket`).join("\n");
+  const inner = `Mystery\n32 results\n${filler}\nThe Girl You Lost\n£12.29\nIn stock\nAdd to basket`;
+  const engine = `Mystery\n32 results\n${filler}\n[class "star-rating Five"]\nThe Girl You Lost\n£12.29\nIn stock\nAdd to basket`;
+  const url = "https://books.toscrape.com/catalogue/category/books/mystery_3/page-2.html";
+  return {
+    run: {
+      task: "Find the five-star Mystery books under £20.", startUrl: "https://books.toscrape.com/", ending: "finished",
+      answer: 'Only one: "The Girl You Lost": £12.29, rated five stars.',
+      history: [{ step: 1, ok: true, action: "navigate", outcome: "Opened page 2", goal: "MODEL GOAL do not show", note: "MODEL NOTE do not show" }],
+      notes: "MODEL NOTES do not show", finalUrl: url, finalTitle: "Mystery", finalText: inner, pages: [{ url, title: "Mystery", text: inner }],
+    },
+    reading: { url, title: "Mystery", text: engine },
+  };
+}
+
+test("the engine's reading grounds a class-carried rating the innerText capture lacks, and the judge is shown its passage", () => {
+  const { run, reading } = booksRun();
+  assert.ok(!/star-rating/.test(J.judgeMessage(run)), "without the reading the judge sees no rating");
+  // The worker side: what the engine kept, model text left behind.
+  const prev = globalThis.self;
+  globalThis.self = { SELECT_TO_AI_ENGINE: { sessions: new Map([[1, { run: { id: "r1", memory: "MODEL NOTES", answers: ["MODEL ANSWER"], seen: [{ ...reading, digest: "d" }], children: [{ run: { seen: [{ url: "https://books.toscrape.com/sub", title: "Sub", text: "sub page text" }] } }] }, runners: new Map() }]]) } };
+  let got;
+  try { got = T.engineReadingsInWorker("r1", {}); assert.equal(T.engineReadingsInWorker("other", {}).length, 0); assert.ok(T.engineReadingsInWorker("r1", { [reading.url]: reading.text.length })[0].same); } finally { globalThis.self = prev; }
+  assert.deepEqual(got.map((p) => Object.keys(p).sort().join(",")), ["text,title,url", "text,title,url"], "page text only, nothing the model wrote");
+  const readings = [...T.mergeReadings(new Map(), got).values()];
+  run.engineReadings = T.engineExcerpts(readings, run.answer);
+  run.grounding = T.answerGrounding({ ...run, readings, finalText: "", pages: [] });
+  assert.deepEqual(run.grounding, { numbers: 1, found: 1, missing: [] });
+  const msg = J.judgeMessage(run);
+  assert.match(msg, /The engine's reading of the pages visited/);
+  assert.ok(msg.includes(`Page: Mystery | ${reading.url} (excerpt of`));
+  assert.match(msg, /\[class "star-rating Five"\]\nThe Girl You Lost\n£12\.29/, "the passage around the answer's values");
+  assert.match(msg, /"The Girl You Lost": on .*\(engine's reading\)/);
+  assert.match(J.JUDGE_SYSTEM, /engine's reading/);
+  for (const s of ["MODEL GOAL", "MODEL NOTE", "MODEL ANSWER"]) assert.ok(!msg.includes(s), s);
+});
+
+test("the engine's readings given to the judge stay within their bounds", () => {
+  const big = (i) => ({ url: `https://a.example/${i}`, title: `P${i}`, text: `${"x".repeat(5000)} value 4242 ${"y".repeat(300000)} value 4242 again ${"z".repeat(300000)} 4242` });
+  const out = T.engineExcerpts(Array.from({ length: 30 }, (_, i) => big(i)), "It is 4242, see **value**");
+  assert.ok(out.length <= T.READING.pages);
+  for (const p of out) { assert.ok(p.text.length <= T.READING.perPage, `${p.text.length}`); assert.ok(p.chars > p.text.length); }
+  assert.ok(out.reduce((n, p) => n + p.text.length, 0) <= T.READING.total);
+  assert.ok(out[0].text.includes("value 4242 again"), "a later passage holding the value is kept");
+  assert.ok(J.engineReadingText(out).length < T.READING.total + 3000);
+  assert.equal(J.engineReadingText([]), "");
+  // With nothing to look for, each page still shows its opening only.
+  assert.ok(T.engineExcerpts([big(0)], "done")[0].text.length <= T.READING.head);
+});

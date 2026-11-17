@@ -255,6 +255,20 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   // The text of each page the agent was on, newest last: what it could have
   // read, for the judge.
   const seenPages = new Map();
+  // The engine's own reading of each page (run.seen in core/run.js), asked of
+  // the worker as the run goes: what the model was shown of the page, which
+  // innerText lacks in places (values carried by a class or a label, a PDF's
+  // text, shadow roots, the rest of a long page).
+  const readings = new Map();
+  let worker = null;
+  const readEngine = async (runId) => {
+    if (!runId) return;
+    try {
+      if (!worker) worker = await BENCH_PROFILE_LIB.workerOf(browser, extensionId);
+      const known = Object.fromEntries([...readings.values()].map((p) => [p.url, p.text.length]));
+      TRIAL.mergeReadings(readings, await worker.evaluate(TRIAL.engineReadingsInWorker, runId, known));
+    } catch (_e) { worker = null; /* a worker that restarted: asked again at the next step */ }
+  };
   const held = [];
   let lastStep = -1;
   let sawRunning = false;
@@ -294,7 +308,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
       // A run at a check-in, or paused for its provider, is still under way.
       const held = !!keep || !!(trace && trace.waitingForUser && ["check_in", "pause"].includes(trace.waitKind));
       const running = held || document.getElementById("actionBtn").classList.contains("stop-btn");
-      return { asked, running, steps: trace ? trace.steps : 0, costUSD: trace ? trace.costUSD || 0 : 0, tokens: trace ? trace.tokens : null };
+      return { asked, running, runId: trace ? trace.id || "" : "", steps: trace ? trace.steps : 0, costUSD: trace ? trace.costUSD || 0 : 0, tokens: trace ? trace.tokens : null };
     }, [...ALLOW]);
     // What the run has spent so far, kept outside this function: a run lost to the browser still cost it.
     live.costUSD = Math.max(live.costUSD || 0, state.costUSD || 0);
@@ -302,7 +316,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
     live.steps = state.steps;
     if (state.asked) held.push(state.asked);
     if (state.running) sawRunning = true;
-    if (state.steps !== lastStep) { lastStep = state.steps; if (state.steps > 0) await shot(`step${state.steps}`); }
+    if (state.steps !== lastStep) { lastStep = state.steps; if (state.steps > 0) { await shot(`step${state.steps}`); await readEngine(state.runId); } }
     if (sawRunning && !state.running) { ending = "finished"; break; }
     // A question answered without starting a run ends when its answer stops changing.
     if (!sawRunning && Date.now() - t0 > 20000) {
@@ -317,6 +331,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   const shown = await agentPage.evaluate(() => { const b = [...document.querySelectorAll(".final-answer-box")].filter((x) => getComputedStyle(x).display !== "none").pop(); return b ? (b.innerText || "").trim() : ""; }).catch(() => "");
   // The final answer, from the trace: never one shown while it was being checked.
   const answer = J.finalAnswer(trace, shown);
+  if (trace && trace.id) await readEngine(trace.id);
   const log = await agentPage.evaluate(() => [...document.querySelectorAll(".log-item")].map((i) => i.textContent).join("\n")).catch(() => "");
   if (ending === "timed out") await agentPage.evaluate(() => { const b = document.getElementById("actionBtn"); if (b.classList.contains("stop-btn")) b.click(); }).catch(() => {});
   // BENCH_MAX_USD: the run's own budget was what was left under the cap.
@@ -393,10 +408,13 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
     finalText: final.text,
     formState,
     pages: [...seenPages.values()].slice(-10),
+    // The engine's reading of the pages, cut to the parts that bear on the answer (TRIAL.engineExcerpts).
+    engineReadings: TRIAL.engineExcerpts([...readings.values()], answer),
     screenshots,
     ...(recipe ? { recipe } : {}),
   };
-  run.grounding = TRIAL.answerGrounding(run);
+  // Grounded against the whole of each reading, not only the excerpts.
+  run.grounding = TRIAL.answerGrounding({ ...run, readings: [...readings.values()] });
   // What the user would be looking at in the agent's panel when the run ended.
   const panel = await agentPage.evaluate(() => (document.body.innerText || "").replace(/\n{2,}/g, "\n").slice(-1500)).catch(() => "");
   fs.writeFileSync(path.join(dir, "log.txt"), `${log}\n\n--- panel at the end ---\n${panel}`);
@@ -802,7 +820,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   if (s.blocked || s.lost) console.log(`Success with the ${s.blocked} blocked and ${s.lost} lost run(s) counted as failures: ${pct(s.successAllRuns)}.`);
   // Why a shard stopped can hold a lost run's error text: a sealed log says only that it did.
   if (stoppedEarly) console.log(SEALED ? "Stopped early: a shard stopped early." : `Stopped early: ${stoppedEarly}`);
-  fs.writeFileSync(path.join(OUT, `results${SHARD ? `-${SHARD[1]}of${SHARD[2]}` : ""}.json`), JSON.stringify({ agent: { provider: PROVIDER, model: MODEL, helperModel: HELPER_MODEL || undefined, url: CUSTOM_URL || undefined, extension: EXT, profile: CHATGPT ? CHATGPT.profile : undefined, debugger: DEBUGGER || "as built", debuggerAvailable, learning: LEARN || "off", recipes: RECIPES, disguise: DISGUISE }, shard: SHARD ? `shard ${SHARD[1]} of ${SHARD[2]}` : "", judge: { model: JUDGE.model, url: JUDGE.url, vision: JUDGE.vision, shots: JUDGE.vision ? JUDGE.shots : 0, stubCalls: DRY ? judgeStub.calls : undefined }, dry: DRY, spentUSD: spent, capUSD: MAX_USD, capReached, runsPerTask: RUNS, planned: tasks.map((t) => t.id), summary: s, stoppedEarly, rows: rows.map((r) => ({ ...r, finalText: undefined, pages: undefined, screenshots: (r.screenshots || []).length })) }, null, 2));
+  fs.writeFileSync(path.join(OUT, `results${SHARD ? `-${SHARD[1]}of${SHARD[2]}` : ""}.json`), JSON.stringify({ agent: { provider: PROVIDER, model: MODEL, helperModel: HELPER_MODEL || undefined, url: CUSTOM_URL || undefined, extension: EXT, profile: CHATGPT ? CHATGPT.profile : undefined, debugger: DEBUGGER || "as built", debuggerAvailable, learning: LEARN || "off", recipes: RECIPES, disguise: DISGUISE }, shard: SHARD ? `shard ${SHARD[1]} of ${SHARD[2]}` : "", judge: { model: JUDGE.model, url: JUDGE.url, vision: JUDGE.vision, shots: JUDGE.vision ? JUDGE.shots : 0, stubCalls: DRY ? judgeStub.calls : undefined }, dry: DRY, spentUSD: spent, capUSD: MAX_USD, capReached, runsPerTask: RUNS, planned: tasks.map((t) => t.id), summary: s, stoppedEarly, rows: rows.map((r) => ({ ...r, finalText: undefined, pages: undefined, engineReadings: undefined, screenshots: (r.screenshots || []).length })) }, null, 2));
   // The spend cap doing its job is not a failure of the run.
   if (stoppedEarly && !capReached) process.exitCode = 2;
 })().catch((e) => { console.error(SEALED ? "The harness stopped with an error; a sealed run withholds the detail." : e); process.exit(1); });

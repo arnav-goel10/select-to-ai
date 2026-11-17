@@ -213,14 +213,123 @@ function asciiDigits(text) {
  * compared without its thousands separators. Not proof either way: only the
  * last few pages are kept, and an answer may state a sum or a difference.
  */
+const numbersIn = (text) => [...asciiDigits(text).matchAll(/\d+(?:[.,:]\d+)*/g)].map((m) => m[0]);
+const flatNumber = (n) => n.replace(/[,.](?=\d{3}(\D|$))/g, "");
+
 function answerGrounding(run) {
-  const numbersOf = (text) => [...asciiDigits(text).matchAll(/\d+(?:[.,:]\d+)*/g)].map((m) => m[0]);
-  const flat = (n) => n.replace(/[,.](?=\d{3}(\D|$))/g, "");
+  const numbersOf = numbersIn;
+  const flat = flatNumber;
   const said = [...new Set(numbersOf(run.answer).map(flat))].filter((n) => n.length > 1);
   const forms = ((run.formState && run.formState.controls) || []).map((c) => `${c.value || ""} ${(c.selected || []).join(" ")}`).join(" ");
-  const seen = new Set(numbersOf([run.finalText, ...(run.pages || []).map((p) => p.text), forms].join("\n")).map(flat));
+  // The engine's own reading of each page counts as much as the harness's capture: it holds what innerText lacks.
+  const read = (run.readings || run.engineReadings || []).map((p) => p.text);
+  const seen = new Set(numbersOf([run.finalText, ...(run.pages || []).map((p) => p.text), ...read, forms].join("\n")).map(flat));
   const missing = said.filter((n) => !seen.has(n));
   return { numbers: said.length, found: said.length - missing.length, missing: missing.slice(0, 12) };
+}
+
+/**
+ * Runs in the extension's service worker (handed over whole, so it uses
+ * nothing from this file): the text the engine kept of each page the run
+ * read (core/run.js, run.seen), its sub-tasks' too. Page text only: never
+ * the model's notes, goals or answer. `known` maps an address to the length
+ * of the text the harness already holds for it, and an unchanged page comes
+ * back without its text, so a long run is not sent again at every step.
+ */
+function engineReadingsInWorker(runId, known) {
+  const E = self.SELECT_TO_AI_ENGINE;
+  if (!E || !E.sessions || !runId) return null;
+  const out = [];
+  const visit = (run) => {
+    if (!run) return;
+    for (const p of run.seen || []) {
+      const text = String(p.text || "");
+      if (!p.url || !text) continue;
+      out.push(known && known[p.url] === text.length ? { url: p.url, title: String(p.title || ""), same: true } : { url: p.url, title: String(p.title || ""), text });
+    }
+    for (const c of run.children || []) visit(c.run);
+  };
+  for (const s of E.sessions.values()) {
+    if (!s.run || s.run.id !== runId) continue;
+    visit(s.run);
+    for (const r of (s.runners && s.runners.values()) || []) visit(r.run);
+  }
+  return out;
+}
+
+/** Adds what engineReadingsInWorker sent to the harness's readings (a Map by address, newest last). */
+function mergeReadings(map, got) {
+  for (const p of got || []) {
+    if (!p || !p.url) continue;
+    if (p.same) continue;
+    map.delete(p.url);
+    map.set(p.url, { url: p.url, title: p.title || "", text: String(p.text || "") });
+  }
+  return map;
+}
+
+// The bounds on the engine's readings shown to the judge.
+const READING = Object.freeze({ head: 1200, around: 300, perPage: 6000, total: 24000, pages: 8, hits: 3 });
+
+/**
+ * What the answer states that can be looked for on a page: its numbers (two
+ * digits or more) and its bold or quoted names. Used only to choose which
+ * parts of a page to show: the text shown is always the page's own.
+ */
+function answerValues(answer) {
+  const a = String(answer || "");
+  const nums = [...new Set(numbersIn(a))].filter((n) => n.replace(/\D/g, "").length > 1);
+  const names = [...a.matchAll(/\*\*([^*\n]{3,80})\*\*|"([^"\n]{3,80})"|“([^”\n]{3,80})”/g)].map((m) => (m[1] || m[2] || m[3]).trim().replace(/[:.,]$/, ""));
+  return [...new Set([...nums, ...nums.map(flatNumber), ...names])].filter((v) => v.length > 1).slice(0, 24);
+}
+
+/**
+ * The engine's readings, cut for the judge: each page's opening and the text
+ * around every value the answer states, pages with the most of those values
+ * first, within READING's bounds.
+ */
+function engineExcerpts(readings, answer, bounds = READING) {
+  const values = answerValues(answer).map((v) => asciiDigits(v).toLowerCase());
+  const pages = (readings || []).filter((p) => p && p.url && p.text).map((p, order) => {
+    const text = String(p.text).replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n");
+    const lower = asciiDigits(text).toLowerCase();
+    const spans = [];
+    let hits = 0;
+    for (const v of values) {
+      let from = 0;
+      for (let n = 0; n < bounds.hits; n++) {
+        const at = lower.indexOf(v, from);
+        if (at < 0) break;
+        if (n === 0) hits++;
+        spans.push([Math.max(0, at - bounds.around), Math.min(text.length, at + v.length + bounds.around)]);
+        from = at + v.length;
+      }
+    }
+    return { url: p.url, title: p.title || "", text, spans, hits, order };
+  });
+  pages.sort((a, b) => b.hits - a.hits || b.order - a.order);
+  const out = [];
+  let used = 0;
+  for (const p of pages.slice(0, bounds.pages)) {
+    const room = Math.min(bounds.perPage, bounds.total - used);
+    if (room < 200) break;
+    const head = Math.min(bounds.head, p.text.length);
+    const merged = [];
+    for (const s of p.spans.filter((x) => x[1] > head).map((x) => [Math.max(x[0], head), x[1]]).sort((x, y) => x[0] - y[0])) {
+      const last = merged[merged.length - 1];
+      if (last && s[0] <= last[1]) last[1] = Math.max(last[1], s[1]); else merged.push(s);
+    }
+    let text = p.text.slice(0, head);
+    for (const [a, b] of merged) {
+      const piece = `\n[...]\n${p.text.slice(a, b)}`;
+      if (text.length + piece.length > room) break;
+      text += piece;
+    }
+    text = text.slice(0, room);
+    used += text.length;
+    out.push({ url: p.url, title: p.title, chars: p.text.length, text });
+  }
+  return out;
 }
 
 /**
@@ -1005,7 +1114,7 @@ function main(argv) {
   process.exit(1);
 }
 
-module.exports = { FAMILIES, DIFFICULTIES, SUITES, SEALED_SUITES, READING_CHECKS, SEALED_CRASH, readingCheckPages, SEALED_MIN_GROUP, SEALED_WITHHELD, HOLDOUT_ENCRYPTED, DRY_PORT, PRACTICE_SITES, validateTasks, taskSites, holdoutFile, holdoutProblems, holdoutShapeProblems, readSuites, groupTable, sealedReport, sealedMarkdown, sealedLogText, sealConsole, leaksIn, patternMatch, patternVerdict, learnPlan, plannedRuns, longPromptSurchargeUSD, spendOf, answerGrounding, countersOf, judgeCostUSD, bucketOf, failureOf, familyTable, markdown, armProblems, learnTable, learnMarkdown, recipeTable, recipeMarkdown, readRows, readShards, checkDry, checkLeg, readFormControls };
+module.exports = { FAMILIES, DIFFICULTIES, SUITES, SEALED_SUITES, READING_CHECKS, SEALED_CRASH, readingCheckPages, SEALED_MIN_GROUP, SEALED_WITHHELD, HOLDOUT_ENCRYPTED, DRY_PORT, PRACTICE_SITES, validateTasks, taskSites, holdoutFile, holdoutProblems, holdoutShapeProblems, readSuites, groupTable, sealedReport, sealedMarkdown, sealedLogText, sealConsole, leaksIn, patternMatch, patternVerdict, learnPlan, plannedRuns, longPromptSurchargeUSD, spendOf, answerGrounding, engineReadingsInWorker, mergeReadings, answerValues, engineExcerpts, READING, countersOf, judgeCostUSD, bucketOf, failureOf, familyTable, markdown, armProblems, learnTable, learnMarkdown, recipeTable, recipeMarkdown, readRows, readShards, checkDry, checkLeg, readFormControls };
 
 if (require.main === module) {
   const argv = process.argv.slice(2);
