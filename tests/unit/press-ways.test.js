@@ -299,13 +299,15 @@ function unseeing(o = {}) {
     takeRecords() { return this.left; }
     disconnect() { this.off = true; }
   }
-  const scope = { document, agentDrawn: () => false, shownNow: (c) => c.shown !== false, pageNetLastStart: 0, Date: { now: () => 5000 }, ...(o.noObserver ? { PerformanceObserver: undefined } : { PerformanceObserver }) };
+  const record = [];
+  const performance = { getEntriesByType: (type) => (type === "resource" ? [...record] : []) };
+  const scope = { document, agentDrawn: () => false, shownNow: (c) => c.shown !== false, pageNetLastStart: 0, Date: { now: () => 5000 }, performance: o.noRecord ? undefined : performance, ...(o.noObserver ? { PerformanceObserver: undefined } : { PerformanceObserver }) };
   const names = ["openRoots", "fieldsNow", "focusNow", "watchUnseen"];
   const keys = Object.keys(scope);
   const { source } = require("../helpers/content-source.js");
   // pageNetLastStart is a variable of the content script: the test sets it through `net`.
   const made = new Function(...keys, `${names.map(source).join("\n")}\nreturn { ${names.join(", ")}, net: (t) => { pageNetLastStart = t; } };`)(...keys.map((k) => scope[k]));
-  return { ...made, document, root, listeners, observers, fields, inner };
+  return { ...made, document, root, listeners, observers, fields, inner, record };
 }
 
 test("a field given a new value by the page's code is seen, in a component's own root too", () => {
@@ -368,8 +370,20 @@ test("anything the page fetched is seen: by the page's own count, its background
   const w3 = late.watchUnseen();
   late.observers[0].left = [{}];
   assert.deepEqual(w3.stop(), ["request"]);
+  // The record grew, though nothing was told as it did: read by its length at the end.
+  const grown = unseeing({ noObserver: true });
+  grown.record.push({ name: "https://shop.example/old" });
+  const w5 = grown.watchUnseen();
+  grown.record.push({ name: "https://shop.example/api/feed" });
+  assert.deepEqual(w5.stop(), ["request"]);
+  // What was in it before the press is not this press's, and the extension's own loads are not the page's.
+  const before = unseeing({ noObserver: true });
+  before.record.push({ name: "https://shop.example/old" });
+  const w6 = before.watchUnseen();
+  before.record.push({ name: "chrome-extension://abcdef/icons/icon-48.png" });
+  assert.deepEqual(w6.stop(), []);
   // A browser without that record: the rest still works.
-  assert.deepEqual(unseeing({ noObserver: true }).watchUnseen().stop(), []);
+  assert.deepEqual(unseeing({ noObserver: true, noRecord: true }).watchUnseen().stop(), []);
 });
 
 test("the focus going elsewhere is seen", () => {

@@ -580,7 +580,7 @@ const FIXTURES = {
        window.reports = 0;
        const kept = window.fetch.bind(window);
        const report = document.getElementById('report');
-       const go = () => { window.reports += 1; kept('/api/slow-ok?n=' + window.reports).catch(() => {}); };
+       const go = () => { window.reports += 1; kept('/api/slow-ok?n=' + window.reports).then((r) => r.json()).catch(() => {}); };
        report.addEventListener('click', go);
        report.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') go(); });
      </script>`,

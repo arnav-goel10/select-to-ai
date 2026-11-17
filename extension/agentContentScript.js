@@ -4512,6 +4512,9 @@
         for (const root of roots) root.addEventListener('scroll', scrolled, true);
         // What the extension itself loads into the page (its own pictures) is not the page fetching.
         const theirs = (list) => list.some((e) => !/^(chrome-extension|data):/.test(String((e && e.name) || '')));
+        // The record is read two ways: as it is added to, and by its length at the end.
+        const recorded = () => { try { return typeof performance === 'object' && performance.getEntriesByType ? performance.getEntriesByType('resource') : []; } catch (_) { return []; } };
+        const had = recorded().length;
         let loads = null;
         try {
             if (typeof PerformanceObserver === 'function') {
@@ -4527,6 +4530,8 @@
                 for (const root of roots) root.removeEventListener('scroll', scrolled, true);
                 try { if (loads) { if (theirs(loads.takeRecords())) seen.add('request'); loads.disconnect(); } } catch (_) { /* nothing more to read */ }
                 if (pageNetLastStart >= since) seen.add('request');
+                const now = recorded();
+                if (now.length > had && theirs(now.slice(had))) seen.add('request');
                 if (fieldsNow() !== fields) seen.add('value');
                 if (focusNow() !== focus) seen.add('focus');
                 return [...seen];
