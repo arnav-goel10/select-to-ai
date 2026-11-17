@@ -40,6 +40,29 @@ Since then `slowResults` passes without the debugger (the wait counts the page's
 
 In 4.0 these page types get scripted input, and screenshots use `chrome.tabs.captureVisibleTab`, which sees only the front tab. These are scripted fixtures, so they show which kinds of page break, not how often real sites use them. No real-site comparison has been run.
 
+## Revisit, 18 Nov 2026
+
+The real-task trial asked for in the decision above has run. It used a sealed held-out set of 50 real-site tasks that no change was tuned on. Only the totals are recorded here.
+
+| Build | Passed | Widgets family (hover menus, drag and drop, sliders, date pickers, arrow keys, frames) |
+|---|---|---|
+| 4.0 as shipped (no debugger) | 40 of 50 | 1 of 6 |
+| The same build with `debugger` | 42 of 50 | 4 of 6 |
+| The older build (no debugger) | not compared in total | 1 of 6 |
+
+The widgets family accounts for the whole difference, and more. The other families together passed one task fewer with the debugger. The sample is small: six widgets tasks and one run of each build. A gain of three tasks there is a real signal about which page types need real input. It is not a measured rate.
+
+The plan was to ship real input as an optional grant: no warning at install or update, and a one-time card asking for it when a scripted action failed. Chrome does not allow this.
+
+- The permissions API page (https://developer.chrome.com/docs/extensions/reference/api/permissions) says "Most Chrome extension permissions can be specified as optional, with the following exceptions." `debugger` is first in that list.
+- Chromium's own permission table (`chrome/common/extensions/permissions/chrome_api_permissions.cc`, checked on main on 18 Nov 2026) gives `debugger` the flags `kFlagImpliesFullURLAccess`, `kFlagCannotBeOptional` and `kFlagRequiresManagementUIWarning`. Listed under `optional_permissions`, it is dropped from the manifest with a warning, and `chrome.permissions.request` for it is refused.
+
+So this listing has only two ways to get real input: `debugger` as a required permission, or none. The decision above stands for 4.0. What is left is the owner's choice (row 4 of [decisions-4.0.md](release/decisions-4.0.md)):
+
+1. **A companion listing** with `debugger` required from its first version, as described below. Nobody is disabled, and only users who want real input install it. It costs a second store item and its review.
+2. **`debugger` required on this listing** in a later update. Every existing user (about 1,000 on 2.0) is disabled on that update until they accept "Access the page debugger backend" and "Read and change all your data on all websites". The store review is longer.
+3. **Keep 4.0 as it is** and work on scripted input for widgets. The trial's 1 of 6 says the scripted path does not handle these pages today.
+
 ## What a later companion listing would need
 
 - Its own store item, name and listing, with `debugger` required from its first version, so nobody is disabled on update.
