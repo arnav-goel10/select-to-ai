@@ -772,7 +772,7 @@ async function main() {
         await new Promise((res) => setTimeout(res, 2500));
         const at = await r.fixture.evaluate(() => ({ sends: window.sends, state: document.getElementById("state").textContent }));
         const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
-        if (at.sends !== 1 || at.state !== "Order sent 1 time") return `the order was sent ${at.sends} times (${at.state}), not once: ${JSON.stringify(press && press.outcome)} ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (at.sends !== 1 || at.state !== "Stock counted 1 time") return `the stock was counted ${at.sends} times (${at.state}), not once: ${JSON.stringify(press && press.outcome)} ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
         if (r.actions.filter((a) => a.do === "click").length !== 1) return `the model pressed more than once: ${JSON.stringify(r.actions.map((a) => a.do))}`;
         if (/ways tried|then pressed with/.test(press.outcome)) return `another way was tried on top: ${JSON.stringify(press.outcome)}`;
         if (press.pointer === "real") return null;
@@ -791,7 +791,7 @@ async function main() {
       ["pressKept", "/press-kept", async () => false, async (r) => {
         const at = await r.fixture.evaluate(() => ({ reports: window.reports }));
         const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
-        if (at.reports !== 1) return `the report was sent ${at.reports} times, not once: ${JSON.stringify(press && press.outcome)} ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (at.reports !== 1) return `the feed was asked for ${at.reports} times, not once: ${JSON.stringify(press && press.outcome)} ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
         if (r.actions.filter((a) => a.do === "click").length !== 1) return `the model pressed more than once: ${JSON.stringify(r.actions.map((a) => a.do))}`;
         if (/ways tried|then pressed with/.test(press.outcome)) return `another way was tried on top: ${JSON.stringify(press.outcome)}`;
         if (/no request from it was seen/.test(press.outcome)) return `the result said no request was seen, though one was made: ${JSON.stringify(press.outcome)}`;

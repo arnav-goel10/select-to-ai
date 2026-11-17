@@ -543,14 +543,14 @@ const FIXTURES = {
   // This one acts a second and a half after the press, on a timer of its
   // own, with no request.
   "/press-late": pageShell(
-    "Order",
-    `<h1>Order</h1>
-     <p id="state">Order not sent</p>
-     <div id="send" role="button" tabindex="0" style="display:inline-block;padding:8px 18px;border:1px solid #888">Send order</div>
+    "Stock",
+    `<h1>Stock</h1>
+     <p id="state">Stock not counted</p>
+     <div id="send" role="button" tabindex="0" style="display:inline-block;padding:8px 18px;border:1px solid #888">Count the stock</div>
      <script>
        window.sends = 0;
        const send = document.getElementById('send');
-       const later = () => setTimeout(() => { window.sends += 1; document.getElementById('state').textContent = 'Order sent ' + window.sends + (window.sends === 1 ? ' time' : ' times'); }, 1500);
+       const later = () => setTimeout(() => { window.sends += 1; document.getElementById('state').textContent = 'Stock counted ' + window.sends + (window.sends === 1 ? ' time' : ' times'); }, 1500);
        send.addEventListener('click', later);
        send.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') later(); });
      </script>`,
@@ -572,10 +572,10 @@ const FIXTURES = {
   // This one asks the server through a fetch it kept from when the page
   // loaded, and the answer takes a second: nothing on the page changes.
   "/press-kept": pageShell(
-    "Report",
-    `<h1>Report</h1>
-     <p>Send the weekly report to the team.</p>
-     <div id="report" role="button" tabindex="0" style="display:inline-block;padding:8px 18px;border:1px solid #888">Send report</div>
+    "Feed",
+    `<h1>Feed</h1>
+     <p>News from the trail.</p>
+     <div id="report" role="button" tabindex="0" style="display:inline-block;padding:8px 18px;border:1px solid #888">Refresh the feed</div>
      <script>
        window.reports = 0;
        const kept = window.fetch.bind(window);
@@ -1068,17 +1068,17 @@ function buildStepPolicies(baseUrl) {
     },
     // Presses whose answer comes late or out of sight: one press each.
     pressLate(ctx) {
-      if (/Order sent/.test(ctx.userText)) return done("The order is sent.", ["Order sent"]);
-      if (/Nothing on the page changed|No change was seen/.test(ctx.userText)) return done("I pressed Send order once. The page showed no change while I watched.", [], false);
-      return step("Send the order", [{ do: "click", ref: named(ctx, /send order/i).id }]);
+      if (/Stock counted/.test(ctx.userText)) return done("The stock is counted.", ["Stock counted"]);
+      if (/Nothing on the page changed|No change was seen/.test(ctx.userText)) return done("I pressed Count the stock once. The page showed no change while I watched.", [], false);
+      return step("Count the stock", [{ do: "click", ref: named(ctx, /count the stock/i).id }]);
     },
     pressScroll(ctx) {
       if (/Nothing on the page changed|No change was seen|The page updated|The page scrolled/.test(ctx.userText)) return done("I pressed Next lines once.", [], false);
       return step("Show the next lines", [{ do: "click", ref: named(ctx, /next lines/i).id }]);
     },
     pressKept(ctx) {
-      if (/Nothing on the page changed|No change was seen|The page updated/.test(ctx.userText)) return done("I pressed Send report once. The page shows no change.", [], false);
-      return step("Send the report", [{ do: "click", ref: named(ctx, /send report/i).id }]);
+      if (/Nothing on the page changed|No change was seen|The page updated/.test(ctx.userText)) return done("I pressed Refresh the feed once. The page shows no change.", [], false);
+      return step("Refresh the feed", [{ do: "click", ref: named(ctx, /refresh the feed/i).id }]);
     },
     // A control that takes only the user's own press: told so, the model hands that one press over.
     pressUser(ctx) {
@@ -1410,9 +1410,9 @@ function createE2EServer(port = 8907) {
   scenarios.pressOnce = { task: "Subscribe me to the newsletter." };
   scenarios.pressUser = { task: "Unlock the downloads." };
   scenarios.pressPlain = { task: "Show more photos." };
-  scenarios.pressLate = { task: "Send my order." };
+  scenarios.pressLate = { task: "Count the stock." };
   scenarios.pressScroll = { task: "Show the next lines of the log." };
-  scenarios.pressKept = { task: "Send the weekly report." };
+  scenarios.pressKept = { task: "Refresh the feed." };
   scenarios.shadowClick = { task: "Add this to my basket." };
   scenarios.toolbar = { task: "Make the title upper case." };
   scenarios.lookPerSite = { task: "What does the sales chart show?" };
