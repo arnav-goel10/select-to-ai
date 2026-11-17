@@ -14,6 +14,8 @@
  *            the only verdict in dry mode, which has no judge
  *   sites    the other sites a task names, when it names more than one
  *   lang     the language of the site, when it is not English
+ *   difficulty  easy, medium or hard: how hard the task is for a person
+ *            using the page, so a holdout run can be counted by it too
  *   then     (learn tasks) the id of the task to run next in the same
  *            browser profile, on the same site: a pair. A task no "then"
  *            points to, and with none of its own, runs twice
@@ -25,13 +27,21 @@
  *
  * `summary` reads every run.json under the folder (one per task run, written
  * by run.js), prints a table by family in Markdown, and writes
- * trial-summary.json beside them.
+ * trial-summary.json beside them. With --sealed (the holdout suite) it prints
+ * and writes numbers only: no task id, answer, verdict or reason.
+ *
+ *   node tests/bench/trial.js holdout-check
+ *   node tests/bench/trial.js leaks <log file> --tasks <task file>
+ *
+ * `holdout-check` fails when a holdout task is on a site any other suite
+ * uses. `leaks` fails when a log names any task of the file.
  */
 "use strict";
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { isInfra, normaliseTasks, sampleTasks } = require("./judge.js");
+const { isInfra, normaliseTasks, sampleTasks, taskList } = require("./judge.js");
+const { siteOf } = require("../../extension/agentTools.js");
 
 const FAMILIES = Object.freeze({
   "fact-lookup": "Look up a fact on a page",
@@ -45,8 +55,21 @@ const FAMILIES = Object.freeze({
   "shopping": "Shopping research, no checkout",
   "maps-transit": "Maps and transit",
   "news-sports": "News and sports",
+  "widgets": "Page widgets: hover, drag, sliders, keys, pickers, frames, dialogs",
   "fixture": "Fixture pages (dry mode)",
 });
+
+const DIFFICULTIES = Object.freeze(["easy", "medium", "hard"]);
+
+// The task file of each suite the workflow runs. The holdout file is
+// sealed: see HOLDOUT_RULE and tests/bench/README.md.
+const SUITES = Object.freeze({
+  everyday: "tests/bench/everyday-tasks.json",
+  dev: "tests/bench/smoke-tasks.json",
+  learn: "tests/bench/learn-tasks.json",
+  holdout: "tests/bench/holdout-tasks.json",
+});
+const SEALED_SUITES = Object.freeze(["holdout"]);
 
 // The scripted model's server in dry mode. The fixture task file names this port in its addresses.
 const DRY_PORT = 8931;
@@ -59,7 +82,9 @@ const FORBIDDEN = /\b(sign up|sign me up|register an account|create an account|l
 // nouns a read-only task is full of ("open that book", "comments and docstrings").
 const FORBIDDEN_HAND_IN = /\b(submit|subscribe|upload|book (a|an|me|us|it|one|two|three|the|my|this)\b|apply (for|to|now)\b|(comment|reply) (on|to)\b|(leave|post|write|add) (a |an |the |my |this )?(comment|reply|review))\b/i;
 // Sites built for practising on forms: nothing typed there reaches a person or an account.
-const PRACTICE_SITES = Object.freeze(["httpbin.org", "selenium.dev", "demoqa.com", "the-internet.herokuapp.com", "formy-project.herokuapp.com", "jqueryui.com", "testpages.eviltester.com"]);
+const PRACTICE_SITES = Object.freeze(["httpbin.org", "selenium.dev", "demoqa.com", "the-internet.herokuapp.com", "formy-project.herokuapp.com", "jqueryui.com", "testpages.eviltester.com",
+  // Practice sites of the holdout suite.
+  "practice-automation.com", "automationtesting.in", "testautomationpractice.blogspot.com", "practicesoftwaretesting.com", "expandtesting.com"]);
 const hostOf = (url) => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch (_e) { return ""; } };
 const onPracticeSite = (url) => PRACTICE_SITES.some((s) => hostOf(url) === s || hostOf(url).endsWith(`.${s}`));
 
@@ -74,6 +99,7 @@ function validateTasks(list) {
     ids.add(t.id);
     if (!/^[a-z0-9][a-z0-9-]*$/.test(t.id)) problems.push(`${name}: id must be lower-case letters, digits and hyphens (it names a folder)`);
     if (!FAMILIES[t.level]) problems.push(`${name}: level "${t.level}" is not a family`);
+    if (t.difficulty !== undefined && !DIFFICULTIES.includes(t.difficulty)) problems.push(`${name}: difficulty "${t.difficulty}" is not one of ${DIFFICULTIES.join(", ")}`);
     if (t.level === "fixture" ? !/^http:\/\/127\.0\.0\.1:\d+\//.test(t.url) : !/^https:\/\//.test(t.url)) problems.push(`${name}: url ${t.url}`);
     if (!t.expect && !t.pattern) problems.push(`${name}: needs expect or pattern`);
     if (t.pattern) { try { new RegExp(t.pattern, "i"); } catch (e) { problems.push(`${name}: pattern does not compile (${e.message})`); } }
@@ -598,16 +624,160 @@ function checkLeg(leg, { rows, planned, shards, learn, recipes }) {
   return problems;
 }
 
+/** The sites a task uses, as registrable domains: its start page and the other sites it names. */
+function taskSites(t) {
+  return [...new Set([t && t.url, ...((t && t.sites) || [])].map((u) => siteOf(String(u || ""))).filter(Boolean))];
+}
+
+/**
+ * Problems with the holdout file, as sentences: every task needs a
+ * difficulty, and no task may use a site that a task of another suite uses.
+ * `others` maps a suite's name to its task list.
+ */
+function holdoutProblems(holdout, others) {
+  const problems = [];
+  const owner = new Map();
+  for (const [suite, list] of Object.entries(others || {})) for (const t of list || []) for (const site of taskSites(t)) if (!owner.has(site)) owner.set(site, `${suite} (${t.id})`);
+  for (const t of holdout || []) {
+    if (!DIFFICULTIES.includes(t.difficulty)) problems.push(`${t.id}: a holdout task needs a difficulty (${DIFFICULTIES.join(", ")})`);
+    for (const site of taskSites(t)) if (owner.has(site)) problems.push(`${t.id}: ${site} is also used by ${owner.get(site)}`);
+  }
+  return problems;
+}
+
+/** The holdout file and every other suite's, read from the repository. */
+function readSuites(root = path.join(__dirname, "../..")) {
+  const read = (f) => taskList(JSON.parse(fs.readFileSync(path.join(root, f), "utf8")));
+  const out = {};
+  for (const [name, file] of Object.entries(SUITES)) out[name] = read(file);
+  return out;
+}
+
+// In a sealed summary a group of fewer tasks than this is shown only
+// together with the other small groups: a line for one or two tasks would
+// be those tasks' own results.
+const SEALED_MIN_GROUP = 3;
+const SMALL_GROUPS = "other";
+
+/**
+ * The family table's counts grouped by a field of the task (its family or
+ * its difficulty), for a sealed summary. A run is matched to its task by
+ * slot. With `min`, groups of fewer distinct tasks than that are put
+ * together under "other".
+ */
+function groupTable(rows, tasks, field, min = 0) {
+  const all = tasks || [];
+  const bySlot = new Map(all.map((t) => [t.slot || t.id, t]));
+  const raw = (t) => (t && t[field]) || "none";
+  const taskOf = (r) => bySlot.get(r.slot || r.id) || bySlot.get(`${r.id}#${r.run || 1}`) || all.find((x) => x.id === r.id);
+  const size = {};
+  for (const t of all) (size[raw(t)] = size[raw(t)] || new Set()).add(t.id);
+  const keyOfTask = (t) => (min && (!size[raw(t)] || size[raw(t)].size < min) ? SMALL_GROUPS : raw(t));
+  const keyOf = (r) => keyOfTask(taskOf(r) || { [field]: r[field] || (field === "level" ? r.family || r.level : "") });
+  const keys = [...new Set([...all.map(keyOfTask), ...rows.map(keyOf)])];
+  const order = (k) => { const i = DIFFICULTIES.indexOf(k); return k === SMALL_GROUPS ? 999 : i < 0 ? 99 + Object.keys(FAMILIES).indexOf(k) : i; };
+  keys.sort((a, b) => order(a) - order(b) || a.localeCompare(b));
+  return keys.map((k) => ({ ...familyTable(rows.filter((r) => keyOf(r) === k), all.filter((x) => keyOfTask(x) === k)).total, family: undefined, [field]: k, distinctTasks: new Set(all.filter((x) => keyOfTask(x) === k).map((x) => x.id)).size }));
+}
+
+/** Only the numbers of a line: what a sealed summary may show of it. */
+function sealedCounts(l) {
+  const scored = l.passed + l.failed + l.timedOut;
+  return {
+    tasks: l.tasks, passed: l.passed, failed: l.failed, timedOut: l.timedOut, blocked: l.blocked, lost: l.lost, notRun: l.notRun,
+    passRate: scored ? l.passed / scored : null,
+    strictPassRate: l.tasks ? l.passed / l.tasks : null,
+    medianSeconds: l.medianSeconds,
+    spendUSD: l.agentUSD + l.judgeUSD + (l.replayUSD || 0),
+  };
+}
+
+/**
+ * What a sealed run may report, and nothing else: totals, rates, median
+ * time, spend, and counts by family and by difficulty. No task id, answer,
+ * verdict, reason, site or failure text is in it.
+ */
+function sealedReport(rows, planned, meta) {
+  const table = familyTable(rows, planned);
+  const byFamily = groupTable(rows, planned, "level", SEALED_MIN_GROUP);
+  const byDifficulty = groupTable(rows, planned, "difficulty", SEALED_MIN_GROUP);
+  return {
+    sealed: true,
+    rule: "Held-out results are read as numbers only. Nobody tunes the agent on the holdout file.",
+    meta: {
+      suite: meta.suite || "", arm: meta.arm || "", agent: meta.agent || "", judge: meta.judge || "", commit: meta.commit ? String(meta.commit).slice(0, 7) : "",
+      runs: meta.runs || 1, dry: !!meta.dry, learning: meta.learning || "", capUSD: meta.capUSD || 0, capReached: !!meta.capReached,
+      shardsStoppedEarly: (meta.stopped || []).length, armCheck: meta.armProblems && meta.armProblems.length ? "failed" : meta.armChecked ? "passed" : "not checked",
+    },
+    total: sealedCounts(table.total),
+    // Two signals worth a look that name no task.
+    patternDisagrees: table.total.patternDisagrees,
+    ungrounded: table.total.ungrounded,
+    byFamily: byFamily.map((l) => ({ family: l.level, ...sealedCounts(l) })),
+    byDifficulty: byDifficulty.map((l) => ({ difficulty: l.difficulty, ...sealedCounts(l) })),
+  };
+}
+
+/** A sealed report as Markdown, for the job summary. */
+function sealedMarkdown(report) {
+  const pct = (x) => (x === null || x === undefined ? "-" : `${(100 * x).toFixed(1)}%`);
+  const dash = (x) => (x === null || x === undefined ? "-" : x);
+  const m = report.meta;
+  const t = report.total;
+  const out = [`## Held-out trial (sealed: numbers only)${m.dry ? ", dry mode" : ""}`, ""];
+  out.push([m.suite ? `suite ${m.suite}` : "", m.arm ? `arm ${m.arm}` : "", m.learning ? `learning ${m.learning}` : "", m.runs > 1 ? `${m.runs} runs per task` : "", m.agent ? `agent ${m.agent}` : "", m.judge ? `judge ${m.judge}` : "", m.commit ? `commit ${m.commit}` : ""].filter(Boolean).join(", "), "");
+  out.push("Nobody tunes the agent on this suite. Read these numbers, not the runs behind them: no task, answer or verdict is shown here or in the summary artifact.", "");
+  out.push(`Passed ${t.passed} of ${t.passed + t.failed + t.timedOut} scored runs (${pct(t.passRate)}); with blocked, lost and not-run tasks counted as failures, ${t.passed} of ${t.tasks} (${pct(t.strictPassRate)}).`);
+  out.push(`Failed ${t.failed}, timed out ${t.timedOut}, blocked by a human check ${t.blocked}, lost ${t.lost}, not run ${t.notRun}. Median ${dash(t.medianSeconds)} s a run. Model spend ${usd(t.spendUSD)}${m.capUSD ? `, cap ${capText(m.capUSD)}` : ""}${m.capReached ? " (the cap stopped the run)" : ""}.`);
+  out.push("");
+  const head = (first) => [`| ${first} | tasks | passed | failed | timed out | blocked | lost | not run | pass rate |`, "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"];
+  const row = (name, l) => `| ${name} | ${l.tasks} | ${l.passed} | ${l.failed} | ${l.timedOut} | ${l.blocked} | ${l.lost} | ${l.notRun} | ${pct(l.passRate)} |`;
+  out.push(...head("family"));
+  const small = `Families of fewer than ${SEALED_MIN_GROUP} tasks, together`;
+  for (const l of report.byFamily) out.push(row(l.family === SMALL_GROUPS ? small : FAMILIES[l.family] || l.family, l));
+  out.push("", ...head("difficulty"));
+  for (const l of report.byDifficulty) out.push(row(l.difficulty === SMALL_GROUPS ? `difficulties of fewer than ${SEALED_MIN_GROUP} tasks, together` : l.difficulty, l));
+  out.push("");
+  out.push(`A family or difficulty of fewer than ${SEALED_MIN_GROUP} tasks is counted only with the other small ones, so that no line is one task's result.`);
+  if (report.patternDisagrees) out.push(`The judge and a task's answer pattern disagree in ${report.patternDisagrees} run(s).`);
+  if (report.ungrounded) out.push(`${report.ungrounded} passed run(s) state numbers none of which is in any captured page.`);
+  out.push(`Arm check: ${m.armCheck}.${m.shardsStoppedEarly ? ` ${m.shardsStoppedEarly} shard(s) stopped early.` : ""}`);
+  return out.join("\n");
+}
+
+/** The tasks a text names, by id or start page: empty when it names none. */
+function leaksIn(text, tasks) {
+  const s = String(text || "");
+  return (tasks || []).filter((t) => (t.id && s.includes(t.id)) || (t.url && s.includes(t.url))).map((t) => t.id);
+}
+
 function main(argv) {
   const [cmd, target, ...rest] = argv;
   const flag = (name) => { const i = rest.indexOf(name); return i >= 0 ? rest[i + 1] : ""; };
   if (cmd === "validate") {
-    const list = JSON.parse(fs.readFileSync(target, "utf8"));
+    const list = taskList(JSON.parse(fs.readFileSync(target, "utf8")));
     const problems = validateTasks(list);
     const per = {};
     for (const t of list) per[t.level] = (per[t.level] || 0) + 1;
     console.log(`${list.length} tasks: ${Object.entries(per).map(([k, v]) => `${k} ${v}`).join(", ")}; ${list.filter((t) => t.pattern).length} with a pattern`);
     if (problems.length) { console.error(problems.join("\n")); process.exit(1); }
+    return;
+  }
+  if (cmd === "holdout-check") {
+    const suites = readSuites();
+    const { holdout, ...others } = suites;
+    const problems = [...validateTasks(holdout), ...holdoutProblems(holdout, others)];
+    const sites = new Set(holdout.flatMap(taskSites));
+    // Counts only: this command runs in the open part of the workflow.
+    console.log(`holdout: ${holdout.length} tasks on ${sites.size} sites, none shared with ${Object.keys(others).join(", ")}${problems.length ? ": NOT SO" : ""}`);
+    if (problems.length) { console.error(problems.join("\n")); process.exit(1); }
+    return;
+  }
+  if (cmd === "leaks") {
+    const tasks = normaliseTasks(JSON.parse(fs.readFileSync(flag("--tasks"), "utf8")));
+    const found = leaksIn(fs.existsSync(target) ? fs.readFileSync(target, "utf8") : "", tasks);
+    if (found.length) { console.error(`${target} names ${found.length} task(s) of a sealed suite.`); process.exit(1); }
+    console.log(`${target} names none of the ${tasks.length} task(s).`);
     return;
   }
   if (cmd === "summary") {
@@ -650,6 +820,28 @@ function main(argv) {
       armProblems: armProblems(arm, shards, rows, parseInt(flag("--shards") || "0", 10)),
     };
     const table = familyTable(rows, planned);
+    if (rest.includes("--sealed")) {
+      const report = sealedReport(rows, planned, meta);
+      const text = sealedMarkdown(report);
+      const json = JSON.stringify(report, null, 2);
+      // A sealed summary that names a task is not printed or written at all.
+      const leaked = [...new Set([...leaksIn(text, planned), ...leaksIn(json, planned)])];
+      if (leaked.length) { console.error(`The sealed summary would name ${leaked.length} task(s); nothing was printed or written.`); process.exit(1); }
+      console.log(text);
+      fs.mkdirSync(target, { recursive: true });
+      fs.writeFileSync(path.join(target, "trial-summary.json"), json);
+      const problems = [];
+      if (meta.armProblems.length) problems.push(`the arm check failed (${meta.armProblems.length} problem(s); the sealed per-task files hold the detail)`);
+      if (rest.includes("--check-dry")) { const n = checkDry(rows, planned, shards).length; if (n) problems.push(`${n} dry-run problem(s)`); }
+      for (const leg of (flag("--check") || "").split(",").filter(Boolean)) {
+        if (leg === "sealed") { if (!rows.length) problems.push("no run.json to summarise"); continue; }
+        const n = checkLeg(leg, { rows, planned, shards, learn: learnTable(rows), recipes: recipeTable(rows) }).length;
+        if (n) problems.push(`${n} problem(s) in the ${leg} leg`);
+      }
+      if (problems.length) { console.error(`\nTrial check failed: ${problems.join("; ")}.`); process.exit(1); }
+      if (flag("--check")) console.error(`\nDry leg check (${flag("--check")}): passed.`);
+      return;
+    }
     const learn = learnTable(rows);
     const recipes = recipeTable(rows);
     const text = [markdown(table, meta), learn ? learnMarkdown(learn) : "", recipes ? recipeMarkdown(recipes) : ""].filter(Boolean).join("\n");
@@ -672,10 +864,10 @@ function main(argv) {
     if (flag("--check")) console.error(`\nDry leg check (${flag("--check")}): passed.`);
     return;
   }
-  console.error("Usage: node tests/bench/trial.js validate <tasks.json> | summary <out dir> --tasks <tasks.json> [--sample N] [--runs N] [--learn on|pairs] [--arm shipped|debugger-on] [--shards N] [--check-dry] [--check cap|learn|recipes]");
+  console.error("Usage: node tests/bench/trial.js validate <tasks.json> | holdout-check | leaks <log> --tasks <tasks.json> | summary <out dir> --tasks <tasks.json> [--sample N] [--runs N] [--learn on|pairs] [--arm shipped|debugger-on] [--shards N] [--sealed] [--check-dry] [--check cap|learn|recipes|sealed]");
   process.exit(1);
 }
 
-module.exports = { FAMILIES, DRY_PORT, PRACTICE_SITES, validateTasks, patternMatch, patternVerdict, learnPlan, plannedRuns, longPromptSurchargeUSD, spendOf, answerGrounding, countersOf, judgeCostUSD, bucketOf, failureOf, familyTable, markdown, armProblems, learnTable, learnMarkdown, recipeTable, recipeMarkdown, readRows, readShards, checkDry, checkLeg, readFormControls };
+module.exports = { FAMILIES, DIFFICULTIES, SUITES, SEALED_SUITES, SEALED_MIN_GROUP, DRY_PORT, PRACTICE_SITES, validateTasks, taskSites, holdoutProblems, readSuites, groupTable, sealedReport, sealedMarkdown, leaksIn, patternMatch, patternVerdict, learnPlan, plannedRuns, longPromptSurchargeUSD, spendOf, answerGrounding, countersOf, judgeCostUSD, bucketOf, failureOf, familyTable, markdown, armProblems, learnTable, learnMarkdown, recipeTable, recipeMarkdown, readRows, readShards, checkDry, checkLeg, readFormControls };
 
 if (require.main === module) main(process.argv.slice(2));

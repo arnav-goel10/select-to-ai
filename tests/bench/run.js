@@ -53,7 +53,9 @@
  *                      the run's working time.
  *   BENCH_SHARD        "2/4": the second of four equal parts of the tasks
  *   BENCH_QUIET        1 for a held-out set: prints how each run ended and
- *                      the totals, never the judge's reasons
+ *                      the totals, never the judge's reasons. "sealed" (the
+ *                      holdout suite) prints no task at all: one line per
+ *                      finished run with its number, and the totals
  *   BENCH_HEADFUL      1 to watch
  *   BENCH_PROFILE      a browser profile signed in to ChatGPT with
  *                      chatgpt-profile.js (npm run bench:chatgpt-login). The
@@ -141,6 +143,7 @@ const ALLOW = new Set((process.env.BENCH_ALLOW || "site,address").split(",").map
 const ONLY = (process.env.BENCH_ONLY || "").split(",").filter(Boolean);
 const OUT = process.env.BENCH_OUT || path.join(__dirname, "out", new Date().toISOString().replace(/[:.]/g, "-"));
 const QUIET = !!process.env.BENCH_QUIET;
+const SEALED = process.env.BENCH_QUIET === "sealed";
 const SHARD = (process.env.BENCH_SHARD || "").match(/^(\d+)\/(\d+)$/);
 // The browser went away under the harness: nothing to do with the agent.
 const BROWSER_GONE = /Connection closed|Target closed|Session closed|detached Frame|Protocol error|browser has disconnected|Navigating frame was detached/i;
@@ -747,7 +750,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
         // A run recorded earlier stands, unless it was lost to the browser,
         // the provider or the judge. A lost one is run again, and what it spent still counts.
         const prior = readSaved(dir);
-        if (prior && !isInfra(prior)) { spent += TRIAL.spendOf(prior); rows.push({ ...prior, screenshots: prior.screenshots || [] }); console.log(`${prior.success ? "PASS" : "FAIL"}  ${task.id.padEnd(28)} run ${r}  (recorded earlier)  ${prior.ending}`); continue; }
+        if (prior && !isInfra(prior)) { spent += TRIAL.spendOf(prior); rows.push({ ...prior, screenshots: prior.screenshots || [] }); console.log(SEALED ? `run ${rows.length} of ${tasks.length * RUNS} recorded earlier` : `${prior.success ? "PASS" : "FAIL"}  ${task.id.padEnd(28)} run ${r}  (recorded earlier)  ${prior.ending}`); continue; }
         const carried = prior ? TRIAL.spendOf(prior) : 0;
         if (MAX_USD && spent + carried >= MAX_USD) { spent += carried; capStop(); break; }
         const notReady = await chatgptNotReady();
@@ -759,7 +762,9 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
         rows.push(row);
         saveRow(row, dir);
         if (!QUIET && row.problems && row.problems.length) console.log(`  [page errors] ${row.problems.slice(0, 3).join(" | ")}`);
-        console.log(`${markOf(row).padEnd(5)} ${task.id.padEnd(28)} run ${r}  ${String(row.steps).padStart(2)} steps ${String(row.seconds).padStart(3)}s  ${row.ending}${QUIET ? "" : `  | ${String(row.reason).slice(0, 110)}`}`);
+        // Sealed: which run this was and nothing about how it went.
+        if (SEALED) console.log(`run ${rows.length} of ${tasks.length * RUNS} done`);
+        else console.log(`${markOf(row).padEnd(5)} ${task.id.padEnd(28)} run ${r}  ${String(row.steps).padStart(2)} steps ${String(row.seconds).padStart(3)}s  ${row.ending}${QUIET ? "" : `  | ${String(row.reason).slice(0, 110)}`}`);
         if (row.recipe && !QUIET) console.log(`      recipe: ${row.recipe.saveable ? `saved (${row.recipe.steps} steps)${row.recipe.replay ? `, replay ${row.recipe.replay.state || `did not run: ${row.recipe.replay.why}`}, ${row.recipe.replay.modelCalls || 0} model call(s), ${row.recipe.replay.seconds}s` : ", not replayed"}` : `not saveable: ${row.recipe.why}`}`);
         lostInARow = lost ? lostInARow + 1 : 0;
         // The plan says its usage is used up: every later run would end the same way.

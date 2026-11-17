@@ -23,9 +23,9 @@ on:
   workflow_dispatch:
     inputs:
       suite:
-        description: "everyday: 93 tasks. dev: 12 smoke tasks. learn: 12 tasks run twice and 6 pairs of neighbours, learning on (tests/bench/learn-tasks.json)"
+        description: "everyday: 93 tasks. dev: 12 smoke tasks. learn: 12 tasks run twice and 6 pairs of neighbours, learning on (tests/bench/learn-tasks.json). holdout: 50 held-out tasks on sites no other suite uses, reported as numbers only (tests/bench/README.md)"
         type: choice
-        options: [everyday, dev, learn]
+        options: [everyday, dev, learn, holdout]
         default: everyday
       arm:
         description: "shipped: the packed 4.0 build as it is (no debugger). debugger-on: the same build with the debugger permission added"
@@ -108,6 +108,7 @@ jobs:
       shards: ${{ steps.plan.outputs.shards }}
       shard_count: ${{ steps.plan.outputs.shard_count }}
       cap_per_shard: ${{ steps.plan.outputs.cap_per_shard }}
+      sealed: ${{ steps.plan.outputs.sealed }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - id: plan
@@ -146,11 +147,14 @@ jobs:
           limit="${IN_LIMIT:-all}"
           cap="${IN_MAX_USD:-5}"
           learn=""
+          # A sealed suite is reported as numbers only, and its per-task files are kept apart.
+          sealed=false
           case "$suite" in
             everyday) tasks=tests/bench/everyday-tasks.json ;;
             dev) tasks=tests/bench/smoke-tasks.json ;;
             learn) tasks=tests/bench/learn-tasks.json; learn=pairs ;;
-            *) fail "suite must be everyday, dev or learn" ;;
+            holdout) tasks=tests/bench/holdout-tasks.json; sealed=true ;;
+            *) fail "suite must be everyday, dev, learn or holdout" ;;
           esac
           if [ -z "$learn" ] && [ "$IN_LEARNING" = "true" ]; then learn=on; fi
           recipes=false
@@ -189,6 +193,7 @@ jobs:
           if [ "$dry" = "true" ]; then
             suite=fixture
             tasks=tests/bench/fixture-tasks.json
+            sealed=false
             learn=""
             recipes=false
             runs=1
@@ -219,6 +224,7 @@ jobs:
             echo "shards=$list"
             echo "shard_count=$shards"
             echo "cap_per_shard=$per"
+            echo "sealed=$sealed"
           } >> "$GITHUB_OUTPUT"
           {
             echo "### Plan"
@@ -229,10 +235,13 @@ jobs:
               echo "Real run. Agent: \`$provider\` / \`$model\`, key \`$key_name\`, sent to $provider only. Judge: \`$judge_model\` on Anthropic, key \`ANTHROPIC_API_KEY\`."
             fi
             echo "$count $([ "$learn" = "pairs" ] && echo "pair(s)" || echo "task(s)") from \`$tasks\`, $runs run(s) each, arm \`$arm\`, learning \`${learn:-off}\`, recipes \`$recipes\`, $shards shard(s), spend cap \$$cap (\$$per per shard)."
+            if [ "$sealed" = "true" ]; then echo "Sealed: the summary shows numbers only, and the per-task files go to artifacts named holdout-SEALED-per-task-do-not-open, kept one day."; fi
           } >> "$GITHUB_STEP_SUMMARY"
       - name: The task files are sound
         run: |
-          for f in everyday-tasks learn-tasks fixture-tasks fixture-learn-tasks; do node tests/bench/trial.js validate "tests/bench/$f.json"; done
+          for f in everyday-tasks learn-tasks fixture-tasks fixture-learn-tasks holdout-tasks; do node tests/bench/trial.js validate "tests/bench/$f.json"; done
+          # No holdout task may be on a site another suite uses.
+          node tests/bench/trial.js holdout-check
 
   # The packed 4.0 zip, built and checked the way ci.yml's package-integrity job does it.
   build:
@@ -300,6 +309,8 @@ jobs:
           BENCH_LEARN: ${{ needs.plan.outputs.learn }}
           BENCH_RUNS: ${{ needs.plan.outputs.runs }}
           BENCH_RECIPES: ${{ needs.plan.outputs.recipes == 'true' && '1' || '' }}
+          # A sealed suite's log names no task and says nothing of how one went.
+          BENCH_QUIET: ${{ needs.plan.outputs.sealed == 'true' && 'sealed' || '' }}
           # The browser says what it is. A site that refuses an automated visit shows as blocked and leaves the task file.
           BENCH_DISGUISE: "off"
           BENCH_PROVIDER: ${{ needs.plan.outputs.provider }}
@@ -313,13 +324,14 @@ jobs:
           BENCH_JUDGE_KEY: ${{ needs.plan.outputs.dry != 'true' && secrets.ANTHROPIC_API_KEY || '' }}
         run: node tests/bench/run.js
       # Per task: run.json (steps, outcome, verdict, cost, time, failure, counters, form state), log.txt and the screenshots.
+      # A sealed suite's go to an artifact named so nobody opens it while working on the agent, kept one day: the summary job needs it, nothing else does.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: trial-shard-${{ matrix.shard }}
+          name: ${{ needs.plan.outputs.sealed == 'true' && format('holdout-SEALED-per-task-do-not-open-shard-{0}', matrix.shard) || format('trial-shard-{0}', matrix.shard) }}
           path: tests/bench/out/trial
           if-no-files-found: warn
-          retention-days: 30
+          retention-days: ${{ needs.plan.outputs.sealed == 'true' && 1 || 30 }}
 
   summary:
     name: summary
@@ -334,7 +346,7 @@ jobs:
           node-version: 22
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: trial-shard-*
+          pattern: ${{ needs.plan.outputs.sealed == 'true' && 'holdout-SEALED-per-task-do-not-open-shard-*' || 'trial-shard-*' }}
           path: tests/bench/out/trial
           merge-multiple: true
       - name: Table by family
@@ -347,12 +359,16 @@ jobs:
           LEARN: ${{ needs.plan.outputs.learn }}
           RUNS: ${{ needs.plan.outputs.runs }}
           SHARDS: ${{ needs.plan.outputs.shard_count }}
+          SEALED: ${{ needs.plan.outputs.sealed }}
         run: |
           mkdir -p tests/bench/out/trial
           check=""
           if [ "$DRY" = "true" ]; then check="--check-dry"; fi
+          # Sealed: totals, rates, time, spend and counts by family and difficulty, and nothing that names a task.
+          if [ "$SEALED" = "true" ]; then check="$check --sealed"; fi
           # Fails when a shard's build is not the arm's, a shard left no results file, or the shipped arm made a real input event.
           node tests/bench/trial.js summary tests/bench/out/trial --tasks "$TASKS" --sample "$SAMPLE" --suite "$SUITE" --arm "$ARM" --runs "$RUNS" --learn "$LEARN" --shards "$SHARDS" --commit "$GITHUB_SHA" $check | tee -a "$GITHUB_STEP_SUMMARY"
+      # In a sealed run trial-summary.json holds the numbers only.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
@@ -381,6 +397,8 @@ jobs:
           - { leg: learn, arm: shipped, debugger: "", tasks: tests/bench/fixture-learn-tasks.json, cap: "2", learn: pairs, recipes: "", check: learn }
           # Each passed run saved as a recipe by the extension and replayed once.
           - { leg: recipes, arm: shipped, debugger: "", tasks: tests/bench/fixture-tasks.json, cap: "2", learn: "", recipes: "1", check: recipes }
+          # The holdout suite's sealed path: its log and its summary name no task.
+          - { leg: sealed, arm: shipped, debugger: "", tasks: tests/bench/fixture-tasks.json, cap: "2", learn: "", recipes: "", check: sealed, quiet: sealed }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -407,8 +425,11 @@ jobs:
           BENCH_TIMEOUT_S: "40"
           BENCH_LEARN: ${{ matrix.learn }}
           BENCH_RECIPES: ${{ matrix.recipes }}
+          BENCH_QUIET: ${{ matrix.quiet }}
           BENCH_DISGUISE: "off"
-        run: node tests/bench/run.js
+        run: |
+          mkdir -p tests/bench/out
+          node tests/bench/run.js | tee tests/bench/out/leg-run.log
       - name: Check what it left
         if: always()
         env:
@@ -421,7 +442,14 @@ jobs:
           mkdir -p tests/bench/out/leg
           check=""
           if [ -n "$CHECK" ]; then check="--check $CHECK"; fi
+          if [ "$LEG" = "sealed" ]; then check="$check --sealed"; fi
           node tests/bench/trial.js summary tests/bench/out/leg --tasks "$TASKS" --suite "fixture, dry leg $LEG" --arm "$ARM" --learn "$LEARN" --commit "$GITHUB_SHA" $check | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$LEG" = "sealed" ]; then
+            # The shard's log, as a sealed run's would be seen in the Actions page, names no task.
+            node tests/bench/trial.js leaks tests/bench/out/leg-run.log --tasks "$TASKS"
+            # Nor does the summary file the summary artifact would hold.
+            node tests/bench/trial.js leaks tests/bench/out/leg/trial-summary.json --tasks "$TASKS"
+          fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
