@@ -268,6 +268,10 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
       // At a check-in the user says to keep going: the harness's own timeout is the limit.
       const keep = document.querySelector('.confirmation-bubble[data-wait-kind="check_in"] .checkin-keep-btn');
       if (keep) keep.click();
+      // A run held for its provider (a spent allowance, a model that stayed
+      // busy) is ended with what it has, as it ended by itself before holds.
+      const holdStop = document.querySelector(".confirmation-bubble[data-hold] .hold-stop-btn");
+      if (holdStop) holdStop.click();
       const bubble = document.querySelector(".confirmation-bubble.risk");
       let asked = null;
       if (bubble) {

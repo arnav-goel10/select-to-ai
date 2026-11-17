@@ -87,9 +87,6 @@
         'a', 'button', 'input', 'select', 'textarea', 'option'
     ]);
 
-    /** Form element tags that should receive a `change` event after click */
-    const FORM_TAGS = new Set(['input', 'select', 'textarea']);
-
     /**
      * Key metadata lookup, keyCode, code, and whether the key is printable.
      * @type {Object<string, {keyCode: number, code: string, printable: boolean}>}
@@ -668,7 +665,7 @@
             how.real = await pressRealKey(key, meta, {}, 1);
             if (how.real) return;
         }
-        const opts = { key, code: meta.code, keyCode: meta.keyCode, which: meta.keyCode, bubbles: true, cancelable: true, view: window };
+        const opts = { key, code: meta.code, keyCode: meta.keyCode, which: meta.keyCode, bubbles: true, cancelable: true, composed: true, view: window };
         el.dispatchEvent(new KeyboardEvent('keydown', opts));
         el.dispatchEvent(new KeyboardEvent('keyup', opts));
     }
@@ -2172,104 +2169,142 @@
     // Event Simulation Helpers
     // =========================================================================
 
-    /**
-     * Computes common pointer/mouse event init properties for an element.
-     * @param {Element} el
-     * @param {Object} [modifiers={}]
-     * @returns {Object}
-     */
-    function pointerEventDefaults(el, modifiers = {}) {
+    /** The middle of an element's box, in this frame's viewport. */
+    function centreOf(el) {
         const rect = el.getBoundingClientRect();
-        const clientX = rect.left + rect.width / 2;
-        const clientY = rect.top + rect.height / 2;
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    }
+
+    /**
+     * The fields of a pointer or mouse event made by script, as Chrome
+     * fills them for a real mouse: it crosses shadow boundaries (composed),
+     * it is the primary mouse pointer, and it says which button is held and
+     * how hard. Clicks, hovers and drags all take their fields from here,
+     * so a page sees the same pointer whichever of them it is.
+     * @param {{x: number, y: number}} point  in this frame's viewport
+     * @param {{held?: boolean, button?: number, detail?: number, related?: Element|null, modifiers?: Object}} [o]
+     */
+    function pointerInit(point, o = {}) {
+        const keys = o.modifiers || {};
+        const button = o.button || 0;
         return {
             bubbles: true,
             cancelable: true,
+            composed: true,
             view: window,
-            clientX,
-            clientY,
-            screenX: window.screenX + clientX,
-            screenY: window.screenY + clientY,
-            button: 0,
-            buttons: 1,
-            ctrlKey: !!modifiers.ctrlKey,
-            shiftKey: !!modifiers.shiftKey,
-            altKey: !!modifiers.altKey,
-            metaKey: !!modifiers.metaKey,
+            clientX: point.x,
+            clientY: point.y,
+            screenX: window.screenX + point.x,
+            screenY: window.screenY + point.y,
+            button,
+            buttons: o.held ? (button === 2 ? 2 : 1) : 0,
+            detail: o.detail || 0,
+            pointerId: 1,
+            pointerType: 'mouse',
+            isPrimary: true,
+            pressure: o.held ? 0.5 : 0,
+            relatedTarget: o.related || null,
+            ctrlKey: !!keys.ctrlKey,
+            shiftKey: !!keys.shiftKey,
+            altKey: !!keys.altKey,
+            metaKey: !!keys.metaKey,
         };
     }
 
+    // What the scripted pointer was last over, so its next move leaves it as a mouse would.
+    let pointerOver = null;
+
     /**
-     * Dispatches a full click event sequence (pointer + mouse events) on an element.
-     * Only dispatches `change` for form elements.
-     * @param {Element} targetEl
-     * @param {Object} [modifiers={}]
+     * Moves the scripted pointer onto `target`. What it was over hears it
+     * go, the target hears it arrive, and every box around either whose
+     * edge it crossed hears it leave or enter, as with a mouse: a menu that
+     * closes when the pointer leaves it closes, and a box that listens for
+     * the pointer entering it is told. Nothing is sent when the pointer is
+     * already there, unless `again` asks for the arrival to be said again.
      */
-    function dispatchClickEvents(control, modifiers = {}, point = null) {
-        const opts = pointerEventDefaults(control, modifiers);
-        // A press at a given point of the page (click_at) carries that point.
-        if (point) {
-            opts.clientX = point.x;
-            opts.clientY = point.y;
-            opts.screenX = window.screenX + point.x;
-            opts.screenY = window.screenY + point.y;
+    function movePointerTo(target, point, modifiers, again) {
+        const prev = pointerOver && pointerOver.isConnected && pointerOver !== target ? pointerOver : null;
+        const fresh = pointerOver !== target;
+        pointerOver = target;
+        if (!fresh && !again) return;
+        const holds = (box, n) => { for (let x = n; x; x = upOf(x)) if (x === box) return true; return false; };
+        const quiet = (init) => ({ ...init, bubbles: false, cancelable: false });
+        if (prev) {
+            const out = pointerInit(point, { modifiers, related: target });
+            prev.dispatchEvent(new PointerEvent('pointerout', out));
+            prev.dispatchEvent(new MouseEvent('mouseout', out));
+            for (let n = prev; n && n.nodeType === 1 && !holds(n, target); n = upOf(n)) {
+                n.dispatchEvent(new PointerEvent('pointerleave', quiet(out)));
+                n.dispatchEvent(new MouseEvent('mouseleave', quiet(out)));
+            }
         }
-        // A pointer's events go to the innermost thing drawn where it
-        // presses and travel up from there. A page may listen on a part
-        // inside the control (the link inside a tab), so the events start
-        // where a press at the control's middle would.
-        let targetEl = control;
-        try {
-            const hit = document.elementFromPoint(opts.clientX, opts.clientY);
-            if (hit && hit !== control && control.contains(hit)) targetEl = hit;
-        } catch (_) { /* a detached control has no point */ }
-
-        // Pointer sequence
-        targetEl.dispatchEvent(new PointerEvent('pointerover', opts));
-        targetEl.dispatchEvent(new PointerEvent('pointerenter', { ...opts, bubbles: false }));
-        targetEl.dispatchEvent(new PointerEvent('pointermove', opts));
-        targetEl.dispatchEvent(new PointerEvent('pointerdown', opts));
-
-        // Mouse sequence
-        targetEl.dispatchEvent(new MouseEvent('mouseover', opts));
-        targetEl.dispatchEvent(new MouseEvent('mouseenter', { ...opts, bubbles: false }));
-        targetEl.dispatchEvent(new MouseEvent('mousedown', opts));
-
-        focusField(control);
-
-        targetEl.dispatchEvent(new PointerEvent('pointerup', { ...opts, buttons: 0 }));
-        targetEl.dispatchEvent(new MouseEvent('mouseup', { ...opts, buttons: 0 }));
-        // False when the page cancelled the click (it handled it itself).
-        const went = targetEl.dispatchEvent(new MouseEvent('click', { ...opts, buttons: 0 }));
-
-        // Only dispatch change on form elements
-        const tag = control.tagName.toLowerCase();
-        if (FORM_TAGS.has(tag)) {
-            control.dispatchEvent(new Event('change', { bubbles: true }));
+        const over = pointerInit(point, { modifiers, related: prev });
+        target.dispatchEvent(new PointerEvent('pointerover', over));
+        target.dispatchEvent(new MouseEvent('mouseover', over));
+        // Outermost first, as the browser enters them.
+        const entered = [];
+        for (let n = target; n && n.nodeType === 1 && !(prev && holds(n, prev)); n = upOf(n)) entered.unshift(n);
+        for (const n of entered) {
+            n.dispatchEvent(new PointerEvent('pointerenter', quiet(over)));
+            n.dispatchEvent(new MouseEvent('mouseenter', quiet(over)));
         }
-        return went;
     }
 
     /**
-     * Dispatches hover-only events (no click) on an element.
-     * @param {Element} targetEl
-     * @param {Object} [modifiers={}]
+     * Where a pointer's events start: the innermost thing drawn at the
+     * point, when that is inside the control. A page may listen on a part
+     * inside the control (the link inside a tab), so the events start where
+     * a press at that point would and travel up from there.
+     */
+    function pointerTargetIn(control, point) {
+        try {
+            const hit = document.elementFromPoint(point.x, point.y);
+            if (hit && hit !== control && control.contains(hit)) return hit;
+        } catch (_) { /* a detached control has no point */ }
+        return control;
+    }
+
+    /**
+     * A click made by script, as a mouse makes one: the pointer arrives,
+     * presses, lets go, and the click follows. `point` is where, for a
+     * press at a given point of the page (click_at); the control's middle
+     * otherwise. `detail` is which click of a run this is (2 for the second
+     * of a double click). Returns false when the page cancelled the click.
+     */
+    function dispatchClickEvents(control, modifiers = {}, point = null, detail = 1) {
+        const at = point || centreOf(control);
+        const targetEl = pointerTargetIn(control, at);
+        movePointerTo(targetEl, at, modifiers);
+        const idle = pointerInit(at, { modifiers });
+        targetEl.dispatchEvent(new PointerEvent('pointermove', idle));
+        targetEl.dispatchEvent(new MouseEvent('mousemove', idle));
+
+        const down = pointerInit(at, { modifiers, held: true, detail });
+        targetEl.dispatchEvent(new PointerEvent('pointerdown', { ...down, detail: 0 }));
+        // A page that cancels mousedown keeps the focus and the selection
+        // where they are (the toolbar of a text editor does), so the focus
+        // moves only when the press was left to the browser.
+        if (targetEl.dispatchEvent(new MouseEvent('mousedown', down))) focusField(control);
+
+        const up = pointerInit(at, { modifiers, detail });
+        targetEl.dispatchEvent(new PointerEvent('pointerup', { ...up, detail: 0 }));
+        targetEl.dispatchEvent(new MouseEvent('mouseup', up));
+        // The browser itself sends the change of a box the click ticks; a
+        // second one made here would run the page's handler twice.
+        return targetEl.dispatchEvent(new PointerEvent('click', up));
+    }
+
+    /**
+     * Moves the scripted pointer over a control without pressing: the
+     * events start at what is drawn at the control's middle, as for a click.
      */
     function dispatchHoverEvents(control, modifiers = {}) {
-        // No button is held, and the events start at what is drawn at the
-        // control's middle, as for a click.
-        const opts = { ...pointerEventDefaults(control, modifiers), buttons: 0 };
-        let targetEl = control;
-        try {
-            const hit = document.elementFromPoint(opts.clientX, opts.clientY);
-            if (hit && hit !== control && control.contains(hit)) targetEl = hit;
-        } catch (_) { /* a detached control has no point */ }
-        targetEl.dispatchEvent(new PointerEvent('pointerover', opts));
-        targetEl.dispatchEvent(new PointerEvent('pointerenter', { ...opts, bubbles: false }));
-        targetEl.dispatchEvent(new MouseEvent('mouseover', opts));
-        targetEl.dispatchEvent(new MouseEvent('mouseenter', { ...opts, bubbles: false }));
-        targetEl.dispatchEvent(new PointerEvent('pointermove', opts));
-        targetEl.dispatchEvent(new MouseEvent('mousemove', opts));
+        const at = centreOf(control);
+        const targetEl = pointerTargetIn(control, at);
+        movePointerTo(targetEl, at, modifiers, true);
+        const idle = pointerInit(at, { modifiers });
+        targetEl.dispatchEvent(new PointerEvent('pointermove', idle));
+        targetEl.dispatchEvent(new MouseEvent('mousemove', idle));
     }
 
     // =========================================================================
@@ -2620,7 +2655,7 @@
         let source = null;
         let data = null;
         let over = null;
-        const at = (s, buttons) => ({ bubbles: true, cancelable: true, composed: true, view: window, clientX: s.x, clientY: s.y, screenX: window.screenX + s.x, screenY: window.screenY + s.y, button: 0, buttons, pointerId: 1, pointerType: 'mouse', isPrimary: true });
+        const at = (s, buttons) => pointerInit(s, { held: buttons === 1 });
         const draggable = el.closest('[draggable="true"]') || (el.closest('a[href], img') && el.closest('[draggable="false"]') === null ? el.closest('a[href], img') : null);
         for (const s of steps) {
             if (s.t === 'wait') { await (document.visibilityState === 'hidden' ? Promise.resolve() : delay(s.ms || 0)); continue; }
@@ -3198,39 +3233,33 @@
                 // counter (event-driven, replaces the old fixed 300ms wait).
                 const isTextField = el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && /^(text|search|email|url|tel|number|password)$/.test((el.type || 'text').toLowerCase()));
                 if (el.disabled) return { success: true, pointer, message: `Clicked element [${id}]. It is disabled, so the click does nothing to it.` };
-                return { success: true, pointer, message: `Clicked element [${id}].${isTextField ? ' It is a text field: the click only put the cursor in it.' : ''}${note}` };
+                // `cancelled`: the page took the click over, which is an answer to it.
+                return { success: true, pointer, ...(went ? {} : { cancelled: true }), message: `Clicked element [${id}].${isTextField ? ' It is a text field: the click only put the cursor in it.' : ''}${note}` };
             }
 
             // ----- double_click -----
             if (action === 'double_click') {
-                const opts = pointerEventDefaults(el, modifiers);
                 await moveAgentCursorToElement(el, "Double click");
                 await pulseAgentCursor("Double click");
-                // First click sequence
+                // Two clicks, the second counted as the second, then the double click.
                 dispatchClickEvents(el, modifiers);
-                // Second click sequence (detail=2)
-                dispatchClickEvents(el, modifiers);
-                // dblclick event
-                el.dispatchEvent(new MouseEvent('dblclick', { ...opts, buttons: 0, detail: 2 }));
+                dispatchClickEvents(el, modifiers, null, 2);
+                el.dispatchEvent(new MouseEvent('dblclick', pointerInit(centreOf(el), { modifiers, detail: 2 })));
                 return { success: true, message: `Double-clicked element [${id}].` };
             }
 
             // ----- right_click -----
             if (action === 'right_click') {
-                const opts = pointerEventDefaults(el, modifiers);
                 await moveAgentCursorToElement(el, "Right click");
                 await pulseAgentCursor("Right click");
-                opts.button = 2;
-                opts.buttons = 2;
-                el.dispatchEvent(new PointerEvent('pointerdown', opts));
-                el.dispatchEvent(new MouseEvent('mousedown', opts));
-                el.dispatchEvent(new PointerEvent('pointerup', { ...opts, buttons: 0 }));
-                el.dispatchEvent(new MouseEvent('mouseup', { ...opts, buttons: 0 }));
-                el.dispatchEvent(new MouseEvent('contextmenu', {
-                    ...opts,
-                    button: 2,
-                    buttons: 0,
-                }));
+                const at = centreOf(el);
+                const down = pointerInit(at, { modifiers, held: true, button: 2 });
+                const up = pointerInit(at, { modifiers, button: 2 });
+                el.dispatchEvent(new PointerEvent('pointerdown', down));
+                el.dispatchEvent(new MouseEvent('mousedown', down));
+                el.dispatchEvent(new PointerEvent('pointerup', up));
+                el.dispatchEvent(new MouseEvent('mouseup', up));
+                el.dispatchEvent(new MouseEvent('contextmenu', up));
                 return { success: true, message: `Right-clicked element [${id}].` };
             }
 
@@ -3803,6 +3832,7 @@
                     which: meta.keyCode,
                     bubbles: true,
                     cancelable: true,
+                    composed: true,
                     view: window,
                     ctrlKey: !!modifiers.ctrlKey,
                     shiftKey: !!modifiers.shiftKey,
@@ -3993,8 +4023,11 @@
         let pressed = false;
         if (target) target.addEventListener('click', (e) => { if (e.isTrusted) pressed = true; }, { capture: true });
         const check = () => {
+            // A control to press that is not in this page's own listing (one
+            // inside a frame) cannot be watched from here: the wait is ended
+            // by the user's "I'm done", never by its seeming to be gone.
             const still = pressId
-                ? !pressed && !!(target && target.isConnected && location.href === startUrl)
+                ? !pressed && (target ? target.isConnected && location.href === startUrl : true)
                 : present();
             if (still && !had) { had = true; seen(); }
             // Never seen: nothing here can say it is gone.
@@ -4036,14 +4069,36 @@
     // Outcome measurement (cheap validator signal)
     // =========================================================================
 
+    /**
+     * The open shadow roots on the page, those inside others too, up to a
+     * bound. What a component shows inside its own root is part of the
+     * page, and a look at the document alone misses it.
+     */
+    function openRoots() {
+        const out = [];
+        const into = (root) => {
+            let all = [];
+            try { all = root.querySelectorAll('*'); } catch (_) { return; }
+            for (const el of all) {
+                if (out.length >= 60) return;
+                const inner = el.shadowRoot;
+                if (!inner || agentDrawn(el)) continue;
+                out.push(inner);
+                into(inner);
+            }
+        };
+        into(document);
+        return out;
+    }
+
     /** Captures the page facts an action can change. */
     function captureOutcomeSnapshot() {
         let elementCount = 0;
         try {
-            elementCount = document.querySelectorAll(
-                'a,button,input,select,textarea,[role="button"],[role="link"],[tabindex]'
-            ).length;
-        } catch (_) { /* keep 0 */ }
+            const controls = 'a,button,input,select,textarea,[role="button"],[role="link"],[tabindex]';
+            elementCount = document.querySelectorAll(controls).length;
+            for (const root of openRoots()) elementCount += root.querySelectorAll(controls).length;
+        } catch (_) { /* keep what was counted */ }
         return {
             url: window.location.href,
             title: document.title,
@@ -4084,12 +4139,10 @@
                     count++;
                 }
             });
-            observer.observe(document.body, {
-                childList: true,
-                subtree: true,
-                attributes: true,
-                characterData: true,
-            });
+            const what = { childList: true, subtree: true, attributes: true, characterData: true };
+            observer.observe(document.body, what);
+            // A change inside a component's own root does not reach the body's observer.
+            for (const root of openRoots()) { try { observer.observe(root, what); } catch (_) { /* that root is left out */ } }
         } catch (_) { /* observation unavailable; count stays 0 */ }
 
         return {
@@ -4119,6 +4172,73 @@
     // least TICK_MS apart, during an action is a counter or a clock.
     const TICKS = 3;
     const TICK_MS = 500;
+
+    // The page's own requests, for a browser with no network view to give.
+    // A small function the engine runs in the page's own world
+    // (core/inject.js, netShim) says when each fetch and XMLHttpRequest
+    // call begins and ends. They are counted here the way the engine counts
+    // the debugger's, so what a page asks for by itself is told from what
+    // an action made it ask for.
+    // The name is made anew for each page, and only the engine is told it
+    // (with the listing), so a page cannot speak under it by knowing it.
+    const NET_EVENT = (() => {
+        try { return `n${Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('')}`; } catch (_) { return `n${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`; }
+    })();
+    const pageNet = SETTLE_TOOLS && SETTLE_TOOLS.createNetworkTracker ? SETTLE_TOOLS.createNetworkTracker() : null;
+    // True once that function has said it is there.
+    let pageNetAlive = false;
+    const pageNetOpen = new Set();
+    // When the page last began a request of any kind, its background ones too.
+    let pageNetLastStart = 0;
+
+    /** One thing the page's world said about its requests. Anything else a page sends under that name is left alone. */
+    function onPageNet(e) {
+        let said = null;
+        try { said = JSON.parse(String(e.detail || '')); } catch (_) { return; }
+        if (!pageNet || !said || typeof said !== 'object') return;
+        if (said.t === 'hello') { pageNetAlive = true; return; }
+        const id = String(said.id || '').slice(0, 40);
+        if (!id) return;
+        if (said.t === 'start' && (said.kind === 'Fetch' || said.kind === 'XHR') && pageNetOpen.size < 200) {
+            let url = String(said.url || '').slice(0, 300);
+            try { url = new URL(url, location.href).href; } catch (_) { /* counted under what it was given as */ }
+            pageNetOpen.add(id);
+            pageNetLastStart = Date.now();
+            pageNet.started(id, url, said.kind, pageNetLastStart);
+        } else if (said.t === 'end' && pageNetOpen.delete(id)) {
+            pageNet.ended(id, Date.now());
+        }
+    }
+
+    /**
+     * The requests an action begun at `since` started, as the page's own
+     * world counted them: { open, quietFor, asked }, or null when nothing
+     * is counting. `asked` is whether it started any at all.
+     */
+    function pageRequests(since, now) {
+        if (!pageNet || !pageNetAlive) return null;
+        const st = pageNet.state(since, now);
+        return { ...st, asked: st.open > 0 || st.quietFor < now - since };
+    }
+
+    /**
+     * Starts listening to the page's world, and reads what the page asked
+     * for before this script arrived from the browser's own record of it,
+     * so an address the page asks for again and again by itself is known as
+     * its background from the first action on.
+     */
+    function watchRequests() {
+        if (!pageNet) return;
+        try {
+            for (const r of performance.getEntriesByType('resource')) {
+                if (r.initiatorType !== 'fetch' && r.initiatorType !== 'xmlhttprequest') continue;
+                const id = `past ${r.startTime}`;
+                pageNet.started(id, r.name, r.initiatorType === 'fetch' ? 'Fetch' : 'XHR', performance.timeOrigin + r.startTime);
+                pageNet.ended(id, performance.timeOrigin + (r.responseEnd || r.startTime));
+            }
+        } catch (_) { /* no record: the count starts now */ }
+        document.addEventListener(NET_EVENT, onPageNet, true);
+    }
 
     /** An element the page changes over and over by itself: a clock, a feed, a rotating panel. */
     function changesByItself(el, now) {
@@ -4221,7 +4341,7 @@
             try {
                 chrome.runtime.sendMessage({ action: 'agentNetState', since }, (r) => {
                     void (chrome.runtime && chrome.runtime.lastError);
-                    finish(r && r.net ? { open: Number(r.open) || 0, quietFor: Number(r.quietFor) || 0 } : null);
+                    finish(r && r.net ? { open: Number(r.open) || 0, quietFor: Number(r.quietFor) || 0, asked: !!r.asked } : null);
                 });
             } catch (_) { finish(null); }
         });
@@ -4230,24 +4350,29 @@
     /**
      * Waits until the page has finished what the action started: nothing it
      * started is open on the network, no new busy mark is showing, and the
-     * page has not changed for the quiet period; or until the ceiling.
-     * Returns { ms, loading, signs }.
+     * page has not changed for the quiet period; or until the ceiling. The
+     * requests are the browser's view of the tab where the engine has one,
+     * else the page's own count of them, else not known.
+     * Returns { ms, loading, signs, network, asked }: `network` is whether
+     * the requests could be seen, `asked` whether the action started any.
      */
     async function settleAfterAction(since, busyBefore) {
         const T = SETTLE_TOOLS;
         const S = T.SETTLE;
         const begun = Date.now();
-        let net = await askNetwork(since);
-        let ceiling = net ? S.CEILING_MS : S.FALLBACK_MS;
+        let far = await askNetwork(since);
+        let net = far || pageRequests(since, Date.now());
+        let asked = !!(net && net.asked);
         let verdict = { done: false, signs: [] };
         for (;;) {
             await new Promise((r) => setTimeout(r, 100));
+            // The engine's view can go away (the user closed the debugging bar): the page's count is used from then on.
+            if (far) far = await askNetwork(since);
             const now = Date.now();
-            if (net) {
-                net = await askNetwork(since);
-                // The view went away (the user closed the debugging bar): what the page shows is all there is.
-                if (!net) ceiling = S.FALLBACK_MS;
-            }
+            net = far || pageRequests(since, now);
+            if (net && net.asked) asked = true;
+            // With no requests in view, what the page shows is all there is.
+            const ceiling = net ? S.CEILING_MS : S.FALLBACK_MS;
             const busy = [];
             for (const [k, kind] of busyMarks()) if (!busyBefore.has(k)) busy.push(kind);
             // An endless animation says little by itself: a carousel or a
@@ -4257,8 +4382,8 @@
             const fetching = !!(net && net.open > 0);
             if (busy.includes('animation') && !fetching && (net || now - begun > 6000)) busy.splice(0, busy.length, ...busy.filter((k) => k !== 'animation'));
             verdict = T.settleVerdict({ elapsed: now - begun, domQuietFor: now - Math.max(since, lastChangeAt), busy, net });
-            if (verdict.done || cancelRequested) return { ms: now - begun, loading: false, network: !!net };
-            if (now - begun >= ceiling) return { ms: now - begun, loading: true, signs: verdict.signs, network: !!net };
+            if (verdict.done || cancelRequested) return { ms: now - begun, loading: false, network: !!net, asked };
+            if (now - begun >= ceiling) return { ms: now - begun, loading: true, signs: verdict.signs, network: !!net, asked };
         }
     }
 
@@ -4280,6 +4405,273 @@
                 !urlChanged && !titleChanged && !scrollChanged &&
                 mutationCount === 0 && newElementCount === 0,
         };
+    }
+
+    // =========================================================================
+    // A press the page did not answer
+    // =========================================================================
+    //
+    // A press made by script is not a person's press, and a page can ignore
+    // it. When a press changed nothing, and nothing says the page took it,
+    // it is made the next way before the result is given: with the keyboard
+    // (the focus on the control, then Enter, then Space). The result says
+    // which way the page answered, or that no change was seen after any.
+    // A way is tried only while nothing at all says the page took the one
+    // before, so a press that worked out of sight (a request sent, a form
+    // sent, a field's value changed, a box scrolled, something changed
+    // inside a component) is not made twice. A page can also act on a press
+    // a while after it (a timer, a request the count does not see), so the
+    // page is watched a while longer before each key, and a key is sent
+    // only when the page allows that key on that control as it allowed the
+    // click (the engine says so with the press). The control's own click() is
+    // never called on top: it runs the very listeners the pointer's click
+    // already ran, so a control that took the first would act twice. Where
+    // what a press does cannot be seen at all (a drawing on the page), no
+    // other way is tried.
+
+    /**
+     * Watches for a press taking effect where the page itself shows no
+     * change: the page begins to go elsewhere, a form is sent, another
+     * window takes the user's eye, or something starts or stops playing.
+     * stop() ends the watch and returns what was seen.
+     */
+    function watchTaken() {
+        const seen = new Set();
+        const going = () => seen.add('navigation');
+        const sent = () => seen.add('form');
+        const away = (e) => { if (e.type !== 'blur' || e.target === window) seen.add('window'); };
+        const playing = () => Array.from(document.querySelectorAll('video, audio')).map((m) => `${m.paused}${m.muted}`).join();
+        const was = { playing: playing(), full: document.fullscreenElement || null };
+        const nav = window.navigation && typeof window.navigation.addEventListener === 'function' ? window.navigation : null;
+        if (nav) nav.addEventListener('navigate', going);
+        window.addEventListener('beforeunload', going, true);
+        window.addEventListener('submit', sent, true);
+        window.addEventListener('blur', away, true);
+        document.addEventListener('visibilitychange', away, true);
+        let stopped = false;
+        return {
+            stop() {
+                if (stopped) return [...seen];
+                stopped = true;
+                if (nav) nav.removeEventListener('navigate', going);
+                window.removeEventListener('beforeunload', going, true);
+                window.removeEventListener('submit', sent, true);
+                window.removeEventListener('blur', away, true);
+                document.removeEventListener('visibilitychange', away, true);
+                if (playing() !== was.playing || (document.fullscreenElement || null) !== was.full) seen.add('media');
+                return [...seen];
+            },
+        };
+    }
+
+    /** The value every field on the page holds, in open shadow roots too, as one string to compare. */
+    function fieldsNow() {
+        const out = [];
+        try {
+            for (const root of [document, ...openRoots()]) {
+                for (const f of root.querySelectorAll('input, select, textarea')) {
+                    if (out.length >= 400) break;
+                    out.push(`${f.type === 'password' ? String(f.value || '').length : f.value}\u0001${f.checked ? 1 : 0}`);
+                }
+            }
+        } catch (_) { /* what could be read is compared */ }
+        return out.join('\u0002');
+    }
+
+    /** The element holding the focus, followed into shadow roots. */
+    function focusNow() {
+        let a = document.activeElement;
+        while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement;
+        return a || null;
+    }
+
+    /**
+     * Watches for what a press can do that neither the page's elements nor
+     * its counted requests show: a field given a new value by the page's
+     * code, a box inside the page scrolled, the focus moved, anything at
+     * all fetched (a request the page makes by itself at other times, or
+     * through a function it kept from before the count began, is still in
+     * the browser's own record). A drawing on the page is 'canvas' from
+     * the start: what a press redraws in it cannot be seen. stop() ends
+     * the watch and returns what was seen. Any of it means the press is
+     * not made another way.
+     */
+    function watchUnseen() {
+        const seen = new Set();
+        const fields = fieldsNow();
+        const focus = focusNow();
+        const since = Date.now();
+        try {
+            for (const c of document.querySelectorAll('canvas')) {
+                const r = c.getBoundingClientRect();
+                if (r.width * r.height >= 10000 && shownNow(c)) { seen.add('canvas'); break; }
+            }
+        } catch (_) { /* none found */ }
+        const scrolled = (e) => { if (!agentDrawn(e.target)) seen.add('scroll'); };
+        const roots = [document, ...openRoots()];
+        for (const root of roots) root.addEventListener('scroll', scrolled, true);
+        // What the extension itself loads into the page (its own pictures) is not the page fetching.
+        const theirs = (list) => list.some((e) => !/^(chrome-extension|data):/.test(String((e && e.name) || '')));
+        // The record is read two ways: as it is added to, and by its length at the end.
+        const recorded = () => { try { return typeof performance === 'object' && performance.getEntriesByType ? performance.getEntriesByType('resource') : []; } catch (_) { return []; } };
+        const had = recorded().length;
+        let loads = null;
+        try {
+            if (typeof PerformanceObserver === 'function') {
+                loads = new PerformanceObserver((list) => { if (theirs(list.getEntries())) seen.add('request'); });
+                loads.observe({ type: 'resource' });
+            }
+        } catch (_) { loads = null; }
+        let stopped = false;
+        return {
+            stop() {
+                if (stopped) return [...seen];
+                stopped = true;
+                for (const root of roots) root.removeEventListener('scroll', scrolled, true);
+                try { if (loads) { if (theirs(loads.takeRecords())) seen.add('request'); loads.disconnect(); } } catch (_) { /* nothing more to read */ }
+                if (pageNetLastStart >= since) seen.add('request');
+                const now = recorded();
+                if (now.length > had && theirs(now.slice(had))) seen.add('request');
+                if (fieldsNow() !== fields) seen.add('value');
+                if (focusNow() !== focus) seen.add('focus');
+                return [...seen];
+            },
+        };
+    }
+
+    /** One key sent to a control by script: down, pressed and up. False when the page cancelled it. */
+    function scriptKey(el, key) {
+        const meta = resolveKeyMeta(key);
+        const opts = { key, code: meta.code, keyCode: meta.keyCode, which: meta.keyCode, bubbles: true, cancelable: true, composed: true, view: window };
+        const down = el.dispatchEvent(new KeyboardEvent('keydown', opts));
+        const pressed = el.dispatchEvent(new KeyboardEvent('keypress', { ...opts, charCode: meta.keyCode }));
+        const up = el.dispatchEvent(new KeyboardEvent('keyup', opts));
+        return down && pressed && up;
+    }
+
+    /**
+     * True for a control a press does something to, so that a press which
+     * changed nothing may be made another way: it is on the page and
+     * switched on, it is not a box that only takes the cursor, it is not
+     * a surface that draws its own inside, where a press means a point,
+     * and it is not marked as the one already chosen (the open tab, the
+     * current page's link), where a press rightly does nothing.
+     */
+    function takesPress(el) {
+        if (!el || !el.isConnected || el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+        if (el.isContentEditable || /^(TEXTAREA|SELECT|CANVAS|VIDEO|AUDIO|IFRAME|OBJECT|EMBED)$/.test(el.tagName)) return false;
+        if (el.tagName === 'INPUT' && !/^(button|submit|reset|image|checkbox|radio|file)$/.test((el.type || 'text').toLowerCase())) return false;
+        const current = el.getAttribute('aria-current');
+        if (el.getAttribute('aria-selected') === 'true' || (current && current !== 'false')) return false;
+        return true;
+    }
+
+    /**
+     * True when nothing at all says the page took a press. `m` is what was
+     * measured after it: { changed, cancelled, taken, unseen, network,
+     * asked, loading }. A page whose requests cannot be seen is never
+     * judged to have ignored a press: it may be waiting for an answer to it.
+     */
+    function unanswered(m) {
+        return !!m && !m.changed && !m.cancelled && !(m.taken || []).length && !(m.unseen || []).length && !!m.network && !m.asked && !m.loading;
+    }
+
+    /**
+     * Makes a press the page did not answer the next way, and the next.
+     * `first` is what was measured after the press by pointer events;
+     * `pressBy(way)` presses that way and resolves what was measured after
+     * it, or null when that way cannot be used here; `pressBy('wait')`
+     * presses nothing and watches the page a while longer. Returns null
+     * when the first press was answered or cannot be judged, or no other
+     * way could be used; else { tried, by, seen, last }: the ways tried in
+     * order, the way the page took (null when it took none; 'pointer' when
+     * the first press was answered late), and whether a change was seen
+     * after it.
+     */
+    async function otherPressWays(first, pressBy) {
+        const tried = ['pointer'];
+        let last = first;
+        for (const way of ['Enter', 'Space']) {
+            if (!unanswered(last) || cancelRequested) break;
+            // The page may yet act on the press before: it is given longer, and anything it then does is that press's answer.
+            const late = await pressBy('wait');
+            if (late && !unanswered(late)) return { tried, by: tried[tried.length - 1], seen: !!late.changed, last: late };
+            if (cancelRequested) break;
+            const m = await pressBy(way);
+            if (!m) continue;
+            tried.push(way);
+            last = m;
+            if (last.changed) return { tried, by: way, seen: true, last };
+        }
+        if (tried.length === 1) return null;
+        return unanswered(last) ? { tried, by: null, seen: false, last } : { tried, by: tried[tried.length - 1], seen: false, last };
+    }
+
+    /**
+     * The other ways for one control, as the page's handler runs them:
+     * { ways, waited }, what otherPressWays returned and how long the page
+     * was watched over all of them. A way that cannot be used here adds
+     * nothing.
+     */
+    async function pressWays(el, first, busyBefore, compute) {
+        let waited = 0;
+        const ways = await otherPressWays(first, async (way) => {
+            const m = await pressBy(el, way, busyBefore, compute);
+            if (m) waited += m.ms;
+            return m;
+        });
+        return { ways, waited };
+    }
+
+    /** True for a control the keyboard can reach, so a key may follow a press on it. */
+    function takesFocus(el) {
+        return !!el && (el.tabIndex >= 0 || el.hasAttribute('tabindex'));
+    }
+
+    /** Waits until the page changes or asks for something, or the longer watch for a late answer is over. */
+    async function laterSign(since) {
+        const until = since + ((SETTLE_TOOLS && SETTLE_TOOLS.SETTLE.SECOND_PRESS_MS) || 2000);
+        while (Date.now() < until && !cancelRequested && lastChangeAt < since && pageNetLastStart < since) await new Promise((r) => setTimeout(r, 100));
+    }
+
+    /**
+     * Presses a control one way and measures what the page did: 'Enter' or
+     * 'Space' with the focus on it; 'focus' only puts the focus on it (for
+     * a hover that brought nothing up); 'wait' presses nothing and watches
+     * the page a while longer for what the press before set off. Null for
+     * a key when the control did not take the focus: a key sent to a
+     * control that does not hold the focus is not what a person at the
+     * keyboard can do. Null for the wait when no key can follow it.
+     */
+    async function pressBy(el, way, busyBefore, compute) {
+        if (way === 'wait' && !takesFocus(el)) return null;
+        // The focus goes on first for a key, so that what is measured is
+        // what the key did, not what taking the focus did.
+        if (way === 'Enter' || way === 'Space') {
+            focusField(el);
+            if (focusNow() !== el) return null;
+        }
+        const before = captureOutcomeSnapshot();
+        const counter = createMutationCounter();
+        const state = stateOf(el);
+        const watch = watchTaken();
+        const unseen = way === 'focus' ? null : watchUnseen();
+        const since = Date.now();
+        let cancelled = false;
+        try {
+            if (way === 'focus') {
+                focusField(el);
+            } else if (way !== 'wait') {
+                cancelled = !scriptKey(el, way === 'Space' ? ' ' : 'Enter');
+            }
+        } catch (_) { /* a page's own handler threw: what the page then did is measured all the same */ }
+        if (way === 'wait') await laterSign(since);
+        const settle = await settleAfterAction(since, busyBefore);
+        const outcome = compute(before, captureOutcomeSnapshot(), counter.stop());
+        // Taking the focus can scroll the control into view, which brings nothing up.
+        const onlyScrolled = way === 'focus' && outcome.scrollChanged && !outcome.urlChanged && !outcome.titleChanged && !outcome.domMutationCount && !outcome.newElementCount;
+        const changed = (!outcome.noEffect && !onlyScrolled) || !el.isConnected || stateOf(el) !== state;
+        return { changed, cancelled, taken: watch.stop(), unseen: unseen ? unseen.stop() : [], outcome, settle, ms: Date.now() - since, network: !!settle.network, asked: !!settle.asked, loading: !!settle.loading };
     }
 
     /** Actions whose real page effect should be measured. */
@@ -4390,6 +4782,7 @@
     }
 
     watchPage();
+    watchRequests();
 
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const reply = sendResponse;
@@ -4429,6 +4822,10 @@
                     frameAreas: window === window.top ? frameAreas() : [],
                     overlays: overlayLayers.map((l) => ({ where: l.where, name: l.name, framed: l.framed, controls: list.filter((e) => e.onTop && elementMap[e.id] && l.node.contains(elementMap[e.id])).length })),
                     blockers: detectBlockers(),
+                    // Whether the page's own world is counting its requests yet (the engine starts that).
+                    netView: pageNetAlive,
+                    // The name the page's world is to say them under.
+                    netEvent: pageNet ? NET_EVENT : '',
                     whole: !!request.whole,
                     // A tab behind another is not drawn: its animations stand still.
                     inBackground: document.visibilityState === 'hidden',
@@ -4497,6 +4894,18 @@
                     const since = Date.now();
                     actingSince = since;
                     actionTicks = new WeakMap();
+                    if (pageNet) pageNet.begin();
+                    const compute =
+                        typeof SELECT_TO_AI_TOOLS !== "undefined" && SELECT_TO_AI_TOOLS.computeOutcomeDelta
+                            ? SELECT_TO_AI_TOOLS.computeOutcomeDelta
+                            : fallbackComputeOutcomeDelta;
+                    // A press the page does not answer is made another way (see
+                    // otherPressWays), unless the user approved this one press.
+                    const kind = request.data.action;
+                    const again = !!SETTLE_TOOLS && !request.data.once && (kind === 'click' || kind === 'hover');
+                    const watch = again && kind === 'click' ? watchTaken() : null;
+                    // What a press does out of sight is watched for every click, so the result can say it.
+                    const unseenWatch = kind === 'click' && SETTLE_TOOLS ? watchUnseen() : null;
                     let result;
                     try {
                         result = await performAction(request.data);
@@ -4506,18 +4915,45 @@
                                 const isTyping = request.data.action === 'type';
                                 await waitForDomStable(isTyping ? 250 : 350, isTyping ? 1200 : 2200);
                             }
+                            result.outcome = compute(before, captureOutcomeSnapshot(), counter.stop());
+                            const taken = watch ? watch.stop() : [];
+                            const unseen = unseenWatch ? unseenWatch.stop() : [];
+                            // A field's new value is the press's doing, and is said (the focus the press itself moves is not).
+                            if (unseen.includes('value') && result.outcome.noEffect) taken.push('value');
+                            // A request in the browser's own record is one the page made, though the count missed it.
+                            if (unseen.includes('request') && result.settle) result.settle.asked = true;
+                            if (taken.length) result.taken = taken;
+                            const scripted = again && result.pointer === 'synthetic' && !result.opensTab && acted && acted.isConnected;
+                            // A key is sent only where the engine found that key allowed on this control (request.data.keys).
+                            if (scripted && kind === 'click' && request.data.keys === true && takesPress(acted)) {
+                                const first = { changed: !result.outcome.noEffect || stateOf(acted) !== stateBefore, cancelled: !!result.cancelled, taken, unseen: unseen.filter((u) => u !== 'focus'), ...result.settle };
+                                const { ways, waited } = await pressWays(acted, first, busyBefore, compute);
+                                result.settle = { ...result.settle, ms: result.settle.ms + waited };
+                                if (ways) {
+                                    result.ways = { tried: ways.tried, by: ways.by, seen: ways.seen };
+                                    result.outcome = ways.last.outcome;
+                                    result.settle = { ...ways.last.settle, ms: result.settle.ms, ...((ways.last.unseen || []).includes('request') ? { asked: true } : {}) };
+                                    // What the page was seen to set off after the last of them is said too.
+                                    const after = [...(ways.last.taken || [])];
+                                    if ((ways.last.unseen || []).includes('value') && ways.last.outcome.noEffect) after.push('value');
+                                    if (after.length) result.taken = [...new Set([...taken, ...after])];
+                                }
+                            } else if (scripted && kind === 'hover' && result.outcome.noEffect) {
+                                // Menus made for the keyboard open with the focus on what opens them.
+                                const m = await pressBy(acted, 'focus', busyBefore, compute);
+                                result.ways = { tried: ['pointer', 'focus'], by: m.changed ? 'focus' : null, seen: m.changed, hover: true };
+                                result.outcome = m.outcome;
+                                result.settle = { ...m.settle, ms: result.settle.ms + m.settle.ms };
+                            }
                         }
                     } finally {
                         actingSince = 0;
+                        if (pageNet) pageNet.end();
+                        counter.stop();
+                        if (watch) watch.stop();
+                        if (unseenWatch) unseenWatch.stop();
                     }
-                    const mutationCount = counter.stop();
-                    const after = captureOutcomeSnapshot();
                     if (result && result.success) {
-                        const compute =
-                            typeof SELECT_TO_AI_TOOLS !== "undefined" && SELECT_TO_AI_TOOLS.computeOutcomeDelta
-                                ? SELECT_TO_AI_TOOLS.computeOutcomeDelta
-                                : fallbackComputeOutcomeDelta;
-                        result.outcome = compute(before, after, mutationCount);
                         if (acted && acted.isConnected && typeof result.message === 'string') {
                             const stateNow = stateOf(acted);
                             if (stateNow && stateNow !== stateBefore) {

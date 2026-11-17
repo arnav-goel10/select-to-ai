@@ -9,6 +9,10 @@ A new engine, built and measured over 1 to 3 October 2026 (the measurements are 
 - Recipes ship in this release: save a run that worked from the agent page and replay it from the Recipes panel. A replay calls no model while the pages are as recorded, repairs a step that only moved or was restyled, and stops before a press whose meaning changed.
 - Recipe replays and the agent now wait on a page in one way (`core/inject.js`), so a page that never finishes loading no longer stalls a replay.
 - Shortcuts. The side panel keeps the 2.0 key, Ctrl+Shift+S (Command+Shift+S on macOS). The agent is Alt+A and the quick box Alt+K, which are Control+Shift+G and Control+Shift+Q on macOS, because Option+A and Option+K type accented letters there.
+- Updating from 2.0 or 3.x: the popup shows a short "What is new in 4.0" note once, and the toolbar icon says New until it is read. The worker and the popup used different storage keys before, so the note never appeared.
+- Claude is never dropped from right-click without a word. claude.ai is asked for in 4.0, so when a user who had Claude does not hold that host after the update, the popup and Settings each offer one click to add it back.
+- The first task on the welcome page asks Chrome for that task's site alone, not for every website and notifications at once. Other sites are asked for when the agent reaches them, and notifications by a new Settings switch, "Tell me when a task is done".
+- Each step tells the model the browser's language and that the user reads the answer in the language of their request, so a request in Spanish about an English page is answered in Spanish.
 - Sign in with ChatGPT is turned off (`FEATURES.chatgptSignIn` in `defaults.js`) until it has been tried on a real plan.
 - A finished run no longer keeps the text of the pages it read in session storage, and Reset now also removes saved recipes and chat addresses. The privacy policy is rewritten to match; every request and stored item is listed in `docs/privacy-disclosure.md`.
 

@@ -28,7 +28,7 @@
   // answer (a menu opening, a list of suggestions) is part of the result.
   const PAGE_ACTIONS = Object.freeze(new Set(["click", "click_at", "hover", "drag", "fill", "fill_details", "press", "scroll"]));
   // Waits the user meets on the page itself, where a banner asks them.
-  const ON_PAGE_WAITS = Object.freeze(new Set(["sign_in", "human_check", "code", "payment"]));
+  const ON_PAGE_WAITS = Object.freeze(new Set(["sign_in", "human_check", "code", "payment", "press"]));
 
   const has = (list, id) => id !== null && id !== undefined && (list || []).includes(id);
 
@@ -101,9 +101,10 @@
   // What the bar says while the run waits, in the agent page's words.
   const WAIT_WORDS = Object.freeze({
     approval: "Waiting for your go-ahead", sign_in: "Waiting for you to sign in", human_check: "Waiting for you to pass a check",
-    code: "Waiting for a code from you", payment: "Waiting for you to pay", site_access: "Waiting for access to this site",
+    code: "Waiting for a code from you", payment: "Waiting for you to pay", press: "Waiting for you to press a button", site_access: "Waiting for access to this site",
     question: "Waiting for your answer", check_in: "Waiting for you: keep going?", pause: "Paused by the provider",
   });
+  const HELD_WORDS = Object.freeze({ timed: "On hold until the provider takes requests again", open: "On hold: waiting for you" });
   const ENDED = Object.freeze({
     success: { state: "done", text: "Done. The answer is on the agent page." },
     unconfirmed: { state: "done", text: "Done, not confirmed. The answer is on the agent page." },
@@ -122,6 +123,8 @@
     if (run.outcome) return ENDED[run.outcome.state] || { state: "stopped", text: "Stopped." };
     if (run.status === "waiting") {
       const kind = run.wait && run.wait.kind;
+      // A held run is not paused for a moment: it waits for the reset, or for the user.
+      if (kind === "pause" && run.wait.hold) return run.wait.until ? { state: "working", text: HELD_WORDS.timed } : { state: "needs", text: HELD_WORDS.open };
       return { state: kind === "pause" ? "working" : "needs", text: WAIT_WORDS[kind] || "Waiting for you" };
     }
     const goal = run.current && String(run.current.goal || "").trim();

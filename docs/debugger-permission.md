@@ -36,6 +36,8 @@ Measured on 10 Nov 2026 with the 59 scripted end-to-end scenarios (`tests/e2e/ru
 | `pointerCanvas` | A press at a point on a drawing |
 | `realKeys` | A key press the page checks is real |
 
+Since then `slowResults` passes without the debugger (the wait counts the page's own requests), so 6 are listed now.
+
 In 4.0 these page types get scripted input, and screenshots use `chrome.tabs.captureVisibleTab`, which sees only the front tab. These are scripted fixtures, so they show which kinds of page break, not how often real sites use them. No real-site comparison has been run.
 
 ## What a later companion listing would need

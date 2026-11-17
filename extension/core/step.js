@@ -60,7 +60,9 @@
   // page budget is not added, and the model is told so.
   const NOTES_LIMIT = 8000;
 
-  const ASK_KINDS = Object.freeze(["question", "sign_in", "human_check", "code", "payment"]);
+  // press: one control the user is to press themselves, named by its ref
+  // (a control that takes only a real press, which a scripted one is not).
+  const ASK_KINDS = Object.freeze(["question", "sign_in", "human_check", "code", "payment", "press"]);
 
   // Sub-tasks one delegate action hands out. Each is a run of its own in a
   // tab of its own (core/run.js says how many run at once and why); past
@@ -101,14 +103,14 @@
     const names = ACTION_NAMES.filter(on);
     const about = {
       click: "click: press a control or follow a link (ref).",
-      hover: "hover: move the pointer over a control without pressing it (ref), for a menu or tooltip that opens when the pointer is over it.",
-      drag: "drag: press on a control, move it while holding, and let go (ref; to_ref, or direction and distance): an item to move in a list, a thing to drop on a box, a knob that fill cannot set. To set a slider to a number, use fill. Nothing else runs in the same step: its result says what changed.",
+      hover: "hover: move the pointer over a control without pressing it (ref), for a menu or tooltip that opens when the pointer is over it. Its result says what that brought up, or that nothing came up.",
+      drag: "drag: press on a control, move it while holding, and let go (ref; to_ref, or direction and distance): an item to move in a list, a thing to drop on a box, a knob that fill cannot set. To set a slider to a number, use fill. Nothing else runs in the same step: its result says what changed, and a drag that changed nothing was not followed by the page.",
       click_at: "click_at: press a point on the page that has no number in the listing, such as a spot on a map or a drawing (x, y: page pixels from its top left corner, as the listing gives them after \"at\").",
       fill: `fill: give a control a value (ref, value). It works on text boxes, dropdowns, checkboxes (value "on" or "off"), radio buttons, date fields and sliders, and replaces what was there.${opts.hasDetails ? " With from in place of value it puts in one of the user's details on file." : ""}`,
       fill_details: "fill_details: fill every field of a form that the user's details on file cover, in one go (ref: any control in that form). It says what it filled and what is left.",
       recall: "recall: read details on file when you have to write with them yourself (from). The user is shown what you read.",
       remember: "remember: keep something the user told you about themselves or how they want things done, for later tasks (value, scope).",
-      press: "press: a key such as Enter, Escape, Tab or ArrowDown (key; ref of the field to press it in).",
+      press: "press: a key such as Enter, Escape or ArrowDown (key; ref of the field to press it in).",
       scroll: "scroll: move down or up the page (direction), for a list that loads more as it is scrolled, or to bring later items of a long list into the listing. With a ref as well, it scrolls inside the box that control is in (a long text box, a panel with its own scroll bar). It is not needed to reach a control: every control can be acted on by its ref wherever it is.",
       navigate: "navigate: open an address (url).",
       back: "back: go back one page.",
@@ -118,7 +120,7 @@
       read: "read: the next part of a long page's text (part).",
       find: "find: search the whole page for words (query), in its text and on its controls, on screen or not. It matches words as the page writes them, so give words the page would use (a name, a label, a number written the page's way), not a description of what you want. It returns the passages and the controls that have them, or says nothing matched. Use it to look for something instead of scrolling.",
       delegate: `delegate: hand out up to ${DELEGATE_MAX} independent sub-tasks that run at the same time, each in a background tab of its own (tasks: for each, a short instruction that stands by itself, and the address to start at when you know it). You get every sub-task's answer back as this action's result. Nothing else runs in the same step.`,
-      ask_user: "ask_user: hand something only the user can do or decide to them, then carry on (kind, question).",
+      ask_user: "ask_user: hand something only the user can do or decide to them, then carry on (kind, question). With kind \"press\" and a ref, the user presses that one control themselves and you carry on once they have.",
       done: "done: finish. Use it as soon as you can answer, with the full answer (success, answer, evidence). Answering a question about the page in front of you is done, with nothing before it.",
     };
     const action = {
@@ -178,7 +180,7 @@
           tab: { type: "integer", description: "tabs switch, close: the tab number from the tab list." },
           seconds: { type: "number", description: "wait: how long, up to 10." },
           scope: { type: "string", enum: ["everywhere", "this_site"], description: "remember: whether it holds everywhere or only on this site." },
-          kind: { type: "string", enum: ASK_KINDS, description: "ask_user: sign_in, human_check, code or payment when the page needs that from the user; question for anything else." },
+          kind: { type: "string", enum: ASK_KINDS, description: "ask_user: sign_in, human_check, code or payment when the page needs that from the user; press, with ref, for one control that only the user's own press works on; question for anything else." },
           question: { type: "string", description: "ask_user: what you need from the user, in one or two plain sentences." },
           success: { type: "boolean", description: "done: true only if every part of the request was carried out or answered." },
           answer: { type: "string", description: "done: the full reply to the user, in Markdown. When success is false, what you did, what is missing and why." },
@@ -299,11 +301,14 @@
     const needsRef = name === "click" || name === "fill" || name === "hover" || name === "drag";
     if (name === "fill_details" && (a.ref === undefined || a.ref === null || a.ref === "")) delete a.ref;
     // A ref of 0, or one given to an action that takes none, means "no control".
-    if (!needsRef && (asInt(a.ref) === 0 || ["navigate", "back", "wait", "look", "read", "find", "done", "ask_user", "tabs", "remember", "recall", "click_at", "delegate"].includes(name))) delete a.ref;
+    // Asking the user to press a control names it by its ref; no other ask takes one.
+    const asksPress = name === "ask_user" && String(a.kind || "").trim().toLowerCase() === "press";
+    if (!needsRef && !asksPress && (asInt(a.ref) === 0 || ["navigate", "back", "wait", "look", "read", "find", "done", "ask_user", "tabs", "remember", "recall", "click_at", "delegate"].includes(name))) delete a.ref;
     if (a.ref !== undefined && a.ref !== null && a.ref !== "") {
       const ref = asInt(a.ref);
       if (ref === null) return { error: `ref must be the number in [brackets] before a control, not "${clip(a.ref, 30)}".` };
       const el = els.find((e) => e.id === ref);
+      if (!el && asksPress) return { error: `There is no control [${ref}] on this page for the user to press. Use a number from the current page listing.` };
       if (!el && (needsRef || name === "press" || name === "scroll")) {
         // The same control under a new number, when the page was redrawn.
         const was = ctx.labels && ctx.labels[ref];
@@ -429,7 +434,9 @@
       const q = String(a.question || "").trim();
       if (!q) return { error: "ask_user needs question: what you need from the user." };
       out.question = q.slice(0, 600);
-      out.kind = ASK_KINDS.includes(a.kind) ? a.kind : "question";
+      const kind = String(a.kind || "").trim().toLowerCase();
+      out.kind = ASK_KINDS.includes(kind) ? kind : "question";
+      if (out.kind === "press" && out.ref === undefined) return { error: "ask_user with kind \"press\" needs ref: the number of the control the user is to press." };
     }
     if (name === "done") {
       // Finishing without success, with the account of what happened written

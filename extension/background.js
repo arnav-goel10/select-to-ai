@@ -14,6 +14,8 @@ let agentLoaded = false;
 try {
     importScripts('publicSuffixes.js', 'agentTools.js', 'agentPrompt.js', 'usageLimits.js', 'pageSearch.js',
         'core/step.js', 'core/observe.js', 'core/memory.js', 'core/context.js', 'core/policy.js', 'core/run.js', 'core/llm.js', 'core/learn.js', 'core/view.js', 'core/inject.js',
+        // The data consent, kept per provider: the engine checks it before a held run goes on.
+        'setup.js',
         'recipes/vendor/recipes-core.js', 'recipes/driver.js', 'recipes/service.js', 'engine.js');
     // Saved runs ("recipes") and their replays, for the agent's page.
     if (self.SELECT_TO_AI_RECIPES) self.SELECT_TO_AI_RECIPES.install(chrome);
@@ -170,7 +172,28 @@ function compareVersions(a, b) {
 
 const LEGACY_V2_SETTINGS = ['sidebarMode', 'contextMode'];
 // Read by the popup: shows a one-time "What is new" note. No tab is opened.
-const UPGRADE_NOTICE_KEY = 'upgradeNotice';
+// Worker and popup take the key from config.js, so they cannot drift apart.
+const UPGRADE_NOTICE_KEY = CONFIG.STORAGE.UPGRADE_NOTICE;
+
+/**
+ * "New" on the toolbar icon while the note is unread: an update opens no
+ * tab, so this is what tells the user there is something to open the popup
+ * for. Chrome forgets a badge when the browser closes, so it is set again at
+ * every worker start and cleared when the popup removes the notice.
+ */
+function showUpgradeBadge(on) {
+    if (!chrome.action || typeof chrome.action.setBadgeText !== 'function') return;
+    try {
+        const done = chrome.action.setBadgeText({ text: on ? 'New' : '' }, () => void chrome.runtime.lastError);
+        if (done && typeof done.catch === 'function') done.catch(() => {});
+    } catch (e) { /* the badge is a hint, never a reason to fail */ }
+}
+chrome.storage.local.get(UPGRADE_NOTICE_KEY, (items) => {
+    if (!chrome.runtime.lastError && items && items[UPGRADE_NOTICE_KEY]) showUpgradeBadge(true);
+});
+chrome.storage.onChanged.addListener((changes, namespace) => {
+    if (namespace === 'local' && changes[UPGRADE_NOTICE_KEY]) showUpgradeBadge(!!changes[UPGRADE_NOTICE_KEY].newValue);
+});
 
 /**
  * 2.0 saved a setting only when its control was touched, and read the
@@ -197,6 +220,19 @@ function migrateFromV2() {
     });
 }
 
+/**
+ * 3.x showed Claude unless it was turned off, and held claude.ai from the
+ * install. 4.0 asks for that host, so what 3.x was showing is written down:
+ * the popup and Settings then know this user had Claude, and offer it back
+ * when Chrome does not hold the host after the update.
+ */
+function keepClaudeChoice() {
+    chrome.storage.sync.get(['showClaude'], (items) => {
+        if (chrome.runtime.lastError || !items || items.showClaude !== undefined) return;
+        chrome.storage.sync.set({ showClaude: true });
+    });
+}
+
 // The menu is built at every worker start from the stored settings (see
 // updateCache), so onInstalled only migrates. A fresh install also opens the
 // welcome page; an update opens nothing.
@@ -206,6 +242,7 @@ function onInstalledHandler(details) {
     if (reason === 'update') {
         const previous = details.previousVersion;
         if (majorVersion(previous) < 3) migrateFromV2();
+        else if (compareVersions(previous, '4.0.0') < 0) keepClaudeChoice();
         if (previous && compareVersions(previous, '4.0.0') < 0) {
             chrome.storage.local.set({ [UPGRADE_NOTICE_KEY]: { from: String(previous), at: Date.now() } });
         }
@@ -292,6 +329,8 @@ function menuItems(settings, claudeGranted) {
     if (settings.showGemini) items.push({ name: 'openGemini', title: 'Send to Gemini' });
     if (settings.showPerplexity) items.push({ name: 'openPerplexity', title: 'Send to Perplexity' });
     // claude.ai is optional in 4.0: the item appears once the user grants it.
+    // A user who had Claude and lost the host is offered it back in the
+    // popup and in Settings (showClaude true with the host not held).
     if (settings.showClaude && claudeGranted) items.push({ name: 'openClaude', title: 'Send to Claude' });
     if (settings.showAgent) items.push({ name: 'openAgent', title: 'Ask the agent about this' });
     return items;

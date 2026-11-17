@@ -74,7 +74,7 @@ function storageArea(name, onChanged, log) {
  */
 function loadBackground(opts = {}) {
   const log = [];
-  const calls = { sidePanelOpen: [], tabsCreate: [], sendMessage: [], menus: [], removeAll: 0, notify: [], sessionRules: [] };
+  const calls = { sidePanelOpen: [], tabsCreate: [], sendMessage: [], menus: [], removeAll: 0, notify: [], sessionRules: [], badge: [] };
   const storageChanged = event();
   const granted = new Set(opts.granted || []);
   let nextTabId = 100;
@@ -147,6 +147,7 @@ function loadBackground(opts = {}) {
       updateSessionRules(rules, cb) { calls.sessionRules.push(rules); setImmediate(() => cb && cb()); },
     },
     commands: { onCommand: event() },
+    action: { setBadgeText(details, cb) { calls.badge.push(details.text); setImmediate(() => cb && cb()); } },
     scripting: {
       executeScript(o, cb) { setImmediate(() => cb && cb([])); },
       getRegisteredContentScripts(f, cb) { setImmediate(() => cb([])); },
@@ -195,4 +196,4 @@ function loadBackground(opts = {}) {
   };
 }
 
-module.exports = { loadBackground, settle, tick };
+module.exports = { loadBackground, settle, tick, event, storageArea };

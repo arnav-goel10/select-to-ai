@@ -10,6 +10,8 @@
  *  2. Small fixture pages: a search page with a form + results, a
  *     multi-field signup form, a page behind a fake login wall, and a
  *     two-page price-comparison pair.
+ *     POST /control/limit {on} makes it refuse every call as a provider
+ *     whose daily requests are spent (429), until turned off.
  *  3. A control API for the runner: POST /control/scenario selects the
  *     active scenario, GET /control/log returns every executor action the
  *     gateway issued for it (used to assert e.g. "no credentials typed").
@@ -460,6 +462,185 @@ const FIXTURES = {
        zone.addEventListener('drop', (e) => { e.preventDefault(); zone.appendChild(chip); document.getElementById('dropped').textContent = 'Dropped: ' + e.dataTransfer.getData('text/plain'); });
      </script>`,
   ),
+  // Controls that do not answer a click made by script, each in its own
+  // way: the run has no debugger, so its pointer and keys are scripted.
+  // This one takes a real mouse press, or Enter with the focus on it.
+  "/press-keys": pageShell(
+    "Settings",
+    `<h1>Settings</h1>
+     <p id="state">Not saved</p>
+     <div id="save" role="button" tabindex="0" style="display:inline-block;padding:8px 18px;border:1px solid #888">Save settings</div>
+     <script>
+       window.saves = 0;
+       const save = document.getElementById('save');
+       const saved = (how) => { window.saves += 1; document.getElementById('state').textContent = 'Saved ' + how; };
+       save.addEventListener('click', (e) => { if (e.isTrusted) saved('with the mouse'); });
+       save.addEventListener('keydown', (e) => { if (e.key === 'Enter' && document.activeElement === save) saved('with the keyboard'); });
+     </script>`,
+  ),
+  // Controls that take a scripted click and show it only out of sight of
+  // the page's elements. Each also takes Enter and Space, as a control
+  // built for the keyboard does, so a press made a second way would count
+  // twice. This one sets a field's value from its code: no element changes.
+  "/press-silent": pageShell(
+    "Basket",
+    `<h1>Basket</h1>
+     <label for="qty">Apples</label> <input type="text" id="qty" value="1" readonly />
+     <div id="more" role="button" tabindex="0" aria-label="One more apple" style="display:inline-block;padding:8px 18px;border:1px solid #888">+</div>
+     <script>
+       window.steps = 0;
+       const qty = document.getElementById('qty'), more = document.getElementById('more');
+       const one = () => { window.steps += 1; qty.value = String(Number(qty.value) + 1); };
+       more.addEventListener('click', one);
+       more.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') one(); });
+     </script>`,
+  ),
+  // This one shows what it did only inside its component's own shadow root.
+  "/shadow-silent": pageShell(
+    "Wishlist",
+    `<h1>Wishlist</h1>
+     <wish-card id="card"></wish-card>
+     <script>
+       window.wishes = 0;
+       const root = document.getElementById('card').attachShadow({ mode: 'open' });
+       root.innerHTML = '<div id="wish" role="button" tabindex="0" style="display:inline-block;padding:8px 18px;border:1px solid #888">Add to wishlist</div> <span id="n">In wishlist: 0</span>';
+       const wish = root.getElementById('wish');
+       const one = () => { window.wishes += 1; root.getElementById('n').textContent = 'In wishlist: ' + window.wishes; };
+       wish.addEventListener('click', one);
+       wish.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') one(); });
+     </script>`,
+  ),
+  // A press the user approves is made once, whatever the page shows after
+  // it. This button shows nothing, and counts any key sent to it.
+  "/press-once": pageShell(
+    "Newsletter",
+    `<h1>Newsletter</h1>
+     <p>Weekly notes from the trail.</p>
+     <button type="button" id="sub">Subscribe</button>
+     <script>
+       window.subs = 0; window.keys = 0;
+       const sub = document.getElementById('sub');
+       sub.addEventListener('click', () => { window.subs += 1; });
+       sub.addEventListener('keydown', () => { window.keys += 1; });
+     </script>`,
+  ),
+  // A control the keyboard cannot reach (no tabindex), that does nothing
+  // when pressed. It counts what reaches it.
+  "/press-plain": pageShell(
+    "Gallery",
+    `<h1>Gallery</h1>
+     <p>Twelve photos from the trail.</p>
+     <div id="more" role="button" style="display:inline-block;padding:8px 18px;border:1px solid #888;cursor:pointer">Show more photos</div>
+     <script>
+       window.clicks = 0; window.keys = 0;
+       const more = document.getElementById('more');
+       more.addEventListener('click', () => { window.clicks += 1; });
+       more.addEventListener('keydown', () => { window.keys += 1; });
+     </script>`,
+  ),
+  // Controls built for the keyboard too, whose answer to a press comes
+  // late or out of sight. A press made a second way would count twice.
+  // This one acts a second and a half after the press, on a timer of its
+  // own, with no request.
+  "/press-late": pageShell(
+    "Stock",
+    `<h1>Stock</h1>
+     <p id="state">Stock not counted</p>
+     <div id="send" role="button" tabindex="0" style="display:inline-block;padding:8px 18px;border:1px solid #888">Count the stock</div>
+     <script>
+       window.sends = 0;
+       const send = document.getElementById('send');
+       const later = () => setTimeout(() => { window.sends += 1; document.getElementById('state').textContent = 'Stock counted ' + window.sends + (window.sends === 1 ? ' time' : ' times'); }, 1500);
+       send.addEventListener('click', later);
+       send.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') later(); });
+     </script>`,
+  ),
+  // This one scrolls a box inside the page: no element changes.
+  "/press-scroll": pageShell(
+    "Log",
+    `<h1>Log</h1>
+     <div id="box" style="height:120px;overflow:auto;border:1px solid #888"><div style="height:2000px">Line 1</div></div>
+     <div id="next" role="button" tabindex="0" style="display:inline-block;padding:8px 18px;border:1px solid #888">Next lines</div>
+     <script>
+       window.moves = 0;
+       const box = document.getElementById('box'), next = document.getElementById('next');
+       const move = () => { window.moves += 1; box.scrollTop += 200; };
+       next.addEventListener('click', move);
+       next.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') move(); });
+     </script>`,
+  ),
+  // This one asks the server through a fetch it kept from when the page
+  // loaded, and the answer takes a second: nothing on the page changes.
+  "/press-kept": pageShell(
+    "Feed",
+    `<h1>Feed</h1>
+     <p>News from the trail.</p>
+     <div id="report" role="button" tabindex="0" style="display:inline-block;padding:8px 18px;border:1px solid #888">Refresh the feed</div>
+     <script>
+       window.reports = 0;
+       const kept = window.fetch.bind(window);
+       const report = document.getElementById('report');
+       const go = () => { window.reports += 1; kept('/api/slow-ok?n=' + window.reports).then((r) => r.json()).catch(() => {}); };
+       report.addEventListener('click', go);
+       report.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') go(); });
+     </script>`,
+  ),
+  // This one takes only a person's own press.
+  "/press-real": pageShell(
+    "Downloads",
+    `<h1>Downloads</h1>
+     <p id="state">Downloads locked</p>
+     <button type="button" id="real">Unlock downloads</button>
+     <script>
+       window.scripted = 0;
+       document.getElementById('real').addEventListener('click', (e) => { if (!e.isTrusted) { window.scripted += 1; return; } document.getElementById('state').textContent = 'Downloads unlocked'; });
+     </script>`,
+  ),
+  // A button inside a component's shadow root, with the page listening for
+  // the click outside it, as a framework that listens at the root does.
+  "/shadow-click": pageShell(
+    "Basket",
+    `<h1>Basket</h1>
+     <p id="state">Basket empty</p>
+     <shop-card id="card"></shop-card>
+     <script>
+       window.adds = 0;
+       const root = document.getElementById('card').attachShadow({ mode: 'open' });
+       root.innerHTML = '<button type="button" id="add">Add to basket</button>';
+       document.addEventListener('click', (e) => { const first = e.composedPath()[0]; if (first && first.id === 'add') { window.adds += 1; document.getElementById('state').textContent = 'Added to basket'; } });
+     </script>`,
+  ),
+  // A toolbar button that keeps the cursor where it is by cancelling the
+  // press, as a text editor's toolbar does, and acts on the box that has it.
+  "/toolbar": pageShell(
+    "Note",
+    `<h1>Note</h1>
+     <label for="title">Title</label><input type="text" id="title" value="shopping list" />
+     <button type="button" id="upper">Upper case</button>
+     <p id="state">Nothing done</p>
+     <script>
+       const title = document.getElementById('title'), upper = document.getElementById('upper');
+       upper.addEventListener('mousedown', (e) => e.preventDefault());
+       upper.addEventListener('click', () => {
+         if (document.activeElement !== title) { document.getElementById('state').textContent = 'The title lost the cursor'; return; }
+         title.value = title.value.toUpperCase();
+         document.getElementById('state').textContent = 'Title in upper case';
+       });
+     </script>`,
+  ),
+  // A chart only a picture shows, and a button that puts its legend in words.
+  "/chart": pageShell(
+    "Sales",
+    `<h1>Sales</h1>
+     <canvas id="chart" width="300" height="120" style="border:1px solid #000"></canvas>
+     <button type="button" id="legend-btn">Show the legend</button>
+     <p id="legend"></p>
+     <script>
+       const g = document.getElementById('chart').getContext('2d');
+       g.fillRect(20, 60, 40, 60); g.fillRect(90, 30, 40, 90); g.fillRect(160, 80, 40, 40);
+       document.getElementById('legend-btn').addEventListener('click', () => { document.getElementById('legend').textContent = 'Legend: sales by month'; });
+     </script>`,
+  ),
   // A drawing to press at a point, below the fold, and a button something is drawn over.
   "/pointer-canvas": pageShell(
     "Drawing",
@@ -667,6 +848,8 @@ function buildScenarios() {
     booking: { task: "Book a Pro workshop ticket for Grace Hopper on this page, agreeing to the terms." },
     hijack: { task: "What is the total of my last order on this page?" },
     article: { task: "When does the Brightwater Lighthouse open to visitors, according to this article?" },
+    // The same question, asked in Spanish about the same English page.
+    otherLanguage: { task: "¿A qué hora abre al público el faro de Brightwater, según este artículo?" },
     // A question answered from what the model knows, on the first step. The
     // model and the check take a while, as real ones do, so the answer shown
     // while it is checked can be told apart from the final one.
@@ -752,6 +935,16 @@ function buildStepPolicies(baseUrl) {
     article(ctx) {
       if (/9:30 to 16:45/.test(ctx.userText)) return done("The Brightwater Lighthouse opens from 9:30 to 16:45 every day except Tuesday.", ["opens to visitors from 9:30 to 16:45 every day except Tuesday"]);
       return step("Find the visiting hours", [{ do: "read", query: "open to visitors" }]);
+    },
+    // A model that answers in the request's language once the step says who
+    // reads the answer (core/context.js languageFact), and in the page's
+    // language when it is told nothing, as small models often did.
+    otherLanguage(ctx) {
+      if (!/9:30 to 16:45/.test(ctx.userText)) return step("Find the visiting hours", [{ do: "read", query: "open to visitors" }]);
+      const quote = ["opens to visitors from 9:30 to 16:45 every day except Tuesday"];
+      const told = /The user reads your answer, and any question you ask them, in the language the user's request is written in\./.test(ctx.userText);
+      if (told) return done("El faro de Brightwater abre al público de 9:30 a 16:45 todos los días excepto los martes.", quote);
+      return done("The Brightwater Lighthouse opens from 9:30 to 16:45 every day except Tuesday.", quote);
     },
     // A sign-in wall: the agent hands it to the user and carries on after.
     signin(ctx) {
@@ -839,6 +1032,78 @@ function buildStepPolicies(baseUrl) {
       const pricing = named(ctx, /^pricing$/i);
       if (pricing) return step("Choose Pricing", [{ do: "click", ref: pricing.id }]);
       return step("Open the Products menu", [{ do: "hover", ref: named(ctx, /^products$/i).id }]);
+    },
+    // The same menu with a scripted pointer: nothing comes up, the result says why, and the hover is not tried again.
+    hoverScripted(ctx) {
+      if (/Pricing chosen/.test(ctx.userText)) return done("Pricing is chosen.", ["Pricing chosen"]);
+      const pricing = named(ctx, /^pricing$/i);
+      if (pricing) return step("Choose Pricing", [{ do: "click", ref: pricing.id }]);
+      if (/What opens only under the real mouse cannot be opened by script/.test(ctx.userText)) return done("The Products menu opens only under the real mouse, which I cannot move here, so Pricing was not chosen.", [], false);
+      return step("Open the Products menu", [{ do: "hover", ref: named(ctx, /^products$/i).id }]);
+    },
+    // Controls that ignore a click made by script: one press each, and the page says what it took.
+    pressKeyboard(ctx) {
+      if (/Saved with/.test(ctx.userText)) return done("The settings are saved.", ["Saved with"]);
+      return step("Save the settings", [{ do: "click", ref: named(ctx, /save settings/i).id }]);
+    },
+    // A press that worked out of sight: the result says what was seen, and it is not pressed again.
+    pressSilent(ctx) {
+      if (/A field on the page holds a different value after it/.test(ctx.userText)) return done("There is one more apple in the basket.", []);
+      return step("Add one more apple", [{ do: "click", ref: named(ctx, /one more apple/i).id }]);
+    },
+    shadowSilent(ctx) {
+      if (/In wishlist: [1-9]|The page updated/.test(ctx.userText)) return done("It is on the wishlist.", []);
+      return step("Add it to the wishlist", [{ do: "click", ref: named(ctx, /add to wishlist/i).id }]);
+    },
+    // A press the user approved, with no change after it: said as that, and left there.
+    pressOnce(ctx) {
+      if (/Nothing on the page changed|No change was seen/.test(ctx.userText)) return done("I pressed Subscribe once, as you approved. The page shows no change, so I cannot tell whether it took.", [], false);
+      return step("Subscribe", [{ do: "click", ref: named(ctx, /^subscribe$/i).id }]);
+    },
+    // A dead control the keyboard cannot reach: one press, and a plain result with no failure in it.
+    pressPlain(ctx) {
+      if (/Nothing on the page changed|No change was seen/.test(ctx.userText)) return done("I pressed Show more photos once. The page shows no change.", [], false);
+      if (/did not work|Cannot read/.test(ctx.userText)) return done("policy error: the press came back as a failure", [], false);
+      return step("Show more photos", [{ do: "click", ref: named(ctx, /show more photos/i).id }]);
+    },
+    // Presses whose answer comes late or out of sight: one press each.
+    pressLate(ctx) {
+      if (/Stock counted/.test(ctx.userText)) return done("The stock is counted.", ["Stock counted"]);
+      if (/Nothing on the page changed|No change was seen/.test(ctx.userText)) return done("I pressed Count the stock once. The page showed no change while I watched.", [], false);
+      return step("Count the stock", [{ do: "click", ref: named(ctx, /count the stock/i).id }]);
+    },
+    pressScroll(ctx) {
+      if (/Nothing on the page changed|No change was seen|The page updated|The page scrolled/.test(ctx.userText)) return done("I pressed Next lines once.", [], false);
+      return step("Show the next lines", [{ do: "click", ref: named(ctx, /next lines/i).id }]);
+    },
+    pressKept(ctx) {
+      if (/Nothing on the page changed|No change was seen|The page updated/.test(ctx.userText)) return done("I pressed Refresh the feed once. The page shows no change.", [], false);
+      return step("Refresh the feed", [{ do: "click", ref: named(ctx, /refresh the feed/i).id }]);
+    },
+    // A control that takes only the user's own press: told so, the model hands that one press over.
+    pressUser(ctx) {
+      if (/Downloads unlocked/.test(ctx.userText)) return done("Downloads are unlocked.", ["Downloads unlocked"]);
+      const button = named(ctx, /unlock downloads/i);
+      const handOver = ctx.userText.match(/ask_user with kind "press" and ref (\d+)/);
+      if (handOver) return step("Hand the press to the user", [{ do: "ask_user", kind: "press", ref: Number(handOver[1]), question: "Please press Unlock downloads on the page: it only takes your own press." }]);
+      return step("Unlock the downloads", [{ do: "click", ref: button.id }]);
+    },
+    shadowClick(ctx) {
+      if (/Added to basket/.test(ctx.userText)) return done("It is in the basket.", ["Added to basket"]);
+      return step("Add it to the basket", [{ do: "click", ref: named(ctx, /add to basket/i).id }]);
+    },
+    toolbar(ctx) {
+      if (/Title in upper case/.test(ctx.userText)) return done("The title is in upper case.", ["Title in upper case"]);
+      if (/The title lost the cursor/.test(ctx.userText)) return done("The button did nothing: the title lost the cursor.", [], false);
+      return step("Put the cursor in the title and press Upper case", [{ do: "click", ref: named(ctx, /^title$/i).id }, { do: "click", ref: named(ctx, /upper case/i).id }]);
+    },
+    // A page with a chart: the model asks for a picture once its tab is in front.
+    lookPerSite(ctx) {
+      if (/A picture of the page as it is on screen is attached/.test(ctx.userText)) return done("I looked at the chart: sales by month.", ["Legend: sales by month"]);
+      if (/A picture of this tab could not be taken/.test(ctx.userText)) return done("I could not take a picture of the chart. Its legend says sales by month.", ["Legend: sales by month"]);
+      if (/cannot be shown pictures/.test(ctx.userText)) return done("policy error: the run did not offer look to a model that takes pictures", [], false);
+      if (!/Legend: sales by month/.test(ctx.userText)) return step("Show the legend", [{ do: "click", ref: named(ctx, /show the legend/i).id }]);
+      return step("Look at the chart", [{ do: "look" }]);
     },
     // A button in another site's frame, below the fold of both.
     pointerFrame(ctx) {
@@ -1138,6 +1403,19 @@ function createE2EServer(port = 8907) {
   scenarios.pointerNoDebugger = { task: "Count once and move Apples to the end of the list." };
   scenarios.pointerCanvas = { task: "Press the drawing a little right of its middle, then press the hidden button." };
   scenarios.pointerRisk = { task: "Tidy up my account." };
+  scenarios.hoverScripted = { task: "Choose Pricing from the Products menu." };
+  scenarios.pressKeyboard = { task: "Save my settings." };
+  scenarios.pressSilent = { task: "Add one more apple to the basket." };
+  scenarios.shadowSilent = { task: "Add this to my wishlist." };
+  scenarios.pressOnce = { task: "Subscribe me to the newsletter." };
+  scenarios.pressUser = { task: "Unlock the downloads." };
+  scenarios.pressPlain = { task: "Show more photos." };
+  scenarios.pressLate = { task: "Count the stock." };
+  scenarios.pressScroll = { task: "Show the next lines of the log." };
+  scenarios.pressKept = { task: "Refresh the feed." };
+  scenarios.shadowClick = { task: "Add this to my basket." };
+  scenarios.toolbar = { task: "Make the title upper case." };
+  scenarios.lookPerSite = { task: "What does the sales chart show?" };
   scenarios.framed = { task: "How much is Item B?" };
   scenarios.findQuote = { task: "How much is the garden hose?" };
   scenarios.code = { task: "What was the total of order 4411?" };
@@ -1220,6 +1498,17 @@ function createE2EServer(port = 8907) {
 
     // Where a hijacked agent would send the user's data. Counted, so a test
     // can prove nothing arrived.
+    // The gateway answers as a provider whose day's requests are spent, until told otherwise.
+    if (pathname === "/control/limit" && req.method === "POST") {
+      collectBody(req, (raw) => {
+        let on = false;
+        try { on = !!JSON.parse(raw).on; } catch (_e) { on = false; }
+        state.limited = on;
+        respond(200, JSON.stringify({ ok: true, limited: on }), "application/json");
+      });
+      return;
+    }
+
     if (pathname === "/collect") {
       state.collected = (state.collected || 0) + 1;
       respond(200, pageShell("Collected", "<h1>Thanks</h1>"));
@@ -1246,6 +1535,10 @@ function createE2EServer(port = 8907) {
           return;
         }
         state.llmCalls++;
+        if (state.limited) {
+          respond(429, JSON.stringify({ error: { message: "Rate limit exceeded: free-models-per-day. The daily quota for this key is used up." } }), "application/json");
+          return;
+        }
         const scenario = scenarios[state.scenarioName];
         // The instructions are the first message; the step's context, with
         // the element list and page text, is the one after it.
@@ -1330,6 +1623,10 @@ function createE2EServer(port = 8907) {
     }
     if (pathname === "/api/slow-results") {
       setTimeout(() => respond(200, JSON.stringify([{ id: "f101", name: "Flight 101", price: "$420" }, { id: "f202", name: "Flight 202", price: "$515" }]), "application/json"), 3000);
+      return;
+    }
+    if (pathname === "/api/slow-ok") {
+      setTimeout(() => respond(200, "{}", "application/json"), 1000);
       return;
     }
     if (pathname === "/api/ping") {

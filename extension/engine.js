@@ -294,12 +294,10 @@
       else if (change.op === "replace" && change.store && change.store.v === 2) memory = KNOWN.sanitizeStore ? KNOWN.sanitizeStore(change.store, now) : { ...KNOWN.empty(), ...change.store };
       else if (change.op === "mark") memory = KNOWN.mark(memory, change.ids, change.how, now);
       else if (change.op === "learn_routine" && change.routine && change.scope) {
-        const twin = memory.entries.find((e) => e.kind === "routine" && e.scope === change.scope && (e.task === change.routine.task || (KNOWN.overlap && KNOWN.overlap(e.task, change.routine.task) >= 0.8 && KNOWN.overlap(change.routine.task, e.task) >= 0.8)));
-        let base = twin ? KNOWN.removeEntry(memory, twin.id) : memory;
-        const r = KNOWN.addEntry(base, { kind: "routine", text: change.routine.text, task: change.routine.task, steps: change.routine.steps, scope: change.scope, source: "run" }, now);
-        memory = r.store;
-        result = { added: r.added, replaced: !!twin };
+        result = KNOWN.learnRoutine(memory, change.routine, change.scope, now);
+        memory = result.store;
       }
+      else if (change.op === "forget_run") { result = KNOWN.forgetRun(memory, change.runId); memory = result.store; }
       else if (change.op === "learn_apply" && change.run && change.flags) {
         result = LEARN.applyLearned(memory, change.run, change.reply, change.site, change.flags, now);
         memory = result.store;
@@ -421,7 +419,7 @@
     const back = (event) => deliver(session, { ...event, token });
     if (fx.type === "observe") observe(session, fx, back).catch((e) => back({ type: "model_failed", kind: "page", message: `The page could not be read: ${e && e.message ? e.message : e}` })).finally(() => timed("observe"));
     else if (fx.type === "model") model(session, fx, back).finally(() => timed("model"));
-    else if (fx.type === "act") toFront(session, fx.action).then(() => (RECIPES ? RECIPES.around(session, fx.action, () => act(session, fx.action)) : act(session, fx.action))).then(settledFor).then(pointed).then((result) => lookAgain(session, result, back)).then((result) => back({ type: "acted", result }), (e) => back({ type: "acted", result: { ok: false, message: String((e && e.message) || e) } })).finally(() => timed("act"));
+    else if (fx.type === "act") toFront(session, fx.action).then(() => (RECIPES ? RECIPES.around(session, fx.action, () => act(session, fx.action, fx.keys === true)) : act(session, fx.action, fx.keys === true))).then(settledFor).then(pointed).then((result) => lookAgain(session, result, back)).then((result) => back({ type: "acted", result }), (e) => back({ type: "acted", result: { ok: false, message: String((e && e.message) || e) } })).finally(() => timed("act"));
     else if (fx.type === "attention") attention(rootOf(session), fx.wait, !!fx.again).catch((e) => console.error("Select to AI attention:", e));
     else if (fx.type === "memory") changeMemory(fx).catch((e) => console.error("Select to AI memory:", e));
     else if (fx.type === "end") finished(session);
@@ -542,6 +540,9 @@
     });
   }
 
+  /** Starts the count of a page's own requests, in the page's world. It runs at once: there is nothing in the page it waits for. */
+  const countRequests = (tabId, name) => (INJECT.NET_EVENT.test(String(name || "")) ? INJECT.injectNow(chrome, { tabId }, { world: "MAIN", func: INJECT.netShim, args: [name] }) : Promise.resolve(null));
+
   /** A page that cannot be read still has an address and a title, and can be left. */
   const unreadable = (tab, why) => ({ url: tab.url || "", title: tab.title || "", elements: [], innerText: `[${why}]`, visibleText: "", protectedPage: true });
 
@@ -585,6 +586,10 @@
     // (agentPressables: "off" leaves them out, for measuring with and without.)
     if (!near && !(session.items && session.items.agentPressables === "off") && await pressables(tab.id)) res = (await send(tab.id, request)) || res;
     if (!Array.isArray(res.elements)) res.elements = [];
+    // With no debugger connection to show the tab's requests, the page's own
+    // world is asked to count them (core/inject.js), so the wait after an
+    // action can tell a page still waiting for an answer from a finished one.
+    if (!res.netView && !nets.has(tab.id)) countRequests(tab.id, res.netEvent);
     session.frames = [];
     if (!near && res.frames) { try { await readFrames(session, tab, res); } catch (_e) { session.frames = []; } }
     return res;
@@ -670,7 +675,7 @@
     await loadMemory();
     KNOWN.annotate(page.elements, memory);
     const startSite = TOOLS.siteOf(LEARN.startUrl(run) || "");
-    const known = KNOWN.knownBlock(memory, TOOLS.siteOf(page.url || ""), run.task, { page, startSite });
+    const known = KNOWN.knownBlock(memory, TOOLS.siteOf(page.url || ""), run.task, { page, startSite, begun: LEARN.begun(run) });
     session.extras.known = known.text;
     session.extras.siteNotes = known.site;
     session.extras.knownIds = known.ids;
@@ -679,6 +684,11 @@
     // front is a fact the model is told (core/context.js).
     if (page.inBackground) page.behind = session.parent ? "subtask" : (await followed(session, tab)) ? "follow" : "user";
     session.page = page;
+    // Whether the pointer and keys are made by script here: said to the model once (core/context.js).
+    // With a debugger that a tab refused, the last pointer action says how it was made.
+    session.extras.scripted = !chrome.debugger || debuggerDisabled || !!(session.pointerWas && session.pointerWas.run === run.id && session.pointerWas.how === "synthetic");
+    // A picture the browser refused on this tab, in this run (act, look).
+    session.extras.noPictures = session.noPictures && session.noPictures.run === run.id && session.noPictures.tabId === tab.id ? session.noPictures.why : "";
     session.extras.tabs = await tabList(tab.windowId, tab.id, session.parent ? run.openedTabs : null);
     back(moved ? { type: "observed", page, moved } : { type: "observed", page });
   }
@@ -764,6 +774,16 @@
     return client;
   }
 
+  // What the provider last said is left of the key's requests, kept where
+  // the agent's page reads it for the model pill. Written only when it changes.
+  let allowance = null;
+  function noteAllowance(provider, left) {
+    if (!provider || !left) return;
+    if (allowance && allowance.provider === provider && allowance.remaining === left.remaining && allowance.limit === left.limit && allowance.resetAt === left.resetAt) return;
+    allowance = { provider, remaining: left.remaining, limit: left.limit, resetAt: left.resetAt };
+    quiet(chrome.storage.local.set({ agentAllowance: { ...allowance, at: Date.now() } }));
+  }
+
   async function model(session, fx, back) {
     const run = session.run;
     const startedAt = Date.now();
@@ -772,16 +792,20 @@
     let last = 0;
     try {
       const out = await clientFor().call({
-        system: fx.system, user: fx.user, tool: fx.tool, tier: fx.tier, effort: fx.effort, image: fx.image, signal: session.abort.signal,
+        system: fx.system, user: fx.user, tool: fx.tool, tier: fx.tier, effort: fx.effort, image: fx.image, reasks: fx.reasks, signal: session.abort.signal,
         // A sub-task's reply as it is written is not shown: its steps are.
         onText: (text) => { const t = Date.now(); if (!session.parent && t - last > 150) { last = t; post(session, { type: "stream", runId: run.id, text: String(text).slice(-6000) }); } },
       }, session.cfg);
       if (!session.parent) post(session, { type: "stream", runId: run.id, text: "" });
+      if (out.left) noteAllowance(out.provider, out.left);
       back({ type: "model_replied", purpose: fx.purpose, reply: out.reply, usage: out.usage, ms: Date.now() - startedAt });
     } catch (e) {
       if (!session.parent) post(session, { type: "stream", runId: run.id, text: "" });
       if (e && e.kind === "aborted") return;
-      back({ type: "model_failed", purpose: fx.purpose, kind: (e && e.kind) || "model", message: (e && e.message) || "The model request failed.", usage: (e && e.usage) || null, waitMs: (e && e.waitMs) || 0, ms: Date.now() - startedAt });
+      // A spent allowance: when it comes back, for the run to be held until then.
+      const limit = e && e.kind === "limit" && e.limit ? { kind: e.limit.kind || "", resetAt: e.limit.resetAt || 0, short: e.limit.short || "" } : null;
+      if (limit && limit.resetAt && e.provider) noteAllowance(e.provider, { remaining: 0, limit: e.limit.limit || 0, resetAt: limit.resetAt });
+      back({ type: "model_failed", purpose: fx.purpose, kind: (e && e.kind) || "model", message: (e && e.message) || "The model request failed.", usage: (e && e.usage) || null, waitMs: (e && e.waitMs) || 0, ...(limit ? { limit } : {}), ms: Date.now() - startedAt });
     } finally {
       session.calling = false;
     }
@@ -836,19 +860,8 @@
   /** The model is told when the page was still loading as the wait ended. */
   const loadingNote = (waited, ms) => (waited && waited.loading ? ` ${TOOLS.stillLoadingNote(ms, waited.signs)}` : "");
 
-  /** What the page did, in words, from what was measured before and after. */
-  function effectOf(o) {
-    if (!o) return "";
-    const said = [];
-    if (o.urlChanged) said.push("The page address changed.");
-    else if (o.titleChanged) said.push("The page title changed.");
-    if (o.newElementCount > 0) said.push(`${o.newElementCount} more control${o.newElementCount === 1 ? "" : "s"} on the page.`);
-    if (o.newElementCount < 0) said.push(`${-o.newElementCount} fewer control${o.newElementCount === -1 ? "" : "s"} on the page.`);
-    if (!said.length && o.domMutationCount > 0) said.push("The page updated.");
-    if (!said.length && o.scrollChanged) said.push("The page scrolled.");
-    if (o.noEffect) said.push("Nothing on the page changed.");
-    return said.join(" ");
-  }
+  /** What the page did, in words, from what was measured before and after (core/context.js). */
+  const effectOf = (o, settle) => CONTEXT.effectNote(o, settle);
 
   /**
    * One action on the page, and the wait for the page to finish what it
@@ -898,6 +911,7 @@
     if (res && res.success && res.opensTab && !opened) opened = created.find((t) => (t.pendingUrl || t.url) === res.opensTab) || null;
     // Whether the pointer was the real one, said with every result.
     const pointer = res && (res.pointer === "real" || res.pointer === "synthetic") ? { pointer: res.pointer } : {};
+    if (pointer.pointer) session.pointerWas = { run: run.id, how: pointer.pointer };
     // A link made to open in a new tab: open it, as the click would have for a person.
     if (res && res.success && res.opensTab && !opened) {
       let why = "";
@@ -941,39 +955,52 @@
     const numbers = (text) => (at.k ? text.replace(/\[(\d+)\]/g, (_m, n) => `[${at.k * FRAME_BASE + Number(n)}]`) : text);
     // The wait ended at the ceiling: said plainly, so the model can choose to wait or act.
     const still = loaded && loaded.loading ? loadingNote(loaded, Date.now() - started).trim() : res.settle && res.settle.loading ? TOOLS.stillLoadingNote(res.settle.ms, res.settle.signs) : "";
-    const message = [String(res.message || "Done.").replace(/\s*Outcome:.*$/s, ""), moved ? `The page changed: now at ${after.url}` : numbers(shown) || effectOf(o), still].filter(Boolean).join(" ");
+    // Which way of pressing the page answered, when the first was not it (core/context.js).
+    const ways = moved ? "" : CONTEXT.waysNote(res.ways, data.id, res.taken);
+    // A field given a new value is a change, though no element changed: it is not then said that nothing did.
+    const valued = !moved && Array.isArray(res.taken) && res.taken.includes("value");
+    const message = [String(res.message || "Done.").replace(/\s*Outcome:.*$/s, ""), ways, moved ? `The page changed: now at ${after.url}` : numbers(shown) || (valued && o.noEffect ? "" : effectOf(o, res.settle)), still].filter(Boolean).join(" ");
     const pageChanged = moved || !!o.urlChanged || !!o.titleChanged || (o.newElementCount || 0) !== 0 || (navigates && (o.domMutationCount || 0) > 0) || !!(res.choices && res.choices.length);
     // Changed where it stands: same address, same title, nothing left to choose.
     const soft = pageChanged && !moved && !o.urlChanged && !o.titleChanged && !(res.choices && res.choices.length);
-    return { ok: true, message, pageChanged, soft, noEffect: !!o.noEffect && !moved, ...pointer };
+    return { ok: true, message, pageChanged, soft, noEffect: !!o.noEffect && !moved && !valued, ...pointer };
   }
 
   /**
    * A picture of a tab. The tab in front is pictured as it is on screen; a
    * tab behind another is pictured where it is, through the debugger
    * connection, which draws it for the picture without bringing it to
-   * front, so looking never takes the user's tab. Returns {image} or {why}.
+   * front, so looking never takes the user's tab. Returns {image}, or
+   * {why, lasting} when none could be taken: why is said to the model, and
+   * lasting means the browser would refuse this tab again (core/context.js).
    */
   async function capture(tabId) {
     const tab = await quiet(chrome.tabs.get(tabId));
     if (!tab) return { why: "The tab is gone." };
+    let refused = "";
     if (tab.active) {
-      const image = await quiet(chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 60 }));
+      const image = await Promise.resolve().then(() => chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 60 })).catch((e) => { refused = String((e && e.message) || e); return null; });
       if (image) return { image };
     }
-    if (!(await connected(tabId))) return { why: tab.active ? "" : "It is behind another tab, and it can be pictured there only through the debugger connection, which this tab refused." };
+    if (!(await connected(tabId))) {
+      // With a debugger to ask, a tab behind another was refused by that tab; without one, no tab behind another can be pictured.
+      if (!tab.active && chrome.debugger && !debuggerDisabled) return { why: "It is behind another tab, and it can be pictured there only through the debugger connection, which this tab refused." };
+      return CONTEXT.noPicture(refused, !tab.active);
+    }
     const got = await quiet(chrome.debugger.sendCommand({ tabId }, "Page.captureScreenshot", { format: "jpeg", quality: 60 }));
     return got && got.data ? { image: `data:image/jpeg;base64,${got.data}` } : { why: "" };
   }
 
-  async function act(session, a) {
+  async function act(session, a, keys) {
     const run = session.run;
     const tabId = run.tabId;
     touch(session, tabId);
     const moved = await approvedChanged(session, a);
     if (moved) return moved;
     switch (a.do) {
-      case "click": return interact(session, a, { action: "click", id: a.ref }, true);
+      // A press the user approved is made once: the page is not pressed another way when it shows no answer.
+      // Any other is made with Enter or Space too only where those keys were allowed on it (keys).
+      case "click": return interact(session, a, { action: "click", id: a.ref, ...(a.approved !== undefined ? { once: true } : keys ? { keys: true } : {}) }, true);
       case "hover": return interact(session, a, { action: "hover", id: a.ref }, false);
       case "click_at": {
         // What is at the point, as the decision on it saw it: the page
@@ -1108,7 +1135,22 @@
       }
       case "look": {
         const shot = await capture(tabId);
-        return shot.image ? { ok: true, pageChanged: true, image: shot.image, message: "A picture of the page is attached to your next step." } : { ok: false, message: `A picture of this tab could not be taken.${shot.why ? ` ${shot.why}` : ""}` };
+        if (shot.image) {
+          // A picture was taken after all (the user opened the extension on this tab): the refusal is no longer a fact here.
+          if (session.noPictures && session.noPictures.tabId === tabId) session.noPictures = { run: session.noPictures.run, tabId: -1, why: "" };
+          return { ok: true, pageChanged: true, image: shot.image, message: "A picture of the page is attached to your next step." };
+        }
+        // A refusal that will come again is a fact of this run from here on
+        // (core/context.js), and the user is told once that the agent works
+        // without pictures: a run that cannot see is not left to look as if it can.
+        const told = session.noPictures && session.noPictures.run === run.id && session.noPictures.tabId === tabId;
+        // The user is told once in a run, whatever tab it is then on.
+        const noted = !!(session.noPictures && session.noPictures.run === run.id);
+        if (shot.lasting && !told) {
+          session.noPictures = { run: run.id, tabId, why: shot.why };
+          if (!noted) run.journal.push({ k: "note", text: "Chrome did not let the agent take a picture of this page, so it is working from the page's text and controls only. Maps, charts and images may be read less well." });
+        }
+        return { ok: false, message: `A picture of this tab could not be taken.${shot.why ? ` ${shot.why}` : ""}` };
       }
       case "read": {
         const page = session.page || {};
@@ -1199,20 +1241,33 @@
     code: "Select to AI is waiting for you to enter the code.",
     payment: "Select to AI is waiting for you to enter the payment details.",
     press: "Select to AI is waiting for you to check this and press the highlighted button.",
+    // A control inside a frame cannot be marked from the page around it.
+    pressFramed: "Select to AI is waiting for you to press the button it asked you about, in the framed part of this page. Choose I'm done here once you have.",
   });
 
   /** Puts the banner on the page and starts the watch for the blocker to go. */
   async function watchPage(wait) {
     const tabId = wait.tabId;
     await quiet(inject({ tabId }, { files: ["agentTools.js", "agentContentScript.js"] }));
-    await send(tabId, { action: "needsYou", kind: wait.kind, text: wait.press ? BANNER.press : BANNER[wait.kind], press: wait.press });
+    await send(tabId, { action: "needsYou", kind: wait.kind, text: wait.press >= FRAME_BASE ? BANNER.pressFramed : wait.press ? BANNER.press : BANNER[wait.kind], press: wait.press });
   }
 
   // A run paused for its provider is woken by an alarm, which outlives the
   // worker. Each wait has its own: a sub-task's pause is its own.
   const RESUME = (windowId, waitId) => `agentResume:${windowId}:${waitId}`;
+  // A held run nobody came back to is not kept waiting for ever: after
+  // this long it ends as the user's own stop would end it, with what it found.
+  const HOLD_LONGEST_MS = 24 * 3600000;
+  const HOLD_OVER = (windowId, waitId) => `agentHoldOver:${windowId}:${waitId}`;
   function wakeAt(session, wait) {
-    if (wait.until <= Date.now() + 1000 || !chrome.alarms) { enqueue(session, { type: "pause_over", id: wait.id }); return; }
+    if (wait.hold && chrome.alarms) quiet(chrome.alarms.create(HOLD_OVER(session.windowId, wait.id), { when: Math.max(wait.until || 0, wait.since || Date.now()) + HOLD_LONGEST_MS }));
+    // A hold with no time named is ended by the user or by a backup being connected.
+    if (!wait.until) return;
+    if (wait.until <= Date.now() + 1000 || !chrome.alarms) {
+      if (wait.hold) resumeHeld(session, wait.id).catch((e) => console.error("Select to AI engine:", e));
+      else enqueue(session, { type: "pause_over", id: wait.id });
+      return;
+    }
     quiet(chrome.alarms.create(RESUME(session.windowId, wait.id), { when: wait.until }));
   }
 
@@ -1225,7 +1280,15 @@
   async function attention(session, wait, again) {
     keepAwake();
     // Nothing for the user to do: the run carries on by itself when the time is up.
-    if (wait.kind === "pause") { session.attending.set(wait.id, wait); wakeAt(session, wait); return; }
+    if (wait.kind === "pause") {
+      session.attending.set(wait.id, wait);
+      wakeAt(session, wait);
+      // A held run has a choice for the user: with no page of the agent's open, a notice says so.
+      if (wait.hold && !again && !session.ports.size) {
+        quiet(notice(`agent-wait:${session.windowId}`, { type: "basic", iconUrl: "icon128.png", title: wait.hold === "limit" ? "Task on hold: usage limit reached" : "Task on hold: the model is busy", message: String(wait.question || "").slice(0, 240) }));
+      }
+      return;
+    }
     const tabId = wait.tabId;
     const watched = WATCHED.has(wait.kind) && tabId !== null && tabId !== undefined;
     session.attending.set(wait.id, wait);
@@ -1526,7 +1589,10 @@
     if (message.action === "agentNetState") {
       const net = nets.get(sender.tab.id);
       const since = Number(message.since) || Date.now();
-      sendResponse(net ? { net: true, ...net.state(since, Date.now()) } : { net: false });
+      const now = Date.now();
+      const st = net ? net.state(since, now) : null;
+      // `asked`: whether the action started any request at all, open or over.
+      sendResponse(st ? { net: true, ...st, asked: st.open > 0 || st.quietFor < now - since } : { net: false });
       return false;
     }
     // A frame saying which frame it is (readFrames).
@@ -1860,7 +1926,7 @@
     const viewed = settleView(session, "").catch((e) => console.error("Select to AI view:", e));
     // A task from the address bar the user chose to start after this one.
     const next = (session.queued || []).shift();
-    if (next) viewed.then(() => start(session, next.text, next.tabId, undefined, next.home)).catch((e) => console.error("Select to AI queued task:", e));
+    if (next) viewed.then(() => start(session, next.text, next.tabId, next.selection, next.home)).catch((e) => console.error("Select to AI queued task:", e));
   }
 
   // ---------------------------------------------------------------- learning
@@ -1870,9 +1936,13 @@
    * it is worth remembering (core/learn.js). One small call, in the
    * background; a failure here costs the user nothing.
    */
+  // A run's learning goes one call after another: the user's thumbs can
+  // come while the learning from the run's end is still out, and what a
+  // thumbs-down takes back must already be written (core/learn.js inTurn).
+  const learnInTurn = LEARN.inTurn();
   async function learn(session, run, feedback) {
     learning += 1;
-    try { await learnFrom(session, run, feedback); } finally { learning -= 1; }
+    try { await learnInTurn(run.id, () => learnFrom(session, run, feedback)); } finally { learning -= 1; }
   }
 
   async function learnFrom(session, run, feedback) {
@@ -1895,15 +1965,21 @@
       });
       if (how && ids.length) await changeMemory({ op: "mark", ids, how });
     }
-    if (feedback && feedback.up === false && used.length) await changeMemory({ op: "mark", ids: used.filter((id) => memory.entries.some((e) => e.id === id && e.scope !== "global")), how: "hurt" });
-    if (feedback && feedback.up === true && used.length) await changeMemory({ op: "mark", ids: used, how: "helped" });
+    // The user's thumbs and the run's end are one decision about the notes
+    // the run was shown (core/learn.js feedbackMarks). A thumbs-down also
+    // takes back what this same run taught by itself: its route, its notes.
+    if (feedback) {
+      for (const m of LEARN.feedbackMarks(run, feedback, used.map((id) => memory.entries.find((e) => e.id === id)))) await changeMemory({ op: "mark", ...m });
+      if (feedback.up === false) await changeMemory({ op: "forget_run", runId: run.id });
+    }
     const learningOn = !session.items || session.items.agentLearning !== false;
     // How it was done, kept for the next request like it. No model call: the
     // run's own steps, by the words on the controls. Kept with the site the
-    // steps begin on, where a like request starts.
-    const routine = !feedback && learningOn && !memory.paused && site ? LEARN.routineOf(run) : null;
+    // steps ran on. At the run's end for a checked answer; on a thumbs-up
+    // for one the check gave no verdict on (core/learn.js confirmedBy).
+    const routine = learningOn && !memory.paused && site ? LEARN.routineOf(run, feedback) : null;
     if (routine) {
-      const scope = TOOLS.siteOf(LEARN.startUrl(run)) || site;
+      const scope = LEARN.routineSite(run) || TOOLS.siteOf(LEARN.startUrl(run)) || site;
       const added = await changeMemory({ op: "learn_routine", routine, scope });
       if (added && added.added) post(session, { type: "learned", runId: run.id, changes: [`${added.replaced ? "new steps" : "the steps"} for this request on ${scope}`] });
     }
@@ -1961,6 +2037,82 @@
   // While a run is working, the worker must not be put to sleep between a
   // request and its reply: a cheap call every 20 seconds keeps it up. A
   // waiting run needs nothing and lets the worker rest.
+  /**
+   * A held run (a spent allowance, a model that stayed crowded) is tried
+   * again: the user said so, or the settings it calls with changed (a
+   * backup connected, another model or provider chosen). The settings are
+   * read again first, so the call goes to what is connected now.
+   */
+  async function resumeHeld(session, waitId, by) {
+    const held = waitsOf(session.run).filter((w) => w.kind === "pause" && w.hold && (!waitId || w.id === waitId));
+    if (!held.length) return false;
+    await loadSettings(session);
+    // The settings may name a provider the run did not start with. Nothing
+    // goes to one the user has not agreed to, or that Chrome does not let
+    // the extension reach: the run stays held, and the agent's page asks.
+    const need = await notReady(session);
+    session.holdNeeds = !!need;
+    if (need) {
+      post(session, { type: "hold_needs", id: held[0].id, consent: need.consent, hosts: need.hosts });
+      return false;
+    }
+    for (const w of held) enqueue(session, { type: "pause_over", id: w.id, ...(by ? { by } : {}) });
+    return true;
+  }
+
+  /**
+   * What stands between the loaded settings and a request: the providers
+   * a call may go to (the one in use, the one it stands in for, a backup
+   * it may switch to) that the user has not agreed to send to (setup.js
+   * keeps the answer per provider), and those whose host Chrome has not
+   * let the extension reach. Null when nothing does.
+   */
+  async function notReady(session) {
+    const cfg = session.cfg || {};
+    const names = [...new Set([cfg.provider, cfg.standIn && cfg.standIn.from, cfg.backup].filter(Boolean))];
+    const SETUP = root.SELECT_TO_AI_SETUP;
+    // Without the record of what was agreed, nothing was.
+    if (!SETUP) return { consent: names, hosts: [] };
+    const items = session.items || {};
+    const store = items[SETUP.CONSENT_KEY] || {};
+    const consent = [];
+    const hosts = [];
+    for (const provider of names) {
+      const customUrl = provider === "custom" ? items.agentCustomUrl || root.SELECT_TO_AI_DEFAULTS.AGENT_DEFAULTS.customUrl : "";
+      const id = SETUP.consentId(provider, customUrl);
+      if (!id || !SETUP.hasConsent(store, id)) consent.push(provider);
+      const origin = SETUP.providerOrigin(provider, customUrl);
+      if (origin && GRANTS && !(await GRANTS.hasHost(origin))) hosts.push(provider);
+    }
+    return consent.length || hosts.length ? { consent, hosts } : null;
+  }
+
+  // The settings a model call is made with: the providers, their keys, the model.
+  const CALL_SETTING = /^agent(?:ActiveProvider|BackupProvider|Model|HelperModel|CustomUrl|[A-Za-z]+Key)$/;
+  // What the next call would be made with. Two settings that give the same are the same to a held run.
+  const callWith = (cfg) => JSON.stringify([cfg.provider, cfg.apiKey, cfg.baseUrl, cfg.model, cfg.liteModel, cfg.helperModel, cfg.backup, cfg.keyProblem]);
+  if (chrome.storage && chrome.storage.onChanged) chrome.storage.onChanged.addListener((changes) => {
+    // The user agreed somewhere (Settings, the agent's page): a run kept held for want of that is tried.
+    if (changes && changes.agentDataConsent) {
+      for (const s of sessions.values()) if (s.holdNeeds) resumeHeld(s, null, "user").catch((e) => console.error("Select to AI engine:", e));
+      return;
+    }
+    if (!Object.keys(changes || {}).some((k) => CALL_SETTING.test(k))) return;
+    // The worker may have been woken by this change: its runs are read back first.
+    restore().then(async () => {
+      if (![...sessions.values()].some((s) => waitsOf(s.run).some((w) => w.kind === "pause" && w.hold))) return;
+      // A held run is tried again only when the change is one its next call
+      // would be made with: a backup chosen before it has a key, or another
+      // provider's key, costs no request and leaves the wait as it was.
+      const items = await storedItems();
+      const was = { ...items };
+      for (const [k, c] of Object.entries(changes)) { if (c && c.oldValue !== undefined) was[k] = c.oldValue; else delete was[k]; }
+      const now = Date.now();
+      if (callWith(LLM.settingsFrom(was, now)) === callWith(LLM.settingsFrom(items, now))) return;
+      for (const s of sessions.values()) await resumeHeld(s, null, "user");
+    }).catch((e) => console.error("Select to AI engine:", e));
+  });
+
   let awake = null;
   function keepAwake() {
     const busy = [...sessions.values()].some((s) => s.run && s.run.status === "running");
@@ -1978,7 +2130,20 @@
       restore().then(() => {
         const session = sessions.get(Number(windowId));
         const wait = session && waitsOf(session.run).find((w) => w.kind === "pause" && (!waitId || w.id === waitId));
-        if (wait) enqueue(session, { type: "pause_over", id: wait.id });
+        if (!wait) return;
+        // A held run may have had its settings changed while it waited:
+        // they are read again, and checked, before it goes on.
+        if (wait.hold) resumeHeld(session, wait.id).catch((e) => console.error("Select to AI engine:", e));
+        else enqueue(session, { type: "pause_over", id: wait.id });
+      });
+      return;
+    }
+    if (alarm.name.startsWith("agentHoldOver:")) {
+      const [, windowId, waitId] = alarm.name.split(":");
+      restore().then(() => {
+        const session = sessions.get(Number(windowId));
+        const wait = session && session.run && session.run.status === "waiting" && session.run.wait;
+        if (wait && wait.kind === "pause" && wait.hold && wait.id === waitId) enqueue(session, { type: "wrap_up", id: wait.id });
       });
       return;
     }
@@ -2127,10 +2292,16 @@
       if (!session) return;
       const run = session.run;
       const live = run && (run.status === "running" || run.status === "waiting");
+      // Held with no time to carry on at: only the user moves it.
+      const heldOpen = live && run.status === "waiting" && run.wait && run.wait.kind === "pause" && run.wait.hold && !run.wait.until ? run.wait : null;
       if (m.type === "send") {
         const text = String(m.text || "").trim().slice(0, 4000);
         if (!text) return;
-        if (live) enqueue(session, { type: "steer", text, keep: !!m.keep });
+        // A word to a run that will not move by itself would sit unseen:
+        // the user is asked what the new request is to do, as for one
+        // typed in the address bar.
+        if (heldOpen) port.postMessage({ type: "handoff_live", text, tabId: m.tabId, ...(m.selection ? { selection: m.selection } : {}) });
+        else if (live) enqueue(session, { type: "steer", text, keep: !!m.keep });
         else await start(session, text, m.tabId, m.selection, home);
       } else if (m.type === "handoff") {
         // A request typed in the address bar is a new task. It never steers
@@ -2138,20 +2309,23 @@
         // to stop that run for it, or to start it when that run ends.
         const text = String(m.text || "").trim().slice(0, 4000);
         if (!text) return;
-        if (!live) await start(session, text, m.tabId, undefined, home);
+        if (!live) await start(session, text, m.tabId, m.selection, home);
         else if (m.choice === "replace") {
-          stop(session, "Stopped for a new task from the address bar.");
+          // A held run ends with what it found, as its own stop button ends it.
+          if (heldOpen) enqueue(session, { type: "wrap_up", id: heldOpen.id });
+          else stop(session, "Stopped for a new task from the address bar.");
           await session.chain;
-          await start(session, text, m.tabId, undefined, home);
+          await start(session, text, m.tabId, m.selection, home);
         } else if (m.choice === "queue") {
-          session.queued = [...(session.queued || []), { text, tabId: m.tabId, home }];
+          session.queued = [...(session.queued || []), { text, tabId: m.tabId, home, ...(m.selection ? { selection: m.selection } : {}) }];
           port.postMessage({ type: "handoff_queued", text });
-        } else port.postMessage({ type: "handoff_live", text, tabId: m.tabId });
+        } else port.postMessage({ type: "handoff_live", text, tabId: m.tabId, ...(m.selection ? { selection: m.selection } : {}) });
       } else if (m.type === "approve" && live) enqueue(session, { type: "approved", id: m.id, always: !!m.always });
       else if (m.type === "decline" && live) enqueue(session, { type: "declined", id: m.id });
       else if (m.type === "done" && live) enqueue(session, { type: "user_done", id: m.id });
       else if (m.type === "skip" && live) enqueue(session, { type: "skipped", id: m.id });
       else if ((m.type === "keep_going" || m.type === "wrap_up") && live) enqueue(session, { type: m.type, id: m.id });
+      else if (m.type === "try_again" && live) await resumeHeld(session, m.id, "user");
       else if (m.type === "stop") stop(session, m.text);
       else if (m.type === "feedback" && run && run.id === m.runId && !live && !run.feedback) {
         run.feedback = { up: !!m.up, reason: String(m.reason || "").slice(0, 400) };
@@ -2229,6 +2403,6 @@
     return restore();
   }
 
-  // release is exported for the scripted tests, as wake is.
-  root.SELECT_TO_AI_ENGINE = Object.freeze({ sessions, effectOf, wake, loadMemory, changeMemory, release, joinFrame, scan });
+  // release and attention are exported for the scripted tests, as wake is.
+  root.SELECT_TO_AI_ENGINE = Object.freeze({ sessions, effectOf, wake, loadMemory, changeMemory, release, joinFrame, scan, attention });
 })(typeof globalThis !== "undefined" ? globalThis : this);

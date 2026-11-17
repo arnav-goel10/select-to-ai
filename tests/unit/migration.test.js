@@ -48,9 +48,10 @@ test("2.0 with nothing stored at all still gets explicit values", async () => {
   assert.deepEqual({ ...sync }, { showPerplexity: true, autoContext: false, openingMode: "sidePanel" });
 });
 
-test("3.3.1: settings are not rewritten, the notice is set", async () => {
+test("3.3.1: settings are not rewritten, Claude being on is written down, the notice is set", async () => {
   const { sync, local, tabs } = await update("3.3.1", { openingMode: "tab" });
-  assert.deepEqual({ ...sync }, { openingMode: "tab" });
+  // 3.x showed Claude when the key was unset; see tests/unit/claude-back.test.js.
+  assert.deepEqual({ ...sync }, { openingMode: "tab", showClaude: true });
   assert.ok(local.upgradeNotice && local.upgradeNotice.from === "3.3.1");
   assert.equal(tabs.length, 0);
 });
