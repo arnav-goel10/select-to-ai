@@ -490,6 +490,55 @@
     } catch (e) { /* presets stay */ }
   });
 
+  // ---------- Claude, when its host is missing ----------
+  // claude.ai is optional in 4.0. The chip shows as on only once the host is
+  // held, and a user who had Claude on (showClaude true) without the host is
+  // told so, with one button to add it back and one to leave it off.
+  function showClaudeState() {
+    return G.hasHost(G.ASSISTANT_HOSTS.claude).then((held) => {
+      $("showClaude").checked = held && settings.showClaude !== false;
+      $("claudeBack").hidden = held || settings.showClaude !== true;
+    });
+  }
+  $("claudeBackAdd").addEventListener("click", () => {
+    // Asked for here, inside the click.
+    G.requestHost(G.ASSISTANT_HOSTS.claude).then((ok) => {
+      if (!ok) { toast("Chrome did not allow claude.ai, so Claude stays off."); return; }
+      save({ showClaude: true });
+      G.registerAssistantScripts();
+      showClaudeState();
+    });
+  });
+  $("claudeBackOff").addEventListener("click", () => {
+    save({ showClaude: false });
+    showClaudeState();
+  });
+  // The host can be granted or taken away elsewhere (the popup, Chrome's own page).
+  for (const changed of [chrome.permissions.onAdded, chrome.permissions.onRemoved]) {
+    if (changed && typeof changed.addListener === "function") changed.addListener(() => { showClaudeState(); });
+  }
+
+  // ---------- task notices ----------
+  // Notifications are optional and asked for here, by the switch that needs
+  // them, not during setup. The switch shows what Chrome holds, since the
+  // grant itself is the setting.
+  const showNoticeState = () => G.hasNotifications().then((held) => { $("taskNotices").checked = held; });
+  $("taskNotices").addEventListener("change", (e) => {
+    if (e.target.checked) {
+      // Inside the click, so Chrome shows its prompt.
+      G.requestNotifications().then((ok) => {
+        e.target.checked = ok;
+        toast(ok ? "Saved" : "Chrome did not allow notifications, so this stays off.");
+      });
+      return;
+    }
+    chrome.permissions.remove({ permissions: ["notifications"] }, () => {
+      void chrome.runtime.lastError;
+      showNoticeState();
+      toast("Saved");
+    });
+  });
+
   // ---------- simple controls ----------
   const TOGGLES = {
     agentRiskConfirmation: (s) => s.agentRiskConfirmation !== false,
@@ -524,6 +573,7 @@
           if (!ok) { e.target.checked = false; toast("Chrome did not allow claude.ai, so Claude stays off."); return; }
           save({ showClaude: true });
           G.registerAssistantScripts();
+          showClaudeState();
         });
         return;
       }
@@ -605,7 +655,7 @@
 
   // ---------- memory ----------
   // What Reset removes from local storage besides the API keys.
-  const RESET_LOCAL_KEYS = ["agentDataConsent", "agentUserMemory", "agentSkills", "agentCrossSessionMemory", "agentKnown", "recipesStore", "chatgptAccount", "chatgptCredentials", "chatgptHostId", "agentProviderPause", "sidePanelState"];
+  const RESET_LOCAL_KEYS = ["agentDataConsent", "agentUserMemory", "agentSkills", "agentCrossSessionMemory", "agentKnown", "recipesStore", "chatgptAccount", "chatgptCredentials", "chatgptHostId", "agentProviderPause", "agentAllowance", "sidePanelState"];
   $("manageMemoryBtn").onclick = () => chrome.tabs.create({ url: chrome.runtime.getURL("agent.html#memory") });
 
   $("resetBtn").onclick = async () => {
@@ -635,7 +685,8 @@
       document.querySelector(`input[name="openingMode"][value="${mode}"]`).checked = true;
       for (const [id, read] of Object.entries(TOGGLES)) $(id).checked = read(settings);
       // Claude shows as on only once claude.ai is allowed.
-      if ($("showClaude").checked) G.hasHost(G.ASSISTANT_HOSTS.claude).then((ok) => { if (!ok) $("showClaude").checked = false; });
+      showClaudeState();
+      showNoticeState();
       $("agentCostBudget").value = settings.agentCostBudget !== undefined ? settings.agentCostBudget : AGENT.costBudget;
       // A choice saved that the list does not offer shows as the nearest one it does.
       const checkIn = settings.agentCheckInMinutes === undefined ? AGENT.checkInMinutes : Number(settings.agentCheckInMinutes) || 0;

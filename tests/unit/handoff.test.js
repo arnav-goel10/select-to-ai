@@ -218,7 +218,7 @@ test("a hand-off after which the page changed is not a repeat", () => {
   assert.equal(run.handoff.n, 1, "a new page starts the count again");
 });
 
-test("provider pauses end the run after four in a row, with what it had found", () => {
+test("provider pauses stop carrying on by themselves after four in a row: the run is held, and ends with what it had found when the user says so", () => {
   const page = login();
   const run = RUN.newRun({ id: "r1", task: "t", tabId: 7, startUrl: page.url, marker: "PAGE-abcd1234", now: 1 });
   RUN.advance(run, { type: "start" }, env(page));
@@ -233,7 +233,16 @@ test("provider pauses end the run after four in a row, with what it had found", 
     RUN.advance(run, { type: "pause_over", id: run.wait.id }, env(page));
     RUN.advance(run, { type: "observed", page }, env(page));
   }
-  const fx = refuse();
+  let fx = refuse();
+  // No fifth wait is started unasked: the run is held with no time to carry on at.
+  assert.equal(fx.length, 1);
+  assert.equal(fx[0].type, "attention");
+  assert.equal(run.status, "waiting");
+  assert.equal(run.wait.kind, "pause");
+  assert.equal(run.wait.hold, "crowded");
+  assert.equal(run.wait.until, undefined, "nothing wakes it but the user");
+  assert.equal(run.outcome, null);
+  fx = RUN.advance(run, { type: "wrap_up", id: run.wait.id }, env(page));
   assert.deepEqual(fx, [{ type: "end" }]);
   assert.equal(run.status, "failed");
   assert.equal(run.outcome.kind, "rate_limited");
@@ -241,12 +250,22 @@ test("provider pauses end the run after four in a row, with what it had found", 
   assert.match(run.outcome.text, /What I had found:\nStep 1: Balance page is behind a sign-in\./);
 });
 
-test("a single provider wait longer than an hour ends the run instead of pausing it", () => {
+test("a single provider wait longer than an hour is held with the choice to stop, not waited out in silence", () => {
   const page = login();
   const run = RUN.newRun({ id: "r1", task: "t", tabId: 7, startUrl: page.url, marker: "PAGE-abcd1234", now: 1 });
   RUN.advance(run, { type: "start" }, env(page));
   RUN.advance(run, { type: "observed", page }, env(page));
-  const fx = RUN.advance(run, { type: "model_failed", purpose: "step", kind: "rate_limited", waitMs: 2 * 3600000, message: "Come back in two hours." }, env(page));
+  let fx = RUN.advance(run, { type: "model_failed", purpose: "step", kind: "rate_limited", waitMs: 2 * 3600000, message: "Come back in two hours." }, env(page));
+  assert.equal(fx[0].type, "attention");
+  assert.equal(run.wait.hold, "crowded");
+  assert.equal(run.wait.until, 1000 + 2 * 3600000, "it carries on at the time the provider named");
+  // Refused again at that time: no second long wait is started by itself.
+  RUN.advance(run, { type: "pause_over", id: run.wait.id }, env(page));
+  RUN.advance(run, { type: "observed", page }, env(page));
+  RUN.advance(run, { type: "model_failed", purpose: "step", kind: "rate_limited", waitMs: 2 * 3600000, message: "Come back in two hours." }, env(page));
+  assert.equal(run.wait.hold, "crowded");
+  assert.equal(run.wait.until, undefined);
+  fx = RUN.advance(run, { type: "wrap_up", id: run.wait.id }, env(page));
   assert.deepEqual(fx, [{ type: "end" }]);
   assert.equal(run.outcome.kind, "rate_limited");
 });

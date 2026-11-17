@@ -307,7 +307,8 @@
   /**
    * What a tab asks for, seen through the debugger's network view (which the
    * agent's engine turns on for the tabs it works in). Only methods,
-   * addresses and kinds are kept, never bodies.
+   * addresses and kinds are kept, never bodies. A build without the
+   * debugger sees nothing, and says so (`sees`).
    */
   function createNetworkView(chrome, tabId) {
     const seen = [];
@@ -325,6 +326,9 @@
     const on = !!(chrome.debugger && chrome.debugger.onEvent);
     if (on) chrome.debugger.onEvent.addListener(listen);
     return {
+      // Whether requests are seen at all. Without the debugger they are not,
+      // and an empty list then says nothing about what an action sent.
+      sees: on,
       mark: () => n,
       since: (m) => seen.filter((r) => r.n > m),
       busy: () => 0,

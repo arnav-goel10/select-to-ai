@@ -336,6 +336,17 @@ async function main() {
         if (r.llmCalls !== 2) return `a question the page answers took ${r.llmCalls} model calls, not one step and one check`;
         return null;
       }],
+      // A request in Spanish about an English page: the step names the
+      // browser's language and says whose language the answer is read in,
+      // and the answer the user gets is the Spanish one.
+      ["otherLanguage", "/article", async () => false, (r) => {
+        const sent = r.prompts.join("\n");
+        if (!sent.includes("¿A qué hora abre al público el faro de Brightwater, según este artículo?")) return "the request did not reach the model as written";
+        const fact = (sent.match(/The user's browser is set to [^\n]*/) || [""])[0];
+        if (!/^The user's browser is set to \S.* \([A-Za-z-]+\)\. The user reads your answer, and any question you ask them, in the language the user's request is written in\./.test(fact)) return `the language fact is missing or names no browser language: ${JSON.stringify(fact)}`;
+        if (!/abre al público de 9:30 a 16:45/.test(r.answer)) return `the answer is not in the request's language: ${JSON.stringify(r.answer)}`;
+        return null;
+      }],
       ["decade", "/article", watchAnswer, (r) => {
         const s = r.seen;
         if (!s.firstShownAt) return "the answer was not shown while it was checked";
@@ -1061,6 +1072,24 @@ async function main() {
         if (lesson.source !== "correction" || lesson.scope === "global") return `the lesson is ${lesson.scope} from ${lesson.source}`;
         return null;
       }, "lesson", { keepOpen: true, before: async () => { await setMemory([{ op: "wipe" }]); await learning(true); } }],
+      // "Not right" on a run that had already taught something: what that
+      // run wrote by itself (its site note, its route) is taken back.
+      ["compare", "/home", async () => false, async (r) => {
+        const agent = r.agent;
+        const mine = (store) => store.entries.filter((e) => e.source === "run" && e.origin && e.origin.runId === r.trace.id);
+        const taught = await until(async () => { const got = mine(await memory()); return got.some((e) => e.kind === "site_note") ? got : null; });
+        if (!taught) { await learning(false); await agent.close().catch(() => {}); return `the run taught no note that carries its id: ${JSON.stringify((await memory()).entries.map((e) => [e.kind, e.source, e.origin]))}`; }
+        await agent.bringToFront();
+        await click(agent, ".feedback-down");
+        await click(agent, ".feedback-send");
+        const gone = await until(async () => mine(await memory()).length === 0);
+        await until(() => worker.evaluate(() => self.__selectToAiMemoryState().then((m) => m.learning === 0)));
+        const left = mine(await memory());
+        await learning(false);
+        await agent.close().catch(() => {});
+        if (!gone || left.length) return `after the thumbs-down the run's own notes are still kept: ${JSON.stringify(left.map((e) => [e.kind, e.text]))}`;
+        return null;
+      }, "thumbsDownForgets", { keepOpen: true, before: async () => { await setMemory([{ op: "wipe" }]); await learning(true); } }],
       // Run 1: the agent asks where the user's assignments are, the user
       // names a service, and a lasting fact about them is kept from their
       // words and the site the checked run used; a line on the page about

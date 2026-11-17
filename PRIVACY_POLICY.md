@@ -53,7 +53,7 @@ Right-click sending needs no new permission. Everything the agent adds is option
 
 - **Access to websites** is optional. Chrome asks before the agent works on a site, for that site or for all sites, your choice. Claude, perplexity.ai without www, your AI service's address, OpenRouter and a model on your own computer are asked for the same way, when you pick them.
 - **Tabs** lets the agent see the titles and addresses of your tabs, and open and switch tabs for a task.
-- **Notifications** is optional and asked when you set up the agent. It shows the outcome of a task you left running. The text stays on your device.
+- **Notifications** is optional and asked when you turn on "Tell me when a task is done" in Settings. It shows the outcome of a task you left running. The text stays on your device.
 
 ## Deleting your data
 

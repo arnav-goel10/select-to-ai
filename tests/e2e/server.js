@@ -10,6 +10,8 @@
  *  2. Small fixture pages: a search page with a form + results, a
  *     multi-field signup form, a page behind a fake login wall, and a
  *     two-page price-comparison pair.
+ *     POST /control/limit {on} makes it refuse every call as a provider
+ *     whose daily requests are spent (429), until turned off.
  *  3. A control API for the runner: POST /control/scenario selects the
  *     active scenario, GET /control/log returns every executor action the
  *     gateway issued for it (used to assert e.g. "no credentials typed").
@@ -846,6 +848,8 @@ function buildScenarios() {
     booking: { task: "Book a Pro workshop ticket for Grace Hopper on this page, agreeing to the terms." },
     hijack: { task: "What is the total of my last order on this page?" },
     article: { task: "When does the Brightwater Lighthouse open to visitors, according to this article?" },
+    // The same question, asked in Spanish about the same English page.
+    otherLanguage: { task: "¿A qué hora abre al público el faro de Brightwater, según este artículo?" },
     // A question answered from what the model knows, on the first step. The
     // model and the check take a while, as real ones do, so the answer shown
     // while it is checked can be told apart from the final one.
@@ -931,6 +935,16 @@ function buildStepPolicies(baseUrl) {
     article(ctx) {
       if (/9:30 to 16:45/.test(ctx.userText)) return done("The Brightwater Lighthouse opens from 9:30 to 16:45 every day except Tuesday.", ["opens to visitors from 9:30 to 16:45 every day except Tuesday"]);
       return step("Find the visiting hours", [{ do: "read", query: "open to visitors" }]);
+    },
+    // A model that answers in the request's language once the step says who
+    // reads the answer (core/context.js languageFact), and in the page's
+    // language when it is told nothing, as small models often did.
+    otherLanguage(ctx) {
+      if (!/9:30 to 16:45/.test(ctx.userText)) return step("Find the visiting hours", [{ do: "read", query: "open to visitors" }]);
+      const quote = ["opens to visitors from 9:30 to 16:45 every day except Tuesday"];
+      const told = /The user reads your answer, and any question you ask them, in the language the user's request is written in\./.test(ctx.userText);
+      if (told) return done("El faro de Brightwater abre al público de 9:30 a 16:45 todos los días excepto los martes.", quote);
+      return done("The Brightwater Lighthouse opens from 9:30 to 16:45 every day except Tuesday.", quote);
     },
     // A sign-in wall: the agent hands it to the user and carries on after.
     signin(ctx) {
@@ -1484,6 +1498,17 @@ function createE2EServer(port = 8907) {
 
     // Where a hijacked agent would send the user's data. Counted, so a test
     // can prove nothing arrived.
+    // The gateway answers as a provider whose day's requests are spent, until told otherwise.
+    if (pathname === "/control/limit" && req.method === "POST") {
+      collectBody(req, (raw) => {
+        let on = false;
+        try { on = !!JSON.parse(raw).on; } catch (_e) { on = false; }
+        state.limited = on;
+        respond(200, JSON.stringify({ ok: true, limited: on }), "application/json");
+      });
+      return;
+    }
+
     if (pathname === "/collect") {
       state.collected = (state.collected || 0) + 1;
       respond(200, pageShell("Collected", "<h1>Thanks</h1>"));
@@ -1510,6 +1535,10 @@ function createE2EServer(port = 8907) {
           return;
         }
         state.llmCalls++;
+        if (state.limited) {
+          respond(429, JSON.stringify({ error: { message: "Rate limit exceeded: free-models-per-day. The daily quota for this key is used up." } }), "application/json");
+          return;
+        }
         const scenario = scenarios[state.scenarioName];
         // The instructions are the first message; the step's context, with
         // the element list and page text, is the one after it.

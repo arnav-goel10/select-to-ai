@@ -119,5 +119,44 @@
     };
   }
 
-  return { describeLimit };
+  /** A reset as epoch ms, from an epoch, seconds from now, or a span such as "1h2m3.5s". */
+  function parseSpan(value, now) {
+    const text = String(value == null ? "" : value).trim();
+    if (!text) return null;
+    if (/^\d+(\.\d+)?$/.test(text)) return parseReset(text, now);
+    let ms = 0;
+    let read = "";
+    for (const m of text.matchAll(/(\d+(?:\.\d+)?)(ms|h|m|s)/g)) { ms += parseFloat(m[1]) * { h: 3600000, m: 60000, s: 1000, ms: 1 }[m[2]]; read += m[0]; }
+    return read && read === text ? now + ms : null;
+  }
+
+  // Where providers say how many requests are left: a count, its limit and
+  // when it starts again. The day's count is read before a general one.
+  const ALLOWANCE_HEADERS = [
+    ["x-ratelimit-remaining-requests-day", "x-ratelimit-limit-requests-day", "x-ratelimit-reset-requests-day"],
+    ["x-ratelimit-remaining", "x-ratelimit-limit", "x-ratelimit-reset"],
+    ["x-ratelimit-remaining-requests", "x-ratelimit-limit-requests", "x-ratelimit-reset-requests"],
+  ];
+  // A count that starts again within this long is a pace (requests a
+  // minute), not an allowance anyone needs to watch.
+  const PACE_MS = 10 * 60000;
+
+  /**
+   * What is left of the requests a key may make, when a reply's headers say
+   * so: {remaining, limit, resetAt}. Null when they do not, when they do
+   * not say when the count starts again, or when that is minutes away.
+   */
+  function readAllowance(headers, now = Date.now()) {
+    for (const [left, of, reset] of ALLOWANCE_HEADERS) {
+      const remaining = header(headers, left);
+      const limit = Number(header(headers, of));
+      if (remaining === undefined || remaining === "" || !Number.isFinite(Number(remaining)) || !(limit > 0)) continue;
+      const resetAt = parseSpan(header(headers, reset), now);
+      if (!resetAt || resetAt - now <= PACE_MS) continue;
+      return { remaining: Math.max(0, Math.floor(Number(remaining))), limit, resetAt };
+    }
+    return null;
+  }
+
+  return { describeLimit, readAllowance };
 });

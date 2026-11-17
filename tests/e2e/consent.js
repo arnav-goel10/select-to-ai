@@ -17,6 +17,10 @@
  *   - Settings' Test sends nothing before Agree
  *   - the last assistant cannot be unticked while the agent is off
  *   - a task handed in the address while a run waits gets the handoff choice
+ *   - a spent allowance (a played 429) holds the run on a card with its
+ *     choices and asks nothing more of the provider; a provider chosen
+ *     while it is held gets nothing until the user agrees, then the run
+ *     carries on with it; Stop on the card ends the run with an answer
  */
 "use strict";
 
@@ -214,6 +218,72 @@ async function main() {
       }
       await page.close();
       await fixture.close();
+    }
+
+    // 7. A spent allowance holds the run. A provider chosen while it is held is agreed to before anything goes to it.
+    {
+      const limit = (server, on) => fetch(`${server.baseUrl}/control/limit`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on }) }).then((r) => r.json());
+      const HOLD = ".confirmation-bubble[data-hold]";
+      const working = (page) => page.evaluate(() => document.getElementById("actionBtn").classList.contains("stop-btn"));
+      async function heldRun(label) {
+        await reset(settingsFor(a), { onboardingComplete: true, agentDataConsent: { [idFor(a)]: Date.now() } });
+        const { task } = await select(a, "search");
+        await select(b, "search");
+        await limit(a, true);
+        const fixture = await open(`${a.baseUrl}/`, "fixture");
+        const tabId = await worker.evaluate(async (href) => { const t = (await chrome.tabs.query({})).find((x) => x.url === href); return t ? t.id : null; }, fixture.url());
+        const page = await open(`chrome-extension://${id}/agent.html?task=${encodeURIComponent(task)}&autostart=1&fresh=1&tabId=${tabId}`, label);
+        const card = await waitFor(() => page.$(HOLD), 60000, 300);
+        check(`${label}: a spent allowance holds the run on a card`, card, "no hold card within 60 s");
+        return { page, fixture, card };
+      }
+
+      let { page, fixture, card } = await heldRun("hold");
+      if (card) {
+        const text = await page.$eval(HOLD, (el) => el.innerText.replace(/\s+/g, " "));
+        check("hold: the card says it is on hold and that nothing is lost", /On hold: out of requests for now/.test(text) && /Nothing is lost\./.test(text), text);
+        check("hold: the card has no em dash and no \"undefined\"", !/\u2014|undefined/.test(text), text);
+        const buttons = await page.$$eval(`${HOLD} button`, (list) => list.map((x) => x.textContent.trim()));
+        check("hold: the card offers a backup, trying again and stopping with what was found", buttons.join(" | ") === "Set up a free backup | Try again | Stop and answer with what you have", buttons.join(" | "));
+        const spent = await calls(a);
+        await sleep(3000);
+        check("hold: a held run asks the provider nothing more", (await calls(a)) === spent, `${(await calls(a)) - spent} more calls while held`);
+        // Another provider is chosen in Settings while the run is held: the user never agreed to it.
+        await worker.evaluate((s) => chrome.storage.sync.set(s), { agentCustomUrl: `${b.baseUrl}/v1` });
+        const consent = await waitFor(() => page.$(".consent-card"), 10000);
+        await sleep(1500);
+        check("hold: a provider chosen while held is asked about first", consent, "no .consent-card within 10 s of the change");
+        check("hold: nothing went to that provider before the user agreed", (await calls(b)) === 0, `${await calls(b)} calls reached it`);
+        check("hold: the run is still held", await page.$(HOLD), "the hold card is gone");
+        if (consent) {
+          const said = await page.$eval(".consent-card", (el) => el.innerText.replace(/\s+/g, " "));
+          check("hold: the consent card names the new provider", said.includes(new URL(b.baseUrl).host), said);
+          await page.click(".consent-agree");
+          const sent = await waitFor(async () => (await calls(b)) > 0, 20000);
+          check("hold: after Agree the run carries on with the new provider", sent, "no model call within 20 s of Agree");
+          check("hold: the consent is stored for it", (await consentStore())[idFor(b)] > 0, JSON.stringify(await consentStore()));
+          check("hold: the hold card goes when the run carries on", await waitFor(async () => !(await page.$(HOLD)), 10000), "the hold card is still there");
+        }
+        await page.evaluate(() => { const s = document.getElementById("liveStopBtn"); if (s) s.click(); });
+        await sleep(800);
+      }
+      await page.close();
+      await fixture.close();
+
+      // Stop on the card ends the run with what it has.
+      ({ page, fixture, card } = await heldRun("hold stop"));
+      if (card) {
+        const spent = await calls(a);
+        await page.click(`${HOLD} .hold-stop-btn`);
+        const ended = await waitFor(async () => !(await page.$(HOLD)) && !(await working(page)), 15000);
+        check("hold stop: the run ends", ended, "still held or working 15 s after Stop");
+        const answer = await page.evaluate(() => document.getElementById("chatContainer").innerText.replace(/\s+/g, " "));
+        check("hold stop: it ends with the provider's limit as its answer", /has reached its usage limit/.test(answer), answer.slice(-300));
+        check("hold stop: stopping asks the provider nothing", (await calls(a)) === spent, `${(await calls(a)) - spent} calls after Stop`);
+      }
+      await page.close();
+      await fixture.close();
+      await limit(a, false);
     }
 
     check("no uncaught page error", !errors.length, errors.join(" | "));
