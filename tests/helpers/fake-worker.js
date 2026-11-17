@@ -11,7 +11,7 @@ const EXT = path.join(__dirname, "../../extension");
 const FILES = [
   "config.js", "defaults.js", "security.js", "commonWords.js", "core/grants.js", "publicSuffixes.js", "agentTools.js", "agentPrompt.js",
   "usageLimits.js", "pageSearch.js", "core/step.js", "core/observe.js", "core/memory.js", "core/context.js", "core/policy.js", "core/run.js",
-  "core/llm.js", "core/learn.js", "core/view.js", "core/inject.js", "setup.js", "engine.js",
+  "core/llm.js", "core/learn.js", "core/view.js", "core/inject.js", "pdfText.js", "setup.js", "engine.js",
 ];
 
 /**
@@ -25,6 +25,8 @@ const FILES = [
  *   tabs           {id: tab} the tabs that exist
  *   local, sync    what chrome.storage.local and .sync hold (a test may change them later)
  *   fetch          the worker's fetch, for a test that plays a provider's replies
+ *   executeScript  (req) => what chrome.scripting.executeScript gives, in place of the default
+ *   timerScale     how much shorter the worker's timers run (10 runs a 25 s wait in 2.5 s)
  */
 function fakeWorker(o = {}) {
   const listeners = {};
@@ -58,7 +60,7 @@ function fakeWorker(o = {}) {
       onRemoved: event("tabs.onRemoved"), onUpdated: event("tabs.onUpdated"), onActivated: event("tabs.onActivated"),
     }, { get: (t, k) => (k in t ? t[k] : typeof k === "string" && k.startsWith("on") ? event(`tabs.${k}`) : anything()) }),
     windows: new Proxy({ getLastFocused: async () => ({ id: 1, focused: false }), update: async () => ({}), getAll: async () => [{ id: 1 }] }, { get: (t, k) => (k in t ? t[k] : anything()) }),
-    scripting: { executeScript: async (req) => { calls.executes += 1; calls.scripts.push(req); if (o.injectFails) throw new Error("Cannot access contents of the page."); return [{ result: "" }]; } },
+    scripting: { executeScript: async (req) => { calls.executes += 1; calls.scripts.push(req); if (o.injectFails) throw new Error("Cannot access contents of the page."); return o.executeScript ? o.executeScript(req) : [{ result: "" }]; } },
     permissions: {
       contains: async (q) => (q.permissions || []).every((p) => p !== "notifications" || !!o.notifications) && (q.origins || []).every((x) => granted.has(String(x).replace(/\/\*$/, ""))),
       request: async () => false,
@@ -98,8 +100,8 @@ function fakeWorker(o = {}) {
     } : {}),
   }, { get: (t, k) => (k in t ? t[k] : k === "notifications" || k === "debugger" ? undefined : anything()) });
 
-  const timer = (fn, ms) => { const t = setTimeout(fn, ms); t.unref(); return t; };
-  const root = { chrome, console, setTimeout: timer, clearTimeout, setInterval: () => 0, clearInterval: () => {}, URL, URLSearchParams, Promise, AbortController, TextEncoder, TextDecoder, crypto: globalThis.crypto, fetch: o.fetch || (async () => { throw new Error("no network in tests"); }) };
+  const timer = (fn, ms) => { const t = setTimeout(fn, (ms || 0) / (o.timerScale || 1)); t.unref(); return t; };
+  const root = { chrome, console, setTimeout: timer, clearTimeout, setInterval: () => 0, clearInterval: () => {}, URL, URLSearchParams, Promise, AbortController, TextEncoder, TextDecoder, DecompressionStream: globalThis.DecompressionStream, crypto: globalThis.crypto, fetch: o.fetch || (async () => { throw new Error("no network in tests"); }) };
   root.globalThis = root;
   root.self = root;
   vm.createContext(root);

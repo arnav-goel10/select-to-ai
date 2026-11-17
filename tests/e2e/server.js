@@ -21,6 +21,13 @@
 "use strict";
 
 const http = require("node:http");
+const { simplePdf } = require("../helpers/pdf-writer.js");
+
+// A two-page statement with Flate-compressed pages (pdfText scenario).
+const STATEMENT_PDF = simplePdf([
+  ["Northwind Utilities", "Account statement for November 2026"],
+  ["Amount due: $81.40", "Pay by 5 December 2026"],
+]);
 
 // ---------------------------------------------------------------------------
 // Fixture pages
@@ -392,6 +399,31 @@ const FIXTURES = {
          const list = await fetch('/api/slow-results').then((r) => r.json());
          document.getElementById('wait').innerHTML = '';
          document.getElementById('results').innerHTML = list.map((f) => '<li><a href="#' + f.id + '">' + f.name + ', ' + f.price + '</a></li>').join('');
+       });
+     </script>`,
+  ),
+
+  // A shop that says "Product added." in a browser alert once its request
+  // is back, and asks with a confirm before it empties the cart. A dialog
+  // stops the page, the extension's script in it included: a step that set
+  // one off waited on the page until the run's time was out.
+  "/dialogs": pageShell(
+    "Cart",
+    `<h1>Cart</h1>
+     <button type="button" id="add">Add to cart</button>
+     <button type="button" id="empty">Empty the cart</button>
+     <p id="state">Cart: empty</p>
+     <script>
+       let n = 0;
+       const show = (t) => { document.getElementById('state').textContent = t; };
+       document.getElementById('add').addEventListener('click', async () => {
+         await fetch('/api/slow-ok');
+         n++;
+         alert('Product added.');
+         show('Cart: ' + n + ' item');
+       });
+       document.getElementById('empty').addEventListener('click', () => {
+         if (confirm('Empty the cart?')) { n = 0; show('Cart: empty'); } else show('Cart: ' + n + ' item, kept');
        });
      </script>`,
   ),
@@ -971,6 +1003,13 @@ function buildStepPolicies(baseUrl) {
       if (reject) return step("Decline the cookies", [{ do: "click", ref: reject.id }]);
       return done("Item B costs **$18**.", ["Price: $18"]);
     },
+    // A PDF in the browser's viewer: its text is the page's text, page by
+    // page, and find finds a passage on its page.
+    pdfText(ctx) {
+      if (/"Amount due" is in/.test(ctx.userText)) return done("The statement says **$81.40** is due, by 5 December 2026.", ["Amount due: $81.40"]);
+      if (!/## Page 1 of 2\nNorthwind Utilities/.test(ctx.userText)) return done("policy error: the PDF's text was not given page by page", [], false);
+      return step("Look for the amount due", [{ do: "find", query: "Amount due" }]);
+    },
     // find on a passage under a long heading: the result quotes the words themselves.
     findQuote(ctx) {
       if (/find "Garden Hose"/.test(ctx.userText)) return done("The Garden Hose (30 m) costs **$24.99**.", ["Garden Hose, 30 m, $24.99"]);
@@ -1006,6 +1045,12 @@ function buildStepPolicies(baseUrl) {
     slowResults(ctx) {
       if (/Flight 101/.test(ctx.userText)) return done("The cheapest is **Flight 101** at **$420**.", ["Flight 101, $420"]);
       return step("Search", [{ do: "click", ref: named(ctx, /search flights/i).id }]);
+    },
+    // An alert after a request, then a confirm: each press comes back with what its dialog said.
+    dialogs(ctx) {
+      if (/answered Cancel/.test(ctx.userText) && /Cart: 1 item, kept/.test(ctx.userText)) return done("The cart has **1 item**. Emptying it asks for an OK in a browser dialog, which I leave to you, so it was kept.", ["Cart: 1 item, kept"]);
+      if (/browser alert: "Product added\."/.test(ctx.userText)) return step("Empty the cart", [{ do: "click", ref: named(ctx, /empty the cart/i).id }]);
+      return step("Add to cart", [{ do: "click", ref: named(ctx, /add to cart/i).id }]);
     },
     // A page that is never still by itself: a simple press is not held up by it.
     busyPage(ctx) {
@@ -1394,6 +1439,7 @@ function createE2EServer(port = 8907) {
   scenarios.slowResults = { task: "Search for flights and tell me the cheapest." };
   scenarios.stillLoading = { task: "How much do Item C and Item D cost?" };
   scenarios.busyPage = { task: "Show the note." };
+  scenarios.dialogs = { task: "Add the item to the cart, then empty the cart, and tell me what the cart shows." };
   scenarios.realKeys = { task: "Move from the first box to the second with the keyboard." };
   scenarios.hoverMenu = { task: "Choose Pricing from the Products menu." };
   scenarios.pointerHover = { task: "Choose Pricing from the Products menu." };
@@ -1418,6 +1464,7 @@ function createE2EServer(port = 8907) {
   scenarios.lookPerSite = { task: "What does the sales chart show?" };
   scenarios.framed = { task: "How much is Item B?" };
   scenarios.findQuote = { task: "How much is the garden hose?" };
+  scenarios.pdfText = { task: "How much is due on this statement?" };
   scenarios.code = { task: "What was the total of order 4411?" };
   scenarios.signinIdentifierFirst = { task: "What is my account balance on this site?" };
   scenarios.codePlain = { task: "What was the total of order 4411?" };
@@ -1639,6 +1686,12 @@ function createE2EServer(port = 8907) {
     }
     if (pathname === "/" || pathname === "/home") {
       respond(200, FIXTURES["/home"]);
+      return;
+    }
+    // A small PDF, served as one: the browser draws it in its own viewer,
+    // where the page an extension can script holds no text.
+    if (pathname === "/files/statement.pdf") {
+      respond(200, STATEMENT_PDF, "application/pdf");
       return;
     }
     const ledger = pathname.match(/^\/ledger\/(\d+)$/);

@@ -49,6 +49,20 @@ jobs:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
       - run: npm run check:fast
 
+  # The PDF reader on the real files the trial failed on (a tax form and a
+  # paper). They are downloaded here and never checked in.
+  pdf-real-files:
+    name: pdf-real-files
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node tests/reading/pdf-real-files.js
+
   manifest-contract:
     name: manifest-contract
     if: github.event_name != 'schedule'
