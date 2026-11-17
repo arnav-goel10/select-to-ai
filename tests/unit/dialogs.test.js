@@ -15,6 +15,8 @@ const { fakeWorker } = require("../helpers/fake-worker.js");
 
 const NAME = "n0123456789abcdef01234567";
 const flush = async (n = 30) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
+// The fake worker's timers do not hold the process open; this does, while the engine waits on one.
+const alive = async (p) => { const keep = setInterval(() => {}, 1000); try { return await p; } finally { clearInterval(keep); } };
 
 /** A page's world with its own dialogs; `held` says whether the content script takes them. */
 function world(o = {}) {
@@ -148,7 +150,7 @@ test("an action whose alert the page's world answered is said with the alert's w
     tabs: { 9: tab },
     onTabMessage: (_id, m) => (m.action === "interact" ? { success: true, message: "Clicked [12] \"Add to cart\".", outcome: { domMutationCount: 0, noEffect: true }, settle: { ms: 900, network: true, asked: true }, dialogs: [{ kind: "alert", text: "Product added.", at: 1 }] } : undefined),
   });
-  const r = await w.engine.interact(session(), { do: "click", ref: 12 }, { action: "click", id: 12 }, true);
+  const r = await alive(w.engine.interact(session(), { do: "click", ref: 12 }, { action: "click", id: 12 }, true));
   assert.equal(r.ok, true);
   assert.match(r.message, /The page showed a browser alert: "Product added\."\. It was closed with OK, and the page went on\./);
 });
