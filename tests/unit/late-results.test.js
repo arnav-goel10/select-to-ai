@@ -34,7 +34,7 @@ test("the content script makes the name the page's world speaks under anew for e
   assert.notEqual(a, b);
   // With no random source it is still a name of that shape.
   assert.match(new Function("crypto", `return ${made[1]}`)(undefined), INJECT.NET_EVENT);
-  assert.match(CONTENT, /netEvent: pageNet \? NET_EVENT : '',/);
+  assert.match(CONTENT, /netEvent: NET_EVENT,/);
   assert.ok(!/select-to-ai:net/.test(CONTENT), "no fixed name a page could speak under");
 });
 
@@ -123,7 +123,7 @@ test("a script that needs nothing from the page is run at once, and a page that 
 });
 
 test("the engine starts the count in the page's world when it reads a page that has none", async () => {
-  const scanOf = (netView, netEvent = NAME) => ({ elements: [], url: "https://shop.example/", title: "Shop", innerText: "", netView, netEvent });
+  const scanOf = (netView, netEvent = NAME) => ({ elements: [], url: "https://shop.example/", title: "Shop", innerText: "", netView, dialogView: netView, netEvent });
   const session = () => ({ windowId: 1, run: { task: "t" }, settings: {}, items: { agentPressables: "off" }, touched: new Set(), frames: [] });
   const tab = { id: 9, url: "https://shop.example/", title: "Shop", windowId: 1 };
   const without = fakeWorker({ onTabMessage: (_id, m) => (m.action === "scan" ? scanOf(false) : undefined) });
@@ -131,7 +131,8 @@ test("the engine starts the count in the page's world when it reads a page that 
   const sent = without.calls.scripts.filter((s) => s.world === "MAIN");
   assert.equal(sent.length, 1);
   assert.deepEqual([sent[0].target.tabId, sent[0].injectImmediately, sent[0].args[0]], [9, true, NAME]);
-  assert.equal(String(sent[0].func), String(INJECT.netShim));
+  assert.equal(JSON.stringify(sent[0].args[1]), JSON.stringify({ net: true, dialogs: true }));
+  assert.equal(String(sent[0].func), String(INJECT.pageShim));
   // A page already counting is not sent it again.
   const counted = fakeWorker({ onTabMessage: (_id, m) => (m.action === "scan" ? scanOf(true) : undefined) });
   await counted.engine.scan(session(), tab, () => {});

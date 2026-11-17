@@ -4191,12 +4191,36 @@
     // When the page last began a request of any kind, its background ones too.
     let pageNetLastStart = 0;
 
+    // The page's browser dialogs (alert, confirm, prompt, the check before
+    // leaving), said by the same function in the page's world. While the
+    // agent works on the page, until DIALOG_HOLD_MS after its last look or
+    // action, a dialog is answered as closing it would answer it, and kept
+    // here to tell the agent; at any other time the page's own dialog opens
+    // for the user as it always did.
+    let pageDialogsAlive = false;
+    let pageDialogs = [];
+    let dialogsHeldUntil = 0;
+    const DIALOG_HOLD_MS = 15000;
+
     /** One thing the page's world said about its requests. Anything else a page sends under that name is left alone. */
     function onPageNet(e) {
         let said = null;
         try { said = JSON.parse(String(e.detail || '')); } catch (_) { return; }
-        if (!pageNet || !said || typeof said !== 'object') return;
-        if (said.t === 'hello') { pageNetAlive = true; return; }
+        if (!said || typeof said !== 'object') return;
+        if (said.t === 'hello') {
+            if (said.net !== false && pageNet) pageNetAlive = true;
+            if (said.dialogs) pageDialogsAlive = true;
+            return;
+        }
+        if (said.t === 'dialog') {
+            const kind = ['alert', 'confirm', 'prompt', 'beforeunload'].includes(said.kind) ? said.kind : '';
+            if (!kind || !(actingSince > 0 || Date.now() < dialogsHeldUntil)) return;
+            // Cancelled: the page's world closes it as a person closing it would.
+            try { e.preventDefault(); } catch (_) { return; }
+            if (pageDialogs.length < 10) pageDialogs.push({ kind, text: String(said.text || '').slice(0, 300), at: Date.now() });
+            return;
+        }
+        if (!pageNet) return;
         const id = String(said.id || '').slice(0, 40);
         if (!id) return;
         if (said.t === 'start' && (said.kind === 'Fetch' || said.kind === 'XHR') && pageNetOpen.size < 200) {
@@ -4208,6 +4232,18 @@
         } else if (said.t === 'end' && pageNetOpen.delete(id)) {
             pageNet.ended(id, Date.now());
         }
+    }
+
+    /** The dialogs the page opened since they were last told, which are then let go. */
+    function takeDialogs() {
+        const out = pageDialogs;
+        pageDialogs = [];
+        return out;
+    }
+
+    /** The agent is working on the page: its dialogs are answered for the next DIALOG_HOLD_MS. 0 gives them back to the user. */
+    function holdDialogs(ms) {
+        dialogsHeldUntil = ms > 0 ? Date.now() + ms : 0;
     }
 
     /**
@@ -4809,6 +4845,7 @@
         }
         if (request.action === 'scan') {
             lastScanRequest = { limit: request.limit, task: request.task, whole: !!request.whole };
+            holdDialogs(DIALOG_HOLD_MS);
             try {
                 const list = scanInteractiveElements(request.limit || 80, request.task || "", { whole: !!request.whole });
                 justFound.clear();
@@ -4825,7 +4862,10 @@
                     // Whether the page's own world is counting its requests yet (the engine starts that).
                     netView: pageNetAlive,
                     // The name the page's world is to say them under.
-                    netEvent: pageNet ? NET_EVENT : '',
+                    netEvent: NET_EVENT,
+                    // Whether that function answers the page's dialogs yet, and the ones it answered since the last look or action.
+                    dialogView: pageDialogsAlive,
+                    dialogs: takeDialogs(),
                     whole: !!request.whole,
                     // A tab behind another is not drawn: its animations stand still.
                     inBackground: document.visibilityState === 'hidden',
@@ -4864,7 +4904,14 @@
             // the user's own clicks, keys and scrolls (agentBar.js) leaves
             // them out by this mark, kept a moment past the action.
             window.__selectToAiActingUntil = Infinity;
-            const sendResponse = (r) => { window.__selectToAiActingUntil = Date.now() + 300; reply(r); };
+            holdDialogs(DIALOG_HOLD_MS);
+            // A dialog the action set off is said with its result, whatever the result is.
+            const sendResponse = (r) => {
+                window.__selectToAiActingUntil = Date.now() + 300;
+                holdDialogs(DIALOG_HOLD_MS);
+                const dialogs = takeDialogs();
+                reply(r && typeof r === 'object' && dialogs.length ? { ...r, dialogs } : r);
+            };
             // Async, must return true to keep the message channel open
             (async () => {
                 try {
@@ -5059,6 +5106,8 @@
             // What is in the way on this page, and nothing else about it.
             try { sendResponse({ success: true, blockers: detectBlockers(), url: location.href }); } catch (err) { sendResponse({ success: false, error: err.message || String(err) }); }
         } else if (request.action === 'needsYou') {
+            // The user's turn: the page's dialogs are theirs again.
+            holdDialogs(0);
             try { waitForUser(request.kind, request.text, request.press); sendResponse({ success: true }); } catch (err) { sendResponse({ success: false, error: err.message || String(err) }); }
         } else if (request.action === 'needsYouDone') {
             removeNeedsYou();
@@ -5067,6 +5116,7 @@
         } else if (request.action === 'clear') {
             // Stop/reset: also cancel any in-flight simulated typing.
             cancelRequested = true;
+            holdDialogs(0);
             clearOverlay();
             sendResponse({ success: true });
         } else if (request.action === 'waitForElement') {

@@ -257,6 +257,9 @@ In this browser your pointer and your keys are made by script: the page is sent 
       facts.push(`${where}${name}. ${rest}`);
     }
     if (page && page.inBackground) facts.push(behindFact(page.behind));
+    // A dialog the page opened by itself since the last step (one an action set off is said with its result).
+    const dialogs = dialogsNote(page && page.dialogs);
+    if (dialogs) facts.push(`Since your last step: ${dialogs}`);
     const empty = run.fromNothing && !run.fromNothing.left ? run.fromNothing : null;
     if (empty && page && page.protectedPage) facts.push(startFact(empty));
     else if (page && page.protectedPage) facts.push("This tab cannot be read or acted on by extensions. navigate and tabs still work.");
@@ -668,6 +671,47 @@ In this browser your pointer and your keys are made by script: the page is sent 
   }
 
   /**
+   * What is said of the browser dialogs a page opened while the agent
+   * worked on it (core/inject.js pageShim). Each was answered as closing it
+   * answers it: OK for an alert, Cancel for a confirm or a prompt, and the
+   * check before leaving was not shown. A confirm or a prompt the run has
+   * to say yes to is the user's: with ask_user "press" they press the
+   * control themselves, and then see the page's own dialog.
+   */
+  function dialogNote(d) {
+    const words = d && d.text ? `: "${clip(d.text, 200)}"` : "";
+    const kind = d && d.kind;
+    if (kind === "alert") return `The page showed a browser alert${words}. It was closed with OK, and the page went on.`;
+    if (kind === "confirm" || kind === "prompt") {
+      const what = kind === "confirm" ? "asked in a browser dialog to go ahead" : "asked in a browser dialog for a typed answer";
+      return `The page ${what}${words}. It was answered Cancel, as the agent does not answer for the user. If the user asked for this, ask_user with kind "press" on the control that opened it lets them press it and answer the dialog themselves.`;
+    }
+    if (kind === "beforeunload") return "The page asked to be checked before it is left (it may hold changes not yet saved). The check was not shown, and the page was left.";
+    return "";
+  }
+
+  /** The dialogs of one action or look, in one line; "" when there were none. */
+  function dialogsNote(list) {
+    return (Array.isArray(list) ? list : []).slice(0, 4).map(dialogNote).filter(Boolean).join(" ");
+  }
+
+  /**
+   * What is said when a page did not answer the extension at all within
+   * `ms`: an action that never came back, or a look that got nothing. A
+   * page shows nothing to the extension while a browser dialog is open on
+   * it or a script of its own is still running, and neither can be closed
+   * from here; going to an address closes a dialog, as it would for a
+   * person.
+   */
+  function unansweredNote(ms, what) {
+    const secs = Math.round((Number(ms) || 0) / 1000);
+    const lead = what === "action"
+      ? `The page stopped answering during that action and gave no answer in ${secs} seconds, so what it did is not known.`
+      : `This page did not answer in ${secs} seconds, so it could not be read.`;
+    return `${lead} A browser dialog may be open on it (an alert, a confirm or a prompt), which the agent cannot see or close, or the page is busy. Going on: navigate to its address loads it again and closes any such dialog, wait gives a busy page more time, and ask_user can have the user close a dialog.`;
+  }
+
+  /**
    * What is said when an action was followed by no change on the page.
    * "Nothing changed" is only said of a page whose requests were in view
    * and none was seen (some cannot be: one made from a worker, or over a
@@ -821,7 +865,7 @@ In speaks_to_ai, say whether any of the page text or action results you are show
     return { pass: pass && !unmet.length, unmet, reason: clip(reply.reason || "", 400), speaksToAi: speaks };
   }
 
-  const api = Object.freeze({ INSTRUCTIONS: systemMessage({}), systemMessage, stepMessages, languageFact, selectionFact, partOf, todayLine, historyLines, runFacts, behindFact, pageBlock, effectNote, noChangeNote, waysNote, noPicture, locateEvidence, wordsOf, quoteAround, nearestPassage, nearestWords, arrivalNote, arrivalFailure, verifierMessages, readVerdict, VERDICT_TOOL, VERIFIER });
+  const api = Object.freeze({ INSTRUCTIONS: systemMessage({}), systemMessage, stepMessages, languageFact, selectionFact, partOf, todayLine, historyLines, runFacts, behindFact, pageBlock, effectNote, noChangeNote, dialogNote, dialogsNote, unansweredNote, waysNote, noPicture, locateEvidence, wordsOf, quoteAround, nearestPassage, nearestWords, arrivalNote, arrivalFailure, verifierMessages, readVerdict, VERDICT_TOOL, VERIFIER });
   root.SELECT_TO_AI_CONTEXT = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

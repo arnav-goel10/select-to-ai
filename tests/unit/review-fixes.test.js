@@ -184,7 +184,7 @@ function fakeWorker(attachRefused, saved) {
   root.self = root;
   vm.createContext(root);
   const EXT = path.join(__dirname, "../../extension");
-  for (const f of ["config.js", "defaults.js", "security.js", "commonWords.js", "publicSuffixes.js", "agentTools.js", "agentPrompt.js", "usageLimits.js", "pageSearch.js", "core/step.js", "core/observe.js", "core/memory.js", "core/context.js", "core/policy.js", "core/run.js", "core/llm.js", "core/learn.js", "core/view.js", "engine.js"]) {
+  for (const f of ["config.js", "defaults.js", "security.js", "commonWords.js", "publicSuffixes.js", "agentTools.js", "agentPrompt.js", "usageLimits.js", "pageSearch.js", "core/step.js", "core/observe.js", "core/memory.js", "core/context.js", "core/policy.js", "core/run.js", "core/llm.js", "core/learn.js", "core/view.js", "core/inject.js", "engine.js"]) {
     vm.runInContext(fs.readFileSync(path.join(EXT, f), "utf8"), root, { filename: f });
   }
   const pressKey = (tabId) => new Promise((resolve) => {
