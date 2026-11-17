@@ -84,8 +84,10 @@
    * cancelled), and the page is given what closing the dialog gives: OK
    * for an alert, Cancel for a confirm or a prompt. Otherwise the page's
    * own dialog opens as before, so the user's own use of the page is not
-   * changed. A check before leaving the page (beforeunload) is treated the
-   * same way: while the agent works, the page is left without it.
+   * changed. The check before leaving a page (beforeunload) is never
+   * touched: it guards what the user typed and has not saved, and only the
+   * user decides to drop that. A step it holds up ends at the bound on
+   * every wait (ask), and the agent is told the page may be holding it.
    *
    * Nothing is left on the window to say it ran: the content script knows
    * from its "hello", and the engine does not send a part to a page that
@@ -134,31 +136,6 @@
           if (say({ t: "dialog", kind, text: String(message === undefined ? "" : message).slice(0, 300) })) return closed[kind];
           return own.apply(this, arguments);
         };
-      }
-      // The check before leaving opens when a listener cancels the event,
-      // sets its returnValue, or the onbeforeunload handler returns words.
-      const leave = () => say({ t: "dialog", kind: "beforeunload", text: "" });
-      const B = w.BeforeUnloadEvent && w.BeforeUnloadEvent.prototype;
-      const E = w.Event && w.Event.prototype;
-      if (B && E && typeof E.preventDefault === "function") {
-        const stop = E.preventDefault;
-        const value = Object.getOwnPropertyDescriptor(B, "returnValue");
-        try {
-          Object.defineProperty(B, "preventDefault", { configurable: true, writable: true, value: function preventDefault() { if (!leave()) stop.call(this); } });
-          if (value && value.set) Object.defineProperty(B, "returnValue", { configurable: true, get: value.get, set: function returnValue(v) { if (v === "" || v === null || v === undefined || !leave()) value.set.call(this, v); } });
-        } catch (_e) { /* the page's own check stays as it was */ }
-        if ("onbeforeunload" in w && typeof w.addEventListener === "function") {
-          let handler = typeof w.onbeforeunload === "function" ? w.onbeforeunload : null;
-          try {
-            w.onbeforeunload = null;
-            Object.defineProperty(w, "onbeforeunload", { configurable: true, enumerable: true, get: () => handler, set: (f) => { handler = typeof f === "function" ? f : null; } });
-            w.addEventListener("beforeunload", function onLeave(e) {
-              if (!handler) return;
-              const r = handler.call(this, e);
-              if (r !== undefined && r !== null && !leave()) { stop.call(e); if (value && value.set) value.set.call(e, String(r)); }
-            });
-          } catch (_e) { if (handler) w.onbeforeunload = handler; }
-        }
       }
     }
     say({ t: "hello", net: !!want.net, dialogs: !!want.dialogs });

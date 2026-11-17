@@ -4191,16 +4191,20 @@
     // When the page last began a request of any kind, its background ones too.
     let pageNetLastStart = 0;
 
-    // The page's browser dialogs (alert, confirm, prompt, the check before
-    // leaving), said by the same function in the page's world. While the
-    // agent works on the page, until DIALOG_HOLD_MS after its last look or
-    // action, a dialog is answered as closing it would answer it, and kept
-    // here to tell the agent; at any other time the page's own dialog opens
-    // for the user as it always did.
+    // The page's browser dialogs (alert, confirm, prompt), said by the same
+    // function in the page's world. From the agent's first look or action
+    // on the page until the run hands it to the user (needsYou) or lets it
+    // go (clear), a dialog is answered as closing it would answer it, and
+    // kept here to tell the agent; at any other time the page's own dialog
+    // opens for the user as it always did. A step can take minutes with a
+    // slow model, so the hold is not timed by the step: DIALOG_HOLD_MS is
+    // only a cap for a run that ended without saying so (its worker
+    // stopped), after which the page's dialogs are the user's again. The
+    // check before leaving a page is never answered here (core/inject.js).
     let pageDialogsAlive = false;
     let pageDialogs = [];
     let dialogsHeldUntil = 0;
-    const DIALOG_HOLD_MS = 15000;
+    const DIALOG_HOLD_MS = 180000;
 
     /** One thing the page's world said about its requests. Anything else a page sends under that name is left alone. */
     function onPageNet(e) {
@@ -4208,12 +4212,13 @@
         try { said = JSON.parse(String(e.detail || '')); } catch (_) { return; }
         if (!said || typeof said !== 'object') return;
         if (said.t === 'hello') {
-            if (said.net !== false && pageNet) pageNetAlive = true;
+            // Said even with no count to keep here, so the count is not sent again on every look.
+            if (said.net !== false) pageNetAlive = true;
             if (said.dialogs) pageDialogsAlive = true;
             return;
         }
         if (said.t === 'dialog') {
-            const kind = ['alert', 'confirm', 'prompt', 'beforeunload'].includes(said.kind) ? said.kind : '';
+            const kind = ['alert', 'confirm', 'prompt'].includes(said.kind) ? said.kind : '';
             if (!kind || !(actingSince > 0 || Date.now() < dialogsHeldUntil)) return;
             // Cancelled: the page's world closes it as a person closing it would.
             try { e.preventDefault(); } catch (_) { return; }
@@ -4264,6 +4269,9 @@
      * its background from the first action on.
      */
     function watchRequests() {
+        // The page's dialogs come under the same name, so the listener is
+        // there even when there is no count of requests to keep.
+        document.addEventListener(NET_EVENT, onPageNet, true);
         if (!pageNet) return;
         try {
             for (const r of performance.getEntriesByType('resource')) {
@@ -4273,7 +4281,6 @@
                 pageNet.ended(id, performance.timeOrigin + (r.responseEnd || r.startTime));
             }
         } catch (_) { /* no record: the count starts now */ }
-        document.addEventListener(NET_EVENT, onPageNet, true);
     }
 
     /** An element the page changes over and over by itself: a clock, a feed, a rotating panel. */

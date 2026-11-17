@@ -179,6 +179,7 @@ async function main() {
     const learning = (on) => worker.evaluate((v) => new Promise((r) => chrome.storage.sync.set({ agentLearning: v }, r)), on);
     const allowOnly = (v) => worker.evaluate((list) => new Promise((r) => chrome.storage.sync.set({ agentDomainAllowlist: list }, () => r(true))), v);
     let queuedSlowed = false;
+    const dialogWatch = { page: null, opened: [], on: (d) => { dialogWatch.opened.push(`${d.type()}: ${d.message()}`); d.dismiss().catch(() => {}); } };
     const until = async (fn, ms = 8000) => { const t0 = Date.now(); for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t0 > ms) return null; await sleep(200); } };
 
     /**
@@ -651,6 +652,26 @@ async function main() {
         if (!/navigate .*\/still-writing/.test(visits[0] || "")) return `steps: ${JSON.stringify(visits)}`;
         return null;
       }, "stillLoading", { waitUntil: "domcontentloaded", timeoutMs: 45000 }],
+      // A press whose page shows an alert once its request is back, then a
+      // press whose page asks with a confirm. Each step comes back with
+      // what the dialog said, the page's own dialog never opens, and the
+      // confirm is answered Cancel. Before, the first press never came back.
+      ["dialogs", "/dialogs", approve, async (r) => {
+        if (dialogWatch.page) dialogWatch.page.off("dialog", dialogWatch.on);
+        if (dialogWatch.opened.length) return `the page's own dialogs opened: ${JSON.stringify(dialogWatch.opened)}`;
+        if (r.timedOut) return `the run did not finish: ${JSON.stringify((r.trace && r.trace.history) || [])}`;
+        const presses = (r.trace.history || []).filter((h) => /^click/.test(h.action));
+        if (!presses.some((h) => /browser alert: "Product added\."/.test(h.outcome || ""))) return `no press said the alert: ${JSON.stringify(presses.map((h) => h.outcome))}`;
+        if (!presses.some((h) => /asked in a browser dialog to go ahead: "Empty the cart\?"\. It was answered Cancel/.test(h.outcome || ""))) return `no press said the confirm: ${JSON.stringify(presses.map((h) => h.outcome))}`;
+        const state = await r.fixture.evaluate(() => document.getElementById("state").textContent);
+        if (state !== "Cart: 1 item, kept") return `the cart shows ${JSON.stringify(state)}`;
+        return /1 item/.test(r.answer) ? null : `answer: ${JSON.stringify(r.answer)}`;
+      }, "dialogs", { before: async () => {
+        // Any dialog that reaches the browser is the page's own: it is closed, so the run can go on, and counted.
+        dialogWatch.opened = [];
+        dialogWatch.page = (await browser.pages()).find((p) => !p.url().startsWith("chrome-extension://")) || (await browser.newPage());
+        dialogWatch.page.on("dialog", dialogWatch.on);
+      } }],
       // A clock and a request every 800 ms: a press that changes the page at once is not held for the ceiling.
       ["busyPage", "/busy-page", async () => false, (r) => settleCheck(r, { max: 3000, says: /That brought up: .*Read the note/ })],
       // The debugger connection refused: the spinner the page shows holds the wait, within the fallback cap.

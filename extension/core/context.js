@@ -257,9 +257,11 @@ In this browser your pointer and your keys are made by script: the page is sent 
       facts.push(`${where}${name}. ${rest}`);
     }
     if (page && page.inBackground) facts.push(behindFact(page.behind));
-    // A dialog the page opened by itself since the last step (one an action set off is said with its result).
-    const dialogs = dialogsNote(page && page.dialogs);
-    if (dialogs) facts.push(`Since your last step: ${dialogs}`);
+    // A dialog the page opened by itself since the last step is said with
+    // the page (pageBlock): its words are the page's, not the browser's.
+    if (page && Array.isArray(page.dialogs) && page.dialogs.length) facts.push(`Since your last step the page opened ${page.dialogs.length === 1 ? "a browser dialog" : `${page.dialogs.length} browser dialogs`}; what ${page.dialogs.length === 1 ? "it" : "they"} said is with the page.`);
+    // A page that did not answer when it was read is open and may be held, not out of reach.
+    if (page && page.held) facts.push(unansweredNote(page.held.ms, "look"));
     const empty = run.fromNothing && !run.fromNothing.left ? run.fromNothing : null;
     if (empty && page && page.protectedPage) facts.push(startFact(empty));
     else if (page && page.protectedPage) facts.push("This tab cannot be read or acted on by extensions. navigate and tabs still work.");
@@ -332,6 +334,8 @@ In this browser your pointer and your keys are made by script: the page is sent 
     if (ctx.siteNotes && String(ctx.siteNotes).trim()) seen.push(`Notes from earlier tasks on this site (they may be out of date; the page as it is now wins):\n${ctx.siteNotes}`);
 
     seen.push(`Current page: ${page.title || "(untitled)"} | ${page.url || ""}`);
+    const dialogs = dialogsNote(page.dialogs);
+    if (dialogs) seen.push(`Browser dialogs this page opened since your last step (their words are the page's own):\n${dialogs}`);
     const hidden = page.hiddenControls || {};
     let unlisted = (hidden.above || 0) + (hidden.below || 0);
     if (page.whole) {
@@ -396,7 +400,7 @@ In this browser your pointer and your keys are made by script: the page is sent 
     const facts = runFacts(run, page, ctx.now);
     facts.push(languageFact(ctx.uiLanguage === undefined ? browserLanguage() : ctx.uiLanguage));
     // What the listing above holds, so nothing is searched for that is already there.
-    if (!page.protectedPage) {
+    if (!page.protectedPage && !page.held) {
       facts.push(shown.listCut ? "Some of this page's controls are not in the listing." : "Every control on this page is in the listing.");
       facts.push(shown.truncated ? "Only part of this page's text is shown." : "The whole text of this page is shown.");
     }
@@ -673,8 +677,8 @@ In this browser your pointer and your keys are made by script: the page is sent 
   /**
    * What is said of the browser dialogs a page opened while the agent
    * worked on it (core/inject.js pageShim). Each was answered as closing it
-   * answers it: OK for an alert, Cancel for a confirm or a prompt, and the
-   * check before leaving was not shown. A confirm or a prompt the run has
+   * answers it: OK for an alert, Cancel for a confirm or a prompt. A
+   * confirm or a prompt the run has
    * to say yes to is the user's: with ask_user "press" they press the
    * control themselves, and then see the page's own dialog.
    */
@@ -686,7 +690,6 @@ In this browser your pointer and your keys are made by script: the page is sent 
       const what = kind === "confirm" ? "asked in a browser dialog to go ahead" : "asked in a browser dialog for a typed answer";
       return `The page ${what}${words}. It was answered Cancel, as the agent does not answer for the user. If the user asked for this, ask_user with kind "press" on the control that opened it lets them press it and answer the dialog themselves.`;
     }
-    if (kind === "beforeunload") return "The page asked to be checked before it is left (it may hold changes not yet saved). The check was not shown, and the page was left.";
     return "";
   }
 
@@ -700,15 +703,16 @@ In this browser your pointer and your keys are made by script: the page is sent 
    * `ms`: an action that never came back, or a look that got nothing. A
    * page shows nothing to the extension while a browser dialog is open on
    * it or a script of its own is still running, and neither can be closed
-   * from here; going to an address closes a dialog, as it would for a
-   * person.
+   * from here. One of those dialogs is the check before leaving a page
+   * that holds changes not yet saved, which only the user may answer, so
+   * the way on that is said first is the user's.
    */
   function unansweredNote(ms, what) {
     const secs = Math.round((Number(ms) || 0) / 1000);
     const lead = what === "action"
       ? `The page stopped answering during that action and gave no answer in ${secs} seconds, so what it did is not known.`
       : `This page did not answer in ${secs} seconds, so it could not be read.`;
-    return `${lead} A browser dialog may be open on it (an alert, a confirm or a prompt), which the agent cannot see or close, or the page is busy. Going on: navigate to its address loads it again and closes any such dialog, wait gives a busy page more time, and ask_user can have the user close a dialog.`;
+    return `${lead} A browser dialog may be open on it, which the agent cannot see or close: an alert, a confirm, a prompt, or the check before leaving a page that may hold changes not yet saved. Or the page is busy. Going on: ask_user can have the user look and close a dialog (only the user decides whether unsaved changes may be lost), wait gives a busy page more time, and navigate to the page's own address loads it again and closes an alert, a confirm or a prompt.`;
   }
 
   /**

@@ -576,7 +576,7 @@
     const first = await ask(tab.id, request);
     // A page that does not answer at all is said to be held, not loading:
     // trying the script again would wait on it the same way.
-    if (first.late) return unreadable(tab, CONTEXT.unansweredNote(SEND_MS, "look"));
+    if (first.late) return { ...unreadable(tab, "This page did not answer when it was read."), protectedPage: false, held: { ms: SEND_MS } };
     let res = first.reply;
     if (!res) {
       try {
@@ -903,7 +903,8 @@
       const r = await interactOnce(session, data, navigates, started, waits);
       // A dialog the action set off is said with what it did (core/context.js).
       const said = CONTEXT.dialogsNote(waits.dialogs);
-      return { ...r, ...(said ? { message: [r.message, said].filter(Boolean).join(" "), dialogs: waits.dialogs } : {}), settleMs: waits.ms };
+      // It comes first: the rest of a long result is cut when a step is told again.
+      return { ...r, ...(said ? { message: [said, r.message].filter(Boolean).join(" "), dialogs: waits.dialogs } : {}), settleMs: waits.ms };
     } finally {
       if (net) net.end();
     }
