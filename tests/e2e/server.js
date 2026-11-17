@@ -522,6 +522,67 @@ const FIXTURES = {
        sub.addEventListener('keydown', () => { window.keys += 1; });
      </script>`,
   ),
+  // A control the keyboard cannot reach (no tabindex), that does nothing
+  // when pressed. It counts what reaches it.
+  "/press-plain": pageShell(
+    "Gallery",
+    `<h1>Gallery</h1>
+     <p>Twelve photos from the trail.</p>
+     <div id="more" role="button" style="display:inline-block;padding:8px 18px;border:1px solid #888;cursor:pointer">Show more photos</div>
+     <script>
+       window.clicks = 0; window.keys = 0;
+       const more = document.getElementById('more');
+       more.addEventListener('click', () => { window.clicks += 1; });
+       more.addEventListener('keydown', () => { window.keys += 1; });
+     </script>`,
+  ),
+  // Controls built for the keyboard too, whose answer to a press comes
+  // late or out of sight. A press made a second way would count twice.
+  // This one acts a second and a half after the press, on a timer of its
+  // own, with no request.
+  "/press-late": pageShell(
+    "Order",
+    `<h1>Order</h1>
+     <p id="state">Order not sent</p>
+     <div id="send" role="button" tabindex="0" style="display:inline-block;padding:8px 18px;border:1px solid #888">Send order</div>
+     <script>
+       window.sends = 0;
+       const send = document.getElementById('send');
+       const later = () => setTimeout(() => { window.sends += 1; document.getElementById('state').textContent = 'Order sent ' + window.sends + (window.sends === 1 ? ' time' : ' times'); }, 1500);
+       send.addEventListener('click', later);
+       send.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') later(); });
+     </script>`,
+  ),
+  // This one scrolls a box inside the page: no element changes.
+  "/press-scroll": pageShell(
+    "Log",
+    `<h1>Log</h1>
+     <div id="box" style="height:120px;overflow:auto;border:1px solid #888"><div style="height:2000px">Line 1</div></div>
+     <div id="next" role="button" tabindex="0" style="display:inline-block;padding:8px 18px;border:1px solid #888">Next lines</div>
+     <script>
+       window.moves = 0;
+       const box = document.getElementById('box'), next = document.getElementById('next');
+       const move = () => { window.moves += 1; box.scrollTop += 200; };
+       next.addEventListener('click', move);
+       next.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') move(); });
+     </script>`,
+  ),
+  // This one asks the server through a fetch it kept from when the page
+  // loaded, and the answer takes a second: nothing on the page changes.
+  "/press-kept": pageShell(
+    "Report",
+    `<h1>Report</h1>
+     <p>Send the weekly report to the team.</p>
+     <div id="report" role="button" tabindex="0" style="display:inline-block;padding:8px 18px;border:1px solid #888">Send report</div>
+     <script>
+       window.reports = 0;
+       const kept = window.fetch.bind(window);
+       const report = document.getElementById('report');
+       const go = () => { window.reports += 1; kept('/api/slow-ok?n=' + window.reports).catch(() => {}); };
+       report.addEventListener('click', go);
+       report.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') go(); });
+     </script>`,
+  ),
   // This one takes only a person's own press.
   "/press-real": pageShell(
     "Downloads",
@@ -985,6 +1046,26 @@ function buildStepPolicies(baseUrl) {
       if (/Nothing on the page changed|No change was seen/.test(ctx.userText)) return done("I pressed Subscribe once, as you approved. The page shows no change, so I cannot tell whether it took.", [], false);
       return step("Subscribe", [{ do: "click", ref: named(ctx, /^subscribe$/i).id }]);
     },
+    // A dead control the keyboard cannot reach: one press, and a plain result with no failure in it.
+    pressPlain(ctx) {
+      if (/Nothing on the page changed|No change was seen/.test(ctx.userText)) return done("I pressed Show more photos once. The page shows no change.", [], false);
+      if (/did not work|Cannot read/.test(ctx.userText)) return done("policy error: the press came back as a failure", [], false);
+      return step("Show more photos", [{ do: "click", ref: named(ctx, /show more photos/i).id }]);
+    },
+    // Presses whose answer comes late or out of sight: one press each.
+    pressLate(ctx) {
+      if (/Order sent/.test(ctx.userText)) return done("The order is sent.", ["Order sent"]);
+      if (/Nothing on the page changed|No change was seen/.test(ctx.userText)) return done("I pressed Send order once. The page showed no change while I watched.", [], false);
+      return step("Send the order", [{ do: "click", ref: named(ctx, /send order/i).id }]);
+    },
+    pressScroll(ctx) {
+      if (/Nothing on the page changed|No change was seen|The page updated|The page scrolled/.test(ctx.userText)) return done("I pressed Next lines once.", [], false);
+      return step("Show the next lines", [{ do: "click", ref: named(ctx, /next lines/i).id }]);
+    },
+    pressKept(ctx) {
+      if (/Nothing on the page changed|No change was seen|The page updated/.test(ctx.userText)) return done("I pressed Send report once. The page shows no change.", [], false);
+      return step("Send the report", [{ do: "click", ref: named(ctx, /send report/i).id }]);
+    },
     // A control that takes only the user's own press: told so, the model hands that one press over.
     pressUser(ctx) {
       if (/Downloads unlocked/.test(ctx.userText)) return done("Downloads are unlocked.", ["Downloads unlocked"]);
@@ -1314,6 +1395,10 @@ function createE2EServer(port = 8907) {
   scenarios.shadowSilent = { task: "Add this to my wishlist." };
   scenarios.pressOnce = { task: "Subscribe me to the newsletter." };
   scenarios.pressUser = { task: "Unlock the downloads." };
+  scenarios.pressPlain = { task: "Show more photos." };
+  scenarios.pressLate = { task: "Send my order." };
+  scenarios.pressScroll = { task: "Show the next lines of the log." };
+  scenarios.pressKept = { task: "Send the weekly report." };
   scenarios.shadowClick = { task: "Add this to my basket." };
   scenarios.toolbar = { task: "Make the title upper case." };
   scenarios.lookPerSite = { task: "What does the sales chart show?" };
@@ -1509,6 +1594,10 @@ function createE2EServer(port = 8907) {
     }
     if (pathname === "/api/slow-results") {
       setTimeout(() => respond(200, JSON.stringify([{ id: "f101", name: "Flight 101", price: "$420" }, { id: "f202", name: "Flight 202", price: "$515" }]), "application/json"), 3000);
+      return;
+    }
+    if (pathname === "/api/slow-ok") {
+      setTimeout(() => respond(200, "{}", "application/json"), 1000);
       return;
     }
     if (pathname === "/api/ping") {

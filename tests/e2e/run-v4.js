@@ -740,6 +740,52 @@ async function main() {
         const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
         return /ways tried|then pressed with/.test(press.outcome) ? `another way was tried on top of an approved press: ${JSON.stringify(press.outcome)}` : null;
       }],
+      // A dead control the keyboard cannot reach: no key can follow the
+      // click, and the click that was made is reported as made, with the
+      // plain line that nothing changed, never as a failure.
+      ["pressPlain", "/press-plain", async () => false, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ clicks: window.clicks, keys: window.keys }));
+        const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
+        if (!press) return `no click was made: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (press.ok === false || /Cannot read|did not work/.test(press.outcome)) return `the press that was made came back as a failure: ${JSON.stringify(press.outcome)}`;
+        if (at.clicks !== 1 || at.keys !== 0) return `the control counted ${at.clicks} clicks and ${at.keys} keys, not 1 and 0: ${JSON.stringify(press.outcome)}`;
+        if (r.actions.filter((a) => a.do === "click").length !== 1) return `the model pressed more than once: ${JSON.stringify(r.actions.map((a) => a.do))}`;
+        if (/ways tried|then pressed with/.test(press.outcome)) return `a way was named that cannot be used on it: ${JSON.stringify(press.outcome)}`;
+        return /^Clicked/.test(press.outcome) && /Nothing on the page changed|No change was seen on the page/.test(press.outcome) ? null : `the result was not the plain line that nothing changed: ${JSON.stringify(press.outcome)}`;
+      }],
+      // A control that acts on a press after a timer of its own, and takes
+      // Enter and Space too: it is watched long enough to see that, and is
+      // pressed once.
+      ["pressLate", "/press-late", async () => false, async (r) => {
+        // Past every timer a press could have started.
+        await new Promise((res) => setTimeout(res, 2500));
+        const at = await r.fixture.evaluate(() => ({ sends: window.sends, state: document.getElementById("state").textContent }));
+        const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
+        if (at.sends !== 1 || at.state !== "Order sent 1 time") return `the order was sent ${at.sends} times (${at.state}), not once: ${JSON.stringify(press && press.outcome)} ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (r.actions.filter((a) => a.do === "click").length !== 1) return `the model pressed more than once: ${JSON.stringify(r.actions.map((a) => a.do))}`;
+        if (/ways tried|then pressed with/.test(press.outcome)) return `another way was tried on top: ${JSON.stringify(press.outcome)}`;
+        if (press.pointer === "real") return null;
+        return /Nothing on the page changed|No change was seen/.test(press.outcome) ? `the late change was not seen: ${JSON.stringify(press.outcome)}` : null;
+      }],
+      // A press that scrolled a box inside the page, and one that asked the
+      // server through a fetch the page kept from before its requests were
+      // counted: each is an answer, and neither is pressed a second way.
+      ["pressScroll", "/press-scroll", async () => false, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ moves: window.moves, top: document.getElementById("box").scrollTop }));
+        const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
+        if (at.moves !== 1 || at.top !== 200) return `the box was moved ${at.moves} times to ${at.top}, not once to 200: ${JSON.stringify(press && press.outcome)} ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (r.actions.filter((a) => a.do === "click").length !== 1) return `the model pressed more than once: ${JSON.stringify(r.actions.map((a) => a.do))}`;
+        return /ways tried|then pressed with/.test(press.outcome) ? `another way was tried on top: ${JSON.stringify(press.outcome)}` : null;
+      }],
+      ["pressKept", "/press-kept", async () => false, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ reports: window.reports }));
+        const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
+        if (at.reports !== 1) return `the report was sent ${at.reports} times, not once: ${JSON.stringify(press && press.outcome)} ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (r.actions.filter((a) => a.do === "click").length !== 1) return `the model pressed more than once: ${JSON.stringify(r.actions.map((a) => a.do))}`;
+        if (/ways tried|then pressed with/.test(press.outcome)) return `another way was tried on top: ${JSON.stringify(press.outcome)}`;
+        if (/no request from it was seen/.test(press.outcome)) return `the result said no request was seen, though one was made: ${JSON.stringify(press.outcome)}`;
+        return null;
+      }],
       // A control that takes no scripted press at all: the result says so, the
       // model hands that one press to the user, and the run goes on after it.
       ["pressUser", "/press-real", async ({ card, fixture, seen }) => {
@@ -806,7 +852,8 @@ async function main() {
         console.log(`      pictures with one site granted: ${pictured ? "taken" : `not taken. ${looked.outcome}`}`);
         if (pictured) return null;
         if (!/^A picture of this tab could not be taken\. \S/.test(looked.outcome)) return `the look failed with no reason given: ${JSON.stringify(looked.outcome)}`;
-        if (!/The browser refused: it gives an extension a picture of a tab only with access to every address/.test(looked.outcome)) return null;
+        // In the build without the debugger the one reason there can be is the browser's rule on pictures: any other is a failure.
+        if (!/The browser refused: it gives an extension a picture of a tab only with access to every address/.test(looked.outcome)) return process.env.E2E_DEBUGGER === "off" ? `the picture was refused for another reason than the browser's rule on pictures: ${JSON.stringify(looked.outcome)}` : null;
         if (!r.prompts.some((p) => /- No picture of the page can be taken on this tab\. The browser refused/.test(p))) return "the model was not told, as a fact, that no picture can be taken on this tab";
         return notes.some((n) => /Chrome did not let the agent take a picture of this page/.test(n)) ? null : `the user was not told: ${JSON.stringify(notes)}`;
       }, "lookPerSite", { before: () => mainModel("e2e-vision-model"), keepOpen: true }],
