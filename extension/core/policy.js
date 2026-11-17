@@ -225,7 +225,76 @@
    */
   const requestOf = (run) => String((run && (run.request || run.task)) || "");
 
+  // Actions that only look: they change nothing, so a declined control may still be read.
+  const LOOKS = new Set(["hover", "scroll", "read", "look", "find", "wait", "recall"]);
+  const addressOf = (url) => String(url || "").split("#")[0];
+  // A control as the user saw it: its words and the row they sit in, since
+  // refs are renumbered when the page is redrawn and two rows may each have a "Remove".
+  const controlKey = (el) => (el ? `${TOOLS.elementLabel(el)}\u0001${el.group || ""}` : "");
+  const opensUrl = (a) => (a.do === "navigate" || (a.do === "tabs" && a.op === "open") ? addressOf(a.url) : "");
+
+  /**
+   * What an action the user declined touched: the controls it pressed,
+   * typed into, dragged or let go on, a key's landing place and a point's
+   * control, and the address it would open. Kept by the run (run.declined)
+   * until the user says something new.
+   */
+  function declinedMark(a, page, run) {
+    const els = (page && page.elements) || [];
+    const refs = [a.ref, a.to_ref, ...(a.landsOn || [])].filter((r) => r !== undefined && r !== null);
+    if (a.do === "click_at" || (a.do === "drag" && a.to_ref === undefined)) {
+      const at = a.do === "click_at" ? { x: a.x, y: a.y } : dropPoint(a, page);
+      const hit = at ? pointTarget(page, at.x, at.y) : null;
+      if (hit && hit.el) refs.push(hit.el.id);
+    }
+    const found = refs.map((r) => els.find((e) => e.id === r)).filter(Boolean);
+    const labels = (run && run.labels) || {};
+    const names = [...new Set([...found.map(TOOLS.elementLabel), ...refs.map((r) => labels[r]).filter(Boolean)])];
+    const rows = [...new Set(found.map((e) => e.group).filter(Boolean))];
+    return { page: addressOf(page && page.url), keys: [...new Set(found.map(controlKey))], names, rows, urls: opensUrl(a) ? [opensUrl(a)] : [] };
+  }
+
+  /**
+   * The declined step an action would reach again, or null: its control
+   * (by its words and row, so a redraw's new ref is the same control) on
+   * the same page, or its address.
+   */
+  function declinedAgain(a, el, page, run) {
+    const gone = (run && run.declined) || [];
+    if (!gone.length || LOOKS.has(a.do)) return null;
+    const here = addressOf(page && page.url);
+    const key = controlKey(el);
+    const url = opensUrl(a);
+    return gone.find((d) => (key && d.page === here && d.keys.includes(key)) || (url && d.urls.includes(url))) || null;
+  }
+
+  /**
+   * Every action is decided here. The user has just declined a step: until
+   * they say something new, any action that reaches what they declined is
+   * theirs to allow again, however the rules would judge it alone. "No" is
+   * to the result, so a key pressed on the same control (Delete, Enter), a
+   * press at its spot, a drag onto it or the same address opened another
+   * way does not get round it. Actions decided by parts (a drag, a press at
+   * a point, a key with no ref) come back through here for each part, and
+   * a new action is held to this as well.
+   */
   function decide(a, page, run, settings, store, tabs) {
+    const v = judge(a, page, run, settings, store, tabs);
+    if ((settings || {}).riskConfirmation === false || STRENGTH(v) > 2) return v;
+    // A key with no ref lands where the focus is: on the control the page
+    // shows focused, or the one this step last used.
+    const els = (page && page.elements) || [];
+    const on = a.ref !== undefined ? els.filter((e) => e.id === a.ref)
+      : a.do === "press" ? els.filter((e) => e.focused || (run && e.id === run.focusRef)) : [];
+    const hit = [...on, null].map((el) => declinedAgain(a, el, page, run)).find(Boolean);
+    if (!hit) return v;
+    const what = hit.names[0] || hit.urls[0] || "that step";
+    const said = `You declined "${String(what).slice(0, 80)}" a moment ago. This would do it again${a.do === "click" ? "" : " another way"}.`;
+    if (v.verdict === "confirm") return { ...v, detail: [said, ...(v.detail || [])] };
+    return { verdict: "confirm", kind: hit.risk || "send", why: said, detail: [], declined: true };
+  }
+
+  function judge(a, page, run, settings, store, tabs) {
     const s = settings || {};
     const els = (page && page.elements) || [];
     const el = a.ref !== undefined ? els.find((e) => e.id === a.ref) : null;
@@ -464,7 +533,7 @@
     return t;
   }
 
-  const api = Object.freeze({ decide, decideSwitch, keysToo, blockersOf, detourSite, detourMessage, remember, asRiskAction, keptFromSending, pressesControl, pressLandsOn, firstAddress, pointTarget, dropPoint, HANDOVER });
+  const api = Object.freeze({ decide, decideSwitch, keysToo, blockersOf, detourSite, detourMessage, remember, asRiskAction, keptFromSending, pressesControl, pressLandsOn, firstAddress, pointTarget, dropPoint, declinedMark, declinedAgain, HANDOVER });
   root.SELECT_TO_AI_POLICY = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

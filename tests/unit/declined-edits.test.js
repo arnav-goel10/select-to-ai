@@ -1,0 +1,228 @@
+"use strict";
+// Removing a value from a field is an edit of the page, not a delete; and a
+// step the user declines leaves the run going, never waiting on a question
+// they have already answered.
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const T = require("../../extension/agentTools.js");
+const RUN = require("../../extension/core/run.js");
+const POLICY = require("../../extension/core/policy.js");
+
+const chip = (label, extra) => ({ id: 1, tagName: "div", role: "button", accName: label, inField: true, ...extra });
+const page = (els, forms) => ({ url: "https://forms.example/edit", elements: els, forms: forms || [] });
+const click = (el, forms) => T.actionRisk({ action: "click", id: el.id }, page([el], forms));
+const decide = (el) => POLICY.decide({ do: "click", ref: el.id }, page([el]), { trust: {}, task: "edit the field" }, { riskConfirmation: true });
+
+test("the x on a chosen value is not held as a delete, in any wording", () => {
+  for (const label of ["Remove Purple", "Remove item", "Delete tag teal", "Remove", "Clear", "Clear all", "Supprimer", "Entfernen Rot", "×", ""]) {
+    const el = chip(label);
+    assert.equal(click(el), null, label);
+    assert.equal(T.pressCheckOf({ action: "click", id: 1 }, page([el])), null, `${label}: no second opinion is needed`);
+    assert.equal(decide(el).verdict, "allow", label);
+  }
+});
+
+test("the same words on a control outside a field are still held: a saved record, a cart line, a link", () => {
+  for (const label of ["Remove Purple", "Remove item", "Remove", "Delete"]) {
+    const el = { id: 1, tagName: "button", accName: label };
+    assert.equal(click(el).kind, "delete", label);
+    assert.equal(decide(el).verdict, "confirm", label);
+  }
+  // A cart line's Remove, listed next to its quantity and price: the content
+  // script never marks it as part of a field, so it is a delete.
+  const cartLine = { id: 1, tagName: "button", accName: "Remove Blue Widget from basket", group: "Blue Widget, $19, Qty 1" };
+  assert.equal(click(cartLine).kind, "delete");
+  // A link that says it removes is never a field's own button.
+  assert.equal(click({ id: 1, tagName: "a", accName: "Remove", href: "#", inField: true }).kind, "delete");
+  assert.ok(T.pressCheckOf({ action: "click", id: 1 }, page([{ id: 1, tagName: "a", accName: "Remove", url: "https://forms.example/remove?id=4", href: "/remove?id=4", inField: true }])), "a remove link inside a field is still asked about");
+});
+
+test("a field's button that submits, pays or sends is held whatever its place", () => {
+  const forms = [{ id: 0, search: false, fields: 2 }];
+  assert.equal(click(chip("Remove", { tagName: "button", submits: true, formId: 0 }), forms).kind, "delete", "a submit button is never a value's x");
+  assert.equal(click(chip("Buy now")).kind, "pay");
+  assert.equal(click(chip("Send")).kind, "send");
+  assert.equal(decide(chip("Place order")).verdict, "confirm");
+});
+
+// ------------------------------------------------------------- declining
+
+const shop = {
+  url: "https://shop.example/basket", title: "Basket", scrollY: 0, scrollX: 0, viewportHeight: 900, pageHeight: 900,
+  visibleText: "Basket", innerText: "Basket. Blue Widget $19. Purple Mug $8.",
+  elements: [
+    { id: 1, tagName: "button", accName: "Remove Purple Mug", group: "Purple Mug, $8", rect: { x: 100, y: 100, w: 120, h: 30 } },
+    { id: 2, tagName: "button", accName: "Continue shopping", rect: { x: 100, y: 200, w: 120, h: 30 } },
+    { id: 3, tagName: "button", accName: "Remove Blue Widget", group: "Blue Widget, $19", rect: { x: 100, y: 300, w: 120, h: 30 } },
+    { id: 4, tagName: "span", accName: "Purple Mug", rect: { x: 300, y: 100, w: 80, h: 30 } },
+  ],
+  forms: [],
+};
+const env = (page) => ({ now: 1000, page: page || shop, settings: { riskConfirmation: true, allowlist: "", verify: true }, extras: {} });
+const reply = (run, actions, page) => RUN.advance(run, { type: "model_replied", reply: { memory: "", goal: "g", actions }, usage: { prompt: 1, completion: 1, cost: 0, model: "m" } }, env(page));
+const look = (run, page) => RUN.advance(run, { type: "observed", page: page || shop }, env(page));
+const declinedRun = (first) => {
+  const run = RUN.newRun({ id: "r1", task: "tidy my basket", tabId: 7, startUrl: shop.url, marker: "PAGE-abcd1234", now: 1 });
+  RUN.advance(run, { type: "start" }, env());
+  look(run);
+  reply(run, [first || { do: "click", ref: 1 }]);
+  assert.equal(run.wait.kind, "approval");
+  const fx = RUN.advance(run, { type: "declined", id: run.wait.id }, env());
+  assert.deepEqual(fx, [{ type: "observe" }]);
+  return run;
+};
+const results = (run) => run.history.flatMap((h) => h.actions.map((a) => a.result));
+
+test("a declined step tells the model not to get the same result another way, and to finish saying what it did and did not do", () => {
+  const run = declinedRun();
+  const said = results(run)[0];
+  assert.match(said, /The user declined this step \(it would delete something\)\. It was not done\./);
+  assert.match(said, /Do not ask them about it again/);
+  assert.match(said, /do not try to get the same result another way \(another control, a key, a drag, another page or address\)/);
+  assert.match(said, /the user said no to the result, not to one button/);
+  assert.doesNotMatch(said, /needs no go-ahead|do that\./, "nothing tells the model to go round the decline");
+  assert.match(said, /Carry on with any part of the request that does not need it\. Then finish and say what you did, what you did not do and why\./);
+  // The model is shown that on its next step.
+  const fx = look(run);
+  assert.match(fx[0].user, /what you did not do and why/);
+});
+
+const heldAgain = (run, a) => {
+  assert.equal(run.status, "waiting", `${JSON.stringify(a)} is held for the user`);
+  assert.equal(run.wait.kind, "approval", JSON.stringify(a));
+  assert.equal(run.wait.risk, "delete", `${JSON.stringify(a)}: held as what was declined`);
+  assert.ok([run.wait.question, ...run.wait.detail].some((t) => /^You declined "Remove Purple Mug" a moment ago\. This would do it again/.test(t)), JSON.stringify(run.wait));
+};
+
+test("after a decline, every other way to the declined control is the user's to allow again: a key on it, a key landing on it, a press at its spot, a drop on it", () => {
+  const tries = [
+    { do: "press", ref: 1, key: "Delete" },
+    { do: "press", ref: 1, key: "Backspace" },
+    { do: "press", ref: 1, key: "Enter" },
+    { do: "press", ref: 1, key: "Space" },
+    { do: "click_at", x: 150, y: 110 },
+    { do: "drag", ref: 4, to_ref: 1 },
+    { do: "fill", ref: 1, value: "x" },
+  ];
+  for (const a of tries) {
+    // Not held without the decline: the rules alone let some of these through.
+    const fresh = RUN.newRun({ id: "f", task: "tidy my basket", tabId: 7, startUrl: shop.url, marker: "PAGE-abcd1234", now: 1 });
+    if (a.key === "Delete") assert.equal(POLICY.decide(a, shop, fresh, { riskConfirmation: true }).verdict, "allow", "a Delete key alone is not held");
+    const run = declinedRun();
+    look(run);
+    reply(run, [a]);
+    heldAgain(run, a);
+  }
+  // A key with no ref that lands on the focused declined control.
+  const focused = { ...shop, elements: shop.elements.map((e) => (e.id === 1 ? { ...e, focused: true } : e)) };
+  const run = declinedRun();
+  look(run, focused);
+  reply(run, [{ do: "press", key: "Delete" }], focused);
+  assert.equal(run.wait && run.wait.kind, "approval");
+});
+
+test("after a decline, the same control renumbered on a redraw is still the declined one; another row's Remove is asked about as usual; looking is free", () => {
+  const redrawn = { ...shop, elements: shop.elements.map((e) => ({ ...e, id: e.id + 10 })) };
+  const run = declinedRun();
+  look(run, redrawn);
+  reply(run, [{ do: "press", ref: 11, key: "Delete" }], redrawn);
+  assert.equal(run.wait && run.wait.kind, "approval");
+  const other = declinedRun();
+  look(other);
+  reply(other, [{ do: "press", ref: 3, key: "Delete" }]);
+  assert.ok(!other.wait, "another row's control is not the declined one");
+  assert.equal(POLICY.decide({ do: "hover", ref: 1 }, shop, other, { riskConfirmation: true }).verdict, "allow");
+  assert.equal(POLICY.decide({ do: "click", ref: 3 }, shop, other, { riskConfirmation: true }).verdict, "confirm");
+});
+
+test("a declined address opened another way is asked about again, saying so", () => {
+  const run = declinedRun({ do: "navigate", url: "https://shop.example/checkout#pay" });
+  assert.equal(run.declined[0].urls[0], "https://shop.example/checkout");
+  look(run);
+  const v = POLICY.decide({ do: "tabs", op: "open", url: "https://shop.example/checkout" }, shop, run, { riskConfirmation: true });
+  assert.equal(v.verdict, "confirm");
+  assert.match(v.detail[0], /^You declined "https:\/\/shop\.example\/checkout" a moment ago\. This would do it again another way\./);
+});
+
+test("once the user speaks, the rules alone decide again", () => {
+  const run = declinedRun();
+  RUN.advance(run, { type: "steer", text: "actually, remove the mug" }, env());
+  look(run);
+  reply(run, [{ do: "press", ref: 1, key: "Delete" }]);
+  assert.ok(!run.wait, "the rules alone decide again");
+  assert.equal(run.declined.length, 0);
+});
+
+test("a sub-task handed out after a decline does not do the declined step either, and a step declined in a sub-task holds for the run", () => {
+  const run = declinedRun();
+  look(run);
+  RUN.advance(run, { type: "model_replied", reply: { note: "", goal: "split", do: "delegate", tasks: [{ task: "remove the mug" }] }, usage: { prompt: 1, completion: 1, cost: 0, model: "m" } }, env());
+  const child = run.children[0].run;
+  assert.equal(POLICY.decide({ do: "press", ref: 1, key: "Delete" }, shop, child, { riskConfirmation: true }).verdict, "confirm");
+
+  // The other way: the user declines inside a sub-task, which then ends.
+  const blank = { url: "about:blank", title: "", elements: [], innerText: "", visibleText: "", protectedPage: true };
+  const pages = {};
+  const penv = () => ({ ...env(), childEnv: (id) => ({ page: pages[id] || null, extras: {} }) });
+  const parent = RUN.newRun({ id: "p", task: "tidy my basket", tabId: 7, startUrl: shop.url, marker: "PAGE-abcd1234", now: 1 });
+  RUN.advance(parent, { type: "start" }, penv());
+  RUN.advance(parent, { type: "observed", page: shop }, penv());
+  RUN.advance(parent, { type: "model_replied", reply: { note: "", goal: "split", do: "delegate", tasks: [{ task: "remove the mug", url: shop.url }] }, usage: { prompt: 1, completion: 1, cost: 0, model: "m" } }, penv());
+  const c = (event) => RUN.advance(parent, { type: "child", child: "p-s1", event }, penv());
+  c({ type: "spawned", tabId: 101 });
+  pages["p-s1"] = blank;
+  c({ type: "observed", page: blank });
+  c({ type: "acted", result: { ok: true, pageChanged: true, message: "Opened" } });
+  pages["p-s1"] = shop;
+  c({ type: "observed", page: shop });
+  c({ type: "model_replied", reply: { memory: "", goal: "g", actions: [{ do: "click", ref: 1 }] }, usage: { prompt: 1, completion: 1, cost: 0, model: "m" } });
+  const sub = parent.children[0].run;
+  assert.equal(POLICY.decide({ do: "press", ref: 1, key: "Delete" }, shop, parent, { riskConfirmation: true }).verdict, "allow", "before the decline");
+  assert.equal(sub.wait && sub.wait.kind, "approval");
+  c({ type: "declined", id: sub.wait.id });
+  c({ type: "observed", page: shop });
+  c({ type: "model_replied", reply: { memory: "", goal: "g", actions: [{ do: "done", success: false, answer: "I did not remove the mug: you declined it.", evidence: [] }] }, usage: { prompt: 1, completion: 1, cost: 0, model: "m" } });
+  assert.equal(parent.delegation, null, "the sub-task ended");
+  assert.equal(POLICY.decide({ do: "press", ref: 1, key: "Delete" }, shop, parent, { riskConfirmation: true }).verdict, "confirm");
+});
+
+test("a question back about the declined step is not put to the user; asked again, the next step is the last; a third time, the run ends with an answer", () => {
+  const run = declinedRun();
+  look(run);
+  let fx = reply(run, [{ do: "ask_user", kind: "question", question: "You declined removing the Purple Mug. Do you still want me to remove it?" }]);
+  assert.equal(run.status, "running", "the run is not left waiting on the question");
+  assert.deepEqual(fx, [{ type: "observe" }]);
+  assert.match(results(run).pop(), /^Not asked: the user has just declined "Remove Purple Mug", and that is their answer\./);
+  look(run);
+  reply(run, [{ do: "ask_user", kind: "question", question: "Should I remove the Purple Mug after all?" }]);
+  assert.equal(run.status, "running", "asked twice: still not put to the user");
+  assert.match(results(run).pop(), /Your next step is the last: finish then\./);
+  fx = look(run);
+  assert.equal(run.finalStep, true);
+  assert.match(fx[0].user, /The user declined "Remove Purple Mug", and you have asked about it again\. This is the last step/);
+  // Handing the control to the user to press is asking about it too.
+  reply(run, [{ do: "ask_user", kind: "press", ref: 1, question: "Please press Remove yourself." }]);
+  assert.equal(run.status, "failed", "the run ends, never waiting on it");
+  assert.equal(run.outcome.kind, "declined");
+  assert.match(run.outcome.text, /^You declined "Remove Purple Mug", so it was not done, and I stopped there\./);
+});
+
+test("a question about something else is asked at once, and an address's scheme and host words do not tie a question to it", () => {
+  const other = declinedRun();
+  look(other);
+  reply(other, [{ do: "ask_user", kind: "question", question: "Which colour of widget do you want?" }]);
+  assert.equal(other.status, "waiting");
+  assert.equal(other.wait.kind, "question");
+  const away = declinedRun({ do: "navigate", url: "https://www.shop.example/checkout" });
+  look(away);
+  reply(away, [{ do: "ask_user", kind: "question", question: "Do you want the https link to the www help page?" }]);
+  assert.equal(away.status, "waiting", "words every address has do not name the declined one");
+});
+
+test("once the user says something, a question about the step is theirs to answer again", () => {
+  const run = declinedRun();
+  RUN.advance(run, { type: "steer", text: "actually, remove the mug" }, env());
+  look(run);
+  reply(run, [{ do: "ask_user", kind: "question", question: "Remove the Purple Mug now?" }]);
+  assert.equal(run.status, "waiting");
+});

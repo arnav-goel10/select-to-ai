@@ -904,6 +904,19 @@ async function main() {
         if (!r.seen.cards.every((c) => c.risk === "delete")) return `held for the wrong reason: ${JSON.stringify(r.seen.cards)}`;
         return null;
       }],
+      // Removing a chosen value from a field is not held; deleting a saved
+      // record is. Once declined, the Delete key on the same Remove is held
+      // again, the question back is not put to the user, and the run ends with an answer.
+      ["fieldChips", "/field-chips", decline, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ chips: [...document.querySelectorAll('#colours .chip')].map((c) => c.dataset.value), deleted: !!window.addressDeleted }));
+        if (at.deleted) return "the saved address was deleted";
+        if (JSON.stringify(at.chips) !== JSON.stringify(["red"])) return `the field holds ${JSON.stringify(at.chips)}, not just red`;
+        if (r.seen.confirms !== 2) return `${r.seen.confirms} approvals were asked for, not 2 (the saved address's Remove, then the Delete key on it): ${JSON.stringify(r.seen.cards)}`;
+        if (r.seen.cards.some((c) => c.kind !== "approval")) return `the user was asked something besides the approvals: ${JSON.stringify(r.seen.cards)}`;
+        if (r.seen.cards.some((c) => /Purple/.test(c.text) || c.risk !== "delete")) return `an approval was about the wrong control: ${JSON.stringify(r.seen.cards)}`;
+        if (!/declined .*Remove.* a moment ago/.test(r.seen.asked)) return `the second approval did not say it was declined before: ${JSON.stringify(r.seen.asked)}`;
+        return /took Purple out/.test(r.answer) && /did not remove the saved address/.test(r.answer) ? null : `answer: ${JSON.stringify(r.answer)}`;
+      }],
       ["realKeys", "/keys", async () => false, async (r) => {
         const at = await r.fixture.evaluate(() => ({ focus: document.activeElement && document.activeElement.id, trusted: window.keyTrusted }));
         if (at.trusted !== true) return `the key was a scripted event, not a real one (${JSON.stringify(at)})`;
