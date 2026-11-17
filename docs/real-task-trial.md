@@ -10,6 +10,7 @@ Why it exists: every real-site number in [agent-v4-status.md](agent-v4-status.md
 |---|---|
 | `tests/bench/everyday-tasks.json` | 93 tasks in 11 families. Each has a start page, the request as a person would type it, and `expect`: what a right result holds, given to the judge. 63 also have `pattern`, a regular expression the answer should match. |
 | `tests/bench/learn-tasks.json` | The learn suite: 12 tasks that each run twice in one browser profile, and 6 pairs (a task, then a neighbour task on the same site). 24 tasks in all, taken from the everyday file. |
+| `tests/bench/holdout-tasks.json` | The holdout suite: 50 held-out tasks on 44 sites that no other suite uses, reported as numbers only. Nobody tunes the agent on it. The rule is in [tests/bench/README.md](../tests/bench/README.md). |
 | `tests/bench/fixture-tasks.json`, `tests/bench/fixture-learn-tasks.json` | Tasks on the local fixture pages, for dry mode. |
 | `tests/bench/trial.js` | Checks a task file, and turns a folder of results into the tables. |
 | `.github/workflows/real-tasks.yml` | The workflow. |
@@ -19,6 +20,12 @@ The families, with about 8 to 10 tasks each: look up a fact on a page, search an
 No task signs in, pays, posts, sends, signs up or deletes. `trial.js validate` refuses a task that asks for one of those. It also refuses a task that asks to submit, subscribe, book, apply, upload, comment or reply, except a form task on a practice site, and a form task may only be on a practice site (the list is `PRACTICE_SITES` in `trial.js`). The bench declines every confirmation except typing on and going to a site the task did not name, as it always has.
 
 These tasks were written for this trial. They are a dev set: read the transcripts freely. They are not from any held-out set and say nothing about one.
+
+## The holdout suite
+
+The everyday tasks are a development set now: their failures were read and the agent was changed to fix them. `suite: holdout` runs 50 other tasks, written blind to the agent's behaviour, on sites none of the other suites use, with a difficulty (easy, medium, hard) on each and a `widgets` family for hover menus, drag and drop, sliders, keys, date pickers, frames and dialogs. Its summary shows totals, pass rates, median seconds, spend and counts by family and difficulty, and nothing that names a task. The per-task files go to artifacts named `holdout-SEALED-per-task-do-not-open-shard-N`, kept one day. Nobody tunes the agent on this suite, its results are read as numbers only, and a task whose site changes is replaced, not worked around. The full rule: [tests/bench/README.md](../tests/bench/README.md).
+
+`gh workflow run real-tasks.yml --ref rel40-real-tasks -f suite=holdout -f max_usd=5`. A dry leg (`sealed`) on every push checks that the sealed path prints no task, in the shard log and in the summary.
 
 ## Keys
 
@@ -44,7 +51,7 @@ The workflow does not have to be on the default branch first. GitHub registered 
 
 | Input | Default | Meaning |
 |---|---|---|
-| `suite` | `everyday` | `everyday` is the 93 tasks. `dev` is `tests/bench/smoke-tasks.json`, the 12 read-only tasks that were already checked in. `learn` is the learn suite, below. The WebVoyager dev split is not tracked in the repository, so it cannot run here. |
+| `suite` | `everyday` | `everyday` is the 93 tasks. `dev` is `tests/bench/smoke-tasks.json`, the 12 read-only tasks that were already checked in. `learn` is the learn suite, below. `holdout` is the sealed holdout suite, above. The WebVoyager dev split is not tracked in the repository, so it cannot run here. |
 | `arm` | `shipped` | `shipped` loads the packed zip with no `chrome.debugger`: scripted input. `debugger-on` loads the same zip with the `debugger` permission added to the loaded copy, so the same code uses real input events. Run both to see what the permission is worth on real sites. |
 | `provider` | `anthropic` | `anthropic` or `openai`. |
 | `model` | empty | The agent's model id. Empty takes the provider's cheap one, below. |
@@ -110,7 +117,7 @@ Dry mode proves the plumbing with no key and no spend. The model is the scripted
 
 It runs when `dry` is ticked and on every push to `rel40-real-tasks`. The summary job checks that each of the seven fixture tasks ended the way its `dry` field says (five pass, one stops at a human check, one has its form submission held and declined), that the counters it expects are there (typing steps, scripted presses, held actions), that the form controls of the signup page were read back with the typed name in them, and that the judge stub was called and its tokens counted.
 
-Four more jobs run the fixtures one more way each, and fail unless that way left its mark:
+Five more jobs run the fixtures one more way each, and fail unless that way left its mark:
 
 | Leg | What it proves |
 |---|---|
@@ -118,6 +125,7 @@ Four more jobs run the fixtures one more way each, and fail unless that way left
 | `spend-cap` | A cap far below one run's priced tokens stops the run, and the tasks after it are never started. |
 | `learn` | A repeat pair and a neighbour pair run with learning on, and a second run starts with something learned. |
 | `recipes` | Each run gets a record of whether it could be saved, with the reason when not, and each saved, passed run gets one replay. |
+| `sealed` | The holdout suite's sealed path: the shard's log and the numbers-only summary name no task. |
 
 Dry mode says nothing about how good the agent is.
 

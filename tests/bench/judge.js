@@ -308,9 +308,18 @@ function samplePerGroup(tasks, perGroup, salt = "sample") {
   return out;
 }
 
+/**
+ * The task list of a parsed task file: the file itself when it is a list,
+ * or its "tasks" when it is an object (holdout-tasks.json puts its rule
+ * beside the list).
+ */
+function taskList(file) {
+  return Array.isArray(file) ? file : file && Array.isArray(file.tasks) ? file.tasks : [];
+}
+
 /** Tasks from a file in this harness's format or Online-Mind2Web's. */
 function normaliseTasks(list) {
-  return (list || []).map((t, i) => ({
+  return taskList(list).map((t, i) => ({
     id: String(t.id || t.task_id || `task-${i + 1}`),
     task: String(t.task || t.confirmed_task || "").trim(),
     url: String(t.url || t.website || "").trim(),
@@ -322,6 +331,7 @@ function normaliseTasks(list) {
     ...(t.pattern ? { pattern: String(t.pattern) } : {}),
     ...(Array.isArray(t.sites) && t.sites.length ? { sites: t.sites.map(String) } : {}),
     ...(t.lang ? { lang: String(t.lang) } : {}),
+    ...(t.difficulty ? { difficulty: String(t.difficulty) } : {}),
     ...(t.then ? { then: String(t.then) } : {}),
     ...(t.dryForm ? { dryForm: String(t.dryForm) } : {}),
     ...(t.scenario ? { scenario: String(t.scenario) } : {}),
@@ -362,4 +372,4 @@ function finalAnswer(trace, shown) {
   return String(shown || "").trim();
 }
 
-module.exports = { finalAnswer, JUDGE_SYSTEM, judgeMessage, formStateText, pickScreenshots, taskTerms, quotesOf, siteOf, parseVerdict, summarise, normaliseTasks, sampleTasks, excerptFor, isInfra, hashUnit, splitTasks, samplePerGroup };
+module.exports = { taskList, finalAnswer, JUDGE_SYSTEM, judgeMessage, formStateText, pickScreenshots, taskTerms, quotesOf, siteOf, parseVerdict, summarise, normaliseTasks, sampleTasks, excerptFor, isInfra, hashUnit, splitTasks, samplePerGroup };
