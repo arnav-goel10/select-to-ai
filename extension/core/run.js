@@ -1100,7 +1100,8 @@
       return waitFor(run, fx, env, { kind: "approval", risk: verdict.kind, question: verdict.why, detail: [...(verdict.detail || []), run.current && run.current.goal && verdict.kind !== "share" ? `Why: ${run.current.goal}` : ""].filter(Boolean), action: act, confirm: verdict });
     }
     log(run, "executor", "Action", STEP.describe(act));
-    fx.push({ type: "act", action: act });
+    // A click the page shows no answer to may be made with Enter or Space there, where those are allowed as the click was.
+    fx.push({ type: "act", action: act, ...(POLICY.keysToo(act, page, run, env.settings, store, env.extras && env.extras.tabs) ? { keys: true } : {}) });
     return fx;
   }
 

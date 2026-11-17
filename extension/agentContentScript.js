@@ -4419,7 +4419,11 @@
     // A way is tried only while nothing at all says the page took the one
     // before, so a press that worked out of sight (a request sent, a form
     // sent, a field's value changed, a box scrolled, something changed
-    // inside a component) is not made twice. The control's own click() is
+    // inside a component) is not made twice. A page can also act on a press
+    // a while after it (a timer, a request the count does not see), so the
+    // page is watched a while longer before each key, and a key is sent
+    // only when the page allows that key on that control as it allowed the
+    // click (the engine says so with the press). The control's own click() is
     // never called on top: it runs the very listeners the pointer's click
     // already ran, so a control that took the first would act twice. Where
     // what a press does cannot be seen at all (a drawing on the page), no
@@ -4571,16 +4575,23 @@
      * Makes a press the page did not answer the next way, and the next.
      * `first` is what was measured after the press by pointer events;
      * `pressBy(way)` presses that way and resolves what was measured after
-     * it, or null when that way cannot be used here. Returns null when the
-     * first press was answered or cannot be judged; else { tried, by, seen,
-     * last }: the ways tried in order, the way the page took (null when it
-     * took none), and whether a change was seen after it.
+     * it, or null when that way cannot be used here; `pressBy('wait')`
+     * presses nothing and watches the page a while longer. Returns null
+     * when the first press was answered or cannot be judged, or no other
+     * way could be used; else { tried, by, seen, last }: the ways tried in
+     * order, the way the page took (null when it took none; 'pointer' when
+     * the first press was answered late), and whether a change was seen
+     * after it.
      */
     async function otherPressWays(first, pressBy) {
         const tried = ['pointer'];
         let last = first;
         for (const way of ['Enter', 'Space']) {
             if (!unanswered(last) || cancelRequested) break;
+            // The page may yet act on the press before: it is given longer, and anything it then does is that press's answer.
+            const late = await pressBy('wait');
+            if (late && !unanswered(late)) return { tried, by: tried[tried.length - 1], seen: !!late.changed, last: late };
+            if (cancelRequested) break;
             const m = await pressBy(way);
             if (!m) continue;
             tried.push(way);
@@ -4592,13 +4603,43 @@
     }
 
     /**
+     * The other ways for one control, as the page's handler runs them:
+     * { ways, waited }, what otherPressWays returned and how long the page
+     * was watched over all of them. A way that cannot be used here adds
+     * nothing.
+     */
+    async function pressWays(el, first, busyBefore, compute) {
+        let waited = 0;
+        const ways = await otherPressWays(first, async (way) => {
+            const m = await pressBy(el, way, busyBefore, compute);
+            if (m) waited += m.ms;
+            return m;
+        });
+        return { ways, waited };
+    }
+
+    /** True for a control the keyboard can reach, so a key may follow a press on it. */
+    function takesFocus(el) {
+        return !!el && (el.tabIndex >= 0 || el.hasAttribute('tabindex'));
+    }
+
+    /** Waits until the page changes or asks for something, or the longer watch for a late answer is over. */
+    async function laterSign(since) {
+        const until = since + ((SETTLE_TOOLS && SETTLE_TOOLS.SETTLE.SECOND_PRESS_MS) || 2000);
+        while (Date.now() < until && !cancelRequested && lastChangeAt < since && pageNetLastStart < since) await new Promise((r) => setTimeout(r, 100));
+    }
+
+    /**
      * Presses a control one way and measures what the page did: 'Enter' or
      * 'Space' with the focus on it; 'focus' only puts the focus on it (for
-     * a hover that brought nothing up). Null for a key when the control
-     * did not take the focus: a key sent to a control that does not hold
-     * the focus is not what a person at the keyboard can do.
+     * a hover that brought nothing up); 'wait' presses nothing and watches
+     * the page a while longer for what the press before set off. Null for
+     * a key when the control did not take the focus: a key sent to a
+     * control that does not hold the focus is not what a person at the
+     * keyboard can do. Null for the wait when no key can follow it.
      */
     async function pressBy(el, way, busyBefore, compute) {
+        if (way === 'wait' && !takesFocus(el)) return null;
         // The focus goes on first for a key, so that what is measured is
         // what the key did, not what taking the focus did.
         if (way === 'Enter' || way === 'Space') {
@@ -4615,16 +4656,17 @@
         try {
             if (way === 'focus') {
                 focusField(el);
-            } else {
+            } else if (way !== 'wait') {
                 cancelled = !scriptKey(el, way === 'Space' ? ' ' : 'Enter');
             }
         } catch (_) { /* a page's own handler threw: what the page then did is measured all the same */ }
+        if (way === 'wait') await laterSign(since);
         const settle = await settleAfterAction(since, busyBefore);
         const outcome = compute(before, captureOutcomeSnapshot(), counter.stop());
         // Taking the focus can scroll the control into view, which brings nothing up.
         const onlyScrolled = way === 'focus' && outcome.scrollChanged && !outcome.urlChanged && !outcome.titleChanged && !outcome.domMutationCount && !outcome.newElementCount;
         const changed = (!outcome.noEffect && !onlyScrolled) || !el.isConnected || stateOf(el) !== state;
-        return { changed, cancelled, taken: watch.stop(), unseen: unseen ? unseen.stop() : [], outcome, settle, network: !!settle.network, asked: !!settle.asked, loading: !!settle.loading };
+        return { changed, cancelled, taken: watch.stop(), unseen: unseen ? unseen.stop() : [], outcome, settle, ms: Date.now() - since, network: !!settle.network, asked: !!settle.asked, loading: !!settle.loading };
     }
 
     /** Actions whose real page effect should be measured. */
@@ -4873,16 +4915,23 @@
                             const unseen = unseenWatch ? unseenWatch.stop() : [];
                             // A field's new value is the press's doing, and is said (the focus the press itself moves is not).
                             if (unseen.includes('value') && result.outcome.noEffect) taken.push('value');
+                            // A request in the browser's own record is one the page made, though the count missed it.
+                            if (unseen.includes('request') && result.settle) result.settle.asked = true;
                             if (taken.length) result.taken = taken;
                             const scripted = again && result.pointer === 'synthetic' && !result.opensTab && acted && acted.isConnected;
-                            if (scripted && kind === 'click' && takesPress(acted)) {
+                            // A key is sent only where the engine found that key allowed on this control (request.data.keys).
+                            if (scripted && kind === 'click' && request.data.keys === true && takesPress(acted)) {
                                 const first = { changed: !result.outcome.noEffect || stateOf(acted) !== stateBefore, cancelled: !!result.cancelled, taken, unseen: unseen.filter((u) => u !== 'focus'), ...result.settle };
-                                let waited = 0;
-                                const ways = await otherPressWays(first, async (way) => { const m = await pressBy(acted, way, busyBefore, compute); waited += m.settle.ms; return m; });
+                                const { ways, waited } = await pressWays(acted, first, busyBefore, compute);
+                                result.settle = { ...result.settle, ms: result.settle.ms + waited };
                                 if (ways) {
                                     result.ways = { tried: ways.tried, by: ways.by, seen: ways.seen };
                                     result.outcome = ways.last.outcome;
-                                    result.settle = { ...ways.last.settle, ms: result.settle.ms + waited };
+                                    result.settle = { ...ways.last.settle, ms: result.settle.ms, ...((ways.last.unseen || []).includes('request') ? { asked: true } : {}) };
+                                    // What the page was seen to set off after the last of them is said too.
+                                    const after = [...(ways.last.taken || [])];
+                                    if ((ways.last.unseen || []).includes('value') && ways.last.outcome.noEffect) after.push('value');
+                                    if (after.length) result.taken = [...new Set([...taken, ...after])];
                                 }
                             } else if (scripted && kind === 'hover' && result.outcome.noEffect) {
                                 // Menus made for the keyboard open with the focus on what opens them.

@@ -335,6 +335,9 @@
     FALLBACK_MS: 8000,
     LONG_REQUEST_MS: 5000,
     BACKGROUND_MS: 30000,
+    // How much longer a press with no answer is watched before it is made
+    // another way: a page can act on a press after a timer of its own.
+    SECOND_PRESS_MS: 2000,
   });
 
   // What a page loads to show something: the page itself, its data, its code.

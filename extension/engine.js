@@ -421,7 +421,7 @@
     const back = (event) => deliver(session, { ...event, token });
     if (fx.type === "observe") observe(session, fx, back).catch((e) => back({ type: "model_failed", kind: "page", message: `The page could not be read: ${e && e.message ? e.message : e}` })).finally(() => timed("observe"));
     else if (fx.type === "model") model(session, fx, back).finally(() => timed("model"));
-    else if (fx.type === "act") toFront(session, fx.action).then(() => (RECIPES ? RECIPES.around(session, fx.action, () => act(session, fx.action)) : act(session, fx.action))).then(settledFor).then(pointed).then((result) => lookAgain(session, result, back)).then((result) => back({ type: "acted", result }), (e) => back({ type: "acted", result: { ok: false, message: String((e && e.message) || e) } })).finally(() => timed("act"));
+    else if (fx.type === "act") toFront(session, fx.action).then(() => (RECIPES ? RECIPES.around(session, fx.action, () => act(session, fx.action, fx.keys === true)) : act(session, fx.action, fx.keys === true))).then(settledFor).then(pointed).then((result) => lookAgain(session, result, back)).then((result) => back({ type: "acted", result }), (e) => back({ type: "acted", result: { ok: false, message: String((e && e.message) || e) } })).finally(() => timed("act"));
     else if (fx.type === "attention") attention(rootOf(session), fx.wait, !!fx.again).catch((e) => console.error("Select to AI attention:", e));
     else if (fx.type === "memory") changeMemory(fx).catch((e) => console.error("Select to AI memory:", e));
     else if (fx.type === "end") finished(session);
@@ -979,7 +979,7 @@
     return got && got.data ? { image: `data:image/jpeg;base64,${got.data}` } : { why: "" };
   }
 
-  async function act(session, a) {
+  async function act(session, a, keys) {
     const run = session.run;
     const tabId = run.tabId;
     touch(session, tabId);
@@ -987,7 +987,8 @@
     if (moved) return moved;
     switch (a.do) {
       // A press the user approved is made once: the page is not pressed another way when it shows no answer.
-      case "click": return interact(session, a, { action: "click", id: a.ref, ...(a.approved !== undefined ? { once: true } : {}) }, true);
+      // Any other is made with Enter or Space too only where those keys were allowed on it (keys).
+      case "click": return interact(session, a, { action: "click", id: a.ref, ...(a.approved !== undefined ? { once: true } : keys ? { keys: true } : {}) }, true);
       case "hover": return interact(session, a, { action: "hover", id: a.ref }, false);
       case "click_at": {
         // What is at the point, as the decision on it saw it: the page

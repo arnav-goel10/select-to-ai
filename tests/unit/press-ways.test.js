@@ -19,12 +19,23 @@ const ENGINE = fs.readFileSync(path.join(__dirname, "../../extension/engine.js")
 // What was measured after a press: nothing changed, the requests were in view, none was made.
 const quiet = (o) => ({ changed: false, cancelled: false, taken: [], network: true, asked: false, loading: false, ...o });
 
-/** otherPressWays from the content script, with each way's result given by the test. */
+/**
+ * otherPressWays from the content script, with each way's result given by
+ * the test. `results.wait` is what the longer watch before each key finds,
+ * in order (nothing, when not given). `pressed` is the keys sent; `waits`
+ * counts the longer watches.
+ */
 function ladder(results) {
   const pressed = [];
+  const waits = [];
+  const late = [...(results.wait || [])];
   const { otherPressWays } = build(["unanswered", "otherPressWays"], { cancelRequested: false });
-  const run = (first) => otherPressWays(first, async (way) => { pressed.push(way); return way in results ? results[way] : quiet(); });
-  return { pressed, run };
+  const run = (first) => otherPressWays(first, async (way) => {
+    if (way === "wait") { waits.push(pressed.length); return late.length ? late.shift() : quiet(); }
+    pressed.push(way);
+    return way in results ? results[way] : quiet();
+  });
+  return { pressed, waits, run };
 }
 
 test("a press the page answered is not made again", async () => {
@@ -84,6 +95,81 @@ test("what a press did out of sight is an answer: it is not made another way", a
   const got = await l.run(quiet());
   assert.deepEqual(l.pressed, ["Enter"]);
   assert.deepEqual([got.by, got.seen], ["Enter", false]);
+});
+
+test("the page is watched a while longer before each key, and a late answer to the press before means no key", async () => {
+  // Nothing late: one longer watch before Enter and one before Space.
+  const dead = ladder({});
+  await dead.run(quiet());
+  assert.deepEqual([dead.pressed, dead.waits], [["Enter", "Space"], [0, 1]]);
+  // The click's effect came after a timer of the page's own: no key is sent, and the change is the click's.
+  for (const answer of [quiet({ changed: true }), quiet({ unseen: ["request"] }), quiet({ unseen: ["value"] }), quiet({ taken: ["navigation"] }), quiet({ asked: true }), quiet({ loading: true })]) {
+    const l = ladder({ wait: [answer] });
+    const got = await l.run(quiet());
+    assert.deepEqual(l.pressed, [], `a key was sent after ${JSON.stringify(answer)}`);
+    assert.deepEqual([got.tried, got.by, got.seen, got.last], [["pointer"], "pointer", !!answer.changed, answer]);
+  }
+  // Enter's effect came late: Space is not sent on top, and Enter is named.
+  const enter = ladder({ wait: [quiet(), quiet({ changed: true })] });
+  const got = await enter.run(quiet());
+  assert.deepEqual(enter.pressed, ["Enter"]);
+  assert.deepEqual([got.tried, got.by, got.seen], [["pointer", "Enter"], "Enter", true]);
+  // An answered first press is not watched longer at all.
+  const answered = ladder({});
+  await answered.run(quiet({ changed: true }));
+  assert.deepEqual(answered.waits, []);
+});
+
+test("the ways as the page's handler runs them: a control that cannot take the focus is pressed once and nothing throws", async () => {
+  // pressBy gives null for every way on it. The handler's own wrapper is the one run here.
+  const asked = [];
+  const { pressWays } = build(["unanswered", "otherPressWays", "pressWays"], { cancelRequested: false, pressBy: async (el, way) => { asked.push(way); return null; } });
+  assert.deepEqual(await pressWays({}, quiet(), null, null), { ways: null, waited: 0 });
+  assert.deepEqual(asked, ["wait", "Enter", "wait", "Space"]);
+  assert.match(CONTENT, /const \{ ways, waited \} = await pressWays\(acted, first, busyBefore, compute\);/);
+  // The time each way was watched for is added up, the longer watches too.
+  const timed = build(["unanswered", "otherPressWays", "pressWays"], { cancelRequested: false, pressBy: async (el, way) => ({ ...quiet(), ms: way === "wait" ? 2100 : 500 }) });
+  const got = await timed.pressWays({}, quiet(), null, null);
+  assert.deepEqual([got.ways.tried, got.ways.by, got.waited], [["pointer", "Enter", "Space"], null, 5200]);
+});
+
+test("no longer watch is spent on a control the keyboard cannot reach, and none presses anything", async () => {
+  const { takesFocus, pressBy } = build(["takesFocus", "pressBy"], {});
+  const el = (o) => ({ tabIndex: -1, hasAttribute: () => false, ...o });
+  assert.equal(takesFocus(el({})), false);
+  assert.equal(takesFocus(el({ tabIndex: 0 })), true);
+  assert.equal(takesFocus(el({ hasAttribute: (k) => k === "tabindex" })), true);
+  assert.equal(takesFocus(null), false);
+  // Null before anything on the page is touched: every other name pressBy reaches for is missing here.
+  assert.equal(await pressBy(el({}), "wait", null, null), null);
+  const { source } = require("../helpers/content-source.js");
+  assert.ok(!/scriptKey|focusField|dispatchEvent|\.click\(/.test(source("laterSign")), "the longer watch only waits");
+  assert.match(source("pressBy"), /\} else if \(way !== 'wait'\) \{\s*cancelled = !scriptKey/);
+});
+
+test("the longer watch ends at once when the page changes or asks for something, and by its limit otherwise", async () => {
+  const TOOLS = require("../../extension/agentTools.js");
+  assert.ok(TOOLS.SETTLE.SECOND_PRESS_MS >= 1500 && TOOLS.SETTLE.SECOND_PRESS_MS <= 4000, "long enough for a debounce, short enough to wait through twice");
+  const { source } = require("../helpers/content-source.js");
+  const make = (vars) => {
+    let now = 1000;
+    const clock = { now: () => now };
+    const sleeps = [];
+    const setTimeout = (fn, ms) => { sleeps.push(ms); now += ms; if (vars.at && now >= vars.at.when) vars.at.then(set); fn(); };
+    let set;
+    const made = new Function("Date", "setTimeout", "SETTLE_TOOLS", "cancelRequested", `let lastChangeAt = 0, pageNetLastStart = 0;\n${source("laterSign")}\nreturn { laterSign, set: (o) => { if (o.change !== undefined) lastChangeAt = o.change; if (o.net !== undefined) pageNetLastStart = o.net; } };`)(clock, setTimeout, { SETTLE: TOOLS.SETTLE }, false);
+    set = made.set;
+    return { ...made, sleeps, clock };
+  };
+  const quietPage = make({});
+  await quietPage.laterSign(1000);
+  assert.equal(quietPage.clock.now() - 1000, TOOLS.SETTLE.SECOND_PRESS_MS);
+  const changed = make({ at: { when: 1500, then: (set) => set({ change: 1500 }) } });
+  await changed.laterSign(1000);
+  assert.equal(changed.clock.now(), 1500);
+  const asked = make({ at: { when: 1300, then: (set) => set({ net: 1300 }) } });
+  await asked.laterSign(1000);
+  assert.equal(asked.clock.now(), 1300);
 });
 
 test("a key the control cannot be given, for not holding the focus, is not counted as tried", async () => {
@@ -316,7 +402,15 @@ test("changes inside a component's own root are counted with the page's", () => 
 test("the page presses another way only for a scripted click the user did not approve as one press", () => {
   assert.match(CONTENT, /const again = !!SETTLE_TOOLS && !request\.data\.once && \(kind === 'click' \|\| kind === 'hover'\);/);
   assert.match(CONTENT, /const scripted = again && result\.pointer === 'synthetic' && !result\.opensTab && acted && acted\.isConnected;/);
-  assert.match(ENGINE, /case "click": return interact\(session, a, \{ action: "click", id: a\.ref, \.\.\.\(a\.approved !== undefined \? \{ once: true \} : \{\}\) \}, true\);/);
+  assert.match(ENGINE, /case "click": return interact\(session, a, \{ action: "click", id: a\.ref, \.\.\.\(a\.approved !== undefined \? \{ once: true \} : keys \? \{ keys: true \} : \{\}\) \}, true\);/);
+});
+
+test("a key follows a click only where the engine found the key allowed on that control", () => {
+  // The engine passes on what the policy decided with the click, and the page sends no key without it.
+  assert.match(ENGINE, /act\(session, fx\.action, fx\.keys === true\)/);
+  assert.ok(!/act\(session, fx\.action\)/.test(ENGINE), "no act without the decision on the keys");
+  assert.match(CONTENT, /if \(scripted && kind === 'click' && request\.data\.keys === true && takesPress\(acted\)\) \{/);
+  assert.equal(CONTENT.split("pressWays(acted").length - 1, 1, "the keys are sent from one place");
 });
 
 // ------------------------------------------------------ what the model is told
