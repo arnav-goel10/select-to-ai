@@ -1,10 +1,10 @@
 # Decision: no debugger permission in 4.0
 
-Status: decided 16 Nov 2026 (the owner left the call to the release plan). The 4.0.0 build ships without `debugger`. The real-task trial compares both builds, and the decision is looked at again with those numbers. This replaces the 10 Nov 2026 note, which recommended shipping it.
+Status: decided 16 Nov 2026 (the owner left the call to the release plan). The 4.0.0 build ships without `debugger`. The real-task trial has since compared both builds, and the decision was looked at again on 18 Nov 2026 (see [Revisit, 18 Nov 2026](#revisit-18-nov-2026)). It stands: 4.0 ships as it is. This replaces the 10 Nov 2026 note, which recommended shipping it.
 
 ## Decision
 
-`debugger` is not in `extension/manifest.json` for 4.0. It is not added in any later update of this store item either. If real key and pointer input is ever wanted, it ships as a separate companion listing that users install on purpose.
+`debugger` is not in `extension/manifest.json` for 4.0. No later update of this store item is planned to add it, because that update would disable every existing user until they accept the new warning (option 2 in the revisit). If real key and pointer input is ever wanted, the preferred route is a separate companion listing that users install on purpose.
 
 ## Why
 
@@ -38,7 +38,32 @@ Measured on 10 Nov 2026 with the 59 scripted end-to-end scenarios (`tests/e2e/ru
 
 Since then `slowResults` passes without the debugger (the wait counts the page's own requests), so 6 are listed now.
 
-In 4.0 these page types get scripted input, and screenshots use `chrome.tabs.captureVisibleTab`, which sees only the front tab. These are scripted fixtures, so they show which kinds of page break, not how often real sites use them. No real-site comparison has been run.
+In 4.0 these page types get scripted input, and screenshots use `chrome.tabs.captureVisibleTab`, which sees only the front tab. These are scripted fixtures, so they show which kinds of page break, not how often real sites use them. The real-site comparison ran on 18 Nov 2026 and is recorded in the revisit below.
+
+## Revisit, 18 Nov 2026
+
+The real-task trial asked for in the decision above has run. It used a sealed held-out set of 50 real-site tasks that no change was tuned on. Only the totals are recorded here.
+
+| Build | Passed | Widgets family (hover menus, drag and drop, sliders, date pickers, arrow keys, frames) |
+|---|---|---|
+| 4.0 as shipped (no debugger) | 40 of 50 | 1 of 6 |
+| The same build with `debugger` | 42 of 50 | 4 of 6 |
+| The older build (no debugger) | not compared in total | 1 of 6 |
+
+The widgets family accounts for the whole difference, and more. The other families together passed one task fewer with the debugger. The sample is small: six widgets tasks and one run of each build. A gain of three tasks there is a real signal about which page types need real input. It is not a measured rate.
+
+The plan was to ship real input as an optional grant: no warning at install or update, and a one-time card asking for it when a scripted action failed. Chrome does not allow this.
+
+- The permissions API page (https://developer.chrome.com/docs/extensions/reference/api/permissions) says "Most Chrome extension permissions can be specified as optional, with the following exceptions." `debugger` is first in that list.
+- Chromium's own permission table (`chrome/common/extensions/permissions/chrome_api_permissions.cc`, checked on main on 18 Nov 2026) gives `debugger` the flags `kFlagImpliesFullURLAccess`, `kFlagCannotBeOptional` and `kFlagRequiresManagementUIWarning`. Listed under `optional_permissions`, it is dropped from the manifest with a warning, and `chrome.permissions.request` for it is refused.
+
+So this listing has only two ways to get real input: `debugger` as a required permission, or none. The decision above stands for 4.0. What is left is the owner's choice (row 4 of [decisions-4.0.md](release/decisions-4.0.md)):
+
+1. **A companion listing** with `debugger` required from its first version, as described below. Nobody is disabled, and only users who want real input install it. It costs a second store item and its review.
+2. **`debugger` required on this listing** in a later update. Every existing user (about 1,000 on 2.0) is disabled on that update until they accept "Access the page debugger backend" and "Read and change all your data on all websites". The store review is longer.
+3. **Keep 4.0 as it is** and work on scripted input for widgets. The trial's 1 of 6 says the scripted path does not handle these pages today.
+
+Decided on 18 Nov 2026 under the release plan: option 3. 4.0 ships as it is, without `debugger`. The next work is better scripted input on widget pages, practised on the open widget practice set and judged only by the sealed held-out number, so no change is tuned on the held-out tasks. Option 1, a companion listing with real input, is not ruled out. It stays the owner's choice for later and does not block 4.0. Option 2 is not planned, for the reason in the decision above.
 
 ## What a later companion listing would need
 
