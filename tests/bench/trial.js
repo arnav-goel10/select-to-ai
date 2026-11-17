@@ -247,7 +247,9 @@ function countersOf(run) {
   return {
     // Presses, hovers and drags made by page script (chrome.scripting), as against real input events.
     scriptedInputs: pointer.synthetic || 0,
-    realInputs: pointer.real || 0,
+    // Counted from steps that went through. The engine also marks a press it
+    // refused before making it (a covered control) as "real", and that is not an input event.
+    realInputs: (run.history || []).some((h) => h && h.pointer) ? (run.history || []).filter((h) => h && h.ok && h.pointer === "real").length : pointer.real || 0,
     // Steps that typed, chose or sent a key. The engine does not say which way these went:
     // in a build without the debugger every one of them is made by script.
     typedActions: (run.history || []).filter((h) => /^(fill|type|press|select)\b/i.test(String(h.action || ""))).length,
