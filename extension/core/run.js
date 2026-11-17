@@ -33,14 +33,19 @@
   };
 
   // The text of the pages the run read, kept for checking the quotes in its
-  // answer, by total size: the oldest page's text goes first. A page as the
-  // page reader gives it is at most about 80,000 characters
-  // (agentContentScript.js), and most are far less, so this holds ten pages
-  // at that size and a dozen-product comparison with room to spare. The run
-  // is saved to the browser's session storage after every step (10 MB for
-  // the whole extension); at up to three bytes a character this stays under
-  // a quarter of it.
+  // answer, by total size: the oldest page's text goes first. Most pages
+  // are far under PAGE_SEEN, so this holds a dozen-product comparison with
+  // room to spare. The run is saved to the browser's session storage after
+  // every step (10 MB for the whole extension); at up to three bytes a
+  // character this stays under a quarter of it.
   const SEEN_BUDGET = 800000;
+  // One page's share of it. The page reader keeps up to 700,000 characters
+  // of a long document (a specification, a manual), which alone would push
+  // every earlier page out. Past this, a page keeps its start and the parts
+  // of it the run was shown: what it found or read there, the passages
+  // matching the task, and the section its address points to.
+  const PAGE_SEEN = SEEN_BUDGET / 4;
+  const SEEN_SEAM = "\n\u241e\n"; // between the kept parts of a long page, so a quote never spans two
   const DROPPED_KEPT = 50; // pages whose text was let go, named in the feedback on a quote
   const SEEN_URLS = 1500; // addresses seen on pages, for "did the agent make this address up"
   const INVALID_LIMIT = 3; // unusable replies in a row before the run gives up on the model
@@ -452,7 +457,28 @@
    * quote from it can be said to be one that could not be checked.
    */
   function keepSeen(run, page) {
-    keepText(run, { url: page.url, title: page.title || "", digest: TOOLS.digestPage(page.innerText, 600), text: shownText(page).slice(0, SEEN_BUDGET) });
+    const entry = { url: page.url, title: page.title || "", digest: TOOLS.digestPage(page.innerText, 600) };
+    const text = shownText(page);
+    if (text.length <= PAGE_SEEN) return keepText(run, { ...entry, text });
+    const full = String(page.innerText || "");
+    const before = run.seen.find((p) => p.url === page.url);
+    const at = page.anchor ? full.indexOf(String(page.anchor)) : -1;
+    const pieces = [];
+    let used = 0;
+    const add = (t) => {
+      const v = String(t || "").trim();
+      if (!v || used + v.length + SEEN_SEAM.length > PAGE_SEEN / 2 || pieces.some((x) => x.includes(v))) return;
+      pieces.push(v);
+      used += v.length + SEEN_SEAM.length;
+    };
+    // Newest first, so a long stay on one page keeps what it was shown last.
+    for (const r of run.reads.filter((x) => x.url === page.url).reverse()) add(r.text);
+    if (at >= 0) add(full.slice(at, at + 1600));
+    for (const p of TOOLS.relevantPassages(full, run.task, { max: 3, maxChars: 600 })) add(p);
+    // What earlier looks at this page kept, after the start of its text.
+    if (before && before.tail >= 0) for (const p of before.text.slice(before.tail).split(SEEN_SEAM)) add(p);
+    const head = text.slice(0, PAGE_SEEN - used);
+    keepText(run, { ...entry, text: head + pieces.map((p) => SEEN_SEAM + p).join(""), tail: head.length });
   }
 
   /** One page's kept text ({url, title, digest, text}), within the budget. */
