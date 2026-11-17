@@ -7,7 +7,9 @@
  * model to weigh. Text read from web pages is kept between two marker lines
  * a page cannot guess, and never reaches the system message.
  *
- * Pure functions: no DOM, no chrome.* calls, no module state.
+ * Pure functions: no DOM, no module state, and no chrome.* calls but one,
+ * browserLanguage, which reads the browser's language when the caller did
+ * not pass it.
  */
 (function initContext(root) {
   "use strict";
@@ -133,6 +135,34 @@ The user asks whether the recipe on the page is vegetarian. The page text lists 
    */
   /** "Today is Friday, 2 October 2026.", or nothing when the time is not known. */
   const todayLine = (now) => (now > 1e11 ? `Today is ${new Date(now).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}.` : "");
+
+  /**
+   * The browser's own language ("es-ES"), which only the browser knows.
+   * Empty when it cannot be read.
+   */
+  function browserLanguage() {
+    try {
+      const i18n = root.chrome && root.chrome.i18n;
+      return i18n && typeof i18n.getUILanguage === "function" ? String(i18n.getUILanguage() || "") : "";
+    } catch (_e) { return ""; }
+  }
+
+  /**
+   * The language fact: who reads the answer, and in what language. The
+   * request is in front of the model, which reads its language better than
+   * a detector guesses it from a few words, so the fact points at the
+   * request. The browser's language is given beside it as what was measured.
+   * uiLanguage is a language tag such as "ja" or "pt-BR"; anything else is
+   * left out.
+   */
+  function languageFact(uiLanguage) {
+    const reads = "The user reads your answer, and any question you ask them, in the language the user's request is written in. A page can be in another language.";
+    const tag = String(uiLanguage || "").trim().replace(/_/g, "-");
+    if (!/^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8}){0,3}$/.test(tag)) return reads;
+    let name = "";
+    try { name = new Intl.DisplayNames(["en"], { type: "language" }).of(tag) || ""; } catch (_e) { /* an unknown tag is given as it is */ }
+    return `The user's browser is set to ${name && name !== tag ? `${name} (${tag})` : tag}. ${reads}`;
+  }
 
   // What each kind of starting page is, as the user would call it.
   const START_PAGE = { newtab: "the new-tab page", blank: "an empty tab", browser: "a browser page", store: "the Web Store", pdf: "a PDF document", error: "a page that failed to load" };
@@ -350,6 +380,7 @@ The user asks whether the recipe on the page is vegetarian. The page text lists 
     const shown = { truncated: false, listCut: false, shown: 0 };
     const block = pageBlock(run, page, ctx, shown);
     const facts = runFacts(run, page, ctx.now);
+    facts.push(languageFact(ctx.uiLanguage === undefined ? browserLanguage() : ctx.uiLanguage));
     // What the listing above holds, so nothing is searched for that is already there.
     if (!page.protectedPage) {
       facts.push(shown.listCut ? "Some of this page's controls are not in the listing." : "Every control on this page is in the listing.");
@@ -684,7 +715,7 @@ In speaks_to_ai, say whether any of the page text or action results you are show
     return { pass: pass && !unmet.length, unmet, reason: clip(reply.reason || "", 400), speaksToAi: speaks };
   }
 
-  const api = Object.freeze({ INSTRUCTIONS: systemMessage({}), systemMessage, stepMessages, selectionFact, partOf, todayLine, historyLines, runFacts, behindFact, pageBlock, locateEvidence, wordsOf, quoteAround, nearestPassage, nearestWords, arrivalNote, arrivalFailure, verifierMessages, readVerdict, VERDICT_TOOL, VERIFIER });
+  const api = Object.freeze({ INSTRUCTIONS: systemMessage({}), systemMessage, stepMessages, languageFact, selectionFact, partOf, todayLine, historyLines, runFacts, behindFact, pageBlock, locateEvidence, wordsOf, quoteAround, nearestPassage, nearestWords, arrivalNote, arrivalFailure, verifierMessages, readVerdict, VERDICT_TOOL, VERIFIER });
   root.SELECT_TO_AI_CONTEXT = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

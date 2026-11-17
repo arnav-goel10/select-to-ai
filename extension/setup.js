@@ -316,8 +316,22 @@
     return grants.hasHost(origin);
   }
 
+  /**
+   * What Chrome is asked for when a first task is clicked: the one site that
+   * task works on, with its own subdomains, and nothing else.
+   * "wikipedia.org" -> ["https://*.wikipedia.org/*"]. Every other site is
+   * asked for when the agent first reaches it (the site-access card), and
+   * notifications when the user turns task notices on in Settings.
+   * Null for anything that is not a plain host name.
+   */
+  function siteAccess(site) {
+    const host = String(site || "").trim().toLowerCase();
+    if (host.length > 253 || !/^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/.test(host)) return null;
+    return [`https://*.${host}/*`];
+  }
+
   const api = Object.freeze({
-    NAMES, KEY_SHAPES, CONSENT_KEY, PRIVACY_URL,
+    NAMES, KEY_SHAPES, CONSENT_KEY, PRIVACY_URL, siteAccess,
     providerName, routeKey, providerOrigin, testRequest, checkKey, failureText,
     consentId, hasConsent, missingConsent, readConsent, recordConsent, consentText, consentCard,
     requestProviderHost, hasProviderHost,

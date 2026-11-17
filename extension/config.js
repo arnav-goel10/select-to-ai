@@ -139,6 +139,9 @@ const CONFIG = {
     // Storage Keys
     STORAGE: {
         SIDE_PANEL_STATE: 'sidePanelState',
+        // Written by the worker on an update from before 4.0 and read by the
+        // popup, which shows "What is new in 4.0" until it is dismissed.
+        UPGRADE_NOTICE: 'upgradeNotice',
         SETTINGS: [
             'autoSend',
             'autoContext',
