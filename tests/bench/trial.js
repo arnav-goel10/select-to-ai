@@ -30,11 +30,17 @@
  * trial-summary.json beside them. With --sealed (the holdout suite) it prints
  * and writes numbers only: no task id, answer, verdict or reason.
  *
- *   node tests/bench/trial.js holdout-check
+ *   node tests/bench/trial.js holdout-check [--detail]
  *   node tests/bench/trial.js leaks <log file> --tasks <task file>
  *
  * `holdout-check` fails when a holdout task is on a site any other suite
- * uses. `leaks` fails when a log names any task of the file.
+ * uses or the file's shape is off, and prints counts only (--detail, for
+ * whoever edits the file on their own machine, names the problems).
+ * `leaks` fails when a log names any task of the file.
+ *
+ * The holdout file is committed encrypted (tests/bench/holdout-tasks.json.enc).
+ * The workflow decrypts it to tests/bench/holdout-tasks.json, which git
+ * ignores; HOLDOUT_TASKS points at a plain copy kept anywhere else.
  */
 "use strict";
 
@@ -62,7 +68,8 @@ const FAMILIES = Object.freeze({
 const DIFFICULTIES = Object.freeze(["easy", "medium", "hard"]);
 
 // The task file of each suite the workflow runs. The holdout file is
-// sealed: see HOLDOUT_RULE and tests/bench/README.md.
+// sealed (tests/bench/README.md): only its encrypted copy is in the
+// repository, and the plain path is where the workflow decrypts it.
 const SUITES = Object.freeze({
   everyday: "tests/bench/everyday-tasks.json",
   dev: "tests/bench/smoke-tasks.json",
@@ -70,6 +77,13 @@ const SUITES = Object.freeze({
   holdout: "tests/bench/holdout-tasks.json",
 });
 const SEALED_SUITES = Object.freeze(["holdout"]);
+const HOLDOUT_ENCRYPTED = "tests/bench/holdout-tasks.json.enc";
+
+/** Where the plain holdout file is: HOLDOUT_TASKS, else the decrypted path. Null when it is not there. */
+function holdoutFile(root = path.join(__dirname, "../..")) {
+  const file = process.env.HOLDOUT_TASKS || path.join(root, SUITES.holdout);
+  return fs.existsSync(file) ? file : null;
+}
 
 // The scripted model's server in dry mode. The fixture task file names this port in its addresses.
 const DRY_PORT = 8931;
@@ -84,7 +98,7 @@ const FORBIDDEN_HAND_IN = /\b(submit|subscribe|upload|book (a|an|me|us|it|one|tw
 // Sites built for practising on forms: nothing typed there reaches a person or an account.
 const PRACTICE_SITES = Object.freeze(["httpbin.org", "selenium.dev", "demoqa.com", "the-internet.herokuapp.com", "formy-project.herokuapp.com", "jqueryui.com", "testpages.eviltester.com",
   // Practice sites of the holdout suite.
-  "practice-automation.com", "automationtesting.in", "testautomationpractice.blogspot.com", "practicesoftwaretesting.com", "expandtesting.com"]);
+  "automationtesting.in", "testautomationpractice.blogspot.com", "expandtesting.com"]);
 const hostOf = (url) => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch (_e) { return ""; } };
 const onPracticeSite = (url) => PRACTICE_SITES.some((s) => hostOf(url) === s || hostOf(url).endsWith(`.${s}`));
 
@@ -645,25 +659,67 @@ function holdoutProblems(holdout, others) {
   return problems;
 }
 
-/** The holdout file and every other suite's, read from the repository. */
+/**
+ * Every suite's task list. The holdout suite's comes from the plain file
+ * (holdoutFile) and is null when that is not there: the repository holds it
+ * encrypted only.
+ */
 function readSuites(root = path.join(__dirname, "../..")) {
-  const read = (f) => taskList(JSON.parse(fs.readFileSync(path.join(root, f), "utf8")));
+  const read = (f) => taskList(JSON.parse(fs.readFileSync(f, "utf8")));
   const out = {};
-  for (const [name, file] of Object.entries(SUITES)) out[name] = read(file);
+  for (const [name, file] of Object.entries(SUITES)) {
+    if (name === "holdout") { const plain = holdoutFile(root); out[name] = plain ? read(plain) : null; } else out[name] = read(path.join(root, file));
+  }
   return out;
 }
 
-// In a sealed summary a group of fewer tasks than this is shown only
-// together with the other small groups: a line for one or two tasks would
-// be those tasks' own results.
+// In a sealed summary no line may hold fewer tasks than this: a line for one
+// or two tasks would be those tasks' own results.
 const SEALED_MIN_GROUP = 3;
 const SMALL_GROUPS = "other";
+
+/**
+ * Problems with the shape of the holdout file, as sentences: its rule, its
+ * size, a spread over families, difficulties and languages, a rubric for
+ * every task, at most three tasks on one site, and every family big enough
+ * for a line of its own in a sealed summary. It counts long documents but
+ * fixes no share of PDFs: the suite is not shaped around any one fix.
+ */
+function holdoutShapeProblems(file) {
+  const problems = [];
+  const tasks = taskList(file);
+  const rule = String((file && file.rule) || "");
+  for (const words of ["Nobody tunes the agent on this file", "numbers only", "replaced"]) if (!rule.includes(words)) problems.push(`the rule does not say "${words}"`);
+  if (tasks.length < 45 || tasks.length > 50) problems.push(`${tasks.length} tasks, not 45 to 50`);
+  const per = (k) => tasks.reduce((m, t) => ({ ...m, [t[k]]: (m[t[k]] || 0) + 1 }), {});
+  const families = per("level");
+  if (Object.keys(families).length < 10) problems.push(`${Object.keys(families).length} families, not 10 or more`);
+  if (families.fixture) problems.push("a fixture task");
+  if ((families.widgets || 0) < 6) problems.push(`${families.widgets || 0} widgets tasks, not 6 or more`);
+  for (const [f, n] of Object.entries(families)) if (n < SEALED_MIN_GROUP) problems.push(`family ${f} has ${n} task(s), fewer than ${SEALED_MIN_GROUP}`);
+  const levels = per("difficulty");
+  for (const d of DIFFICULTIES) if ((levels[d] || 0) < 8) problems.push(`${levels[d] || 0} ${d} tasks, not 8 or more`);
+  if (new Set(tasks.filter((t) => t.lang).map((t) => t.lang)).size < 5) problems.push("fewer than 5 languages");
+  const live = /a page that did not load, or shows none of this, is a failure or a block, never a pass/;
+  const form = /harness's list of the final page's form controls/;
+  for (const t of tasks) {
+    if (!t.expect) problems.push(`${t.id}: no expect`);
+    else if (!t.pattern && !live.test(t.expect) && !form.test(t.expect)) problems.push(`${t.id}: with no pattern, the rubric must say how a live value or a form is judged`);
+    if (t.level === "form-fill" && !form.test(String(t.expect))) problems.push(`${t.id}: a form task is judged from the final page's form controls`);
+  }
+  const bySite = {};
+  for (const t of tasks) for (const s of taskSites(t)) bySite[s] = (bySite[s] || 0) + 1;
+  for (const [s, n] of Object.entries(bySite)) if (n > 3) problems.push(`${n} tasks on ${s}, more than 3`);
+  return problems;
+}
 
 /**
  * The family table's counts grouped by a field of the task (its family or
  * its difficulty), for a sealed summary. A run is matched to its task by
  * slot. With `min`, groups of fewer distinct tasks than that are put
- * together under "other".
+ * together under "other", and while "other" itself is still under `min`
+ * the smallest named group joins it, so no line holds fewer than `min`
+ * tasks unless the whole table does (sealedReport refuses that).
  */
 function groupTable(rows, tasks, field, min = 0) {
   const all = tasks || [];
@@ -672,7 +728,14 @@ function groupTable(rows, tasks, field, min = 0) {
   const taskOf = (r) => bySlot.get(r.slot || r.id) || bySlot.get(`${r.id}#${r.run || 1}`) || all.find((x) => x.id === r.id);
   const size = {};
   for (const t of all) (size[raw(t)] = size[raw(t)] || new Set()).add(t.id);
-  const keyOfTask = (t) => (min && (!size[raw(t)] || size[raw(t)].size < min) ? SMALL_GROUPS : raw(t));
+  const pooled = new Set(min ? Object.keys(size).filter((k) => size[k].size < min) : []);
+  const pooledTasks = () => [...pooled].reduce((n, k) => n + size[k].size, 0);
+  for (;;) {
+    const named = Object.keys(size).filter((k) => !pooled.has(k)).sort((a, b) => size[a].size - size[b].size || a.localeCompare(b));
+    if (!pooled.size || pooledTasks() >= min || !named.length) break;
+    pooled.add(named[0]);
+  }
+  const keyOfTask = (t) => (min && (!size[raw(t)] || pooled.has(raw(t))) ? SMALL_GROUPS : raw(t));
   const keyOf = (r) => keyOfTask(taskOf(r) || { [field]: r[field] || (field === "level" ? r.family || r.level : "") });
   const keys = [...new Set([...all.map(keyOfTask), ...rows.map(keyOf)])];
   const order = (k) => { const i = DIFFICULTIES.indexOf(k); return k === SMALL_GROUPS ? 999 : i < 0 ? 99 + Object.keys(FAMILIES).indexOf(k) : i; };
@@ -698,6 +761,9 @@ function sealedCounts(l) {
  * verdict, reason, site or failure text is in it.
  */
 function sealedReport(rows, planned, meta) {
+  // Fewer tasks than a line may hold: the total itself would be their result.
+  const distinct = new Set((planned || []).map((t) => t.id)).size;
+  if (distinct < SEALED_MIN_GROUP) throw new Error(`A sealed summary needs at least ${SEALED_MIN_GROUP} tasks; this run planned ${distinct}. Run a larger limit.`);
   const table = familyTable(rows, planned);
   const byFamily = groupTable(rows, planned, "level", SEALED_MIN_GROUP);
   const byDifficulty = groupTable(rows, planned, "difficulty", SEALED_MIN_GROUP);
@@ -733,12 +799,11 @@ function sealedMarkdown(report) {
   const head = (first) => [`| ${first} | tasks | passed | failed | timed out | blocked | lost | not run | pass rate |`, "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"];
   const row = (name, l) => `| ${name} | ${l.tasks} | ${l.passed} | ${l.failed} | ${l.timedOut} | ${l.blocked} | ${l.lost} | ${l.notRun} | ${pct(l.passRate)} |`;
   out.push(...head("family"));
-  const small = `Families of fewer than ${SEALED_MIN_GROUP} tasks, together`;
-  for (const l of report.byFamily) out.push(row(l.family === SMALL_GROUPS ? small : FAMILIES[l.family] || l.family, l));
+  for (const l of report.byFamily) out.push(row(l.family === SMALL_GROUPS ? "Smaller families, together" : FAMILIES[l.family] || l.family, l));
   out.push("", ...head("difficulty"));
-  for (const l of report.byDifficulty) out.push(row(l.difficulty === SMALL_GROUPS ? `difficulties of fewer than ${SEALED_MIN_GROUP} tasks, together` : l.difficulty, l));
+  for (const l of report.byDifficulty) out.push(row(l.difficulty === SMALL_GROUPS ? "smaller difficulties, together" : l.difficulty, l));
   out.push("");
-  out.push(`A family or difficulty of fewer than ${SEALED_MIN_GROUP} tasks is counted only with the other small ones, so that no line is one task's result.`);
+  out.push(`A family or difficulty of fewer than ${SEALED_MIN_GROUP} tasks is counted together with others until that line holds ${SEALED_MIN_GROUP} or more, so that no line is one or two tasks' result.`);
   if (report.patternDisagrees) out.push(`The judge and a task's answer pattern disagree in ${report.patternDisagrees} run(s).`);
   if (report.ungrounded) out.push(`${report.ungrounded} passed run(s) state numbers none of which is in any captured page.`);
   out.push(`Arm check: ${m.armCheck}.${m.shardsStoppedEarly ? ` ${m.shardsStoppedEarly} shard(s) stopped early.` : ""}`);
@@ -749,6 +814,47 @@ function sealedMarkdown(report) {
 function leaksIn(text, tasks) {
   const s = String(text || "");
   return (tasks || []).filter((t) => (t.id && s.includes(t.id)) || (t.url && s.includes(t.url))).map((t) => t.id);
+}
+
+// The lines a sealed shard's log may hold, and nothing else: run counts, the
+// run's own settings, and the numbers table. A failure's text, an ending, a
+// judge's reason or an error message can hold a task's words or its address,
+// which leaksIn would not see, so every other line is withheld.
+const SEALED_WITHHELD = "(a line withheld: a sealed run prints numbers only)";
+const SEALED_LOG_LINES = [
+  /^$/,
+  /^run \d+ of \d+ (done|recorded earlier)$/,
+  /^Benchmark: \d+ task\(s\) x \d+ run\(s\), agent [\w.:/-]+ \/ [\w.:/-]+, judge [\w.:/-]+( with the last \d+ screenshots)?$/,
+  /^Output: [\w.:/-]+$/,
+  /^\| scored tasks \| runs each \| passed \| success \| success, blocked and lost as failures \| solved at least once \| solved every time \| median steps \(passed\) \| steps spent finding \| median seconds \| blocked by site \| lost \|$/,
+  /^\|( --- \|)+$/,
+  /^\|[\d.%± ()|-]*$/,
+  /^\d+ run\(s\) were lost to the browser, the provider or the judge and are left out of the rate\.$/,
+  /^Success with the \d+ blocked and \d+ lost run\(s\) counted as failures: [\d.]+%\.$/,
+  /^Steps taken by the helper \([\w.:/-]+\): \d+ of \d+( \([\d.]+%\))?\.$/,
+  /^Stopped early: a shard stopped early\.$/,
+  /^The harness stopped with an error; a sealed run withholds the detail\.$/,
+  /^Set BENCH_API_KEY\.$/,
+  /^No tasks to run\.$/,
+  /^A sealed run takes no learning\.$/,
+];
+
+/** A text as a sealed shard's log may show it: each line that is not of an allowed shape is withheld. */
+function sealedLogText(text) {
+  return String(text).split("\n").map((line) => {
+    // The numbers row carries "N of M tasks" in one cell.
+    const bare = line.replace(/ of \d+ tasks /g, " ");
+    return SEALED_LOG_LINES.some((re) => re.test(bare)) ? line : SEALED_WITHHELD;
+  }).join("\n");
+}
+
+/** Puts the sealed filter in front of console.log and console.error: run.js calls this first thing in a sealed run. */
+function sealConsole(con = console) {
+  const fmt = (args) => args.map((a) => (a instanceof Error ? a.stack || a.message : typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+  for (const name of ["log", "info", "warn", "error"]) {
+    const out = con[name].bind(con);
+    con[name] = (...args) => out(sealedLogText(fmt(args)));
+  }
 }
 
 function main(argv) {
@@ -764,13 +870,15 @@ function main(argv) {
     return;
   }
   if (cmd === "holdout-check") {
-    const suites = readSuites();
-    const { holdout, ...others } = suites;
-    const problems = [...validateTasks(holdout), ...holdoutProblems(holdout, others)];
+    const plain = holdoutFile();
+    if (!plain) { console.error(`No plain holdout file: decrypt ${HOLDOUT_ENCRYPTED} to ${SUITES.holdout} first, or set HOLDOUT_TASKS (tests/bench/README.md).`); process.exit(1); }
+    const file = JSON.parse(fs.readFileSync(plain, "utf8"));
+    const { holdout, ...others } = readSuites();
+    const problems = [...validateTasks(holdout), ...holdoutProblems(holdout, others), ...holdoutShapeProblems(file)];
     const sites = new Set(holdout.flatMap(taskSites));
-    // Counts only: this command runs in the open part of the workflow.
-    console.log(`holdout: ${holdout.length} tasks on ${sites.size} sites, none shared with ${Object.keys(others).join(", ")}${problems.length ? ": NOT SO" : ""}`);
-    if (problems.length) { console.error(problems.join("\n")); process.exit(1); }
+    // Counts only: this command runs in the open part of the workflow. --detail is for the file's editor.
+    console.log(`holdout: ${holdout.length} tasks on ${sites.size} sites, none shared with ${Object.keys(others).join(", ")}${problems.length ? `: NOT SO, ${problems.length} problem(s)` : ""}`);
+    if (problems.length) { console.error(argv.includes("--detail") ? problems.join("\n") : "Run holdout-check --detail on the plain file to see them."); process.exit(1); }
     return;
   }
   if (cmd === "leaks") {
@@ -821,7 +929,8 @@ function main(argv) {
     };
     const table = familyTable(rows, planned);
     if (rest.includes("--sealed")) {
-      const report = sealedReport(rows, planned, meta);
+      let report;
+      try { report = sealedReport(rows, planned, meta); } catch (e) { console.error(e.message); process.exit(1); }
       const text = sealedMarkdown(report);
       const json = JSON.stringify(report, null, 2);
       // A sealed summary that names a task is not printed or written at all.
@@ -868,6 +977,13 @@ function main(argv) {
   process.exit(1);
 }
 
-module.exports = { FAMILIES, DIFFICULTIES, SUITES, SEALED_SUITES, SEALED_MIN_GROUP, DRY_PORT, PRACTICE_SITES, validateTasks, taskSites, holdoutProblems, readSuites, groupTable, sealedReport, sealedMarkdown, leaksIn, patternMatch, patternVerdict, learnPlan, plannedRuns, longPromptSurchargeUSD, spendOf, answerGrounding, countersOf, judgeCostUSD, bucketOf, failureOf, familyTable, markdown, armProblems, learnTable, learnMarkdown, recipeTable, recipeMarkdown, readRows, readShards, checkDry, checkLeg, readFormControls };
+module.exports = { FAMILIES, DIFFICULTIES, SUITES, SEALED_SUITES, SEALED_MIN_GROUP, SEALED_WITHHELD, HOLDOUT_ENCRYPTED, DRY_PORT, PRACTICE_SITES, validateTasks, taskSites, holdoutFile, holdoutProblems, holdoutShapeProblems, readSuites, groupTable, sealedReport, sealedMarkdown, sealedLogText, sealConsole, leaksIn, patternMatch, patternVerdict, learnPlan, plannedRuns, longPromptSurchargeUSD, spendOf, answerGrounding, countersOf, judgeCostUSD, bucketOf, failureOf, familyTable, markdown, armProblems, learnTable, learnMarkdown, recipeTable, recipeMarkdown, readRows, readShards, checkDry, checkLeg, readFormControls };
 
-if (require.main === module) main(process.argv.slice(2));
+if (require.main === module) {
+  const argv = process.argv.slice(2);
+  // A sealed summary that crashes prints no stack: its paths and values name the runs.
+  try { main(argv); } catch (e) {
+    if (argv.includes("--sealed")) { console.error("The sealed summary stopped with an error; the detail is withheld."); process.exit(1); }
+    throw e;
+  }
+}

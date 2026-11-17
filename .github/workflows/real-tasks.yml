@@ -111,6 +111,14 @@ jobs:
       sealed: ${{ steps.plan.outputs.sealed }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # The holdout tasks are committed encrypted. HOLDOUT_KEY decrypts them to the
+      # git-ignored plain path; the key is never printed and nothing else reads it.
+      - name: Decrypt the holdout tasks
+        env:
+          HOLDOUT_KEY: ${{ secrets.HOLDOUT_KEY }}
+        run: |
+          if [ -z "$HOLDOUT_KEY" ]; then echo "::error::The repository has no HOLDOUT_KEY secret, so the holdout tasks cannot be decrypted (tests/bench/README.md)."; exit 1; fi
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 -in tests/bench/holdout-tasks.json.enc -out tests/bench/holdout-tasks.json -pass env:HOLDOUT_KEY
       - id: plan
         name: Work out what to run
         # Inputs reach the script as environment values, never as script text.
@@ -157,6 +165,7 @@ jobs:
             *) fail "suite must be everyday, dev, learn or holdout" ;;
           esac
           if [ -z "$learn" ] && [ "$IN_LEARNING" = "true" ]; then learn=on; fi
+          if [ "$sealed" = "true" ] && [ -n "$learn" ]; then fail "the holdout suite runs without learning: the learning loop's log names tasks"; fi
           recipes=false
           if [ "$IN_RECIPES" = "true" ]; then recipes=true; fi
           case "$arm" in shipped|debugger-on) ;; *) fail "arm must be shipped or debugger-on" ;; esac
@@ -201,6 +210,8 @@ jobs:
             sample=0
             cap=2
           fi
+          if [ "$sealed" = "true" ] && [ "$sample" -gt 0 ] && [ "$sample" -lt 3 ]; then fail "a holdout run needs a limit of 3 or more: a smaller one would show one or two tasks' own results"; fi
+          if [ "$sealed" = "true" ] && [ ! -f "$tasks" ]; then fail "$tasks is not there: the step before this one decrypts it from tests/bench/holdout-tasks.json.enc with HOLDOUT_KEY"; fi
           # A learn run is counted in pairs: the task that starts each one.
           total=$(node -e "const T = require('./tests/bench/trial.js'); const all = require('./tests/bench/judge.js').normaliseTasks(require('./' + process.argv[1])); console.log(process.argv[2] === 'pairs' ? T.learnPlan(all).length : all.length)" "$tasks" "$learn")
           count="$total"
@@ -239,8 +250,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       - name: The task files are sound
         run: |
-          for f in everyday-tasks learn-tasks fixture-tasks fixture-learn-tasks holdout-tasks; do node tests/bench/trial.js validate "tests/bench/$f.json"; done
-          # No holdout task may be on a site another suite uses.
+          for f in everyday-tasks learn-tasks fixture-tasks fixture-learn-tasks; do node tests/bench/trial.js validate "tests/bench/$f.json"; done
+          # The decrypted holdout file: sound, shaped as its rule says, and on no site another suite uses. Counts only.
           node tests/bench/trial.js holdout-check
 
   # The packed 4.0 zip, built and checked the way ci.yml's package-integrity job does it.
@@ -295,6 +306,15 @@ jobs:
         with:
           name: ${{ needs.build.outputs.artifact }}
       - run: mkdir -p build && unzip -q "${{ needs.build.outputs.artifact }}" -d build
+      # The holdout tasks are committed encrypted. HOLDOUT_KEY decrypts them to the
+      # git-ignored plain path; the key is never printed and nothing else reads it.
+      - name: Decrypt the holdout tasks
+        if: ${{ needs.plan.outputs.sealed == 'true' }}
+        env:
+          HOLDOUT_KEY: ${{ secrets.HOLDOUT_KEY }}
+        run: |
+          if [ -z "$HOLDOUT_KEY" ]; then echo "::error::The repository has no HOLDOUT_KEY secret, so the holdout tasks cannot be decrypted (tests/bench/README.md)."; exit 1; fi
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 -in tests/bench/holdout-tasks.json.enc -out tests/bench/holdout-tasks.json -pass env:HOLDOUT_KEY
       - name: Run the tasks
         env:
           BENCH_DRY: ${{ needs.plan.outputs.dry == 'true' && '1' || '' }}
@@ -349,6 +369,15 @@ jobs:
           pattern: ${{ needs.plan.outputs.sealed == 'true' && 'holdout-SEALED-per-task-do-not-open-shard-*' || 'trial-shard-*' }}
           path: tests/bench/out/trial
           merge-multiple: true
+      # The holdout tasks are committed encrypted. HOLDOUT_KEY decrypts them to the
+      # git-ignored plain path; the key is never printed and nothing else reads it.
+      - name: Decrypt the holdout tasks
+        if: ${{ needs.plan.outputs.sealed == 'true' }}
+        env:
+          HOLDOUT_KEY: ${{ secrets.HOLDOUT_KEY }}
+        run: |
+          if [ -z "$HOLDOUT_KEY" ]; then echo "::error::The repository has no HOLDOUT_KEY secret, so the holdout tasks cannot be decrypted (tests/bench/README.md)."; exit 1; fi
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 -in tests/bench/holdout-tasks.json.enc -out tests/bench/holdout-tasks.json -pass env:HOLDOUT_KEY
       - name: Table by family
         env:
           TASKS: ${{ needs.plan.outputs.tasks }}

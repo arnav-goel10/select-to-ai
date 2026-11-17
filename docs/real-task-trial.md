@@ -10,7 +10,7 @@ Why it exists: every real-site number in [agent-v4-status.md](agent-v4-status.md
 |---|---|
 | `tests/bench/everyday-tasks.json` | 93 tasks in 11 families. Each has a start page, the request as a person would type it, and `expect`: what a right result holds, given to the judge. 63 also have `pattern`, a regular expression the answer should match. |
 | `tests/bench/learn-tasks.json` | The learn suite: 12 tasks that each run twice in one browser profile, and 6 pairs (a task, then a neighbour task on the same site). 24 tasks in all, taken from the everyday file. |
-| `tests/bench/holdout-tasks.json` | The holdout suite: 50 held-out tasks on 44 sites that no other suite uses, reported as numbers only. Nobody tunes the agent on it. The rule is in [tests/bench/README.md](../tests/bench/README.md). |
+| `tests/bench/holdout-tasks.json.enc` | The holdout suite, encrypted: 50 held-out tasks on sites that no other suite uses, reported as numbers only. The workflow decrypts it with the `HOLDOUT_KEY` secret. Nobody tunes the agent on it. The rule, and how to edit it: [tests/bench/README.md](../tests/bench/README.md). |
 | `tests/bench/fixture-tasks.json`, `tests/bench/fixture-learn-tasks.json` | Tasks on the local fixture pages, for dry mode. |
 | `tests/bench/trial.js` | Checks a task file, and turns a folder of results into the tables. |
 | `.github/workflows/real-tasks.yml` | The workflow. |
@@ -23,7 +23,7 @@ These tasks were written for this trial. They are a dev set: read the transcript
 
 ## The holdout suite
 
-The everyday tasks are a development set now: their failures were read and the agent was changed to fix them. `suite: holdout` runs 50 other tasks, written blind to the agent's behaviour, on sites none of the other suites use, with a difficulty (easy, medium, hard) on each and a `widgets` family for hover menus, drag and drop, sliders, keys, date pickers, frames and dialogs. Its summary shows totals, pass rates, median seconds, spend and counts by family and difficulty, and nothing that names a task. The per-task files go to artifacts named `holdout-SEALED-per-task-do-not-open-shard-N`, kept one day. Nobody tunes the agent on this suite, its results are read as numbers only, and a task whose site changes is replaced, not worked around. The full rule: [tests/bench/README.md](../tests/bench/README.md).
+The everyday tasks are a development set now: their failures were read and the agent was changed to fix them. `suite: holdout` runs 50 other tasks, written blind to the agent's behaviour, mostly on widely used real sites none of the other suites use, with a difficulty (easy, medium, hard) on each and a `widgets` family for the interactions only practice pages offer. The tasks are committed encrypted and the workflow decrypts them with the `HOLDOUT_KEY` secret. Its summary shows totals, pass rates, median seconds, spend and counts by family and difficulty, no line of fewer than 3 tasks, and nothing that names a task or carries a failure's text. The per-task files go to artifacts named `holdout-SEALED-per-task-do-not-open-shard-N`, kept one day. Nobody tunes the agent on this suite, its results are read as numbers only, and a task whose site changes is replaced, not worked around. The full rule: [tests/bench/README.md](../tests/bench/README.md).
 
 `gh workflow run real-tasks.yml --ref rel40-real-tasks -f suite=holdout -f max_usd=5`. A dry leg (`sealed`) on every push checks that the sealed path prints no task, in the shard log and in the summary.
 

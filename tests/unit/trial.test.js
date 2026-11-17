@@ -371,9 +371,12 @@ test("the workflow pairs each provider with its own key and gives the judge Anth
   assert.match(y, /BENCH_JUDGE_KEY: \$\{\{ needs\.plan\.outputs\.dry != 'true' && secrets\.ANTHROPIC_API_KEY \|\| '' \}\}/);
   assert.match(y, /BENCH_JUDGE_URL: https:\/\/api\.anthropic\.com\/v1\/messages/);
   assert.match(y, /BENCH_KEY_PROVIDER: \$\{\{ needs\.plan\.outputs\.provider \}\}/);
-  // Only the two paired secrets are named anywhere, and none of the others the repository holds.
+  // Only the two paired secrets and the holdout tasks' passphrase are named anywhere, and none of the others the repository holds.
   const named = [...y.matchAll(/secrets\.([A-Z0-9_]+)/g)].map((m) => m[1]);
-  assert.deepEqual([...new Set(named)].sort(), ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]);
+  assert.deepEqual([...new Set(named)].sort(), ["ANTHROPIC_API_KEY", "HOLDOUT_KEY", "OPENAI_API_KEY"]);
+  // The passphrase only ever reaches openssl, as HOLDOUT_KEY in a decrypt step.
+  for (const m of y.matchAll(/secrets\.HOLDOUT_KEY/g)) assert.match(y.slice(m.index - 40, m.index), /HOLDOUT_KEY: \$\{\{ $/);
+  assert.equal(y.split("-pass env:HOLDOUT_KEY").length - 1, y.split("secrets.HOLDOUT_KEY").length - 1);
   assert.ok(!/has no BENCH_API_KEY|dry=true; why="the repository has no/.test(y), "a missing key never turns a real run into a dry one");
   assert.match(y, /Nothing was run\. Tick dry for a dry run\./);
   assert.match(y, /provider must be anthropic or openai/);

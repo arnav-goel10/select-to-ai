@@ -117,6 +117,10 @@ const { summarise, normaliseTasks, sampleTasks, isInfra } = J;
 const { judgeConfig, judgeRun } = require("./judge-call.js");
 const BENCH_PROFILE_LIB = require("./profile.js");
 const TRIAL = require("./trial.js");
+// A sealed run (the holdout suite): before anything can print, the log is
+// limited to run counts and the numbers table. Any other line, an error's
+// text included, is withheld (TRIAL.sealedLogText says which lines pass).
+if (process.env.BENCH_QUIET === "sealed") TRIAL.sealConsole();
 
 // BENCH_EXTENSION runs another build of the extension (an older commit's
 // checkout) under this same harness, for before-and-after comparisons.
@@ -157,6 +161,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const HEADFUL = !!process.env.BENCH_HEADFUL;
 const LEARN = process.env.BENCH_LEARN || "";
 if (LEARN && !["1", "near", "pairs", "on"].includes(LEARN)) { console.error('BENCH_LEARN is "1", "near", "pairs" or "on".'); process.exit(1); }
+// The learning loop's log names tasks and pairs: a sealed run has none of it.
+if (SEALED && LEARN) { console.error("A sealed run takes no learning."); process.exit(1); }
 // Runs in pairs, each pair in a fresh browser; "on" is learning with the ordinary loop.
 const PAIRED = ["1", "near", "pairs"].includes(LEARN);
 const RECIPES = process.env.BENCH_RECIPES === "1";
@@ -532,7 +538,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
     if (session) await session.browser.close().catch(() => {});
     fs.rmSync(loaded, { recursive: true, force: true });
     if (profileCopy) fs.rmSync(profileCopy, { recursive: true, force: true });
-    console.error(e.message || e);
+    console.error(SEALED ? "The harness stopped with an error; a sealed run withholds the detail." : e.message || e);
     process.exit(1);
   }
   // Before each ChatGPT run: the shared sign-in, renewed under the lock if it
@@ -785,7 +791,8 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   const pct = (x) => `${(100 * x).toFixed(1)}%`;
   console.log(`\n| scored tasks | runs each | passed | success | success, blocked and lost as failures | solved at least once | solved every time | median steps (passed) | steps spent finding | median seconds | blocked by site | lost |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |`);
   console.log(`| ${s.tasks} | ${s.runsPerTask} | ${s.passed} | ${pct(s.success)} ± ${pct(s.standardError)} | ${pct(s.successAllRuns)} of ${s.tasksAllRuns} tasks | ${pct(s.solvedOnce)} | ${pct(s.solvedEveryTime)} | ${s.medianSteps} (${s.medianStepsPassed}) | ${pct(s.findingShare)} | ${s.medianSeconds} | ${s.blocked} | ${s.lost} |`);
-  console.log(`\nHow runs ended: ${Object.entries(s.endings).map(([k, v]) => `${k} ${v}`).join(", ")}`);
+  // An ending can carry an error's text: a sealed log shows the counts above only.
+  if (!SEALED) console.log(`\nHow runs ended: ${Object.entries(s.endings).map(([k, v]) => `${k} ${v}`).join(", ")}`);
   if (HELPER_MODEL) {
     const all = rows.reduce((n, r) => n + (r.steps || 0), 0);
     const helped = rows.reduce((n, r) => n + (r.helperSteps || 0), 0);
@@ -793,8 +800,9 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   }
   if (s.lost) console.log(`${s.lost} run(s) were lost to the browser, the provider or the judge and are left out of the rate.`);
   if (s.blocked || s.lost) console.log(`Success with the ${s.blocked} blocked and ${s.lost} lost run(s) counted as failures: ${pct(s.successAllRuns)}.`);
-  if (stoppedEarly) console.log(`Stopped early: ${stoppedEarly}`);
+  // Why a shard stopped can hold a lost run's error text: a sealed log says only that it did.
+  if (stoppedEarly) console.log(SEALED ? "Stopped early: a shard stopped early." : `Stopped early: ${stoppedEarly}`);
   fs.writeFileSync(path.join(OUT, `results${SHARD ? `-${SHARD[1]}of${SHARD[2]}` : ""}.json`), JSON.stringify({ agent: { provider: PROVIDER, model: MODEL, helperModel: HELPER_MODEL || undefined, url: CUSTOM_URL || undefined, extension: EXT, profile: CHATGPT ? CHATGPT.profile : undefined, debugger: DEBUGGER || "as built", debuggerAvailable, learning: LEARN || "off", recipes: RECIPES, disguise: DISGUISE }, shard: SHARD ? `shard ${SHARD[1]} of ${SHARD[2]}` : "", judge: { model: JUDGE.model, url: JUDGE.url, vision: JUDGE.vision, shots: JUDGE.vision ? JUDGE.shots : 0, stubCalls: DRY ? judgeStub.calls : undefined }, dry: DRY, spentUSD: spent, capUSD: MAX_USD, capReached, runsPerTask: RUNS, planned: tasks.map((t) => t.id), summary: s, stoppedEarly, rows: rows.map((r) => ({ ...r, finalText: undefined, pages: undefined, screenshots: (r.screenshots || []).length })) }, null, 2));
   // The spend cap doing its job is not a failure of the run.
   if (stoppedEarly && !capReached) process.exitCode = 2;
-})().catch((e) => { console.error(e); process.exit(1); });
+})().catch((e) => { console.error(SEALED ? "The harness stopped with an error; a sealed run withholds the detail." : e); process.exit(1); });
