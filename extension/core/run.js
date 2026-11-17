@@ -250,6 +250,14 @@
       // began on, whether that tab was reused, and, once a web page has been
       // read, left: true.
       fromNothing: o.fromNothing || null,
+      // The site the run began on, and the sites it opened by an address
+      // (navigate, a new tab): a human check on one of those the task does
+      // not need is left, not handed to the user (policy.js detourSite).
+      startSite: o.startUrl && /^https?:/i.test(o.startUrl) ? TOOLS.siteOf(o.startUrl) : "",
+      wentTo: [],
+      // Detour sites whose check the model was already told to leave: a
+      // second ask there goes to the user (detourToLeave).
+      leftDetours: [],
       trust: { sites: [...new Set(sites.filter(Boolean))], urls: [] },
       current: null,
       queue: [],
@@ -358,6 +366,9 @@
     if (!run.wrapUp && run.checkInMs > 0 && run.activeMs >= run.nextCheckIn) return checkIn(run, fx, env, "time");
     if (!run.wrapUp && run.usage.calls >= run.callCeiling) return checkIn(run, fx, env, "calls");
     page.blockers = POLICY.blockersOf(page);
+    // A check on a site the run went to by itself is said to be one (core/context.js).
+    const away = page.blockers.some((b) => b.kind === "human_check") ? detourToLeave(run, page) : "";
+    if (away) page.blockers = page.blockers.map((b) => (b.kind === "human_check" ? { ...b, away } : b));
     // Sentences the page hides from people looking at it (agentContentScript.js
     // leaves them out of the reading) are put to a narrow question, by
     // meaning and in any language: does one speak to an AI? Pages with no
@@ -1038,6 +1049,7 @@
     if (!a) return closeStep(run, fx);
     if (a.do === "done") return onDone(run, a, page, env, fx);
     if (a.do === "ask_user") {
+      if (a.kind === "human_check") { const left = leaveDetour(run, a, page, fx); if (left) return left; }
       const question = a.kind !== "question" && POLICY.HANDOVER[a.kind] && !a.question ? POLICY.HANDOVER[a.kind] : a.question;
       // A control the user is asked to press themselves is marked on the page for them.
       return waitFor(run, fx, env, { kind: a.kind, question, action: a, ...(a.kind === "press" && a.ref !== undefined ? { press: a.ref } : {}) });
@@ -1098,6 +1110,7 @@
       return closeStep(run, fx, "refused");
     }
     if (verdict.verdict === "handoff") {
+      if (verdict.kind === "human_check") { const left = leaveDetour(run, act, page, fx); if (left) return left; }
       // The action is not run: the user does this part, in the page.
       return waitFor(run, fx, env, { kind: verdict.kind, question: verdict.question, action: act, byPolicy: true, press: verdict.press });
     }
@@ -1505,6 +1518,10 @@
     tally(run, a, r.ok, r.noEffect, page && page.url, !!r.miss);
     searched(run, a, r, page);
     if (r.tabId !== undefined && r.tabId !== null) run.tabId = r.tabId;
+    if (r.ok && (a.do === "navigate" || (a.do === "tabs" && a.op === "open")) && a.url) {
+      const site = TOOLS.siteOf(a.url);
+      if (site && !(run.wentTo || []).includes(site)) run.wentTo = [...(run.wentTo || []), site];
+    }
     if (r.openedTab !== undefined) run.openedTabs = [...run.openedTabs, r.openedTab];
     if (r.closedTab !== undefined) run.openedTabs = run.openedTabs.filter((t) => t !== r.closedTab);
     if (r.read) run.reads = [...run.reads.filter((x) => !(x.url === r.read.url && x.label === r.read.label)), r.read].slice(-4);
@@ -1545,6 +1562,34 @@
     return el.onTop || !els.some((e) => e.onTop && run.labels[e.id] === undefined);
   }
 
+  /**
+   * The detour site whose human check the model should leave, or "". Only
+   * when the run has something to answer from (notes or text it read), and
+   * only once per site: with nothing gathered, or when the model asks again
+   * after being told to leave, the check goes to the user, who may still
+   * want to pass it.
+   */
+  function detourToLeave(run, page) {
+    const site = POLICY.detourSite(page, run);
+    if (!site || (run.leftDetours || []).includes(site)) return "";
+    return run.memory || (run.reads || []).length ? site : "";
+  }
+
+  /**
+   * A human check on a site the run went to by itself and the task does not
+   * need: nothing is handed to the user. The model is told to leave it and
+   * finish from what it has read, and the step ends. Null when the check is
+   * on the task's own site, which stays the user's to pass.
+   */
+  function leaveDetour(run, a, page, fx) {
+    const site = detourToLeave(run, page);
+    if (!site) return null;
+    run.leftDetours = [...(run.leftDetours || []), site];
+    record(run, a, false, POLICY.detourMessage(site));
+    log(run, "system", "Not Handed Over", `A human check on ${site}, a site the task does not need. The agent is told to go back and answer from what it has read.`);
+    return closeStep(run, fx, "refused");
+  }
+
   // ---------------------------------------------------------------- waiting
 
   function waitFor(run, fx, env, wait) {
@@ -1553,13 +1598,16 @@
       const print = run.lastPrint || "";
       const last = run.handoff;
       run.handoff = last && last.kind === wait.kind && last.print === print ? { ...last, n: last.n + 1 } : { kind: wait.kind, print, n: 1 };
+      // What the run has found so far goes with the hand-off, so a user who
+      // cannot do this part still has it.
+      if (run.memory && !wait.found) wait = { ...wait, found: run.memory };
     }
     run.status = "waiting";
     const page = env && env.page;
     // What was in the page's fields, for a wait the user may answer on the page.
     run.waitSnapshot = page && !["approval", "check_in", "pause"].includes(wait.kind) ? { url: page.url, elements: (page.elements || []).map((el) => ({ id: el.id, value: el.sensitive ? "" : el.value || "" })) } : null;
     run.wait = { id: `${run.id}-w${run.waits}`, since: env.now || 0, tabId: run.tabId, ...wait };
-    run.journal.push({ k: "ask", wait: { id: run.wait.id, kind: wait.kind, risk: wait.risk || "", question: wait.question || "", detail: wait.detail || [], tabId: run.tabId, ...(wait.kind === "check_in" ? { notes: wait.notes, active: wait.active, period: wait.period, reason: wait.reason } : {}), ...(wait.until ? { until: wait.until } : {}), ...(wait.hold ? { hold: wait.hold } : {}) } });
+    run.journal.push({ k: "ask", wait: { id: run.wait.id, kind: wait.kind, risk: wait.risk || "", question: wait.question || "", detail: wait.detail || [], tabId: run.tabId, ...(wait.found ? { found: wait.found } : {}), ...(wait.kind === "check_in" ? { notes: wait.notes, active: wait.active, period: wait.period, reason: wait.reason } : {}), ...(wait.until ? { until: wait.until } : {}), ...(wait.hold ? { hold: wait.hold } : {}) } });
     status(run, "idle", wait.kind === "approval" ? "Waiting for your go-ahead" : wait.kind === "pause" ? "Waiting for the provider" : "Waiting for you");
     fx.push({ type: "attention", wait: run.wait });
     return fx;
