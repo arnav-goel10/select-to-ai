@@ -452,6 +452,8 @@
   const FRAME_BASE = 100000;
   const MAX_FRAMES = 6;
   const FRAME_DEPTH = 3;
+  // The most a page read waits, over all levels, for its frames to answer.
+  const FRAME_WAIT_MS = 900;
   const hellos = new Map(); // "tabId:token" -> frameId
   const inFrame = (session, id) => {
     const k = Math.floor(Number(id) / FRAME_BASE);
@@ -502,6 +504,7 @@
     let k = 0;
     // Every frame read counts, a frame that only holds others too.
     let reads = 0;
+    let waitLeft = FRAME_WAIT_MS;
     const parents = [{ frameId: 0, name: "", depth: 1 }];
     while (parents.length && reads < MAX_FRAMES) {
       const parent = parents.shift();
@@ -511,7 +514,11 @@
       // site it has no access to never answers.
       const open = new Set();
       for (const f of list) if (await reachable(f)) open.add(f);
-      for (let waited = 0; waited < 600 && [...open].some((f) => !hellos.has(key(f))); waited += 50) await sleep(50);
+      // Up to 600 ms for a level's frames to answer, and FRAME_WAIT_MS for all levels together.
+      const ceiling = Math.min(600, waitLeft);
+      let waited = 0;
+      for (; waited < ceiling && [...open].some((f) => !hellos.has(key(f))); waited += 50) await sleep(50);
+      waitLeft -= waited;
       for (const f of list) {
         const frameId = hellos.get(key(f));
         hellos.delete(key(f));
@@ -1094,7 +1101,15 @@
     const pageChanged = moved || !!o.urlChanged || !!o.titleChanged || (o.newElementCount || 0) !== 0 || (navigates && (o.domMutationCount || 0) > 0) || !!(res.choices && res.choices.length);
     // Changed where it stands: same address, same title, nothing left to choose.
     const soft = pageChanged && !moved && !o.urlChanged && !o.titleChanged && !(res.choices && res.choices.length);
-    return { ok: true, message, pageChanged, soft, noEffect: !!o.noEffect && !moved && !valued, ...pointer };
+    // What the page itself said back after the action (a control's value
+    // once set, a box's text after typing), apart from the words of the
+    // result, which repeat what the model wrote. Only this is evidence an
+    // answer may quote (core/run.js textsOf). Free text is the box's text,
+    // which holds what the agent typed.
+    const readBack = typeof res.reads === "string" && res.reads ? res.reads
+      : res.shows !== undefined && res.shows !== null && String(res.shows) && local.id !== undefined ? `[${local.id}] now shows "${String(res.shows).slice(0, 120)}"` : "";
+    const reads = readBack ? { reads: numbers(readBack), ...(res.freeText ? { freeText: true } : {}) } : {};
+    return { ok: true, message, pageChanged, soft, noEffect: !!o.noEffect && !moved && !valued, ...pointer, ...reads };
   }
 
   /**
@@ -1204,7 +1219,8 @@
         });
         return { ok: true, message: lines.join("; "), used: keys.filter((k) => KNOWN.fieldValue(memory, k)) };
       }
-      case "press": return interact(session, a, { action: "keypress", id: a.ref, text: a.key, ...(a.times ? { times: a.times } : {}), ...(a.ref === undefined && Array.isArray(a.landsOn) ? { landsOn: a.landsOn } : {}) }, true);
+      // A press the user approved is made once, whatever times says.
+      case "press": return interact(session, a, { action: "keypress", id: a.ref, text: a.key, ...(a.approved !== undefined ? { once: true } : a.times ? { times: a.times } : {}), ...(a.ref === undefined && Array.isArray(a.landsOn) ? { landsOn: a.landsOn } : {}) }, true);
       case "scroll": {
         if (a.ref === undefined) return interact(session, a, { action: "scroll", scrollDirection: a.direction || "down" }, false);
         if (a.direction) return interact(session, a, { action: "scroll", id: a.ref, scrollTarget: inFrame(session, a.ref).id, scrollDirection: a.direction }, false);

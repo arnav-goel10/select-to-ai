@@ -739,12 +739,12 @@ const FIXTURES = {
   ),
   "/frames/outer": pageShell(
     "Outer box",
-    `<h2>Outer frame</h2><button type="button" id="b1">Click Me (outer)</button>
+    `<h2>Outer frame</h2><button type="button" id="b1">Open the outer panel</button>
      <iframe id="inner" title="Inner" src="/frames/inner" style="width:300px;height:110px;border:1px solid #888"></iframe>`,
   ),
   "/frames/inner": pageShell(
     "Inner box",
-    `<button type="button" id="nested" onclick="this.textContent = 'Clicked, thank you'; window.clicked = (window.clicked || 0) + 1">Click Me</button>`,
+    `<button type="button" id="nested" onclick="this.textContent = 'Clicked, thank you'; window.clicked = (window.clicked || 0) + 1">Confirm</button>`,
   ),
   // A rating drawn by its own element, its slider inside a shadow root:
   // its value is stated for a screen reader and nowhere in the text.
@@ -1279,7 +1279,7 @@ function buildStepPolicies(baseUrl) {
     // A button in a frame within a frame.
     nestedFrame(ctx) {
       if (/Clicked, thank you/.test(ctx.userText)) return done("The button now says \"Clicked, thank you\".", ["Clicked, thank you"]);
-      const button = findElement(ctx.elements, (e) => e.text === "Click Me" && e.id >= 100000);
+      const button = findElement(ctx.elements, (e) => e.text === "Confirm" && e.id >= 100000);
       if (!button) return done("policy error: the button in the inner frame is not listed", [], false);
       return step("Press the button in the inner frame", [{ do: "click", ref: button.id }]);
     },

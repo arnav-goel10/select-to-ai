@@ -1561,7 +1561,15 @@
     }
     // Where the focus was left, for a key the step presses next with no ref.
     if (r.ok && ["click", "fill", "type", "select_text", "press"].includes(a.do) && a.ref !== undefined) run.focusRef = a.ref;
+    // Words the model wrote for select_text: a read-back that repeats them proves nothing.
+    if (r.ok && a.do === "select_text") run.selectedTexts = [...(run.selectedTexts || []).filter((t) => t !== String(a.value || "")), String(a.value || "")].slice(-20);
     record(run, a, r.ok, r.message);
+    // What the page said back, kept apart from the result's words (engine.js interactOnce).
+    if (r.ok && typeof r.reads === "string" && r.reads && run.current && run.current.actions.length) {
+      const entry = run.current.actions[run.current.actions.length - 1];
+      entry.reads = clip(r.reads, 600);
+      if (r.freeText) entry.freeText = true;
+    }
     // How long the page was waited on after this action, so the cost of waiting can be read per step.
     if (Number.isFinite(r.settleMs) && run.current && run.current.actions.length) run.current.actions[run.current.actions.length - 1].settle = r.settleMs;
     // Whether the pointer was a real one or events made by a script.
@@ -1709,6 +1717,16 @@
   // --------------------------------------------------------------- finishing
 
   /** Every piece of text the run was shown, for checking quotes. */
+  /** Text with every text the run itself wrote, and each line of it, taken out. */
+  function withoutTyped(text, wrote) {
+    let out = String(text || "");
+    const pieces = [];
+    for (const t of wrote || []) for (const piece of [String(t), ...String(t).split(/\r\n|\r|\n/)]) if (piece.trim().length >= 2) pieces.push(piece.trim());
+    pieces.sort((a, b) => b.length - a.length);
+    for (const piece of pieces) out = out.split(piece).join(" \u2026 ");
+    return out;
+  }
+
   function textsOf(run, page, env) {
     const texts = run.seen.map((p) => ({ url: p.url, title: p.title, text: p.text }));
     if (page && page.innerText) texts.push({ url: page.url, title: page.title, text: shownText(page) });
@@ -1725,11 +1743,18 @@
     const today = CONTEXT.todayLine(env && env.now);
     if (today) texts.push({ url: "", title: "what the browser stated", text: today });
     for (const el of (page && page.elements) || []) if (el.value && !el.sensitive) texts.push({ url: page.url, title: "a field's value", text: String(el.value) });
+    // A read-back that repeats text the model wrote into the page only shows it was typed.
+    const wrote = [...(run.typedTexts || []), ...(run.selectedTexts || [])];
     // What the run's own actions read back from the page (a control's value
-    // after it was set, the text of a box after typing) was shown too. Only
-    // the result, which the page gave: not the action, which the model wrote.
+    // after it was set, the text of a box after typing) was shown too: only
+    // what the page said back (engine.js interactOnce), never the result's
+    // own words, which repeat the action the model wrote.
     for (const h of [...run.history, ...(run.current ? [run.current] : [])]) {
-      for (const x of h.actions || []) if (x.ok && x.result && !["done", "ask_user", "recall", "remember"].includes(x.do)) texts.push({ url: "", title: "what an action read back from the page", text: String(x.result) });
+      for (const x of h.actions || []) {
+        if (!x.ok || !x.reads) continue;
+        const text = x.freeText ? withoutTyped(x.reads, wrote) : String(x.reads);
+        if (text.trim()) texts.push({ url: "", title: "what an action read back from the page", text });
+      }
     }
     return texts;
   }

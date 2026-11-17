@@ -760,6 +760,72 @@ async function open(browser, url, html, opts) {
       assert.ok(lines.some((l) => /"Draft" value="Hello/.test(l)), lines.join(" | "));
       assert.ok(edScan.elements.length > 0);
     });
+    // The rules that hold for fill and press hold for typing and keys too:
+    // a line break typed is not an Enter key (a chat box sends on Enter), a
+    // secret field is never typed in, selected or read back, and a key
+    // that presses what it lands on is pressed once.
+    const GUARDED = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Guarded</title></head><body>
+      <textarea id="msg" aria-label="Message"></textarea>
+      <div id="rich" contenteditable="true" role="textbox" aria-label="Reply" style="border:1px solid #888;min-height:40px"></div>
+      <form id="login" onsubmit="event.preventDefault()"><input id="pw" type="password" aria-label="Password" value="s3cret-value"><button type="submit">Sign in</button></form>
+      <input id="combo" role="combobox" aria-label="City" aria-controls="cities" aria-activedescendant="c1">
+      <ul id="cities" role="listbox"><li id="c1" role="option">Paris</li><li id="c2" role="option">Rome</li></ul>
+      <button id="send" type="button" aria-label="Send">Send</button>
+      <script>
+        window.sent = 0;
+        // Enter sends, as in many chat boxes; Shift+Enter would start a new line.
+        for (const id of ['msg', 'rich']) document.getElementById(id).addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.keyCode === 13 || e.which === 13) && !e.shiftKey) { e.preventDefault(); window.sent += 1; } });
+        window.comboKeys = 0;
+        document.getElementById('combo').addEventListener('keydown', (e) => { if (e.key === 'ArrowDown') window.comboKeys += 1; });
+        window.sends = 0;
+        document.getElementById('send').addEventListener('keydown', (e) => { if (e.key === ' ') window.sends += 1; });
+      </script></body></html>`;
+    const gd = await open(browser, "https://guarded.example/", GUARDED);
+    await gd.send({ action: "scan", limit: 500, task: "", whole: true });
+    const gdRef = (i) => gd.page.evaluate((x) => Number(window.__selectToAiIdOf(document.getElementById(x))), i);
+    const gdDo = async (action, i, more) => gd.send({ action: "interact", data: { action, ...(i ? { id: await gdRef(i) } : {}), ...more } });
+    await check("a line break typed into a box is a new line, not an Enter key that sends it", async () => {
+      let r = await gdDo("insertText", "msg", { value: "Thanks\nArnav" });
+      assert.equal(r.success, true, r.error);
+      r = await gdDo("insertText", "rich", { value: "Thanks\nArnav" });
+      assert.equal(r.success, true, r.error);
+      r = await gdDo("fill", "msg", { value: "Hi\r\nthere" });
+      assert.equal(r.success, true, r.error);
+      r = await gdDo("fill", "rich", { value: "Hi\nthere" });
+      assert.equal(r.success, true, r.error);
+      assert.equal(await gd.page.evaluate(() => window.sent), 0, "no box was sent");
+      assert.equal(await gd.page.evaluate(() => document.getElementById("rich").innerText.split(/\n+/).filter(Boolean).length), 2);
+    });
+    await check("a secret field is not typed in, selected or read back, by any action", async () => {
+      let r = await gdDo("insertText", "pw", { value: "x" });
+      assert.equal(r.success, false);
+      r = await gdDo("selectText", "pw", { value: "s3cret" });
+      assert.equal(r.success, false);
+      assert.doesNotMatch(JSON.stringify(r), /s3cret/);
+      r = await gdDo("keypress", "pw", { text: "ArrowLeft" });
+      assert.doesNotMatch(JSON.stringify(r), /s3cret/, "a key's result does not read the field");
+      r = await gdDo("keypress", "pw", { text: "x" });
+      assert.equal(r.success, false, "a key that types is not pressed there");
+      // With no ref, the key goes where the focus is: still the secret field.
+      await gd.page.evaluate(() => document.getElementById("pw").focus());
+      r = await gdDo("keypress", null, { text: "Backspace" });
+      assert.equal(r.success, false);
+      assert.doesNotMatch(JSON.stringify(r), /s3cret/);
+      assert.equal(await gd.page.evaluate(() => document.getElementById("pw").value), "s3cret-value");
+    });
+    await check("a key on an option goes to the box that moves through its list", async () => {
+      await gd.page.evaluate(() => document.getElementById("combo").focus());
+      const r = await gdDo("keypress", "c1", { text: "ArrowDown" });
+      assert.equal(r.success, true, r.error);
+      assert.equal(await gd.page.evaluate(() => window.comboKeys), 1);
+    });
+    await check("a key that presses what it lands on, and an approved press, are made once", async () => {
+      await gdDo("keypress", "send", { text: "Space", times: 5 });
+      assert.equal(await gd.page.evaluate(() => window.sends), 1);
+      const before = await gd.page.evaluate(() => window.comboKeys);
+      await gdDo("keypress", "combo", { text: "ArrowDown", times: 4, once: true });
+      assert.equal(await gd.page.evaluate(() => window.comboKeys), before + 1);
+    });
     await check("a plain button does not hold a value", async () => {
       const r = await fill("plain", "x");
       assert.equal(r.success, false);

@@ -3177,16 +3177,19 @@
         }
     }
 
-    /** Enter in a box: the editor's own handler, else a new paragraph (a new line in a text area). */
-    function breakLine(box, shift) {
-        const target = keyTarget(box);
-        const ko = keyInit('Enter', { shiftKey: !!shift });
-        const down = target.dispatchEvent(new KeyboardEvent('keydown', ko));
-        const press = down && target.dispatchEvent(new KeyboardEvent('keypress', { ...ko, charCode: 13 }));
-        const how = down && press ? editOnce(box, target, shift || box.tagName === 'TEXTAREA' ? 'insertLineBreak' : 'insertParagraph') : 'page';
-        target.dispatchEvent(new KeyboardEvent('keyup', ko));
-        return how;
+    /**
+     * A line break in text being typed: a new paragraph (a new line in a
+     * text area), made as an edit, with no Enter key. Many chat and comment
+     * boxes send what is in them on an Enter key, so a key here would send
+     * a message the user asked only to be written. Enter itself is press,
+     * which is judged as Enter (core/policy.js).
+     */
+    function breakLine(box) {
+        return editOnce(box, keyTarget(box), box.tagName === 'TEXTAREA' ? 'insertLineBreak' : 'insertParagraph');
     }
+
+    /** A password, payment, one-time-code or identity field: its text is the user's, never typed, selected or read here. */
+    const secretBox = (box) => !!box && isField(box) && !!sensitiveKind(box);
 
     /**
      * What the browser does with a key in a text box that the page left
@@ -3310,6 +3313,8 @@
     function boxReport(box, id) {
         const said = [];
         const name = id ? `[${id}]` : 'The box';
+        // What is in a secret field never leaves the page.
+        if (secretBox(box)) return `${name} is a field only the user fills in; what it holds is not read.`;
         const lines = boxText(box).split(/\n+/).map((l) => l.trim()).filter(Boolean);
         if (!lines.length) said.push(`${name} is empty now.`);
         else if (lines.length === 1) said.push(`${name} now reads "${clipped(lines[0], 200)}".`);
@@ -3411,7 +3416,7 @@
             if (boxText(el).trim()) editOnce(el, keyTarget(el), 'deleteContentBackward');
             const lines = String(text).split(/\r\n|\r|\n/);
             for (let i = 0; i < lines.length && !cancelRequested; i++) {
-                if (i > 0) { breakLine(el, false); await delay(30); }
+                if (i > 0) { breakLine(el); await delay(30); }
                 if (lines[i]) await typeAtCursor(el, lines[i]);
             }
             el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -3451,6 +3456,9 @@
             if (cancelRequested) break;
             const char = text[i];
             const meta = resolveKeyMeta(char);
+            // A line break goes in as text, with no key: "\r" would be sent
+            // as key code 13, which a chat box takes for Enter and sends.
+            const lineBreak = char === '\n' || char === '\r';
 
             const keyOpts = {
                 ...eventBase,
@@ -3462,7 +3470,7 @@
             };
 
             // keydown
-            el.dispatchEvent(new KeyboardEvent('keydown', keyOpts));
+            if (!lineBreak) el.dispatchEvent(new KeyboardEvent('keydown', keyOpts));
 
             // beforeinput
             el.dispatchEvent(new InputEvent('beforeinput', {
@@ -3494,7 +3502,7 @@
             }));
 
             // keyup
-            el.dispatchEvent(new KeyboardEvent('keyup', { ...keyOpts, charCode: 0 }));
+            if (!lineBreak) el.dispatchEvent(new KeyboardEvent('keyup', { ...keyOpts, charCode: 0 }));
 
             // No pause between characters: every per-key event above still
             // fires in order, which is what frameworks listen for, and a
@@ -4139,9 +4147,9 @@
                             dispatchClickEvents(all[i], {});
                             await delay(120);
                             const now = (el.isConnected ? valueOf(el) : '') || shown();
-                            return { success: true, shows: now, message: `Typed "${value}" into [${id}] and chose "${(all[i].innerText || all[i].textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80)}" from its list.${now ? ` It now shows "${now.slice(0, 80)}".` : ''}` };
+                            return { success: true, freeText: true, shows: now, message: `Typed "${value}" into [${id}] and chose "${(all[i].innerText || all[i].textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80)}" from its list.${now ? ` It now shows "${now.slice(0, 80)}".` : ''}` };
                         }
-                        return { success: true, shows: shown(), choices: labels, message: `Typed "${value}" into [${id}]. It opened a list of choices and none is exactly that: ${namedChoices(all, 6)}. Nothing is chosen yet: click the one you want.` };
+                        return { success: true, freeText: true, shows: shown(), choices: labels, message: `Typed "${value}" into [${id}]. It opened a list of choices and none is exactly that: ${namedChoices(all, 6)}. Nothing is chosen yet: click the one you want.` };
                     };
                     let chosen = value && !shown() ? null : await choose();
                     if (!chosen && value && !shown()) {
@@ -4174,7 +4182,9 @@
                     const noList = value && offersChoices(box) && !isSearchField(box) ? ` It takes its value from a list of choices, and none came up for "${value.slice(0, 60)}": nothing is chosen. Shorter or different words may bring the list up.` : '';
                     // A search box holds the words; nothing has been searched yet.
                     const notRun = value && isSearchField(box) ? ' It is a search box: nothing has been searched yet.' : '';
-                    return { success: true, shows: shown(), message: (box !== el
+                    // What a secret field holds is never said back.
+                    if (secretBox(box) || secretBox(el)) return { success: true, message: `[${id}] is filled in. What it holds is not read back: it is a field only the user should see.` };
+                    return { success: true, shows: shown(), freeText: true, message: (box !== el
                         ? `Typed "${value.slice(0, 80)}". The page moved the cursor to another box${labelOf(box) ? ` ("${labelOf(box).slice(0, 40)}")` : ''}, and the text is there now.`
                         : `[${id}] now shows "${shown().slice(0, 120)}".`) + noList + notRun };
                 }
@@ -4303,13 +4313,15 @@
                 const box = textBoxOf(el);
                 if (!box) return { success: false, error: `[${id}] is not a text box or an editor: there is no text in it to ${action === 'insertText' ? 'type into' : 'select'}.` };
                 if (box.readOnly || box.disabled || box.getAttribute('aria-readonly') === 'true') return { success: false, error: `[${id}] is read-only: it takes no typing.` };
+                if (secretBox(box)) return { success: false, error: `[${id}] is a field only the user fills in (a password, card number or code): its text is not typed, selected or read by the agent.` };
                 const value = String(data.value == null ? '' : data.value);
                 if (action === 'selectText') {
                     if (!value.trim()) return { success: false, error: 'select_text needs value: the words to select, as the box writes them.' };
                     await moveAgentCursorToElement(box, 'Select');
                     const got = await selectWords(box, value);
                     if (!got.found) return { success: false, error: `"${clipped(value, 60)}" is not in [${id}]. ${boxReport(box, id)}` };
-                    return { success: true, message: `Selected "${clipped(got.text, 80)}" in [${id}]${got.count > 1 ? ` (it is there ${got.count} times: this is the one nearest the cursor)` : ''}. ${boxReport(box, id)}` };
+                    const read = boxReport(box, id);
+                    return { success: true, reads: read, freeText: true, message: `Selected "${clipped(got.text, 80)}" in [${id}]${got.count > 1 ? ` (it is there ${got.count} times: this is the one nearest the cursor)` : ''}. ${read}` };
                 }
                 if (box.tagName === 'INPUT' && /[\r\n]/.test(value)) return { success: false, error: `[${id}] is a one-line box: it takes no line breaks. Type the line alone, and press Enter if the box is to be sent.` };
                 await moveAgentCursorToElement(box, 'Type');
@@ -4317,14 +4329,15 @@
                 const placed = await caretInto(box, false);
                 const lines = value.split(/\r\n|\r|\n/);
                 for (let i = 0; i < lines.length && !cancelRequested; i++) {
-                    if (i > 0) { breakLine(box, false); await delay(30); }
+                    if (i > 0) { breakLine(box); await delay(30); }
                     if (lines[i]) await typeAtCursor(box, lines[i]);
                 }
                 if (cancelRequested) return { success: false, error: 'Typing cancelled before completion.' };
                 await delay(60);
                 const where = placed ? ' at the end of its text (the cursor was not in it)' : ' where the cursor was';
                 if (boxText(box) === before) return { success: false, error: `Typed "${clipped(value, 80)}" into [${id}]${where}, but its text did not change: the page did not take the typing. ${boxReport(box, id)}` };
-                return { success: true, message: `Typed "${clipped(value, 80)}" into [${id}]${where}, keeping what was there. ${boxReport(box, id)}` };
+                const read = boxReport(box, id);
+                return { success: true, reads: read, freeText: true, message: `Typed "${clipped(value, 80)}" into [${id}]${where}, keeping what was there. ${read}` };
             }
 
             // ----- clear -----
@@ -4412,7 +4425,12 @@
                 // nothing in particular. Focus that moved elsewhere since is
                 // said, and the key is not pressed.
                 const keyName = String(text || data.key || 'Enter');
-                if (pageLevelKey && Array.isArray(data.landsOn) && /(^|\+)\s*(enter|return|numpadenter|space|spacebar| )$/i.test(keyName)) {
+                // "ctrl+b", "Shift+ArrowLeft", "Mod-z": the key and the keys held with it.
+                const combo = EDIT() ? EDIT().parseKeyCombo(keyName, ON_MAC) : { key: keyName, mods: {} };
+                const key = combo.key;
+                // Enter and Space press what they land on, however they are written ("Ctrl-Enter" too).
+                const activates = /^(enter|return|numpadenter| |space|spacebar)$/i.test(key);
+                if (pageLevelKey && Array.isArray(data.landsOn) && activates) {
                     const focus = deepActive();
                     const nowhere = !focus || focus === document.body || focus === document.documentElement;
                     const judged = data.landsOn.some((n) => elementMap[n] === focus);
@@ -4421,9 +4439,6 @@
                         return { success: false, error: `The focus is on ${known ? `[${known}]` : 'a control that is not listed'}, not where this key was judged to land, so ${keyName} was not pressed. Press it with the ref of the control it is meant for.` };
                     }
                 }
-                // "ctrl+b", "Shift+ArrowLeft", "Mod-z": the key and the keys held with it.
-                const combo = EDIT() ? EDIT().parseKeyCombo(keyName, ON_MAC) : { key: keyName, mods: {} };
-                const key = combo.key;
                 const mods = { ctrlKey: !!(combo.mods.ctrlKey || modifiers.ctrlKey), shiftKey: !!(combo.mods.shiftKey || modifiers.shiftKey), altKey: !!(combo.mods.altKey || modifiers.altKey), metaKey: !!(combo.mods.metaKey || modifiers.metaKey) };
                 const meta = resolveKeyMeta(key);
 
@@ -4452,9 +4467,23 @@
                         if (holds(el, deepActive())) focusField(el);
                         const holder = deepActive();
                         const page = !holder || holder === document.body || holder === document.documentElement;
+                        // A list whose options the focused box moves through
+                        // (aria-activedescendant, or the list it names in
+                        // aria-controls or aria-owns): its keys go to that box.
+                        const steers = !page && holder && holder !== el && !holds(el, holder) && (() => {
+                            const active = holder.getAttribute('aria-activedescendant');
+                            if (active && el.id === active) return true;
+                            const named = `${holder.getAttribute('aria-controls') || ''} ${holder.getAttribute('aria-owns') || ''}`.split(/\s+/).filter(Boolean);
+                            for (let n = el; n && n.nodeType === 1; n = n.parentElement) if (n.id && named.includes(n.id)) return true;
+                            return false;
+                        })();
                         if (holder && !page && holds(holder, el) && holder !== el) {
                             const n = idOf(holder);
                             where = ` (the keyboard focus is on ${n ? `[${n}]` : nameOfDrawn(holder)}, around it)`;
+                        } else if (steers) {
+                            targetEl = holder;
+                            const n = idOf(holder);
+                            where = ` (it went to ${n ? `[${n}]` : nameOfDrawn(holder)}, which has the keyboard focus and moves through [${id}]'s list)`;
                         } else if (!holder || page || !holds(el, holder)) {
                             if (key !== 'Escape') return { success: false, error: `[${id}] cannot take the keyboard focus, so ${keyName} would go to the page as a whole, not to it, and was not pressed. Press it with no ref to send it to the page as a whole, or press it on a control that takes keys${el.tagName === 'IFRAME' ? ' (the controls inside a frame are listed by their own numbers)' : ''}.` };
                             // Escape closes what is open wherever it is pressed.
@@ -4467,14 +4496,24 @@
                     const n = idOf(targetEl);
                     where = targetEl === document.body || targetEl === document.documentElement ? ' on the page as a whole (nothing had the keyboard focus)' : n ? ` in [${n}], which has the keyboard focus` : ` in ${nameOfDrawn(targetEl)}, which has the keyboard focus`;
                 }
+                // A key that would type, delete, paste or cut in a field
+                // only the user fills in is not pressed, wherever it came from.
+                const typingBox = textBoxOf(targetEl) || box;
+                if (secretBox(typingBox)) {
+                    const def = EDIT() ? EDIT().keyDefault(key, mods, ON_MAC) : null;
+                    const edits = (def && (def.kind === 'text' || def.kind === 'delete')) || ((mods.ctrlKey || mods.metaKey) && /^[vx]$/i.test(key)) || (mods.shiftKey && key === 'Insert');
+                    if (edits) return { success: false, error: `The keyboard focus is in a field only the user fills in (a password, card number or code), so ${keyName} was not pressed: the user types there themselves.` };
+                }
                 await moveAgentCursorToElement(targetEl === document.body ? (el || targetEl) : targetEl, `Press ${keyName}`);
 
                 // A real key where one can be sent (the engine's debugger
                 // connection, top page only): the browser then does what
                 // the key does, such as scrolling, moving focus or typing.
-                const count = key === 'Enter' ? 1 : Math.max(1, Math.min(50, Number(data.times) || 1));
+                // A key that presses what it lands on, and any approved press, is made once.
+                const count = activates || data.once ? 1 : Math.max(1, Math.min(50, Number(data.times) || 1));
                 if (window === window.top && await pressRealKey(key, meta, mods, count)) {
-                    return { success: true, real: true, message: `Pressed ${keyName}${count > 1 ? ` ${count} times` : ''}${id ? ` in [${id}]` : ''}${where}.${box && !isField(box) ? ` ${boxReport(box, id)}` : ''}` };
+                    const read = box && !isField(box) ? boxReport(box, id) : '';
+                    return { success: true, real: true, ...(read ? { reads: read, freeText: true } : {}), message: `Pressed ${keyName}${count > 1 ? ` ${count} times` : ''}${id ? ` in [${id}]` : ''}${where}.${read ? ` ${read}` : ''}` };
                 }
 
                 // One press: keydown and keypress to the page, then, when the
@@ -4532,21 +4571,24 @@
                 }
 
                 // The same key again, as a person taps it several times.
-                const times = key === 'Enter' ? 1 : Math.max(1, Math.min(50, Number(data.times) || 1));
+                const times = count;
                 for (let i = 1; i < times && targetEl.isConnected && !cancelRequested; i++) {
                     await delay(25);
                     pressOnce(held);
                 }
 
                 let after = '';
+                let read = '';
                 if (editBox) {
                     await delay(40);
                     const marksNow = selectedInEditor();
-                    after = ` ${boxReport(editBox, id || idOf(editBox))}`;
+                    read = boxReport(editBox, id || idOf(editBox));
+                    after = ` ${read}`;
                     if (marksBefore && marksNow && marksBefore.marks === marksNow.marks && (held.ctrlKey || held.metaKey) && !first.heard && !first.did) after += ' Nothing in it heard the key: the selected words are as they were.';
                 }
                 return {
                     success: true,
+                    ...(read ? { reads: read, freeText: true } : {}),
                     message: `Pressed ${keyName}${times > 1 ? ` ${times} times` : ''}${id ? ` in [${id}]` : ''}${where}.${asHere}${after}`,
                 };
             }

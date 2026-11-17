@@ -81,7 +81,7 @@ test("the listing says a slider's value, a toggle's pressed state, and an editor
   const slider = TOOLS.formatElementLine({ id: 9, tagName: "div", accName: "Rating", role: "slider", value: "4", min: "0", max: "5" });
   assert.equal(slider, '[9] div "Rating" role=slider value="4" min=0 max=5');
   assert.equal(TOOLS.formatElementLine({ id: 3, tagName: "button", accName: "Mute", ariaPressed: "true" }), '[3] button "Mute" pressed=true');
-  assert.equal(TOOLS.formatElementLine({ id: 5, tagName: "sl-switch", accName: "Dark mode", ariaChecked: "false" }), '[5] sl-switch "Dark mode" checked=false');
+  assert.equal(TOOLS.formatElementLine({ id: 5, tagName: "my-switch", accName: "Dark mode", ariaChecked: "false" }), '[5] my-switch "Dark mode" checked=false');
 });
 
 test("what an action read back from the page is evidence the answer may quote", () => {
@@ -91,7 +91,7 @@ test("what an action read back from the page is evidence the answer may quote", 
   RUN.advance(run, { type: "start" }, env);
   RUN.advance(run, { type: "observed", page }, env);
   RUN.advance(run, { type: "model_replied", reply: { memory: "", goal: "Set it", actions: [{ do: "fill", ref: 9, value: "4" }] }, usage: {} }, env);
-  RUN.advance(run, { type: "acted", result: { ok: true, message: "[9] now shows \"4\".", pageChanged: false } }, env);
+  RUN.advance(run, { type: "acted", result: { ok: true, message: "[9] now shows \"4\".", reads: "[9] now shows \"4\"", pageChanged: false } }, env);
   RUN.advance(run, { type: "observed", page }, env);
   RUN.advance(run, { type: "model_replied", reply: { memory: "", goal: "Answer", actions: [{ do: "done", success: true, answer: "It holds 4 stars.", evidence: ["[9] now shows \"4\""] }] }, usage: {} }, env);
   const last = run.history[run.history.length - 1] || run.current;
