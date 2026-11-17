@@ -66,7 +66,9 @@
     }
     // The address points into the page (#fragment): the section it names is
     // what the user or the run went there for, wherever it sits in a long page.
-    const atAnchor = anchorSection(full, page.anchor, 1600);
+    // It takes its room from the budget, leaving the main content its minimum.
+    const anchorRoom = Math.min(1600, budget - used - 600);
+    const atAnchor = anchorRoom >= 200 ? anchorSection(full, page.anchor, anchorRoom) : "";
     if (atAnchor) {
       parts.push(`The part of the page the address points to (#${String(page.url || "").split("#")[1] || ""}):\n${atAnchor}`);
       used += atAnchor.length;

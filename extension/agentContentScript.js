@@ -821,8 +821,26 @@
      * class like "star-rating Three" or "rating-45" that the page's style turns
      * into stars. Controls are left out: they are listed with their names.
      */
-    const RATING_CLASS = /(?:^|[\s_-])(?:rating|ratings|rated|stars?|score)(?:$|[\s_-])/i;
-    const VALUE_TOKEN = /(?:^|[\s_-])(?:\d+|zero|one|two|three|four|five|six|seven|eight|nine|ten|half|full|empty)(?:$|[\s_-])/i;
+    const RATING_WORD = /^(?:rating|ratings|rated|stars?|score)$/i;
+    const VALUE_WORD = /^(?:\d+|zero|one|two|three|four|five|six|seven|eight|nine|ten|half|full|empty)$/i;
+    /**
+     * True when a class list carries a rating's value: a rating word with a
+     * value after it in the same class ("a-star-4-5", "rating-45"), or a
+     * rating class beside a class that is only a value ("star-rating Three").
+     * A value elsewhere ("score-panel mt-2") is layout, not a rating.
+     */
+    function ratingClass(cls) {
+        const tokens = String(cls || '').split(/\s+/).filter(Boolean);
+        const parts = tokens.map((t) => t.split(/[_-]+/));
+        let rated = false;
+        for (const p of parts) {
+            const at = p.findIndex((x) => RATING_WORD.test(x));
+            if (at < 0) continue;
+            rated = true;
+            if (p.slice(at + 1).some((x) => VALUE_WORD.test(x))) return true;
+        }
+        return rated && tokens.some((t) => VALUE_WORD.test(t));
+    }
     function markedMeaning(el) {
         if (!el || el.nodeType !== 1) return '';
         // Controls are listed with their names; pictures and frames are read as media.
@@ -832,7 +850,7 @@
         // Attributes first: they are cheap, and most elements have none of these.
         const said = el.getAttribute('aria-hidden') === 'true' ? '' : (el.getAttribute('aria-label') || el.getAttribute('title') || '').replace(/\s+/g, ' ').trim();
         const cls = (typeof el.className === 'string' ? el.className : (el.getAttribute('class') || '')).replace(/\s+/g, ' ').trim();
-        const byClass = cls && RATING_CLASS.test(cls) && VALUE_TOKEN.test(cls) ? `class "${cls.slice(0, 80)}"` : '';
+        const byClass = cls && ratingClass(cls) ? `class "${cls.slice(0, 80)}"` : '';
         if (!said && !byClass) return '';
         // Only an element with no words of its own: otherwise its words say it.
         if ((el.innerText || el.textContent || '').trim()) return '';
@@ -1019,7 +1037,26 @@
         const inlineText = (el) => seenText(el)
             .replace(/\[\d+\]|\[citation needed\]|\[edit\]/gi, '')
             .replace(/[ \t ]+/g, ' ').replace(/\s*\n\s*/g, ' ').trim();
-        const inlineOrMarked = (el) => { const t = inlineText(el); if (t) return t; const m = markedMeaning(el); return m ? `[${m}]` : ''; };
+        // Elements inside one read as a line that say what they mean only
+        // through attributes: a listing card's empty star-rating paragraph
+        // sits beside its title and price, and inline text never shows it.
+        const marksIn = (el) => {
+            const found = [];
+            if (!el.querySelectorAll) return found;
+            for (const d of el.querySelectorAll('[class], [aria-label], [title]')) {
+                if (found.length >= 8) break;
+                if (found.some((f) => f.el.contains(d))) continue;
+                if (d.closest && d.closest('button, [role="button"]')) continue;
+                const m = markedMeaning(d);
+                if (m && !hidden(d)) found.push({ el: d, m });
+            }
+            return found.map((f) => `[${f.m}]`);
+        };
+        const inlineOrMarked = (el) => {
+            const t = inlineText(el);
+            if (!t) { const m = markedMeaning(el); if (m) return `[${m}]`; }
+            return [t, ...marksIn(el)].filter(Boolean).join(' ');
+        };
         const hidden = (el) => {
             if (el.hidden || boxUnseeable(el)) return true;
             // aria-hidden marks decoration (icons, a price repeated for screen
@@ -1050,11 +1087,16 @@
             if (role === 'navigation' || role === 'banner' || role === 'contentinfo' || role === 'complementary') return;
             if (hidden(el)) return;
             // An element with no words whose attributes carry its meaning (a star rating drawn from a class).
+            // Its content is still read when it has any: pictures inside it,
+            // or a web component's shadow root, which innerText does not see.
             const marked = markedMeaning(el);
-            if (marked) { push(`[${marked}]`); return; }
+            if (marked) {
+                push(`[${marked}]`);
+                if (!el.firstElementChild && !el.shadowRoot) return;
+            }
             if (/^H[1-6]$/.test(tag)) { const t = inlineText(el); if (t) push(`${'#'.repeat(Number(tag[1]))} ${t}`); return; }
             if (tag === 'P' || tag === 'BLOCKQUOTE' || tag === 'FIGCAPTION' || tag === 'DT' || tag === 'DD') {
-                const t = inlineText(el);
+                const t = marked ? '' : inlineOrMarked(el);
                 if (t) push(tag === 'BLOCKQUOTE' ? `> ${t}` : t);
                 el.querySelectorAll('img').forEach((img) => walk(img, depth + 1));
                 return;
@@ -1074,7 +1116,7 @@
                 // page budget and part-by-part reading bound the size, not a row cap.
                 const rows = [...el.rows].slice(0, 400);
                 rows.forEach((r, i) => {
-                    const cells = [...r.cells].map((c) => inlineText(c).slice(0, 600));
+                    const cells = [...r.cells].map((c) => inlineOrMarked(c).slice(0, 600));
                     if (cells.some(Boolean)) push(`| ${cells.join(' | ')} |`);
                     if (i === 0) push(`|${cells.map(() => ' --- ').join('|')}|`);
                 });
@@ -1131,6 +1173,24 @@
         };
         walk(root, 0);
         return { markdown: out.join('\n').replace(/\n{3,}/g, '\n\n'), media };
+    }
+
+    // Parts of a page the Markdown walk leaves out by design (SKIP_TAGS and roles).
+    const WALK_SKIPS = 'nav, footer, [role="navigation"], [role="contentinfo"]';
+
+    /**
+     * The share of the plain reading's words that the Markdown reading
+     * kept, leaving out the words of the parts the walk skips on purpose
+     * (`skipped`, their text). Asides are not left out: a page may put real
+     * content in one, and then the plain reading should win.
+     */
+    function keptShare(markdown, plain, skipped) {
+        let yard = String(plain || '');
+        for (const chunk of skipped || []) if (chunk && chunk.length > 20) yard = yard.split(chunk).join('\n');
+        const wordsOf = (s) => String(s).toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) || [];
+        const mdWords = new Set(wordsOf(markdown));
+        const plainWords = wordsOf(yard);
+        return plainWords.length ? plainWords.filter((w) => mdWords.has(w)).length / plainWords.length : 1;
     }
 
     function extractPageContent() {
@@ -1190,11 +1250,12 @@
         // Markdown when it kept the page's words; plain text when a site's
         // markup hides content from the walk. Judged by words kept, not by
         // length: a structured version missing every price is not "long enough".
-        const wordsOf = (s) => String(s).toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) || [];
-        const mdWords = new Set(wordsOf(md.markdown));
-        const plainWords = wordsOf(text);
-        const kept = plainWords.length ? plainWords.filter((w) => mdWords.has(w)).length / plainWords.length : 1;
-        const useMarkdown = md.markdown.length > 0 && kept >= 0.85;
+        // Menus and the footer are left out of the walk on purpose, so their
+        // words are not counted against it: a guessed main area that wraps
+        // the whole page (caniuse's div#main) would otherwise lose the walk
+        // to a plain reading that is mostly menu and footer.
+        const skipped = [...(mainEl || document.body).querySelectorAll(WALK_SKIPS)].map((b) => tidyText(b.innerText || ''));
+        const useMarkdown = md.markdown.length > 0 && keptShare(md.markdown, text, skipped) >= 0.85;
         const forms = document.querySelectorAll('form, input:not([type="hidden"]), textarea, select').length;
         return {
             text: (useMarkdown ? md.markdown : text).slice(0, PAGE_TEXT_LIMIT),
