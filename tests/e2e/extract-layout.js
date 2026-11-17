@@ -45,7 +45,7 @@ const HTML = `<!doctype html><html><body>
   <div class="carousel"><div class="slide">Council approves the new cross-island tram line today</div><div class="slide" aria-hidden="true">Harbour festival returns after five years with fireworks</div><div class="slide clone" aria-hidden="true">Council approves the new cross-island tram line today</div></div>
   <pre>${Array.from({ length: 120 }, (_, i) => `line ${i + 1} of a long plain-text readme`).join("\n")}</pre>
   <ol class="row"><li class="col-xs-6"><article class="product_pod"><div class="image_container"><a href="/b1"><img alt="A Light in the Attic" width="60" height="90"></a></div><p class="star-rating Three"><i class="icon-star"></i><i class="icon-star"></i><i class="icon-star"></i></p><h3><a href="/b1">A Light in the Attic</a></h3><div class="product_price"><p class="price_color">£51.77</p><p class="instock availability">In stock</p></div></article></li></ol>
-  <div aria-label="Product images"><img alt="Front cover of the guide" width="200" height="200" style="width:200px;height:200px"></div>
+  <div aria-label="Product images"><img alt="Front cover of the guide" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Crect width='200' height='200' fill='%23468'/%3E%3C/svg%3E" width="200" height="200"></div>
   <table><tr><th>Feature</th><th>Starter</th></tr>${Array.from({ length: 60 }, (_, i) => `<tr><td>Feature ${i + 1}</td><td>Included</td></tr>`).join("")}</table>
 </main>
 <footer>Footer links and copyright</footer>
