@@ -1039,7 +1039,8 @@
     if (a.do === "done") return onDone(run, a, page, env, fx);
     if (a.do === "ask_user") {
       const question = a.kind !== "question" && POLICY.HANDOVER[a.kind] && !a.question ? POLICY.HANDOVER[a.kind] : a.question;
-      return waitFor(run, fx, env, { kind: a.kind, question, action: a });
+      // A control the user is asked to press themselves is marked on the page for them.
+      return waitFor(run, fx, env, { kind: a.kind, question, action: a, ...(a.kind === "press" && a.ref !== undefined ? { press: a.ref } : {}) });
     }
     if (a.do === "remember") return onRemember(run, a, page, env, fx);
     if (a.do === "delegate") return onDelegate(run, a, page, env, fx);
@@ -1104,7 +1105,8 @@
       return waitFor(run, fx, env, { kind: "approval", risk: verdict.kind, question: verdict.why, detail: [...(verdict.detail || []), run.current && run.current.goal && verdict.kind !== "share" ? `Why: ${run.current.goal}` : ""].filter(Boolean), action: act, confirm: verdict });
     }
     log(run, "executor", "Action", STEP.describe(act));
-    fx.push({ type: "act", action: act });
+    // A click the page shows no answer to may be made with Enter or Space there, where those are allowed as the click was.
+    fx.push({ type: "act", action: act, ...(POLICY.keysToo(act, page, run, env.settings, store, env.extras && env.extras.tabs) ? { keys: true } : {}) });
     return fx;
   }
 

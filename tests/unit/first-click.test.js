@@ -26,6 +26,8 @@ async function connectedWelcome(extra = {}) {
   });
   await settle(6);
   page.$("connectOR").click();
+  // Signing in hashes a value off the main thread, which takes its own time: waited for, within two seconds.
+  for (const until = Date.now() + 2000; !page.visible("done") && Date.now() < until;) await settle(10);
   await settle(40);
   assert.deepEqual(page.errors, []);
   assert.equal(page.visible("done"), true, "the page reached its first-task list");

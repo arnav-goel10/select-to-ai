@@ -174,6 +174,7 @@ async function main() {
     const restartWorker = () => worker.evaluate(() => self.SELECT_TO_AI_ENGINE.wake().then(() => true));
 
     const checkInMinutes = (v) => worker.evaluate((m) => new Promise((r) => (m === null ? chrome.storage.sync.remove("agentCheckInMinutes", r) : chrome.storage.sync.set({ agentCheckInMinutes: m }, r))), v);
+    const mainModel = (name) => worker.evaluate((v) => new Promise((r) => chrome.storage.sync.set({ agentModel: v }, r)), name);
     const helperModel = (name) => worker.evaluate((v) => new Promise((r) => chrome.storage.sync.set({ agentHelperModel: v }, r)), name);
     const learning = (on) => worker.evaluate((v) => new Promise((r) => chrome.storage.sync.set({ agentLearning: v }, r)), on);
     const allowOnly = (v) => worker.evaluate((list) => new Promise((r) => chrome.storage.sync.set({ agentDomainAllowlist: list }, () => r(true))), v);
@@ -706,6 +707,167 @@ async function main() {
         if (!/\[\d+\] is covered: a div with no words is drawn over it/.test(r.log)) return `the press on the covered button was not reported as covered: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
         return pointers(r, ["real", "real"]);
       }],
+      // Input made by script (the build has no debugger). The first press is
+      // the pointer events of a click; a page that does not answer them is
+      // pressed the next way before the result is given, once, and the
+      // result says which way it took. With a real pointer each of these
+      // pages simply takes the press.
+      ["pressKeyboard", "/press-keys", async () => false, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ state: document.getElementById("state").textContent, saves: window.saves }));
+        if (at.saves !== 1) return `the settings were saved ${at.saves} times, not once (${at.state}): ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (r.actions.filter((a) => a.do === "click").length !== 1) return `the model had to press more than once: ${JSON.stringify(r.actions.map((a) => a.do))}`;
+        const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
+        if (press.pointer === "real") return /Saved with the mouse/.test(at.state) ? null : `a real press left "${at.state}"`;
+        if (at.state !== "Saved with the keyboard") return `state: ${at.state}`;
+        return /No change was seen after pointer events on it\. It was then pressed with the Enter key with the focus on it, and the page changed/.test(press.outcome) ? null : `the result did not name the way that worked: ${JSON.stringify(press.outcome)}`;
+      }],
+      // A control that took the click and showed it only out of sight of the
+      // page's elements (a field's value set from code; a change inside a
+      // component's own shadow root) is pressed once: no other way is tried
+      // on top, and the result says what was seen.
+      ["pressSilent", "/press-silent", async () => false, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ qty: document.getElementById("qty").value, steps: window.steps }));
+        const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
+        if (at.steps !== 1 || at.qty !== "2") return `the control acted ${at.steps} times and the box holds ${at.qty}, not once and 2: ${JSON.stringify(press && press.outcome)} ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (r.actions.filter((a) => a.do === "click").length !== 1) return `the model pressed more than once: ${JSON.stringify(r.actions.map((a) => a.do))}`;
+        if (/ways tried|then pressed with/.test(press.outcome)) return `another way was tried on top: ${JSON.stringify(press.outcome)}`;
+        if (/Nothing on the page changed/.test(press.outcome)) return `the result said nothing changed: ${JSON.stringify(press.outcome)}`;
+        return /A field on the page holds a different value after it\./.test(press.outcome) ? null : `the result did not say a field's value changed: ${JSON.stringify(press.outcome)}`;
+      }],
+      ["shadowSilent", "/shadow-silent", async () => false, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ wishes: window.wishes, shown: document.getElementById("card").shadowRoot.getElementById("n").textContent }));
+        const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
+        if (at.wishes !== 1 || at.shown !== "In wishlist: 1") return `the control acted ${at.wishes} times (${at.shown}), not once: ${JSON.stringify(press && press.outcome)} ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (r.actions.filter((a) => a.do === "click").length !== 1) return `the model pressed more than once: ${JSON.stringify(r.actions.map((a) => a.do))}`;
+        if (/ways tried|then pressed with/.test(press.outcome)) return `another way was tried on top: ${JSON.stringify(press.outcome)}`;
+        return /Nothing on the page changed|No change was seen/.test(press.outcome) ? `the change inside the shadow root was not seen: ${JSON.stringify(press.outcome)}` : null;
+      }],
+      // A press the user approved is made once: no key follows it, though the page shows nothing after it.
+      ["pressOnce", "/press-once", approve, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ subs: window.subs, keys: window.keys }));
+        if (r.seen.confirms !== 1) return `${r.seen.confirms} approvals were asked for, not 1: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (at.subs !== 1 || at.keys !== 0) return `after one approved press the button counted ${at.subs} clicks and ${at.keys} keys: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (r.actions.filter((a) => a.do === "click").length !== 1) return `the approved press was repeated: ${JSON.stringify(r.actions.map((a) => a.do))}`;
+        const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
+        return /ways tried|then pressed with/.test(press.outcome) ? `another way was tried on top of an approved press: ${JSON.stringify(press.outcome)}` : null;
+      }],
+      // A dead control the keyboard cannot reach: no key can follow the
+      // click, and the click that was made is reported as made, with the
+      // plain line that nothing changed, never as a failure.
+      ["pressPlain", "/press-plain", async () => false, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ clicks: window.clicks, keys: window.keys }));
+        const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
+        if (!press) return `no click was made: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (press.ok === false || /Cannot read|did not work/.test(press.outcome)) return `the press that was made came back as a failure: ${JSON.stringify(press.outcome)}`;
+        if (at.clicks !== 1 || at.keys !== 0) return `the control counted ${at.clicks} clicks and ${at.keys} keys, not 1 and 0: ${JSON.stringify(press.outcome)}`;
+        if (r.actions.filter((a) => a.do === "click").length !== 1) return `the model pressed more than once: ${JSON.stringify(r.actions.map((a) => a.do))}`;
+        if (/ways tried|then pressed with/.test(press.outcome)) return `a way was named that cannot be used on it: ${JSON.stringify(press.outcome)}`;
+        return /^Clicked/.test(press.outcome) && /Nothing on the page changed|No change was seen on the page/.test(press.outcome) ? null : `the result was not the plain line that nothing changed: ${JSON.stringify(press.outcome)}`;
+      }],
+      // A control that acts on a press after a timer of its own, and takes
+      // Enter and Space too: it is watched long enough to see that, and is
+      // pressed once.
+      ["pressLate", "/press-late", async () => false, async (r) => {
+        // Past every timer a press could have started.
+        await new Promise((res) => setTimeout(res, 2500));
+        const at = await r.fixture.evaluate(() => ({ sends: window.sends, state: document.getElementById("state").textContent }));
+        const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
+        if (at.sends !== 1 || at.state !== "Stock counted 1 time") return `the stock was counted ${at.sends} times (${at.state}), not once: ${JSON.stringify(press && press.outcome)} ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (r.actions.filter((a) => a.do === "click").length !== 1) return `the model pressed more than once: ${JSON.stringify(r.actions.map((a) => a.do))}`;
+        if (/ways tried|then pressed with/.test(press.outcome)) return `another way was tried on top: ${JSON.stringify(press.outcome)}`;
+        if (press.pointer === "real") return null;
+        return /Nothing on the page changed|No change was seen/.test(press.outcome) ? `the late change was not seen: ${JSON.stringify(press.outcome)}` : null;
+      }],
+      // A press that scrolled a box inside the page, and one that asked the
+      // server through a fetch the page kept from before its requests were
+      // counted: each is an answer, and neither is pressed a second way.
+      ["pressScroll", "/press-scroll", async () => false, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ moves: window.moves, top: document.getElementById("box").scrollTop }));
+        const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
+        if (at.moves !== 1 || at.top !== 200) return `the box was moved ${at.moves} times to ${at.top}, not once to 200: ${JSON.stringify(press && press.outcome)} ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (r.actions.filter((a) => a.do === "click").length !== 1) return `the model pressed more than once: ${JSON.stringify(r.actions.map((a) => a.do))}`;
+        return /ways tried|then pressed with/.test(press.outcome) ? `another way was tried on top: ${JSON.stringify(press.outcome)}` : null;
+      }],
+      ["pressKept", "/press-kept", async () => false, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ reports: window.reports }));
+        const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
+        if (at.reports !== 1) return `the feed was asked for ${at.reports} times, not once: ${JSON.stringify(press && press.outcome)} ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (r.actions.filter((a) => a.do === "click").length !== 1) return `the model pressed more than once: ${JSON.stringify(r.actions.map((a) => a.do))}`;
+        if (/ways tried|then pressed with/.test(press.outcome)) return `another way was tried on top: ${JSON.stringify(press.outcome)}`;
+        if (/no request from it was seen/.test(press.outcome)) return `the result said no request was seen, though one was made: ${JSON.stringify(press.outcome)}`;
+        return null;
+      }],
+      // A control that takes no scripted press at all: the result says so, the
+      // model hands that one press to the user, and the run goes on after it.
+      ["pressUser", "/press-real", async ({ card, fixture, seen }) => {
+        if (!card || card.kind !== "press") return false;
+        seen.banner = !!(await until(() => hasBanner(fixture), 4000));
+        seen.marked = await fixture.evaluate(() => { const b = document.querySelector("[data-select-to-ai-press]"); return b ? b.id : ""; });
+        seen.before = await fixture.evaluate(() => ({ state: document.getElementById("state").textContent, scripted: window.scripted }));
+        await fixture.bringToFront();
+        await fixture.click("#real");
+        return true;
+      }, async (r) => {
+        const state = await r.fixture.evaluate(() => document.getElementById("state").textContent);
+        const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
+        if (press && press.pointer === "real") return state === "Downloads unlocked" ? null : `a real press left "${state}"`;
+        if (!r.seen.cards.some((c) => c.kind === "press")) return `the user was never asked to press it: ${String(r.log).replace(/\s+/g, " ").slice(0, 700)}`;
+        if (!/No change was seen after a press made by script in any of the ways tried: pointer events, the Enter key with the focus on it, the Space key with the focus on it\. It may have nothing to do here/.test(press.outcome) || /ignores scripted input/.test(press.outcome)) return `the result did not say that no change was seen in any way tried: ${JSON.stringify(press.outcome)}`;
+        if (!r.seen.banner || r.seen.marked !== "real") return `the page did not show the user what to press: banner ${r.seen.banner}, marked "${r.seen.marked}"`;
+        // One scripted click reached the page, the pointer's, and it was ignored: the control's own click is not called on top.
+        if (r.seen.before.state !== "Downloads locked" || r.seen.before.scripted !== 1) return `before the user's press: ${JSON.stringify(r.seen.before)}`;
+        if (r.actions.filter((a) => a.do === "click").length !== 1) return `the dead press was repeated: ${JSON.stringify(r.actions.map((a) => a.do))}`;
+        if (state !== "Downloads unlocked") return `state: ${state}`;
+        return /Downloads are unlocked/.test(r.answer) ? null : `answer: ${JSON.stringify(r.answer)}`;
+      }],
+      // A click made by script crosses a shadow boundary, as a mouse's does: the first way is enough.
+      ["shadowClick", "/shadow-click", async () => false, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ state: document.getElementById("state").textContent, adds: window.adds }));
+        if (at.adds !== 1 || at.state !== "Added to basket") return `added ${at.adds} times (${at.state}): ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
+        return /ways tried|then pressed with|No change was seen after pointer events/.test(press.outcome) ? `the pointer's click did not reach the page's listener: ${JSON.stringify(press.outcome)}` : null;
+      }],
+      // A press the page cancels (an editor's toolbar) leaves the cursor where it was.
+      ["toolbar", "/toolbar", async () => false, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ state: document.getElementById("state").textContent, title: document.getElementById("title").value }));
+        return at.state === "Title in upper case" && at.title === "SHOPPING LIST" ? null : `${JSON.stringify(at)}: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+      }],
+      // A menu only the real mouse opens: said once, as a fact, and the hover is not repeated.
+      ["hoverScripted", "/pointer-menu", async () => false, async (r) => {
+        const state = await r.fixture.evaluate(() => document.getElementById("state").textContent);
+        if (state === "Pricing chosen") return null;
+        const hovers = r.actions.filter((a) => a.do === "hover").length;
+        if (hovers !== 1) return `the hover was tried ${hovers} times: ${JSON.stringify(r.actions.map((a) => a.do))}`;
+        if (!/Nothing came up under the pointer made by script, or with the focus on it\. What opens only under the real mouse cannot be opened by script\./.test(r.log)) return `the hover's result did not say why nothing came up: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        return /opens only under the real mouse/.test(r.answer) ? null : `answer: ${JSON.stringify(r.answer)}`;
+      }],
+      // The model is told, once, that its input is scripted, in a build where it is.
+      ["search", "/search", async () => false, async (r) => {
+        if (!r.answer.includes("$19")) return `answer: ${JSON.stringify(r.answer)}`;
+        const real = await worker.evaluate(() => !!chrome.debugger) && process.env.E2E_DEBUGGER !== "off";
+        const told = r.prompts.filter((p) => /your pointer and your keys are made by script/.test(p)).length;
+        if (real) return told ? "the model was told its input is scripted in a build with the real pointer" : null;
+        return told === r.prompts.filter((p) => /You are Select to AI/.test(p) && /# How a step works/.test(p)).length && told > 0 ? null : `${told} of the step prompts said the input is scripted`;
+      }, "scriptedFact"],
+      // A picture of the page with one site granted. Chrome gives one only
+      // with access to every address or on a tab the user opened the
+      // extension on, so the look is either a picture or a stated reason,
+      // never a failure with nothing said. The line printed says which.
+      ["lookPerSite", "/chart", async () => false, async (r) => {
+        await mainModel("e2e-scripted-model");
+        const notes = await r.agent.evaluate(() => [...document.querySelectorAll(".chat-note")].map((n) => n.textContent)).catch(() => []);
+        await r.agent.close().catch(() => {});
+        const looked = (r.trace.history || []).find((h) => /^look/.test(h.action));
+        if (!looked) return `look was never run: ${JSON.stringify(r.answer)} ${JSON.stringify((r.trace.history || []).map((h) => h.action))}`;
+        const pictured = /I looked at the chart/.test(r.answer);
+        console.log(`      pictures with one site granted: ${pictured ? "taken" : `not taken. ${looked.outcome}`}`);
+        if (pictured) return null;
+        if (!/^A picture of this tab could not be taken\. \S/.test(looked.outcome)) return `the look failed with no reason given: ${JSON.stringify(looked.outcome)}`;
+        // In the build without the debugger the one reason there can be is the browser's rule on pictures: any other is a failure.
+        if (!/The browser refused: it gives an extension a picture of a tab only with access to every address/.test(looked.outcome)) return process.env.E2E_DEBUGGER === "off" ? `the picture was refused for another reason than the browser's rule on pictures: ${JSON.stringify(looked.outcome)}` : null;
+        if (!r.prompts.some((p) => /- No picture of the page can be taken on this tab\. The browser refused/.test(p))) return "the model was not told, as a fact, that no picture can be taken on this tab";
+        return notes.some((n) => /Chrome did not let the agent take a picture of this page/.test(n)) ? null : `the user was not told: ${JSON.stringify(notes)}`;
+      }, "lookPerSite", { before: () => mainModel("e2e-vision-model"), keepOpen: true }],
       ["pointerRisk", "/pointer-risk", decline, async (r) => {
         const at = await r.fixture.evaluate(() => ({ deleted: !!window.deleted, binned: !!window.binned }));
         if (at.deleted || at.binned) return `something was deleted: ${JSON.stringify(at)}`;

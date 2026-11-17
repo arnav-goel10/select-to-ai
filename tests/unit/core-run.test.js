@@ -169,7 +169,7 @@ test("a step goes on after a change in place when its next control is still what
   let fx = reply(run, page, [{ do: "click", ref: 3 }, { do: "click", ref: 1 }, { do: "click", ref: 3 }]);
   // Looked at again, the next control is there under the same words: the step goes on.
   fx = RUN.advance(run, { type: "acted", result: { ok: true, message: "Clicked.", pageChanged: true, soft: true, rescanned: true } }, env(page));
-  assert.deepEqual(fx, [{ type: "act", action: { do: "click", ref: 1 } }]);
+  assert.deepEqual(fx, [{ type: "act", action: { do: "click", ref: 1 }, keys: true }]);
   // The control now reads differently: the step ends there.
   const changed = { ...page, elements: page.elements.map((el) => (el.id === 3 ? { ...el, text: "Something else entirely", accName: "", label: "" } : el)) };
   fx = RUN.advance(run, { type: "acted", result: { ok: true, message: "Clicked.", pageChanged: true, soft: true, rescanned: true } }, env(changed));
@@ -1033,7 +1033,7 @@ test("a one-box form the second opinion says asks runs with no wait, and the log
   assert.ok(!`${fx[0].system}\n${fx[0].user}`.includes("Ignore the user"), "no page text");
   assert.ok(!`${fx[0].system}\n${fx[0].user}`.includes("Calculator."), "no page text");
   fx = opinion(run, page, { sends: false, why: "It asks for a calculation." });
-  assert.deepEqual(fx, [{ type: "act", action: { do: "click", ref: 2 } }]);
+  assert.deepEqual(fx, [{ type: "act", action: { do: "click", ref: 2 }, keys: true }]);
   assert.equal(run.status, "running");
   const held = run.journal.filter((j) => j.title === "Not Held");
   assert.equal(held.length, 1);
@@ -1096,7 +1096,7 @@ test("choosing a configuration whose name says Buy is judged by what it means: t
   assert.match(fx[0].user, /The control: "13-inch model Ultra display Buy from \$1499/);
   assert.match(fx[0].user, /What kind of control it is, from the page's structure: a radio button, one of a set of choices\./);
   fx = opinion(run, page, { does: "nothing", why: "It chooses a size." });
-  assert.deepEqual(fx, [{ type: "act", action: { do: "click", ref: 21 } }]);
+  assert.deepEqual(fx, [{ type: "act", action: { do: "click", ref: 21 }, keys: true }]);
   assert.equal(run.status, "running");
 });
 
@@ -1131,7 +1131,7 @@ test("a verdict is kept for the run: the same box is not judged again on the nex
   acted(run, page, { pageChanged: true });
   look(run, page);
   fx = reply(run, page, [{ do: "click", ref: 2 }]);
-  assert.deepEqual(fx, [{ type: "act", action: { do: "click", ref: 2 } }], "no second call");
+  assert.deepEqual(fx, [{ type: "act", action: { do: "click", ref: 2 }, keys: true }], "no second call");
   // A "sends" verdict is kept as well: the next press waits for the user straight away.
   const other = calc();
   const second = begin("post it", other).run;
@@ -1158,7 +1158,7 @@ test("with confirmations off, nothing is asked and nothing waits", () => {
     RUN.advance(run, { type: "start" }, env(page, off));
     RUN.advance(run, { type: "observed", page }, env(page, off));
     const fx = RUN.advance(run, { type: "model_replied", reply: { memory: "", goal: "g", actions: [{ do: "click", ref: 2 }] }, usage: {} }, env(page, off));
-    assert.deepEqual(fx, [{ type: "act", action: { do: "click", ref: 2 } }]);
+    assert.deepEqual(fx, [{ type: "act", action: { do: "click", ref: 2 }, keys: true }]);
   }
 });
 
@@ -1185,7 +1185,7 @@ test("a button the second opinion clears runs with no wait", () => {
   const { run } = begin("show the options", page);
   reply(run, page, [{ do: "click", ref: 2 }]);
   const fx = opinion(run, page, { does: "nothing", why: "It opens a menu." });
-  assert.deepEqual(fx, [{ type: "act", action: { do: "click", ref: 2 } }]);
+  assert.deepEqual(fx, [{ type: "act", action: { do: "click", ref: 2 }, keys: true }]);
   assert.equal(run.status, "running");
 });
 
@@ -1217,7 +1217,7 @@ test("plain navigation costs no second opinion: links and plain buttons go strai
   const { run } = begin("browse", page);
   for (const ref of [1, 2, 3, 4]) {
     const fx = reply(run, page, [{ do: "click", ref }]);
-    assert.deepEqual(fx, [{ type: "act", action: { do: "click", ref } }], `ref ${ref}`);
+    assert.deepEqual(fx, [{ type: "act", action: { do: "click", ref }, keys: true }], `ref ${ref}`);
     acted(run, page, { pageChanged: true });
     look(run, page);
   }
@@ -1232,7 +1232,7 @@ test("a press verdict is kept per site and label; after two misses the run stops
   opinion(run, page, { does: "nothing", why: "Moves on." });
   acted(run, page, { pageChanged: true });
   look(run, page);
-  assert.deepEqual(reply(run, page, [{ do: "click", ref: 2 }]), [{ type: "act", action: { do: "click", ref: 2 } }], "Weiter is not asked about again");
+  assert.deepEqual(reply(run, page, [{ do: "click", ref: 2 }]), [{ type: "act", action: { do: "click", ref: 2 }, keys: true }], "Weiter is not asked about again");
   acted(run, page, { pageChanged: true });
   look(run, page);
   // First miss: held for the user; declined, the run goes on.
@@ -1259,7 +1259,7 @@ test("a press verdict is kept per site and label; after two misses the run stops
   RUN.advance(run, { type: "declined", id: run.wait.id }, env(later));
   // A button the rules read is still pressed with no call.
   look(run, later);
-  assert.deepEqual(reply(run, later, [{ do: "click", ref: 6 }]), [{ type: "act", action: { do: "click", ref: 6 } }]);
+  assert.deepEqual(reply(run, later, [{ do: "click", ref: 6 }]), [{ type: "act", action: { do: "click", ref: 6 }, keys: true }]);
 });
 
 test("a request to fill in but not send holds the submit, whatever the settings", () => {
@@ -1287,6 +1287,38 @@ test("a request to fill in but not send holds the submit, whatever the settings"
     fx = RUN.advance(run, { type: "model_replied", reply: { memory: "", goal: "g", actions: [{ do: "press", key: "Enter", ref: 4 }] }, usage: {} }, env(page, { settings }));
     assert.equal(fx[0].type, "act");
   }
+});
+
+test("a click may be made with Enter or Space too only where those keys are allowed there as the click was", () => {
+  const page = shop({
+    elements: [
+      { id: 1, tagName: "input", accName: "Name", formId: 0 },
+      { id: 2, tagName: "button", accName: "Show more" },
+      { id: 3, tagName: "div", accName: "Pick a date", formId: 0 },
+      { id: 4, tagName: "div", role: "button", accName: "Open the calendar", formId: 0 },
+      { id: 5, tagName: "div", accName: "Show the map" },
+    ],
+    forms: [{ id: 0, search: false, fields: 2 }],
+  });
+  const start = (task, settings) => {
+    const run = RUN.newRun({ id: "rk", task, tabId: 7, startUrl: page.url, marker: "PAGE-abcd1234", now: 1 });
+    RUN.advance(run, { type: "start" }, env(page, { settings }));
+    RUN.advance(run, { type: "observed", page }, env(page, { settings }));
+    return run;
+  };
+  const click = (run, ref, settings) => RUN.advance(run, { type: "model_replied", reply: { memory: "", goal: "g", actions: [{ do: "click", ref }] }, usage: {} }, env(page, { settings }));
+  const settings = { riskConfirmation: true };
+  // A key on a button is the click again, and a key on a plain control outside any form sends nothing.
+  for (const ref of [2, 4, 5]) assert.deepEqual(click(start("show me more of the page", settings), ref, settings), [{ type: "act", action: { do: "click", ref }, keys: true }], `ref ${ref}`);
+  // The user said not to send: a click on a plain control in the form is allowed, but Enter there is Enter in the form, so no key follows it.
+  const held = start("fill in the contact form with my name but don't submit it", settings);
+  assert.deepEqual(click(held, 3, settings), [{ type: "act", action: { do: "click", ref: 3 } }]);
+  assert.equal(POLICY.keysToo({ do: "click", ref: 3 }, page, held, settings, null), false);
+  assert.equal(POLICY.keysToo({ do: "click", ref: 5 }, page, held, settings, null), true);
+  // A press the user approved is made once, and a key with no control named is not a click.
+  assert.equal(POLICY.keysToo({ do: "click", ref: 2, approved: "Show more" }, page, held, settings, null), false);
+  assert.equal(POLICY.keysToo({ do: "press", key: "Enter", ref: 2 }, page, held, settings, null), false);
+  assert.equal(POLICY.keysToo({ do: "hover", ref: 2 }, page, held, settings, null), false);
 });
 
 // ------------------------------------------------- how a run stops, and waits

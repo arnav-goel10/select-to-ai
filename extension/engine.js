@@ -419,7 +419,7 @@
     const back = (event) => deliver(session, { ...event, token });
     if (fx.type === "observe") observe(session, fx, back).catch((e) => back({ type: "model_failed", kind: "page", message: `The page could not be read: ${e && e.message ? e.message : e}` })).finally(() => timed("observe"));
     else if (fx.type === "model") model(session, fx, back).finally(() => timed("model"));
-    else if (fx.type === "act") toFront(session, fx.action).then(() => (RECIPES ? RECIPES.around(session, fx.action, () => act(session, fx.action)) : act(session, fx.action))).then(settledFor).then(pointed).then((result) => lookAgain(session, result, back)).then((result) => back({ type: "acted", result }), (e) => back({ type: "acted", result: { ok: false, message: String((e && e.message) || e) } })).finally(() => timed("act"));
+    else if (fx.type === "act") toFront(session, fx.action).then(() => (RECIPES ? RECIPES.around(session, fx.action, () => act(session, fx.action, fx.keys === true)) : act(session, fx.action, fx.keys === true))).then(settledFor).then(pointed).then((result) => lookAgain(session, result, back)).then((result) => back({ type: "acted", result }), (e) => back({ type: "acted", result: { ok: false, message: String((e && e.message) || e) } })).finally(() => timed("act"));
     else if (fx.type === "attention") attention(rootOf(session), fx.wait, !!fx.again).catch((e) => console.error("Select to AI attention:", e));
     else if (fx.type === "memory") changeMemory(fx).catch((e) => console.error("Select to AI memory:", e));
     else if (fx.type === "end") finished(session);
@@ -540,6 +540,9 @@
     });
   }
 
+  /** Starts the count of a page's own requests, in the page's world. It runs at once: there is nothing in the page it waits for. */
+  const countRequests = (tabId, name) => (INJECT.NET_EVENT.test(String(name || "")) ? INJECT.injectNow(chrome, { tabId }, { world: "MAIN", func: INJECT.netShim, args: [name] }) : Promise.resolve(null));
+
   /** A page that cannot be read still has an address and a title, and can be left. */
   const unreadable = (tab, why) => ({ url: tab.url || "", title: tab.title || "", elements: [], innerText: `[${why}]`, visibleText: "", protectedPage: true });
 
@@ -583,6 +586,10 @@
     // (agentPressables: "off" leaves them out, for measuring with and without.)
     if (!near && !(session.items && session.items.agentPressables === "off") && await pressables(tab.id)) res = (await send(tab.id, request)) || res;
     if (!Array.isArray(res.elements)) res.elements = [];
+    // With no debugger connection to show the tab's requests, the page's own
+    // world is asked to count them (core/inject.js), so the wait after an
+    // action can tell a page still waiting for an answer from a finished one.
+    if (!res.netView && !nets.has(tab.id)) countRequests(tab.id, res.netEvent);
     session.frames = [];
     if (!near && res.frames) { try { await readFrames(session, tab, res); } catch (_e) { session.frames = []; } }
     return res;
@@ -677,6 +684,11 @@
     // front is a fact the model is told (core/context.js).
     if (page.inBackground) page.behind = session.parent ? "subtask" : (await followed(session, tab)) ? "follow" : "user";
     session.page = page;
+    // Whether the pointer and keys are made by script here: said to the model once (core/context.js).
+    // With a debugger that a tab refused, the last pointer action says how it was made.
+    session.extras.scripted = !chrome.debugger || debuggerDisabled || !!(session.pointerWas && session.pointerWas.run === run.id && session.pointerWas.how === "synthetic");
+    // A picture the browser refused on this tab, in this run (act, look).
+    session.extras.noPictures = session.noPictures && session.noPictures.run === run.id && session.noPictures.tabId === tab.id ? session.noPictures.why : "";
     session.extras.tabs = await tabList(tab.windowId, tab.id, session.parent ? run.openedTabs : null);
     back(moved ? { type: "observed", page, moved } : { type: "observed", page });
   }
@@ -848,19 +860,8 @@
   /** The model is told when the page was still loading as the wait ended. */
   const loadingNote = (waited, ms) => (waited && waited.loading ? ` ${TOOLS.stillLoadingNote(ms, waited.signs)}` : "");
 
-  /** What the page did, in words, from what was measured before and after. */
-  function effectOf(o) {
-    if (!o) return "";
-    const said = [];
-    if (o.urlChanged) said.push("The page address changed.");
-    else if (o.titleChanged) said.push("The page title changed.");
-    if (o.newElementCount > 0) said.push(`${o.newElementCount} more control${o.newElementCount === 1 ? "" : "s"} on the page.`);
-    if (o.newElementCount < 0) said.push(`${-o.newElementCount} fewer control${o.newElementCount === -1 ? "" : "s"} on the page.`);
-    if (!said.length && o.domMutationCount > 0) said.push("The page updated.");
-    if (!said.length && o.scrollChanged) said.push("The page scrolled.");
-    if (o.noEffect) said.push("Nothing on the page changed.");
-    return said.join(" ");
-  }
+  /** What the page did, in words, from what was measured before and after (core/context.js). */
+  const effectOf = (o, settle) => CONTEXT.effectNote(o, settle);
 
   /**
    * One action on the page, and the wait for the page to finish what it
@@ -910,6 +911,7 @@
     if (res && res.success && res.opensTab && !opened) opened = created.find((t) => (t.pendingUrl || t.url) === res.opensTab) || null;
     // Whether the pointer was the real one, said with every result.
     const pointer = res && (res.pointer === "real" || res.pointer === "synthetic") ? { pointer: res.pointer } : {};
+    if (pointer.pointer) session.pointerWas = { run: run.id, how: pointer.pointer };
     // A link made to open in a new tab: open it, as the click would have for a person.
     if (res && res.success && res.opensTab && !opened) {
       let why = "";
@@ -953,39 +955,52 @@
     const numbers = (text) => (at.k ? text.replace(/\[(\d+)\]/g, (_m, n) => `[${at.k * FRAME_BASE + Number(n)}]`) : text);
     // The wait ended at the ceiling: said plainly, so the model can choose to wait or act.
     const still = loaded && loaded.loading ? loadingNote(loaded, Date.now() - started).trim() : res.settle && res.settle.loading ? TOOLS.stillLoadingNote(res.settle.ms, res.settle.signs) : "";
-    const message = [String(res.message || "Done.").replace(/\s*Outcome:.*$/s, ""), moved ? `The page changed: now at ${after.url}` : numbers(shown) || effectOf(o), still].filter(Boolean).join(" ");
+    // Which way of pressing the page answered, when the first was not it (core/context.js).
+    const ways = moved ? "" : CONTEXT.waysNote(res.ways, data.id, res.taken);
+    // A field given a new value is a change, though no element changed: it is not then said that nothing did.
+    const valued = !moved && Array.isArray(res.taken) && res.taken.includes("value");
+    const message = [String(res.message || "Done.").replace(/\s*Outcome:.*$/s, ""), ways, moved ? `The page changed: now at ${after.url}` : numbers(shown) || (valued && o.noEffect ? "" : effectOf(o, res.settle)), still].filter(Boolean).join(" ");
     const pageChanged = moved || !!o.urlChanged || !!o.titleChanged || (o.newElementCount || 0) !== 0 || (navigates && (o.domMutationCount || 0) > 0) || !!(res.choices && res.choices.length);
     // Changed where it stands: same address, same title, nothing left to choose.
     const soft = pageChanged && !moved && !o.urlChanged && !o.titleChanged && !(res.choices && res.choices.length);
-    return { ok: true, message, pageChanged, soft, noEffect: !!o.noEffect && !moved, ...pointer };
+    return { ok: true, message, pageChanged, soft, noEffect: !!o.noEffect && !moved && !valued, ...pointer };
   }
 
   /**
    * A picture of a tab. The tab in front is pictured as it is on screen; a
    * tab behind another is pictured where it is, through the debugger
    * connection, which draws it for the picture without bringing it to
-   * front, so looking never takes the user's tab. Returns {image} or {why}.
+   * front, so looking never takes the user's tab. Returns {image}, or
+   * {why, lasting} when none could be taken: why is said to the model, and
+   * lasting means the browser would refuse this tab again (core/context.js).
    */
   async function capture(tabId) {
     const tab = await quiet(chrome.tabs.get(tabId));
     if (!tab) return { why: "The tab is gone." };
+    let refused = "";
     if (tab.active) {
-      const image = await quiet(chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 60 }));
+      const image = await Promise.resolve().then(() => chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 60 })).catch((e) => { refused = String((e && e.message) || e); return null; });
       if (image) return { image };
     }
-    if (!(await connected(tabId))) return { why: tab.active ? "" : "It is behind another tab, and it can be pictured there only through the debugger connection, which this tab refused." };
+    if (!(await connected(tabId))) {
+      // With a debugger to ask, a tab behind another was refused by that tab; without one, no tab behind another can be pictured.
+      if (!tab.active && chrome.debugger && !debuggerDisabled) return { why: "It is behind another tab, and it can be pictured there only through the debugger connection, which this tab refused." };
+      return CONTEXT.noPicture(refused, !tab.active);
+    }
     const got = await quiet(chrome.debugger.sendCommand({ tabId }, "Page.captureScreenshot", { format: "jpeg", quality: 60 }));
     return got && got.data ? { image: `data:image/jpeg;base64,${got.data}` } : { why: "" };
   }
 
-  async function act(session, a) {
+  async function act(session, a, keys) {
     const run = session.run;
     const tabId = run.tabId;
     touch(session, tabId);
     const moved = await approvedChanged(session, a);
     if (moved) return moved;
     switch (a.do) {
-      case "click": return interact(session, a, { action: "click", id: a.ref }, true);
+      // A press the user approved is made once: the page is not pressed another way when it shows no answer.
+      // Any other is made with Enter or Space too only where those keys were allowed on it (keys).
+      case "click": return interact(session, a, { action: "click", id: a.ref, ...(a.approved !== undefined ? { once: true } : keys ? { keys: true } : {}) }, true);
       case "hover": return interact(session, a, { action: "hover", id: a.ref }, false);
       case "click_at": {
         // What is at the point, as the decision on it saw it: the page
@@ -1120,7 +1135,22 @@
       }
       case "look": {
         const shot = await capture(tabId);
-        return shot.image ? { ok: true, pageChanged: true, image: shot.image, message: "A picture of the page is attached to your next step." } : { ok: false, message: `A picture of this tab could not be taken.${shot.why ? ` ${shot.why}` : ""}` };
+        if (shot.image) {
+          // A picture was taken after all (the user opened the extension on this tab): the refusal is no longer a fact here.
+          if (session.noPictures && session.noPictures.tabId === tabId) session.noPictures = { run: session.noPictures.run, tabId: -1, why: "" };
+          return { ok: true, pageChanged: true, image: shot.image, message: "A picture of the page is attached to your next step." };
+        }
+        // A refusal that will come again is a fact of this run from here on
+        // (core/context.js), and the user is told once that the agent works
+        // without pictures: a run that cannot see is not left to look as if it can.
+        const told = session.noPictures && session.noPictures.run === run.id && session.noPictures.tabId === tabId;
+        // The user is told once in a run, whatever tab it is then on.
+        const noted = !!(session.noPictures && session.noPictures.run === run.id);
+        if (shot.lasting && !told) {
+          session.noPictures = { run: run.id, tabId, why: shot.why };
+          if (!noted) run.journal.push({ k: "note", text: "Chrome did not let the agent take a picture of this page, so it is working from the page's text and controls only. Maps, charts and images may be read less well." });
+        }
+        return { ok: false, message: `A picture of this tab could not be taken.${shot.why ? ` ${shot.why}` : ""}` };
       }
       case "read": {
         const page = session.page || {};
@@ -1211,13 +1241,15 @@
     code: "Select to AI is waiting for you to enter the code.",
     payment: "Select to AI is waiting for you to enter the payment details.",
     press: "Select to AI is waiting for you to check this and press the highlighted button.",
+    // A control inside a frame cannot be marked from the page around it.
+    pressFramed: "Select to AI is waiting for you to press the button it asked you about, in the framed part of this page. Choose I'm done here once you have.",
   });
 
   /** Puts the banner on the page and starts the watch for the blocker to go. */
   async function watchPage(wait) {
     const tabId = wait.tabId;
     await quiet(inject({ tabId }, { files: ["agentTools.js", "agentContentScript.js"] }));
-    await send(tabId, { action: "needsYou", kind: wait.kind, text: wait.press ? BANNER.press : BANNER[wait.kind], press: wait.press });
+    await send(tabId, { action: "needsYou", kind: wait.kind, text: wait.press >= FRAME_BASE ? BANNER.pressFramed : wait.press ? BANNER.press : BANNER[wait.kind], press: wait.press });
   }
 
   // A run paused for its provider is woken by an alarm, which outlives the
@@ -1557,7 +1589,10 @@
     if (message.action === "agentNetState") {
       const net = nets.get(sender.tab.id);
       const since = Number(message.since) || Date.now();
-      sendResponse(net ? { net: true, ...net.state(since, Date.now()) } : { net: false });
+      const now = Date.now();
+      const st = net ? net.state(since, now) : null;
+      // `asked`: whether the action started any request at all, open or over.
+      sendResponse(st ? { net: true, ...st, asked: st.open > 0 || st.quietFor < now - since } : { net: false });
       return false;
     }
     // A frame saying which frame it is (readFrames).

@@ -350,6 +350,22 @@
   }
 
   /**
+   * True when Enter and Space on the control of an allowed click are each
+   * allowed outright too, judged as presses of those keys there. The page
+   * may then press it with those keys when it shows no answer to the
+   * click. On a button or a link a key is the click again; on anything
+   * else Enter is Enter in its form, and is held, refused or asked about
+   * as that.
+   */
+  function keysToo(a, page, run, settings, store, tabs) {
+    if (!a || a.do !== "click" || a.ref === undefined || a.approved !== undefined) return false;
+    return ["Enter", "Space"].every((key) => {
+      const v = decide({ do: "press", key, ref: a.ref }, page, run, settings, store, tabs);
+      return v.verdict === "allow" && !v.check;
+    });
+  }
+
+  /**
    * Moving the run into another tab. The tab's page is read and sent to the
    * model once the run is there, so a tab the run did not open, on a site
    * that is not part of the request, is the user's to allow: once per site.
@@ -420,7 +436,7 @@
     return t;
   }
 
-  const api = Object.freeze({ decide, decideSwitch, blockersOf, remember, asRiskAction, keptFromSending, pressesControl, pressLandsOn, firstAddress, pointTarget, dropPoint, HANDOVER });
+  const api = Object.freeze({ decide, decideSwitch, keysToo, blockersOf, remember, asRiskAction, keptFromSending, pressesControl, pressLandsOn, firstAddress, pointTarget, dropPoint, HANDOVER });
   root.SELECT_TO_AI_POLICY = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

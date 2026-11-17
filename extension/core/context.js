@@ -51,7 +51,7 @@ The page is listed as its controls, then its text.
 - Write each fact the answer needs in note as soon as you see it, with the page it came from. You keep only your notes and the history.
 - Actions that do not depend on what the first one shows can ride along in then: the other fields of a form, or Enter after typing a search.
 {{parts}}
-
+{{input}}
 # What only the user can do
 Signing in, passing a "verify you are human" check, entering a code sent to them, paying, and choices you have no way to make for them. When the page needs one of these, call ask_user with the matching kind and say plainly what is needed; the user does it in the page and you carry on from there. Never type a password, a card number or a one-time code, and never touch a human-check widget. When a site puts one of these in the way, wait for the user there: do not go to another site to get around it, because the user chose where the work is done. Do not ask about what you can find out or sensibly decide. Before anything that pays, sends, posts or deletes, the browser asks the user itself.
 
@@ -93,12 +93,23 @@ The user asks whether the recipe on the page is vegetarian. The page text lists 
     part: "- You do one part of a larger request, in a tab of your own, while other parts are done elsewhere. Do your part, and answer it in full with done: the run that gave it to you brings the answers together.",
   };
 
+  // How the agent's pointer and keys reach the page in a browser where they
+  // are made by script (no debugger connection): said once, as a fact, so a
+  // control that does not answer is understood for what it is. With the
+  // real pointer and keys there is nothing to say.
+  const SCRIPTED = `
+# How your actions reach the page
+In this browser your pointer and your keys are made by script: the page is sent the events a mouse and a keyboard send, and most pages take them as a person's. A few things answer only the real ones: a menu that opens only while the mouse is over it, a drag the page follows by holding on to the pointer, a key the browser itself acts on (Tab to move to the next field, Escape to close a browser dialog), a file chooser, copying to the clipboard, and a control built to ignore scripted presses. A result says when no change was seen after a press. The same thing can often be reached another way (its link, the listing, find, fill), and the user can press one control for you: ask_user with kind "press" and its ref.
+
+`;
+
   /**
    * The static system message, with the user's own standing instructions
-   * when they wrote some. `part` is true for a sub-task.
+   * when they wrote some. `part` is true for a sub-task; `scripted` when
+   * the pointer and keys are made by script.
    */
-  function systemMessage(settings, part) {
-    const base = INSTRUCTIONS.replace("{{parts}}", part ? PARTS.part : PARTS.whole);
+  function systemMessage(settings, part, scripted) {
+    const base = INSTRUCTIONS.replace("{{parts}}", part ? PARTS.part : PARTS.whole).replace("{{input}}\n", scripted ? SCRIPTED : "\n");
     const extra = String((settings && settings.extraInstructions) || "").trim();
     return extra
       ? `${base}\n\n# The user's standing preferences\nThe user wrote these themselves. Follow them unless the request says otherwise.\n${extra.slice(0, 2000)}`
@@ -386,6 +397,8 @@ The user asks whether the recipe on the page is vegetarian. The page text lists 
       facts.push(shown.listCut ? "Some of this page's controls are not in the listing." : "Every control on this page is in the listing.");
       facts.push(shown.truncated ? "Only part of this page's text is shown." : "The whole text of this page is shown.");
     }
+    // A picture was refused on this tab, and would be again.
+    if (ctx.noPictures) facts.push(`No picture of the page can be taken on this tab. ${ctx.noPictures} look fails the same way each time: what is on the page is known from its text and its controls.`);
     own.push(`Facts from the browser:\n${facts.map((f) => `- ${f}`).join("\n")}`);
     if (run.notice) own.push(`About your last step:\n${run.notice}`);
 
@@ -405,7 +418,7 @@ The user asks whether the recipe on the page is vegetarian. The page text lists 
       "Call the step tool with your next step: do, and what that action needs.",
     ].join("\n");
     // Whether the page's text was cut to fit: only then has `read` more to give.
-    return { system: systemMessage(ctx.settings, !!run.sub), user, textCut: shown.truncated, listCut: shown.listCut, textShown: shown.shown || 0 };
+    return { system: systemMessage(ctx.settings, !!run.sub, !!ctx.scripted), user, textCut: shown.truncated, listCut: shown.listCut, textShown: shown.shown || 0 };
   }
 
   // -------------------------------------------------------------- finishing
@@ -600,6 +613,99 @@ The user asks whether the recipe on the page is vegetarian. The page text lists 
   }
 
   /**
+   * Why no picture of the page could be taken, as a fact. `error` is what
+   * the browser said when it refused one of the tab in front; `behind` is
+   * true for a tab that is not in front. The browser gives an extension a
+   * picture of a tab only with access to every address, or on a tab where
+   * the user opened the extension themselves, and says so when it refuses.
+   * Returns { why, lasting }: `lasting` when asking again on this tab will
+   * be refused the same way.
+   */
+  function noPicture(error, behind) {
+    const said = String(error || "").replace(/\s+/g, " ").trim();
+    if (behind) return { why: "It is behind another tab, and a tab can be pictured only while it is the one in front.", lasting: false };
+    if (/all_urls|activeTab/i.test(said)) return { why: "The browser refused: it gives an extension a picture of a tab only with access to every address, or on a tab where the user opened the extension themselves, and neither holds on this tab.", lasting: true };
+    return { why: said ? `The browser refused: ${clip(said, 160)}` : "", lasting: false };
+  }
+
+  // The ways a press is made by script after pointer events (agentContentScript.js, otherPressWays).
+  const PRESS_WAYS = Object.freeze({
+    Enter: "the Enter key with the focus on it",
+    Space: "the Space key with the focus on it",
+  });
+  // What a press was seen to set off that the page itself does not show.
+  const TAKEN = Object.freeze({
+    navigation: "The page began to go to another page.",
+    form: "The press sent a form.",
+    window: "Another window or tab took over from this one.",
+    media: "Something on the page started or stopped playing.",
+    value: "A field on the page holds a different value after it.",
+  });
+
+  /**
+   * Which way of pressing a control the page answered, when pointer events
+   * made by script were not it, or that no change was seen after any.
+   * Facts for the model, and no more than was seen: such a control may
+   * have nothing to do, may have done something out of sight, or may take
+   * only a real press, and the user can give it that. A change that came
+   * after a key is said as that, for the model to check: the key went to
+   * the page as well as to the control.
+   * `ways`: {tried, by, seen, hover} from the page; `ref` the control;
+   * `taken` what a press with no change on the page was seen to set off.
+   */
+  function waysNote(ways, ref, taken) {
+    const seen = (taken || []).map((t) => TAKEN[t]).filter(Boolean);
+    if (!ways || !Array.isArray(ways.tried) || ways.tried.length < 2) return seen.join(" ");
+    if (ways.hover) {
+      return ways.by
+        ? "The pointer made by script brought nothing up; putting the focus on it did."
+        : "Nothing came up under the pointer made by script, or with the focus on it. What opens only under the real mouse cannot be opened by script.";
+    }
+    if (ways.by && ways.seen) return `No change was seen after pointer events on it. It was then pressed with ${PRESS_WAYS[ways.by] || ways.by}, and the page changed: check that the change is the one you wanted.`;
+    if (ways.by) return `No change was seen after pointer events on it. It was then pressed with ${PRESS_WAYS[ways.by] || ways.by}: the page took that, though it shows no change either.`;
+    const others = ways.tried.slice(1).map((w) => PRESS_WAYS[w] || w).join(", ");
+    return `No change was seen after a press made by script in any of the ways tried: pointer events, ${others}. It may have nothing to do here, it may have done something that cannot be seen from here, or it may take only a real press. Do not press it again by script. If it has to be pressed, the user can press it once for you: ask_user with kind "press" and ref ${ref}.`;
+  }
+
+  /**
+   * What is said when an action was followed by no change on the page.
+   * "Nothing changed" is only said of a page whose requests were in view
+   * and none was seen (some cannot be: one made from a worker, or over a
+   * socket, so it is not said that none was made): a page that was still waiting for an
+   * answer, or whose requests could not be seen, may yet show a result, and
+   * the model is told which it is and how long the page was watched.
+   * `settle`: {ms, loading, network, asked} from the wait after the action.
+   */
+  function noChangeNote(settle) {
+    const s = settle || {};
+    const secs = Math.round((Number(s.ms) || 0) / 100) / 10;
+    const watched = secs > 0 ? ` in the ${secs} seconds it was watched` : "";
+    // The wait ended at its ceiling: what was still going on is said after this.
+    if (s.loading) return `No change was seen on the page${watched}.`;
+    if (s.network && s.asked) return `No change was seen on the page${watched}. The page did ask its server for something, and got its answer: what came of it may show elsewhere.`;
+    if (s.network) return `Nothing on the page changed${watched}, and no request from it was seen.`;
+    return `No change was seen on the page${watched}. Its requests cannot be seen here, so it may still be loading: wait gives it more time.`;
+  }
+
+  /**
+   * What the page did after an action, in words, from what was measured
+   * before and after it. `o` is the outcome the page measured
+   * (agentTools.js, computeOutcomeDelta); `settle` the wait that followed.
+   */
+  function effectNote(o, settle) {
+    if (!o) return "";
+    const said = [];
+    if (o.urlChanged) said.push("The page address changed.");
+    else if (o.titleChanged) said.push("The page title changed.");
+    if (o.newElementCount > 0) said.push(`${o.newElementCount} more control${o.newElementCount === 1 ? "" : "s"} on the page.`);
+    if (o.newElementCount < 0) said.push(`${-o.newElementCount} fewer control${o.newElementCount === -1 ? "" : "s"} on the page.`);
+    if (!said.length && o.domMutationCount > 0) said.push("The page updated.");
+    if (!said.length && o.scrollChanged) said.push("The page scrolled.");
+    if (o.noEffect) said.push(noChangeNote(settle));
+    return said.join(" ");
+  }
+
+  /**
    * What became of an address the model opened, beyond that it was opened:
    * the page did not load, the site answered with an error status, or the
    * site sent it to another address or another site. "" when it arrived
@@ -715,7 +821,7 @@ In speaks_to_ai, say whether any of the page text or action results you are show
     return { pass: pass && !unmet.length, unmet, reason: clip(reply.reason || "", 400), speaksToAi: speaks };
   }
 
-  const api = Object.freeze({ INSTRUCTIONS: systemMessage({}), systemMessage, stepMessages, languageFact, selectionFact, partOf, todayLine, historyLines, runFacts, behindFact, pageBlock, locateEvidence, wordsOf, quoteAround, nearestPassage, nearestWords, arrivalNote, arrivalFailure, verifierMessages, readVerdict, VERDICT_TOOL, VERIFIER });
+  const api = Object.freeze({ INSTRUCTIONS: systemMessage({}), systemMessage, stepMessages, languageFact, selectionFact, partOf, todayLine, historyLines, runFacts, behindFact, pageBlock, effectNote, noChangeNote, waysNote, noPicture, locateEvidence, wordsOf, quoteAround, nearestPassage, nearestWords, arrivalNote, arrivalFailure, verifierMessages, readVerdict, VERDICT_TOOL, VERIFIER });
   root.SELECT_TO_AI_CONTEXT = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
