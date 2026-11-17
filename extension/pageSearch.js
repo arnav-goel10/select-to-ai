@@ -97,8 +97,12 @@
       // A hit on a heading is a hit on its section: the text under it is
       // what was looked for, so it comes with the heading, up to the next
       // heading of the same or a higher level (and a bound on its length).
+      // Only a heading that has every word looked for: one that shares a
+      // word with the query ("Garden Supplies" for "Garden Hose") is not it.
       const lineStart = body.lastIndexOf("\n", Math.max(0, p.c - 1)) + 1;
-      const heading = /^#{1,6}\s/.test(body.slice(lineStart, lineStart + 7)) ? secs.find((s) => s.start === lineStart && s.level > 0) : null;
+      const lineEnd = body.indexOf("\n", lineStart);
+      const headingLine = lower.slice(lineStart, lineEnd < 0 ? body.length : lineEnd);
+      const heading = /^#{1,6}\s/.test(headingLine) && terms.every((t) => headingLine.includes(t)) ? secs.find((s) => s.start === lineStart && s.level > 0) : null;
       let start = Math.max(0, p.c - half, body.lastIndexOf("\n", Math.max(0, p.c - half)) + 1);
       let end = Math.min(body.length, start + o.window);
       if (heading) {

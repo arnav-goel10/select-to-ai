@@ -144,6 +144,17 @@ test("find on a heading gives the whole section under it, not only its first lin
   assert.ok(hits.some((h) => h.includes("- 15.5.19. 418 (Unused)")), "the contents entry is still a hit");
 });
 
+test("a heading that shares only some of the words is not expanded into its section", () => {
+  const text = [
+    "# Garden Supplies",
+    `## ${"Everything for the outdoor season, from planting and pruning to watering and storage. ".repeat(3)}`,
+    `${"Our yard range is chosen for long use in all weather. ".repeat(3)}Garden Hose, 30 m, $24.99. ${"Every item ships within two working days. ".repeat(6)}`,
+  ].join("\n");
+  const hits = PAGE.findInText(text, "Garden Hose", { maxHits: 4, budget: 2400 });
+  assert.ok(hits.some((h) => h.includes("Garden Hose, 30 m, $24.99")), "the passage with both words is a hit");
+  assert.ok(!hits.some((h) => h.includes("# Garden Supplies") && h.includes("$24.99")), "the top heading was not widened into the whole page");
+});
+
 test("a page opened at a #fragment shows the section it points to, however far down", () => {
   const page = { url: "https://www.rfc-editor.org/rfc/rfc9110.html#name-418-unused", innerText: LONG, anchor: "15.5.19. 418 (Unused)" };
   const shown = PROMPT.composePageText(page, "What does this document say about status code 418?", 3600, {});
