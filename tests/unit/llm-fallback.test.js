@@ -126,3 +126,44 @@ test("recipe repairs use the run's own model for a paid OpenRouter model or a cu
     assert.equal(out.usage.model, model);
   }
 });
+
+// The reply's length limit: OpenAI's current models refuse max_tokens (the
+// whole first step fails with "Unsupported parameter"), other OpenAI-style
+// providers expect it. A refusal of either name is answered with the other.
+const keyed = (provider, more) => ({ ...free(), provider, apiKey: "sk-test", baseUrl: provider === "openai" ? "https://api.openai.com/v1" : "https://api.groq.com/openai/v1", model: "some-model", liteModel: "some-model", ...more });
+
+test("OpenAI is sent max_completion_tokens, and never max_tokens", async () => {
+  const seen = [];
+  await client([reply(200, toolCall({ goal: "go" }))], seen).call(ask, keyed("openai"));
+  const [b] = sent(seen);
+  assert.ok(b.max_completion_tokens > 0);
+  assert.equal("max_tokens" in b, false);
+});
+
+test("another OpenAI-style provider is still sent max_tokens", async () => {
+  const seen = [];
+  await client([reply(200, toolCall({ goal: "go" }))], seen).call(ask, keyed("groq"));
+  const [b] = sent(seen);
+  assert.ok(b.max_tokens > 0);
+  assert.equal("max_completion_tokens" in b, false);
+});
+
+test("a model that refuses the limit's name gets the other one, once, and the connection remembers", async () => {
+  const seen = [];
+  const refusal = err(400, "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.");
+  const c = client([refusal, reply(200, toolCall({ goal: "go" })), reply(200, toolCall({ goal: "again" }))], seen);
+  await c.call(ask, keyed("groq"));
+  await c.call(ask, keyed("groq"));
+  const bodies = sent(seen);
+  assert.equal(bodies.length, 3);
+  assert.ok(bodies[0].max_tokens > 0);
+  assert.ok(bodies[1].max_completion_tokens > 0 && !("max_tokens" in bodies[1]));
+  assert.ok(bodies[2].max_completion_tokens > 0 && !("max_tokens" in bodies[2]), "the next call does not ask the refused way again");
+});
+
+test("a second refusal of the limit's name is not answered with another swap", async () => {
+  const seen = [];
+  const refusal = () => err(400, "Unsupported parameter: 'max_completion_tokens'.");
+  await assert.rejects(client([refusal(), refusal(), refusal()], seen).call(ask, keyed("openai")));
+  assert.ok(sent(seen).length <= 3);
+});

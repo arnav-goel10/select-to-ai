@@ -199,3 +199,15 @@ test("a task handed in the address goes through the handoff choice", () => {
   const handed = agent.slice(agent.indexOf("function consumeHandedTask"));
   assert.match(handed, /params\.get\("autostart"\) === "1"\) \{[\s\S]{0,200}startAgent\(true\)/);
 });
+
+test("the key check asks OpenAI with max_completion_tokens, and other providers with max_tokens", () => {
+  const S = require("../../extension/setup.js");
+  const fn = S.testRequest || (globalThis.SELECT_TO_AI_SETUP && globalThis.SELECT_TO_AI_SETUP.testRequest);
+  const openai = fn("openai", "sk-proj-x", "gpt-5.4-mini").body;
+  assert.ok(openai.max_completion_tokens >= 1);
+  assert.equal("max_tokens" in openai, false);
+  const groq = fn("groq", "gsk_x", "m").body;
+  assert.equal(groq.max_tokens, 1);
+  const options = require("node:fs").readFileSync(require("node:path").join(__dirname, "../../extension/options.js"), "utf8");
+  assert.match(options, /p === "openai" \? \{ max_completion_tokens: 16 \}/);
+});

@@ -408,7 +408,8 @@
     }
     if (key) headers.Authorization = `Bearer ${key}`;
     const url = /\/chat\/completions$/.test(base) ? base : `${base.replace(/\/$/, "")}/chat/completions`;
-    return { url, headers, body: { model: m, max_tokens: 1, messages: [{ role: "user", content: "Hi" }] } };
+    const limit = p === "openai" ? { max_completion_tokens: 16 } : { max_tokens: 1 };
+    return { url, headers, body: { model: m, ...limit, messages: [{ role: "user", content: "Hi" }] } };
   }
 
   function askTest() {
