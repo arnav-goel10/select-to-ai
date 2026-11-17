@@ -334,7 +334,7 @@ const check = (name, fn) => checks.push([name, fn]);
 
     check("the x on a chosen value is a field edit; look-alikes that delete saved things are still deletes", () => {
       const one = (label) => {
-        const el = chipScan.elements.find((e) => e.accName === label);
+        const el = chipScan.elements.find((e) => (e.accName || e.text) === label);
         assert.ok(el, `${label} is listed`);
         return el;
       };
