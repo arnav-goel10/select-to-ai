@@ -1315,9 +1315,12 @@
   }
 
   /**
-   * A button the page lists as part of a field's chosen values: the "x" on
-   * a chip or tag, or the field's clear button (the content script marks it
-   * inField from the page's structure). Never a button that submits.
+   * A button the page lists as the "x" on a value chosen in a field, a tag
+   * or a picked option (the content script marks it inField from the
+   * page's structure). Never a link or a button that submits. Taking a
+   * value out changes what the field holds: in a form nothing until it is
+   * sent, and where an app saves the field at once, adding the value back
+   * undoes it. It is not the delete of a saved record.
    */
   function pickedValue(el) {
     return !!el && el.inField === true && !el.submits && String(el.tagName || "").toLowerCase() !== "a";
@@ -1502,9 +1505,9 @@
       // A choice whose words carry what a button's would: what choosing it
       // does is judged by its meaning (pressCheckOf), not by the words.
       if (kind && choiceOf(el)) return null;
-      // The "x" on a value chosen in a field, or the field's clear button,
-      // edits what the field holds on this page: it is not a delete, however
-      // it is labelled. Words that pay or send are still held.
+      // The "x" on a value chosen in a field edits what the field holds:
+      // it is not a delete, however it is labelled. Words that pay or send
+      // are still held.
       if (kind === "delete" && pickedValue(el)) return null;
       // A search or lookup form reads; its button is safe unless its own
       // words say it pays or deletes.

@@ -1537,6 +1537,77 @@
     const overlayOf = (el) => overlayLayers.find((l) => l.node.contains(el)) || null;
 
     /**
+     * True when a button is the "x" on a value chosen in a field the user
+     * types or picks into (a tag, a chosen option of a multi-select).
+     * Pressing it takes the value out of what the field holds. In a form it
+     * changes nothing until the form is sent; some apps save a field's
+     * values as they change, and then re-adding the value undoes it. Either
+     * way it is not a delete of a saved record, whatever its words say.
+     *
+     * Read from the page's structure, not from any one library. All of
+     * these must hold, and anything else is left to the delete rules:
+     * - the button shows no words of its own (an x, or an icon);
+     * - it is not in an option, a list of options or a menu, nor in the
+     *   popup a box says it controls (a list of past searches or of saved
+     *   cards, whose x deletes them);
+     * - the smallest box around it that holds a box the user types into
+     *   holds a picker's box (a combobox, or an input that offers choices
+     *   as it is typed in) and nothing else: no link, heading, table,
+     *   other kind of field or form, only a little text, a few lines tall;
+     * - it sits on a value of its own (the x is inside an item with the
+     *   value's words) that comes before the typing box, where a field's
+     *   chosen values are.
+     * A cart row or a saved record has a link, a price, a quantity, a
+     * heading or words on its button, so it is never taken for one.
+     * `facts` caches what is read about a box for one snapshot.
+     */
+    const PICKER_ROLES = /^(combobox|listbox|searchbox)$/;
+    const ENTRY = 'input:not([type]),input[type="text"],input[type="search"],input[type="email"],input[type="url"],input[type="tel"],textarea,[role="combobox"],[role="searchbox"],[role="textbox"],[contenteditable="true"],[contenteditable=""]';
+    const POPUP = '[role="option"],[role="listbox"],[role="menu"],[role="menubar"],[role="menuitem"],[role="tree"],[role="treeitem"],[role="grid"],[role="tooltip"]';
+    const NOT_A_FIELD = 'a[href],select,h1,h2,h3,h4,h5,h6,[role="heading"],form,table,input[type="number"],input[type="checkbox"],input[type="radio"],input[type="password"],input[type="file"]';
+    const OFFERS_CHOICES = (box) => !!box && (PICKER_ROLES.test(box.getAttribute('role') || '') || box.hasAttribute('aria-autocomplete') || /^(listbox|true|tree|grid|menu)$/.test(box.getAttribute('aria-haspopup') || '') || box.hasAttribute('list'));
+    const popupsOf = (box) => ['aria-controls', 'aria-owns'].flatMap((a) => (box.getAttribute(a) || '').split(/\s+/)).filter(Boolean).map((id) => document.getElementById(id)).filter(Boolean);
+    function fieldBox(node, facts) {
+        if (facts && facts.has(node)) return facts.get(node);
+        const boxes = [...node.querySelectorAll(ENTRY)];
+        let out = null;
+        if (boxes.length) {
+            const picker = PICKER_ROLES.test(node.getAttribute('role') || '') ? boxes[0] : boxes.find(OFFERS_CHOICES);
+            const text = picker && boxes.length <= 2 && !node.querySelector(NOT_A_FIELD) ? ((node.innerText || node.textContent || '') + '').trim() : null;
+            const height = text !== null && text.length <= 200 ? node.getBoundingClientRect().height : Infinity;
+            out = { boxes, picker: picker || null, small: text !== null && text.length <= 200 && (!height || height <= 200) };
+        }
+        if (facts) facts.set(node, out);
+        return out;
+    }
+    function inPickedValues(el, facts) {
+        if (!el || el.matches(ENTRY) || el.matches('select,option,a[href]')) return false;
+        const type = (el.getAttribute('type') || '').toLowerCase();
+        if (type === 'submit' || type === 'image' || (el.tagName === 'BUTTON' && el.form && !el.hasAttribute('type'))) return false;
+        // An x or an icon: a button that shows words says what it does.
+        const own = ((el.textContent || '') + '').trim();
+        if (/[\p{L}\p{N}]/u.test(own) && !/^x$/i.test(own)) return false;
+        if (el.closest(POPUP)) return false;
+        let node = el.parentElement;
+        for (let depth = 0; node && node !== document.body && depth < 5; node = node.parentElement, depth++) {
+            if (!node.querySelector(ENTRY)) continue;
+            // The smallest box with a field in it decides: it is a picker's, or the button is not one.
+            const field = fieldBox(node, facts);
+            if (!field || !field.picker || !field.small || field.boxes.includes(el) || el.contains(field.picker)) return false;
+            if (field.boxes.some((b) => popupsOf(b).some((p) => p.contains(el)))) return false;
+            // A chosen value comes before the box it was typed or picked in.
+            if (!(field.picker.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_PRECEDING)) return false;
+            // The x is on a value: the item of the box it sits in has the value's words beside it.
+            let item = el;
+            while (item.parentElement && item.parentElement !== node) item = item.parentElement;
+            if (item === el || item.contains(field.picker)) return false;
+            const value = ((item.textContent || '') + '').replace(own, '').trim();
+            return value.length > 0 && value.length <= 60;
+        }
+        return false;
+    }
+
+    /**
      * The part of the page a control belongs to: an open dialog, a card or
      * row, a form, the navigation, the footer. Several buttons with the same
      * label ("Add to cart") are told apart by this. A control whose label
@@ -1544,45 +1615,6 @@
      * row as its item when the row says something besides that label, so
      * each "Odd" in a column of them is named by the words of its row.
      */
-    /**
-     * True when a button is part of a field the user types or picks into:
-     * the "x" on a chosen value or tag, or the clear button of a select or
-     * tag box. Pressing it edits what the field holds on this page and
-     * nothing else, so its words ("Remove Purple", "Remove item") say
-     * nothing about deleting saved data.
-     *
-     * Read from the page's structure, not from any one library: the
-     * smallest box around the button that also holds a box the user types
-     * into must be a picker (a combobox or listbox, or an input that offers
-     * choices as it is typed in), and must hold nothing else: no link, no
-     * heading, no other kind of field, only a little text (the values
-     * themselves), and be no taller than a few lines.
-     * A cart row or a saved record has a link, a price, a quantity or a
-     * name around its "Remove", so it is never taken for one.
-     */
-    const PICKER_ROLES = /^(combobox|listbox|searchbox)$/;
-    const ENTRY = 'input:not([type]),input[type="text"],input[type="search"],input[type="email"],input[type="url"],input[type="tel"],textarea,[role="combobox"],[role="searchbox"],[role="textbox"],[contenteditable="true"],[contenteditable=""]';
-    const OFFERS_CHOICES = (box) => !!box && (PICKER_ROLES.test(box.getAttribute('role') || '') || box.hasAttribute('aria-autocomplete') || /^(listbox|true|tree|grid|menu)$/.test(box.getAttribute('aria-haspopup') || '') || box.hasAttribute('list'));
-    function inPickedValues(el) {
-        if (!el || el.matches(ENTRY) || el.matches('select,option,a[href]')) return false;
-        const type = (el.getAttribute('type') || '').toLowerCase();
-        if (type === 'submit' || type === 'image' || (el.tagName === 'BUTTON' && el.form && !el.hasAttribute('type'))) return false;
-        let node = el.parentElement;
-        for (let depth = 0; node && node !== document.body && depth < 5; node = node.parentElement, depth++) {
-            const boxes = [...node.querySelectorAll(ENTRY)].filter((b) => b !== el && !el.contains(b));
-            const widget = PICKER_ROLES.test(node.getAttribute('role') || '');
-            if (!boxes.length && !widget) continue;
-            // The smallest box with a field in it decides: it is a picker's, or the button is not one.
-            if (!widget && !boxes.some(OFFERS_CHOICES)) return false;
-            if (boxes.length > 2 || node.querySelector('a[href],select,h1,h2,h3,h4,h5,h6,form,table,input[type="number"],input[type="checkbox"],input[type="radio"],input[type="password"],input[type="file"]')) return false;
-            const text = ((node.innerText || node.textContent || '') + '').trim();
-            // A field is a line or a few of values, not a section of the page.
-            const box = node.getBoundingClientRect();
-            return text.length <= 200 && (!box.height || box.height <= 200);
-        }
-        return false;
-    }
-
     function groupOf(el, repeated) {
         const own = ((el.innerText || el.textContent || el.value || '') + '').trim().length;
         let inner = null;
@@ -2155,6 +2187,8 @@
         });
         // Labels that more than one listed control carries.
         const labelCount = new Map();
+        // What is read about a box around a control, once per box (inPickedValues).
+        const fieldFacts = new Map();
         for (const n of named) if (n.key) labelCount.set(n.key, (labelCount.get(n.key) || 0) + 1);
 
         let deepFocus = document.activeElement;
@@ -2245,7 +2279,7 @@
                 entry.value = "";
             }
             if (overlayOf(el)) entry.onTop = true;
-            if (inPickedValues(el)) entry.inField = true;
+            if (inPickedValues(el, fieldFacts)) entry.inField = true;
             // The control the keyboard is on, where a key with no ref lands.
             if (el === deepFocus) entry.focused = true;
             const group = groupOf(el, nameKey && labelCount.get(nameKey) > 1 ? nameKey : '');
