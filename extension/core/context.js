@@ -176,7 +176,7 @@ In this browser your pointer and your keys are made by script: the page is sent 
   }
 
   // What each kind of starting page is, as the user would call it.
-  const START_PAGE = { newtab: "the new-tab page", blank: "an empty tab", browser: "a browser page", store: "the Web Store", pdf: "a PDF document", error: "a page that failed to load" };
+  const START_PAGE = { newtab: "the new-tab page", blank: "an empty tab", browser: "a browser page", store: "the Web Store", error: "a page that failed to load" };
 
   /** The fact for a run that began where the agent cannot work. */
   function startFact(from) {

@@ -169,7 +169,7 @@ test("start pages the agent cannot work on are told apart from web pages", () =>
   assert.equal(TOOLS.startPageKind("file:///Users/me/notes.txt"), "browser");
   assert.equal(TOOLS.startPageKind("https://chromewebstore.google.com/detail/x"), "store");
   assert.equal(TOOLS.startPageKind("https://chrome.google.com/webstore/detail/x"), "store");
-  assert.equal(TOOLS.startPageKind("https://example.org/paper.pdf"), "pdf");
+  assert.equal(TOOLS.startPageKind("https://example.org/paper.pdf"), "", "a PDF on the web is read where it is (pdfText.js)");
   assert.equal(TOOLS.startPageKind("https://example.org/"), "");
   assert.equal(TOOLS.startPageKind("http://localhost:8917/home"), "");
 });

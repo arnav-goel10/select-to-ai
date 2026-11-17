@@ -251,7 +251,7 @@
       tabId: o.tabId === undefined ? null : o.tabId,
       openedTabs: o.openedTab !== undefined && o.openedTab !== null ? [o.openedTab] : [],
       // Set when the run began where the agent cannot work (the new-tab
-      // page, a browser page, the Web Store, a PDF, an error page): what it
+      // page, a browser page, the Web Store, an error page): what it
       // began on, whether that tab was reused, and, once a web page has been
       // read, left: true.
       fromNothing: o.fromNothing || null,

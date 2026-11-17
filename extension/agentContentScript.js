@@ -5048,6 +5048,14 @@
                     forms: lastScanExtras.forms,
                     url: window.location.href,
                     title: document.title,
+                    // A PDF the browser draws in its own viewer has no text here; the engine reads the file (pdfText.js).
+                    contentType: document.contentType || '',
+                    // A page that is only one embedded PDF: the file's own address, so that file is read and not this page.
+                    pdfEmbed: (() => {
+                        const one = document.body && document.body.children.length <= 2 ? document.querySelector('body > embed[type="application/pdf"]') : null;
+                        const src = one ? String(one.src || '') : '';
+                        return /^https?:\/\//i.test(src) ? src : '';
+                    })(),
                     innerText: content.text,
                     textFormat: content.format,
                     anchor: content.anchor,

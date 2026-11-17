@@ -29,6 +29,7 @@
   const LEARN = root.SELECT_TO_AI_LEARN;
   const VIEW = root.SELECT_TO_AI_VIEW;
   const INJECT = root.SELECT_TO_AI_INJECT;
+  const PDF = root.SELECT_TO_AI_PDF;
   // Recipes (recipes/service.js): a run's page actions are recorded so a
   // successful run can be saved and repeated. Recording only watches.
   const RECIPES = root.SELECT_TO_AI_RECIPES || null;
@@ -614,7 +615,41 @@
     if (want.net || want.dialogs) shimPage(tab.id, res.netEvent, want);
     session.frames = [];
     if (!near && res.frames) { try { await readFrames(session, tab, res); } catch (_e) { session.frames = []; } }
+    if (PDF && PDF.isPdfPage(res)) return PDF.withPdfText(res, await pdfTextOf(run, tab, PDF.pdfAddress({ ...res, url: res.url || tab.url })));
     return res;
+  }
+
+  // The text of the PDFs read in each run, by run, tab and address: a run
+  // looks at its page every step, and the file is read once. A file that
+  // could not be read is not tried again on every step, and what a run read
+  // goes when the run ends (release).
+  const pdfTexts = new Map();
+  const PDF_MS = 25000;
+  // A reading still going when the first look gave up is waited on this
+  // long at each later look, a few times, and then given up on for the run.
+  const PDF_AGAIN_MS = 2000;
+  const PDF_TRIES = 4;
+  const pdfKey = (run, tabId, url) => `${(run && run.id) || ""} ${tabId} ${url}`;
+
+  /**
+   * The text of the PDF a tab shows. The browser's viewer gives an extension
+   * no text, so the file is fetched again from inside the tab and read there
+   * (pdfText.js): from the browser's cache, with the tab's own cookies, and
+   * no permission beyond the site access the scan used. The tab keeps one
+   * reading per file, so a later look joins a reading still going.
+   */
+  async function pdfTextOf(run, tab, url) {
+    const key = pdfKey(run, tab.id, url);
+    const had = pdfTexts.get(key);
+    if (had && had.got) return had.got;
+    if (had && had.tries >= PDF_TRIES) return { error: "The text of this PDF took too long to read." };
+    await INJECT.injectNow(chrome, { tabId: tab.id }, { files: ["pdfText.js"] });
+    const ran = await INJECT.injectNow(chrome, { tabId: tab.id }, { func: (at) => (self.SELECT_TO_AI_PDF ? self.SELECT_TO_AI_PDF.readHere(at) : null), args: [url] }, { injectMs: had ? PDF_AGAIN_MS : PDF_MS });
+    const got = (ran && ran[0] && ran[0].result) || null;
+    // What the file gave, text or why there is none, holds for the run.
+    pdfTexts.set(key, got ? { got } : { tries: ((had && had.tries) || 0) + 1 });
+    while (pdfTexts.size > 8) pdfTexts.delete(pdfTexts.keys().next().value);
+    return got;
   }
 
   /** What the user had selected and the other tabs their words point at. */
@@ -1434,6 +1469,8 @@
    * next run.
    */
   function release(owner) {
+    const runId = owner && owner.run && owner.run.id;
+    if (runId) for (const k of [...pdfTexts.keys()]) if (k.startsWith(`${runId} `)) pdfTexts.delete(k);
     for (const id of touchedBy(owner)) {
       if (heldElsewhere(id, owner)) continue;
       send(id, { action: "clear" });
@@ -2226,7 +2263,7 @@
   /**
    * Where a run starts when the tab it was given is one the agent cannot
    * work in: the new-tab page or an empty tab is used as it is; any other
-   * (a browser page, the Web Store, a PDF) is left as the user had it, and
+   * (a browser page, the Web Store) is left as the user had it, and
    * the run opens a new tab beside it. No tab at all also gets a new one.
    * Returns {tab, openedTab, fromNothing}, with fromNothing null for a web page.
    */
