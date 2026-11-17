@@ -736,7 +736,12 @@ async function main() {
         const at = await r.fixture.evaluate(() => Object.fromEntries(["s-cell", "s-menu", "s-press", "s-legend", "s-order", "s-bin", "s-token"].map((id) => [id, document.getElementById(id).textContent])));
         const want = { "s-cell": "Cell: editing", "s-menu": "Menu: open", "s-press": "Button: activated by a long press", "s-legend": "North: hidden", "s-order": "Order: Gamma, Alpha, Beta", "s-bin": "Dropped: Teacup in china", "s-token": "Token: moved by touch" };
         const wrong = Object.keys(want).filter((k) => at[k] !== want[k]);
-        if (wrong.length) return `the page shows ${JSON.stringify(at)}: ${String(r.log).replace(/\s+/g, " ").slice(0, 900)}`;
+        // The steps of the gestures that did not land, not the run's opening.
+        const log = String(r.log).replace(/\s+/g, " ");
+        const marks = { "s-order": "Put Gamma first", "s-bin": "Put the teacup", "s-token": "Slide the token" };
+        const starts = wrong.map((k) => (marks[k] ? log.indexOf(marks[k]) : -1)).filter((i) => i >= 0);
+        const from = starts.length ? Math.min(...starts) : 0;
+        if (wrong.length) return `the page shows ${JSON.stringify(at)}: ${log.slice(from, from + 1400)}`;
         const told = (re, what) => (r.prompts.some((p) => re.test(p)) ? null : `the model was not told ${what}`);
         return told(/Text that appeared on screen: "[^"]*08:00 to 09:00 Visits 1204/, "the tooltip the hover brought up")
           || told(/A picture of \[\d+\] \(a canvas, drawn 300 by 150 pixels\) is attached/, "that the drawing's own picture was attached")
