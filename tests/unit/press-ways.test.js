@@ -416,7 +416,7 @@ test("changes inside a component's own root are counted with the page's", () => 
 test("the page presses another way only for a scripted click the user did not approve as one press", () => {
   assert.match(CONTENT, /const again = !!SETTLE_TOOLS && !request\.data\.once && \(kind === 'click' \|\| kind === 'hover'\);/);
   assert.match(CONTENT, /const scripted = again && result\.pointer === 'synthetic' && !result\.opensTab && acted && acted\.isConnected;/);
-  assert.match(ENGINE, /case "click": return interact\(session, a, \{ action: "click", id: a\.ref, \.\.\.\(a\.approved !== undefined \? \{ once: true \} : keys \? \{ keys: true \} : \{\}\) \}, true\);/);
+  assert.match(ENGINE, /case "click": return interact\(session, a, \{ action: "click", id: a\.ref, \.\.\.spotOf\(a\), \.\.\.\(onceIf\(a\)\.once \? \{ once: true \} : keys \? \{ keys: true \} : \{\}\) \}, true\);/);
 });
 
 test("a key follows a click only where the engine found the key allowed on that control", () => {

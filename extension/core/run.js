@@ -1535,7 +1535,7 @@
     // done, and the action is decided again on the page as it is now.
     if (r.changed && a.approved !== undefined) {
       log(run, "system", "Changed", clip(r.message, 300));
-      const { approved: _was, ...again } = a;
+      const { approved: _was, approvedTo: _to, once: _once, ...again } = a;
       run.queue = [again, ...run.queue.slice(1)];
       if (page) for (const el of page.elements || []) run.labels[el.id] = TOOLS.elementLabel(el);
       return page ? next(run, page, env, fx) : closeStep(run, fx, "changed");
@@ -1676,8 +1676,15 @@
         status(run, "executor", `Step ${run.step}…`);
         // What the user approved, by the control's words: the driver runs it
         // only while the control still says that.
-        const approved = a.ref !== undefined && ["click", "fill", "press"].includes(a.do) && run.labels[a.ref] !== undefined ? { ...a, approved: run.labels[a.ref] } : a;
-        if (approved !== a) run.queue = [approved, ...run.queue.slice(1)];
+        // Whatever the action, the press the user approved is made once: the
+        // page is not pressed again another way when it shows no answer.
+        const labelled = a.ref !== undefined && [...POLICY.POINTER_PRESSES, "drag", "fill", "press"].includes(a.do) && run.labels[a.ref] !== undefined;
+        // A drag is let go only on the control they approved, too.
+        const onto = a.do === "drag" && a.to_ref !== undefined && run.labels[a.to_ref] !== undefined ? { approvedTo: run.labels[a.to_ref] } : {};
+        // The control's words, when the run has them, mark it approved (the
+        // driver then makes it once); an action with none is marked once.
+        const approved = { ...a, ...(labelled ? { approved: run.labels[a.ref] } : { once: true }), ...onto };
+        run.queue = [approved, ...run.queue.slice(1)];
         fx.push({ type: "act", action: approved });
         return fx;
       }
