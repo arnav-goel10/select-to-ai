@@ -904,6 +904,17 @@ async function main() {
         if (!r.seen.cards.every((c) => c.risk === "delete")) return `held for the wrong reason: ${JSON.stringify(r.seen.cards)}`;
         return null;
       }],
+      // Removing a chosen value from a field is not held; deleting a saved
+      // record is, and when it is declined the run still ends with an answer.
+      ["fieldChips", "/field-chips", decline, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ chips: [...document.querySelectorAll('#colours .chip')].map((c) => c.dataset.value), deleted: !!window.addressDeleted }));
+        if (at.deleted) return "the saved address was deleted";
+        if (JSON.stringify(at.chips) !== JSON.stringify(["red"])) return `the field holds ${JSON.stringify(at.chips)}, not just red`;
+        if (r.seen.confirms !== 1) return `${r.seen.confirms} approvals were asked for, not 1 (only the saved address's Remove): ${JSON.stringify(r.seen.cards)}`;
+        if (r.seen.cards.some((c) => c.kind !== "approval")) return `the user was asked something besides the one approval: ${JSON.stringify(r.seen.cards)}`;
+        if (!/Remove/.test(r.seen.asked) || /Purple/.test(r.seen.asked)) return `the approval was about the wrong control: ${JSON.stringify(r.seen.asked)}`;
+        return /took Purple out/.test(r.answer) && /did not remove the saved address/.test(r.answer) ? null : `answer: ${JSON.stringify(r.answer)}`;
+      }],
       ["realKeys", "/keys", async () => false, async (r) => {
         const at = await r.fixture.evaluate(() => ({ focus: document.activeElement && document.activeElement.id, trusted: window.keyTrusted }));
         if (at.trusted !== true) return `the key was a scripted event, not a real one (${JSON.stringify(at)})`;

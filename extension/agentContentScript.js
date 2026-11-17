@@ -1544,6 +1544,45 @@
      * row as its item when the row says something besides that label, so
      * each "Odd" in a column of them is named by the words of its row.
      */
+    /**
+     * True when a button is part of a field the user types or picks into:
+     * the "x" on a chosen value or tag, or the clear button of a select or
+     * tag box. Pressing it edits what the field holds on this page and
+     * nothing else, so its words ("Remove Purple", "Remove item") say
+     * nothing about deleting saved data.
+     *
+     * Read from the page's structure, not from any one library: the
+     * smallest box around the button that also holds a box the user types
+     * into must be a picker (a combobox or listbox, or an input that offers
+     * choices as it is typed in), and must hold nothing else: no link, no
+     * heading, no other kind of field, only a little text (the values
+     * themselves), and be no taller than a few lines.
+     * A cart row or a saved record has a link, a price, a quantity or a
+     * name around its "Remove", so it is never taken for one.
+     */
+    const PICKER_ROLES = /^(combobox|listbox|searchbox)$/;
+    const ENTRY = 'input:not([type]),input[type="text"],input[type="search"],input[type="email"],input[type="url"],input[type="tel"],textarea,[role="combobox"],[role="searchbox"],[role="textbox"],[contenteditable="true"],[contenteditable=""]';
+    const OFFERS_CHOICES = (box) => !!box && (PICKER_ROLES.test(box.getAttribute('role') || '') || box.hasAttribute('aria-autocomplete') || /^(listbox|true|tree|grid|menu)$/.test(box.getAttribute('aria-haspopup') || '') || box.hasAttribute('list'));
+    function inPickedValues(el) {
+        if (!el || el.matches(ENTRY) || el.matches('select,option,a[href]')) return false;
+        const type = (el.getAttribute('type') || '').toLowerCase();
+        if (type === 'submit' || type === 'image' || (el.tagName === 'BUTTON' && el.form && !el.hasAttribute('type'))) return false;
+        let node = el.parentElement;
+        for (let depth = 0; node && node !== document.body && depth < 5; node = node.parentElement, depth++) {
+            const boxes = [...node.querySelectorAll(ENTRY)].filter((b) => b !== el && !el.contains(b));
+            const widget = PICKER_ROLES.test(node.getAttribute('role') || '');
+            if (!boxes.length && !widget) continue;
+            // The smallest box with a field in it decides: it is a picker's, or the button is not one.
+            if (!widget && !boxes.some(OFFERS_CHOICES)) return false;
+            if (boxes.length > 2 || node.querySelector('a[href],select,h1,h2,h3,h4,h5,h6,form,table,input[type="number"],input[type="checkbox"],input[type="radio"],input[type="password"],input[type="file"]')) return false;
+            const text = ((node.innerText || node.textContent || '') + '').trim();
+            // A field is a line or a few of values, not a section of the page.
+            const box = node.getBoundingClientRect();
+            return text.length <= 200 && (!box.height || box.height <= 200);
+        }
+        return false;
+    }
+
     function groupOf(el, repeated) {
         const own = ((el.innerText || el.textContent || el.value || '') + '').trim().length;
         let inner = null;
@@ -2206,6 +2245,7 @@
                 entry.value = "";
             }
             if (overlayOf(el)) entry.onTop = true;
+            if (inPickedValues(el)) entry.inField = true;
             // The control the keyboard is on, where a key with no ref lands.
             if (el === deepFocus) entry.focused = true;
             const group = groupOf(el, nameKey && labelCount.get(nameKey) > 1 ? nameKey : '');

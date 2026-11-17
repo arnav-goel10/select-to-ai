@@ -1314,6 +1314,15 @@
     return tag === "textarea" || el.isContentEditable === true || role === "textbox";
   }
 
+  /**
+   * A button the page lists as part of a field's chosen values: the "x" on
+   * a chip or tag, or the field's clear button (the content script marks it
+   * inField from the page's structure). Never a button that submits.
+   */
+  function pickedValue(el) {
+    return !!el && el.inField === true && !el.submits && String(el.tagName || "").toLowerCase() !== "a";
+  }
+
   function labelRisk(el) {
     const label = [el.accName, el.text, el.label, el.value, el.title].filter(Boolean).join(" ");
     if (!label || RISK_LABEL_HARMLESS.test(label)) return null;
@@ -1493,6 +1502,10 @@
       // A choice whose words carry what a button's would: what choosing it
       // does is judged by its meaning (pressCheckOf), not by the words.
       if (kind && choiceOf(el)) return null;
+      // The "x" on a value chosen in a field, or the field's clear button,
+      // edits what the field holds on this page: it is not a delete, however
+      // it is labelled. Words that pay or send are still held.
+      if (kind === "delete" && pickedValue(el)) return null;
       // A search or lookup form reads; its button is safe unless its own
       // words say it pays or deletes.
       if (form && form.search && el.submits) return kind === "pay" || kind === "delete" ? risk(kind, el) : null;
@@ -1587,6 +1600,8 @@
     // pays, sends or deletes would carry; otherwise choosing is moving about.
     const choice = choiceOf(el);
     if (choice && !labelRisk(el)) return null;
+    // A value's "x" in a field: removing it changes only the field.
+    if (pickedValue(el) && [null, "delete"].includes(labelRisk(el))) return null;
     // A link that says it deletes or sends may do it at once (a one-click
     // unsubscribe, a link the site runs as a request), so it is asked about,
     // told where it goes. A link that says it pays is still judged by its

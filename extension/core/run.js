@@ -200,6 +200,7 @@
       pausedInRow: { n: 0, ms: 0 },
       // Sites the user would not let the agent onto, by origin, for this run.
       declinedSites: [],
+      declined: null,
       // The last hand-off to the user: its kind, the page it was on, how many in a row.
       handoff: null,
       // What the step in hand is shown and may do: the main model's, or the helper's on its steps.
@@ -1076,6 +1077,17 @@
     if (a.do === "done") return onDone(run, a, page, env, fx);
     if (a.do === "ask_user") {
       if (a.kind === "human_check") { const left = leaveDetour(run, a, page, fx); if (left) return left; }
+      // The user has just said no to a step. Asking them whether they still
+      // want it would leave the run waiting on a question they have in
+      // effect answered: a question that names what was declined is sent
+      // back once, and the model finds another way or finishes with what it
+      // did and did not do. A question about something else is asked.
+      if (a.kind === "question" && aboutDeclined(run, a.question)) {
+        run.declined.asked = true;
+        record(run, a, false, `Not asked: the user has just declined a step, and that is their answer. ${DECLINED_NEXT}`);
+        log(run, "system", "Not Asked", "You declined a step, so the agent goes on without asking you about it.");
+        return closeStep(run, fx, "refused");
+      }
       const question = a.kind !== "question" && POLICY.HANDOVER[a.kind] && !a.question ? POLICY.HANDOVER[a.kind] : a.question;
       // A control the user is asked to press themselves is marked on the page for them.
       return waitFor(run, fx, env, { kind: a.kind, question, action: a, ...(a.kind === "press" && a.ref !== undefined ? { press: a.ref } : {}) });
@@ -1639,6 +1651,21 @@
     return fx;
   }
 
+  // Words that name nothing, left out when a question is matched to a step.
+  const PLAIN = new Set("this that these those with your yours from have will what which when where they them then there into about want still should would could please here".split(" "));
+  const namingWords = (text) => KNOWN.wordsOf(text, 4).filter((w) => !PLAIN.has(w));
+
+  /** True when a question names the step the user has just declined, and has not been sent back yet. */
+  function aboutDeclined(run, question) {
+    const d = run.declined;
+    if (!d || d.asked || !(d.words || []).length) return false;
+    const asked = new Set(namingWords(question));
+    return d.words.some((w) => asked.has(w));
+  }
+
+  // What the model is told when the user declines a step.
+  const DECLINED_NEXT = "Do not ask them about it again. If the request can still be met another way that needs no go-ahead (another control, the keyboard, a different page), do that. Otherwise finish now and say what you did, what you did not do and why.";
+
   /** The user did, answered, approved, declined or skipped what the run was waiting for. */
   function onUser(run, event, page, env) {
     const fx = [];
@@ -1681,8 +1708,11 @@
         fx.push({ type: "act", action: approved });
         return fx;
       }
-      record(run, a, false, `The user declined this step${w.risk ? ` (it would ${{ pay: "spend money", send: "send or submit something", delete: "delete something", share: "put their details into this site", address: "open an address that was not on any page", site: "type on a site outside the request", secret: "type into a secret field" }[w.risk] || "need their go-ahead"})` : ""}. It was not done.`);
+      record(run, a, false, `The user declined this step${w.risk ? ` (it would ${{ pay: "spend money", send: "send or submit something", delete: "delete something", share: "put their details into this site", address: "open an address that was not on any page", site: "type on a site outside the request", secret: "type into a secret field" }[w.risk] || "need their go-ahead"})` : ""}. It was not done. ${DECLINED_NEXT}`);
       log(run, "system", "Declined", "You declined this step.");
+      // Until the user says something new, a question back to them about it is not put to them.
+      const what = a.ref !== undefined && run.labels[a.ref] ? run.labels[a.ref] : [a.url, a.value].filter(Boolean).join(" ");
+      run.declined = { at: run.step, asked: false, words: namingWords(what) };
       return closeStep(run, fx, "refused");
     }
     const said = String(event.text || "").trim();
@@ -1695,6 +1725,7 @@
           : "The user says it is done.";
     record(run, a || { do: "ask_user", kind: w.kind }, event.type !== "skipped", w.byPolicy ? `Not run: only the user can do this. ${result}` : result);
     if (event.type === "answered" && said) {
+      run.declined = null;
       run.journal.push({ k: "user", text: said });
       run.said.push(said);
       run.answers.push(said);
@@ -2130,6 +2161,7 @@
         if (waitKind && !["approval", "check_in", "pause"].includes(waitKind)) return onUser(run, { type: "answered", text, keep: !!event.keep }, page, e);
         run.steers.push(text);
         run.said.push(text);
+        run.declined = null;
         log(run, "system", "You Added", text);
         run.stuck = { steps: 0, helper: 0, at: run.step };
         if (run.wrapUp && run.wrapUp.by === "stuck") run.wrapUp = null;
