@@ -31,11 +31,16 @@
  * and writes numbers only: no task id, answer, verdict or reason.
  *
  *   node tests/bench/trial.js holdout-check [--detail]
+ *   node tests/bench/trial.js suite-check widgets
  *   node tests/bench/trial.js leaks <log file> --tasks <task file>
  *
  * `holdout-check` fails when a holdout task is on a site any other suite
  * uses or the file's shape is off, and prints counts only (--detail, for
  * whoever edits the file on their own machine, names the problems).
+ * `suite-check widgets` fails when the open widgets practice file is off its
+ * shape or a task of it is on a site any other suite uses, the holdout's
+ * included when the plain holdout file is here. It names the practice task
+ * and its site, never a holdout task.
  * `leaks` fails when a log names any task of the file.
  *
  * The holdout file is committed encrypted (tests/bench/holdout-tasks.json.enc).
@@ -74,9 +79,41 @@ const SUITES = Object.freeze({
   everyday: "tests/bench/everyday-tasks.json",
   dev: "tests/bench/smoke-tasks.json",
   learn: "tests/bench/learn-tasks.json",
+  widgets: "tests/bench/widgets-tasks.json",
   holdout: "tests/bench/holdout-tasks.json",
 });
 const SEALED_SUITES = Object.freeze(["holdout"]);
+
+// The widgets suite is an open practice set for the interactions the holdout
+// suite's widgets family measures: anyone may read its runs and tune on them.
+// Each task names the kind of interaction it practises, and the set covers
+// every kind below. It shares no site with any other suite, the holdout
+// included, so tuning on it is never tuning on a held-out site.
+const WIDGET_KINDS = Object.freeze({
+  hover: "Hover menus and tooltips",
+  drag: "Dragging within a list or a board",
+  "drag-kanban": "Dragging a card between kanban columns",
+  dropzone: "Dropping an element on a drop zone (no file)",
+  slider: "Sliders and range inputs, native and custom",
+  "date-time": "Date and time pickers",
+  keyboard: "Keyboard-driven widgets: arrow keys, Escape, Tab, type-ahead",
+  autocomplete: "Autocomplete suggestions",
+  disclosure: "Accordions and tabs",
+  modal: "Modal dialogs",
+  iframe: "Frames and nested frames",
+  "shadow-dom": "Shadow DOM components",
+  "canvas-svg": "Canvas or SVG click targets",
+  "context-menu": "Context menus",
+  "double-click": "Double click",
+  "long-press": "Long press",
+  "infinite-scroll": "Infinite scroll",
+  "sortable-table": "Sortable tables",
+  "rich-text": "Rich text editors",
+  "multi-select": "Multi-select and tag inputs",
+  "toggle-rating": "Toggles and star ratings",
+});
+const WIDGET_SOURCES = Object.freeze(["library-demo", "real-site"]);
+const PRACTICE_SUITE = "widgets";
 // The generality checks of the page reader and the PDF reader run on real
 // sites too. A holdout task may not share a site with them either: work on
 // those checks would then be work on a holdout task's site.
@@ -653,6 +690,13 @@ function recipeMarkdown(t) {
   return out.join("\n");
 }
 
+/** The widgets practice suite's lines by kind of interaction (groupTable on "widget"), as Markdown. */
+function kindMarkdown(lines) {
+  const out = ["", "### By kind of interaction", "", "| kind | tasks | passed | failed | timed out | blocked | lost | not run |", "| --- | --- | --- | --- | --- | --- | --- | --- |"];
+  for (const l of lines) out.push(`| ${WIDGET_KINDS[l.widget] || l.widget} | ${l.tasks} | ${l.passed} | ${l.failed} | ${l.timedOut} | ${l.blocked} | ${l.lost} | ${l.notRun} |`);
+  return out.join("\n");
+}
+
 /** Every run.json under a folder, newest run of each task last. */
 function readRows(dir) {
   const rows = [];
@@ -772,6 +816,60 @@ function holdoutProblems(holdout, others) {
     if (!DIFFICULTIES.includes(t.difficulty)) problems.push(`${t.id}: a holdout task needs a difficulty (${DIFFICULTIES.join(", ")})`);
     for (const site of taskSites(t)) if (owner.has(site)) problems.push(`${t.id}: ${site} is also used by ${owner.get(site)}`);
   }
+  return problems;
+}
+
+/**
+ * Problems with a suite that must keep to sites of its own, as sentences:
+ * each of its tasks on a site another suite uses. A sentence names the
+ * suite's own task and site, and the other suite's task only when that suite
+ * is open: of a sealed suite (SEALED_SUITES) it names the suite and nothing
+ * more. `others` maps a suite's name to its task list (null when absent).
+ */
+function siteOverlapProblems(own, list, others) {
+  const problems = [];
+  const owner = new Map();
+  for (const [suite, tasks] of Object.entries(others || {})) {
+    if (suite === own) continue;
+    for (const t of tasks || []) for (const site of taskSites(t)) if (!owner.has(site) || SEALED_SUITES.includes(suite)) owner.set(site, SEALED_SUITES.includes(suite) ? `the ${suite} suite` : `${suite} (${t.id})`);
+  }
+  for (const t of list || []) for (const site of taskSites(t)) if (owner.has(site)) problems.push(`${t.id}: ${site} is also used by ${owner.get(site)}`);
+  return problems;
+}
+
+/**
+ * Problems with the widgets practice file, as sentences: its rule says it is
+ * open, it holds 24 to 30 widgets tasks, each with a difficulty, a kind of
+ * interaction (WIDGET_KINDS) and a source (WIDGET_SOURCES), every kind is
+ * practised, both sources are used (at least 5 real sites), no site has more
+ * than 3 tasks, and each task's end state can be checked: a pattern, or a
+ * rubric that says how the final page is judged.
+ */
+function widgetsShapeProblems(file) {
+  const problems = [];
+  const tasks = taskList(file);
+  const rule = String((file && file.rule) || "");
+  for (const words of ["PRACTICE SET", "tune the agent on them", "suite-check widgets"]) if (!rule.includes(words)) problems.push(`the rule does not say "${words}"`);
+  if (tasks.length < 24 || tasks.length > 30) problems.push(`${tasks.length} tasks, not 24 to 30`);
+  const kinds = {};
+  const sources = {};
+  const bySite = {};
+  const judged = /final page|screenshot/i;
+  for (const t of tasks) {
+    if (t.level !== "widgets") problems.push(`${t.id}: level "${t.level}", not widgets`);
+    if (!DIFFICULTIES.includes(t.difficulty)) problems.push(`${t.id}: needs a difficulty (${DIFFICULTIES.join(", ")})`);
+    if (!WIDGET_KINDS[t.widget]) problems.push(`${t.id}: widget "${t.widget}" is not one of ${Object.keys(WIDGET_KINDS).join(", ")}`);
+    else kinds[t.widget] = (kinds[t.widget] || 0) + 1;
+    if (!WIDGET_SOURCES.includes(t.source)) problems.push(`${t.id}: source "${t.source}" is not one of ${WIDGET_SOURCES.join(", ")}`);
+    else sources[t.source] = (sources[t.source] || 0) + 1;
+    if (!t.expect) problems.push(`${t.id}: no expect`);
+    else if (!t.pattern && !judged.test(t.expect)) problems.push(`${t.id}: with no pattern, the rubric must say how the final page shows the end state`);
+    for (const s of taskSites(t)) bySite[s] = (bySite[s] || 0) + 1;
+  }
+  for (const k of Object.keys(WIDGET_KINDS)) if (!kinds[k]) problems.push(`no task practises ${k} (${WIDGET_KINDS[k]})`);
+  if ((sources["real-site"] || 0) < 5) problems.push(`${sources["real-site"] || 0} tasks on real sites, not 5 or more`);
+  if (!sources["library-demo"]) problems.push("no task on a component library's demo page");
+  for (const [s, n] of Object.entries(bySite)) if (n > 3) problems.push(`${n} tasks on ${s}, more than 3`);
   return problems;
 }
 
@@ -1018,6 +1116,21 @@ function main(argv) {
     if (problems.length) { console.error(argv.includes("--detail") ? problems.join("\n") : "Run holdout-check --detail on the plain file to see them."); process.exit(1); }
     return;
   }
+  if (cmd === "suite-check") {
+    // The open practice suite: sound, shaped as its rule says, and on no site another suite uses,
+    // the holdout's too when its plain file is here. A clash with a sealed suite names only this suite's task.
+    const name = target || PRACTICE_SUITE;
+    if (name !== PRACTICE_SUITE) { console.error(`suite-check knows the ${PRACTICE_SUITE} suite only.`); process.exit(1); }
+    const all = readSuites();
+    const file = JSON.parse(fs.readFileSync(path.join(__dirname, "../..", SUITES[name]), "utf8"));
+    const list = all[name];
+    const problems = [...validateTasks(list), ...widgetsShapeProblems(file), ...siteOverlapProblems(name, list, all)];
+    const compared = Object.keys(all).filter((k) => k !== name && all[k]);
+    const kinds = new Set(list.map((t) => t.widget));
+    console.log(`${name}: ${list.length} tasks on ${new Set(list.flatMap(taskSites)).size} sites, ${kinds.size} kinds of interaction; no site shared with ${compared.join(", ")}${all.holdout ? "" : " (not the holdout: no plain holdout file here)"}${problems.length ? `: NOT SO, ${problems.length} problem(s)` : ""}`);
+    if (problems.length) { console.error(problems.join("\n")); process.exit(1); }
+    return;
+  }
   if (cmd === "leaks") {
     const tasks = normaliseTasks(JSON.parse(fs.readFileSync(flag("--tasks"), "utf8")));
     const found = leaksIn(fs.existsSync(target) ? fs.readFileSync(target, "utf8") : "", tasks);
@@ -1090,7 +1203,8 @@ function main(argv) {
     }
     const learn = learnTable(rows);
     const recipes = recipeTable(rows);
-    const text = [markdown(table, meta), learn ? learnMarkdown(learn) : "", recipes ? recipeMarkdown(recipes) : ""].filter(Boolean).join("\n");
+    const kinds = planned.some((t) => t.widget) ? groupTable(rows, planned, "widget") : null;
+    const text = [markdown(table, meta), kinds ? kindMarkdown(kinds) : "", learn ? learnMarkdown(learn) : "", recipes ? recipeMarkdown(recipes) : ""].filter(Boolean).join("\n");
     console.log(text);
     const ran = new Set(rows.map((r) => r.slot || r.id));
     fs.mkdirSync(target, { recursive: true });
@@ -1099,6 +1213,7 @@ function main(argv) {
       table,
       learn,
       recipes,
+      byWidget: kinds || undefined,
       runs: rows.map((r) => ({ id: r.id, slot: r.slot, family: r.family || r.level, outcome: bucketOf(r), ending: r.ending, steps: r.steps, seconds: r.seconds, tokens: tokensOf(r), costUSD: r.costUSD || 0, longPromptUSD: r.longPromptUSD || 0, lostAttemptsUSD: r.lostAttemptsUSD || 0, judgeCostUSD: r.judgeCostUSD || 0, patternMatch: r.patternMatch === undefined ? null : r.patternMatch, grounding: r.grounding || null, counters: r.counters || null, recipe: r.recipe || undefined, learn: r.learn ? { pair: r.learn.pair, phase: r.learn.phase } : undefined, failure: failureOf(r) })),
       notRun: planned.filter((t) => !ran.has(t.slot || t.id)).map((t) => t.slot || t.id),
     }, null, 2));
@@ -1110,11 +1225,11 @@ function main(argv) {
     if (flag("--check")) console.error(`\nDry leg check (${flag("--check")}): passed.`);
     return;
   }
-  console.error("Usage: node tests/bench/trial.js validate <tasks.json> | holdout-check | leaks <log> --tasks <tasks.json> | summary <out dir> --tasks <tasks.json> [--sample N] [--runs N] [--learn on|pairs] [--arm shipped|debugger-on] [--shards N] [--sealed] [--check-dry] [--check cap|learn|recipes|sealed]");
+  console.error("Usage: node tests/bench/trial.js validate <tasks.json> | holdout-check | suite-check widgets | leaks <log> --tasks <tasks.json> | summary <out dir> --tasks <tasks.json> [--sample N] [--runs N] [--learn on|pairs] [--arm shipped|debugger-on] [--shards N] [--sealed] [--check-dry] [--check cap|learn|recipes|sealed]");
   process.exit(1);
 }
 
-module.exports = { FAMILIES, DIFFICULTIES, SUITES, SEALED_SUITES, READING_CHECKS, SEALED_CRASH, readingCheckPages, SEALED_MIN_GROUP, SEALED_WITHHELD, HOLDOUT_ENCRYPTED, DRY_PORT, PRACTICE_SITES, validateTasks, taskSites, holdoutFile, holdoutProblems, holdoutShapeProblems, readSuites, groupTable, sealedReport, sealedMarkdown, sealedLogText, sealConsole, leaksIn, patternMatch, patternVerdict, learnPlan, plannedRuns, longPromptSurchargeUSD, spendOf, answerGrounding, engineReadingsInWorker, mergeReadings, answerValues, engineExcerpts, READING, countersOf, judgeCostUSD, bucketOf, failureOf, familyTable, markdown, armProblems, learnTable, learnMarkdown, recipeTable, recipeMarkdown, readRows, readShards, checkDry, checkLeg, readFormControls };
+module.exports = { FAMILIES, DIFFICULTIES, SUITES, SEALED_SUITES, WIDGET_KINDS, WIDGET_SOURCES, PRACTICE_SUITE, siteOverlapProblems, widgetsShapeProblems, kindMarkdown, READING_CHECKS, SEALED_CRASH, readingCheckPages, SEALED_MIN_GROUP, SEALED_WITHHELD, HOLDOUT_ENCRYPTED, DRY_PORT, PRACTICE_SITES, validateTasks, taskSites, holdoutFile, holdoutProblems, holdoutShapeProblems, readSuites, groupTable, sealedReport, sealedMarkdown, sealedLogText, sealConsole, leaksIn, patternMatch, patternVerdict, learnPlan, plannedRuns, longPromptSurchargeUSD, spendOf, answerGrounding, engineReadingsInWorker, mergeReadings, answerValues, engineExcerpts, READING, countersOf, judgeCostUSD, bucketOf, failureOf, familyTable, markdown, armProblems, learnTable, learnMarkdown, recipeTable, recipeMarkdown, readRows, readShards, checkDry, checkLeg, readFormControls };
 
 if (require.main === module) {
   const argv = process.argv.slice(2);

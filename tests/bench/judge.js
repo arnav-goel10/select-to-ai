@@ -348,6 +348,8 @@ function normaliseTasks(list) {
     ...(t.lang ? { lang: String(t.lang) } : {}),
     ...(t.difficulty ? { difficulty: String(t.difficulty) } : {}),
     ...(t.then ? { then: String(t.then) } : {}),
+    // The kind of interaction a widgets practice task exercises (trial.js WIDGET_KINDS), so its summary can count by kind.
+    ...(t.widget ? { widget: String(t.widget) } : {}),
     ...(t.dryForm ? { dryForm: String(t.dryForm) } : {}),
     ...(t.scenario ? { scenario: String(t.scenario) } : {}),
     ...(t.dry ? { dry: String(t.dry) } : {}),

@@ -4,7 +4,7 @@
 
 ## The holdout suite: read this first
 
-The holdout tasks are a held-out set. The everyday, dev and learn suites are a development set: their failures have been read and the agent has been changed to fix them, so a better score on them no longer shows that the agent got better in general. The holdout suite is there to show that.
+The holdout tasks are a held-out set. The everyday, dev, learn and widgets suites are a development set: their failures have been read and the agent has been changed to fix them, so a better score on them no longer shows that the agent got better in general. The holdout suite is there to show that.
 
 The rule:
 

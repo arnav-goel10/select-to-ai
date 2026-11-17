@@ -26,9 +26,9 @@ on:
   workflow_dispatch:
     inputs:
       suite:
-        description: "everyday: 93 tasks. dev: 12 smoke tasks. learn: 12 tasks run twice and 6 pairs of neighbours, learning on (tests/bench/learn-tasks.json). holdout: 50 held-out tasks on sites no other suite uses, reported as numbers only (tests/bench/README.md)"
+        description: "everyday: 93 tasks. dev: 12 smoke tasks. learn: 12 tasks run twice and 6 pairs of neighbours, learning on (tests/bench/learn-tasks.json). widgets: 30 open practice tasks on interactive widgets, on sites no other suite uses (tests/bench/widgets-tasks.json). holdout: 50 held-out tasks on sites no other suite uses, reported as numbers only (tests/bench/README.md)"
         type: choice
-        options: [everyday, dev, learn, holdout]
+        options: [everyday, dev, learn, widgets, holdout]
         default: everyday
       arm:
         description: "shipped: the packed 4.0 build as it is (no debugger). debugger-on: the same build with the debugger permission added"
@@ -166,8 +166,9 @@ jobs:
             everyday) tasks=tests/bench/everyday-tasks.json ;;
             dev) tasks=tests/bench/smoke-tasks.json ;;
             learn) tasks=tests/bench/learn-tasks.json; learn=pairs ;;
+            widgets) tasks=tests/bench/widgets-tasks.json ;;
             holdout) tasks=tests/bench/holdout-tasks.json; sealed=true ;;
-            *) fail "suite must be everyday, dev, learn or holdout" ;;
+            *) fail "suite must be everyday, dev, learn, widgets or holdout" ;;
           esac
           if [ -z "$learn" ] && [ "$IN_LEARNING" = "true" ]; then learn=on; fi
           if [ "$sealed" = "true" ] && [ -n "$learn" ]; then fail "the holdout suite runs without learning: the learning loop's log names tasks"; fi
@@ -255,7 +256,9 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       - name: The task files are sound
         run: |
-          for f in everyday-tasks learn-tasks fixture-tasks fixture-learn-tasks; do node tests/bench/trial.js validate "tests/bench/$f.json"; done
+          for f in everyday-tasks learn-tasks widgets-tasks fixture-tasks fixture-learn-tasks; do node tests/bench/trial.js validate "tests/bench/$f.json"; done
+          # The widgets practice set: its shape, and no site shared with another suite (the holdout's too when it was decrypted above).
+          node tests/bench/trial.js suite-check widgets
       # The decrypted holdout file: sound, shaped as its rule says, and on no site another suite uses. Counts only.
       - name: The holdout tasks are sound
         if: ${{ github.event_name == 'push' || inputs.suite == 'holdout' }}
