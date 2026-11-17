@@ -762,6 +762,104 @@
 
     const BOILERPLATE = 'nav, header, footer, aside, [role="navigation"], [role="banner"], [role="contentinfo"], [role="complementary"], [aria-hidden="true"]';
     const MAIN_SELECTORS = ['main', '[role="main"]', 'article', '#mw-content-text', '#content', '#main', '.main-content', '#main-content'];
+    // How much of a page's text is kept for find and read. Long documents
+    // (a specification, a manual) run to half a million characters, and a
+    // section past the cap could be seen in its table of contents but never read.
+    const PAGE_TEXT_LIMIT = 700000;
+
+    /**
+     * The page's main content area. A page that marks one with <main> or
+     * role="main" says so itself. The other selectors are guesses from
+     * common names, and a guess must hold a fair share of the page's text:
+     * a document whose sections take their ids from their titles has a
+     * section called "Content" (id="content"), and a listing has one
+     * <article> per card. Taking that one part as the page hid the rest.
+     */
+    function pickMain(doc) {
+        const bodyLength = ((doc.body && doc.body.innerText) || '').trim().length;
+        for (const sel of MAIN_SELECTORS) {
+            const cand = doc.querySelector(sel);
+            if (!cand) continue;
+            const length = (cand.innerText || '').trim().length;
+            if (length <= 200) continue;
+            const declared = sel === 'main' || sel === '[role="main"]';
+            if (declared || length >= bodyLength * 0.3) return cand;
+        }
+        return null;
+    }
+
+    /**
+     * Text a page draws inside open shadow roots (web components). innerText
+     * does not reach into them, so a reading built on it misses whatever a
+     * component renders: a usage figure, a price, a status line.
+     */
+    function shadowText(root) {
+        const out = [];
+        const seenRoots = new Set();
+        const visit = (scope, depth) => {
+            if (depth > 6 || out.length > 400) return;
+            for (const el of scope.querySelectorAll('*')) {
+                const sr = el.shadowRoot;
+                if (!sr || seenRoots.has(sr)) continue;
+                seenRoots.add(sr);
+                for (const kid of sr.children) {
+                    if (/^(STYLE|SCRIPT|TEMPLATE|SLOT)$/.test(kid.tagName)) continue;
+                    const t = seenText(kid).replace(/[ \t ]+/g, ' ').trim();
+                    if (t) out.push(t);
+                }
+                visit(sr, depth + 1);
+            }
+        };
+        visit(root, 0);
+        return out.join('\n');
+    }
+
+    /**
+     * What an element with no words of its own says through its attributes.
+     * Star ratings, levels and scores are often drawn as icons, with the value
+     * only in an attribute: aria-label="4 out of 5", title="Supported", or a
+     * class like "star-rating Three" or "rating-45" that the page's style turns
+     * into stars. Controls are left out: they are listed with their names.
+     */
+    const RATING_CLASS = /(?:^|[\s_-])(?:rating|ratings|rated|stars?|score)(?:$|[\s_-])/i;
+    const VALUE_TOKEN = /(?:^|[\s_-])(?:\d+|zero|one|two|three|four|five|six|seven|eight|nine|ten|half|full|empty)(?:$|[\s_-])/i;
+    function markedMeaning(el) {
+        if (!el || el.nodeType !== 1) return '';
+        // Controls are listed with their names; pictures and frames are read as media.
+        if (/^(A|BUTTON|INPUT|SELECT|TEXTAREA|OPTION|LABEL|SUMMARY|IMG|VIDEO|CANVAS|SVG|IFRAME|PICTURE)$/i.test(el.tagName)) return '';
+        const role = el.getAttribute('role') || '';
+        if (/^(button|link|menuitem|tab|checkbox|radio|switch|option|textbox|combobox|slider)$/.test(role)) return '';
+        // Attributes first: they are cheap, and most elements have none of these.
+        const said = el.getAttribute('aria-hidden') === 'true' ? '' : (el.getAttribute('aria-label') || el.getAttribute('title') || '').replace(/\s+/g, ' ').trim();
+        const cls = (typeof el.className === 'string' ? el.className : (el.getAttribute('class') || '')).replace(/\s+/g, ' ').trim();
+        const byClass = cls && RATING_CLASS.test(cls) && VALUE_TOKEN.test(cls) ? `class "${cls.slice(0, 80)}"` : '';
+        if (!said && !byClass) return '';
+        // Only an element with no words of its own: otherwise its words say it.
+        if ((el.innerText || el.textContent || '').trim()) return '';
+        return said ? said.slice(0, 120) : byClass;
+    }
+
+    /**
+     * The heading of the part of the page the address points to (#fragment):
+     * the heading itself, or the first heading in the section it names.
+     * The text under it is found in the page's reading by this heading.
+     */
+    function anchorHeading(doc, hash) {
+        const id = String(hash || '').replace(/^#/, '');
+        if (!id) return '';
+        let target = null;
+        try { target = doc.getElementById(decodeURIComponent(id)); } catch (_e) { target = doc.getElementById(id); }
+        if (!target && doc.getElementsByName) target = doc.getElementsByName(id)[0] || null;
+        if (!target) return '';
+        const isHeading = (n) => n && /^H[1-6]$/.test(n.tagName);
+        let heading = isHeading(target) ? target : (target.querySelector && target.querySelector('h1, h2, h3, h4, h5, h6'));
+        if (!heading && target.closest) {
+            const section = target.closest('section');
+            heading = section && section.querySelector('h1, h2, h3, h4, h5, h6');
+        }
+        if (!isHeading(heading)) return '';
+        return String(heading.innerText || heading.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+    }
 
     function tidyText(t) {
         return String(t || '')
@@ -921,6 +1019,7 @@
         const inlineText = (el) => seenText(el)
             .replace(/\[\d+\]|\[citation needed\]|\[edit\]/gi, '')
             .replace(/[ \t ]+/g, ' ').replace(/\s*\n\s*/g, ' ').trim();
+        const inlineOrMarked = (el) => { const t = inlineText(el); if (t) return t; const m = markedMeaning(el); return m ? `[${m}]` : ''; };
         const hidden = (el) => {
             if (el.hidden || boxUnseeable(el)) return true;
             // aria-hidden marks decoration (icons, a price repeated for screen
@@ -950,6 +1049,9 @@
             const role = el.getAttribute('role');
             if (role === 'navigation' || role === 'banner' || role === 'contentinfo' || role === 'complementary') return;
             if (hidden(el)) return;
+            // An element with no words whose attributes carry its meaning (a star rating drawn from a class).
+            const marked = markedMeaning(el);
+            if (marked) { push(`[${marked}]`); return; }
             if (/^H[1-6]$/.test(tag)) { const t = inlineText(el); if (t) push(`${'#'.repeat(Number(tag[1]))} ${t}`); return; }
             if (tag === 'P' || tag === 'BLOCKQUOTE' || tag === 'FIGCAPTION' || tag === 'DT' || tag === 'DD') {
                 const t = inlineText(el);
@@ -960,7 +1062,7 @@
             if (tag === 'LI') {
                 const readable = !textUnseeable(el);
                 const own = [...el.childNodes].filter((n) => !(n.nodeType === 1 && /^(UL|OL)$/.test(n.tagName)))
-                    .map((n) => (n.nodeType === 3 ? (readable ? n.textContent : '') : (n.nodeType === 1 && !hidden(n) ? inlineText(n) : ''))).join(' ').replace(/\s+/g, ' ').replace(/\[\d+\]/g, '').trim();
+                    .map((n) => (n.nodeType === 3 ? (readable ? n.textContent : '') : (n.nodeType === 1 && !hidden(n) ? inlineOrMarked(n) : ''))).join(' ').replace(/\s+/g, ' ').replace(/\[\d+\]/g, '').trim();
                 if (own) push(`${'  '.repeat(Math.max(0, depth))}- ${own}`);
                 el.querySelectorAll(':scope > ul, :scope > ol').forEach((sub) => walk(sub, depth + 1));
                 return;
@@ -1011,7 +1113,7 @@
                 if (child.nodeType !== 1) continue;
                 if (runsInline(child)) {
                     if ((SKIP_TAGS.has(child.tagName) && !isDisclosure(child)) || hidden(child)) continue;
-                    line.push(inlineText(child));
+                    line.push(inlineOrMarked(child));
                     continue;
                 }
                 flush();
@@ -1033,17 +1135,18 @@
 
     function extractPageContent() {
         const vh = window.innerHeight || document.documentElement.clientHeight;
-        let mainEl = null;
-        for (const sel of MAIN_SELECTORS) {
-            const cand = document.querySelector(sel);
-            if (cand && (cand.innerText || '').trim().length > 200) { mainEl = cand; break; }
-        }
+        const mainEl = pickMain(document);
         // The plain reading is both the fallback and the yardstick the
         // structured one is held to, so it leaves out unseeable text too:
         // otherwise a page could stuff itself with hidden words to force
         // the fallback and get them read.
         leftOut = new Set();
         let text = tidyText(seenText(mainEl || document.body));
+        // Web components' own text, which innerText leaves out. Without it
+        // the plain reading (the fallback, and the yardstick for the
+        // structured one) has none of what a component draws.
+        const inShadow = shadowText(mainEl || document.body);
+        if (inShadow) text = tidyText(`${text}\n${inShadow}`);
         const unseen = unseenPassages(leftOut);
         leftOut = null;
         if (!mainEl) {
@@ -1083,7 +1186,7 @@
         });
 
         let md = { markdown: '', media: { images: 0, videos: 0, charts: 0, tables: 0, imageAlts: [] } };
-        try { md = extractMarkdown(mainEl || document.body, 80000); } catch (_e) { /* plain text stays */ }
+        try { md = extractMarkdown(mainEl || document.body, PAGE_TEXT_LIMIT); } catch (_e) { /* plain text stays */ }
         // Markdown when it kept the page's words; plain text when a site's
         // markup hides content from the walk. Judged by words kept, not by
         // length: a structured version missing every price is not "long enough".
@@ -1094,8 +1197,9 @@
         const useMarkdown = md.markdown.length > 0 && kept >= 0.85;
         const forms = document.querySelectorAll('form, input:not([type="hidden"]), textarea, select').length;
         return {
-            text: (useMarkdown ? md.markdown : text).slice(0, 80000),
+            text: (useMarkdown ? md.markdown : text).slice(0, PAGE_TEXT_LIMIT),
             format: useMarkdown ? 'markdown' : 'text',
+            anchor: (() => { try { return anchorHeading(document, location.hash); } catch (_e) { return ''; } })(),
             outline,
             visibleText: onScreen.join('\n').slice(0, 1800),
             unseen,
@@ -4834,6 +4938,7 @@
                     title: document.title,
                     innerText: content.text,
                     textFormat: content.format,
+                    anchor: content.anchor,
                     media: content.media,
                     outline: content.outline,
                     visibleText: content.visibleText,

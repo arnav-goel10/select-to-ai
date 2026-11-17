@@ -18,6 +18,34 @@
    * where things are (outline), what is on screen, the passages that match
    * the task from anywhere on the page, then the start of the main content.
    */
+  /**
+   * The text under a heading in a page's reading: from the heading's line to
+   * the next heading of the same or a higher level, at most `max` characters.
+   * Empty when the heading is not a heading line of the text.
+   */
+  function anchorSection(text, heading, max) {
+    const want = String(heading || "").replace(/\s+/g, " ").trim().toLowerCase();
+    if (!want) return "";
+    const lines = String(text || "").split("\n");
+    let at = -1;
+    let level = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const m = /^(#{1,6})\s+(.+)$/.exec(lines[i]);
+      if (m && m[2].replace(/\s+/g, " ").trim().toLowerCase() === want) { at = i; level = m[1].length; break; }
+    }
+    if (at < 0) return "";
+    const out = [lines[at]];
+    let used = lines[at].length;
+    for (let i = at + 1; i < lines.length; i++) {
+      const m = /^(#{1,6})\s/.exec(lines[i]);
+      if (m && m[1].length <= level) break;
+      if (used + lines[i].length + 1 > max) { out.push("…"); break; }
+      out.push(lines[i]);
+      used += lines[i].length + 1;
+    }
+    return out.join("\n").trim();
+  }
+
   function composePageText(page, task, budget, out) {
     const full = page.innerText || "";
     if (!full.trim()) return "Page text: [No text content found]";
@@ -36,8 +64,15 @@
       parts.push(`On screen now:\n${visible}`);
       used += visible.length;
     }
+    // The address points into the page (#fragment): the section it names is
+    // what the user or the run went there for, wherever it sits in a long page.
+    const atAnchor = anchorSection(full, page.anchor, 1600);
+    if (atAnchor) {
+      parts.push(`The part of the page the address points to (#${String(page.url || "").split("#")[1] || ""}):\n${atAnchor}`);
+      used += atAnchor.length;
+    }
     const passages = TOOLS.relevantPassages(full, task, { max: 3, maxChars: 600 })
-      .filter((p) => !visible.includes(p.slice(0, 60)));
+      .filter((p) => !visible.includes(p.slice(0, 60)) && !(atAnchor && atAnchor.includes(p.slice(0, 60))));
     if (passages.length) {
       const block = passages.map((p) => `- ${p}`).join("\n");
       parts.push(`Passages matching the task, from anywhere on the page:\n${block}`);
@@ -71,6 +106,7 @@
 
   const api = Object.freeze({
     composePageText,
+    anchorSection,
     formatTabs,
   });
 
