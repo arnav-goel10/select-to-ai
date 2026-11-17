@@ -2,7 +2,7 @@
 // The widgets practice suite: an open set on interactive widgets that the
 // developers may read and tune on. It loads like any trial file, covers every
 // kind of interaction, and shares no site with any other suite, the holdout
-// included, and a clash with the holdout names only the practice task.
+// included, and a clash with the holdout is only counted unless --detail is asked.
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -47,7 +47,7 @@ test("no widgets task uses a site that an open suite or a reading check uses", (
   for (const t of all.widgets) for (const s of T.taskSites(t)) assert.ok(!used.has(s), `${t.id}: ${s}`);
 });
 
-test("the overlap rule catches a start page, a named site and a subdomain, and names a sealed suite's task never", () => {
+test("the overlap rule catches a start page, a named site and a subdomain, and counts a sealed clash without naming it", () => {
   const own = [{ id: "w1", url: "https://demo.example-widgets.org/slider" }, { id: "w2", url: "https://other.example.net/", sites: ["https://maps.shared-site.com/x"] }];
   const others = {
     everyday: [{ id: "e1", url: "https://www.example-widgets.org/" }],
@@ -57,13 +57,18 @@ test("the overlap rule catches a start page, a named site and a subdomain, and n
   const problems = T.siteOverlapProblems("widgets", own, others);
   assert.equal(problems.length, 2);
   assert.match(problems[0], /^w1: example-widgets\.org is also used by everyday \(e1\)$/);
-  assert.match(problems[1], /^w2: shared-site\.com is also used by the holdout suite$/);
-  assert.ok(!problems.join("\n").includes("secret-holdout-task"), "a sealed suite's task is not named");
+  assert.match(problems[1], /^1 task\(s\) of this suite are on a site the holdout suite also uses/);
+  assert.ok(!/secret-holdout-task|shared-site|w2/.test(problems.join("\n")), "a sealed clash names no task and no site");
+  // --detail (the editor's own machine) names the practice task and site, still never the sealed task.
+  const detailed = T.siteOverlapProblems("widgets", own, others, { detail: true });
+  assert.match(detailed[1], /^w2: shared-site\.com is also used by the holdout suite$/);
+  assert.ok(!detailed.join("\n").includes("secret-holdout-task"));
   // Its own tasks are not a clash, and an absent suite (no plain holdout file) is skipped.
   assert.deepEqual(T.siteOverlapProblems("widgets", own, { widgets: own, holdout: null }), []);
   // A site both an open and the sealed suite use is reported as the sealed suite's, so nothing open points at it.
   const both = { everyday: [{ id: "e2", url: "https://shared-site.com/" }], holdout: others.holdout };
   assert.match(T.siteOverlapProblems("widgets", own, both).join(), /the holdout suite/);
+  assert.ok(!T.siteOverlapProblems("widgets", own, both).join().includes("shared-site"));
 });
 
 test("the holdout's overlap rule now counts the widgets suite as another suite", () => {
@@ -88,16 +93,21 @@ test("the shape check wants every kind, both sources, 24 to 30 widgets tasks, a 
   assert.match(tweak((f) => { f.rule = "A set."; }), /PRACTICE SET/);
 });
 
-test("suite-check names the practice task and its site on a clash with the holdout, and never the holdout task", () => {
+test("suite-check prints only a count on a clash with the holdout, and names the site only with --detail", () => {
   const widgets = raw().tasks;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "widgets-check-"));
   const plain = path.join(dir, "holdout.json");
   fs.writeFileSync(plain, JSON.stringify({ rule: "stand-in", tasks: [{ id: "held-out-stand-in-task", level: "widgets", difficulty: "easy", url: widgets[2].url, task: "x", expect: "y" }] }));
+  const site = T.taskSites(widgets[2])[0];
   const r = spawnSync(process.execPath, [TRIAL, "suite-check", "widgets"], { cwd: ROOT, encoding: "utf8", env: { ...process.env, HOLDOUT_TASKS: plain } });
   assert.equal(r.status, 1);
-  assert.match(r.stderr, new RegExp(`^${widgets[2].id}: ${T.taskSites(widgets[2])[0].replace(/\./g, "\\.")} is also used by the holdout suite$`, "m"));
-  assert.ok(!(r.stdout + r.stderr).includes("held-out-stand-in-task"));
-  assert.ok(!(r.stdout + r.stderr).includes(widgets[2].url), "the clash names a site, not the holdout task's address");
+  assert.match(r.stderr, /^\d+ task\(s\) of this suite are on a site the holdout suite also uses/m);
+  const out = r.stdout + r.stderr;
+  for (const hidden of ["held-out-stand-in-task", site, widgets[2].id, widgets[2].url]) assert.ok(!out.includes(hidden), `no ${hidden} without --detail`);
+  const d = spawnSync(process.execPath, [TRIAL, "suite-check", "widgets", "--detail"], { cwd: ROOT, encoding: "utf8", env: { ...process.env, HOLDOUT_TASKS: plain } });
+  assert.equal(d.status, 1);
+  assert.match(d.stderr, new RegExp(`^${widgets[2].id}: ${site.replace(/\./g, "\\.")} is also used by the holdout suite$`, "m"));
+  assert.ok(!(d.stdout + d.stderr).includes("held-out-stand-in-task"));
   const clean = spawnSync(process.execPath, [TRIAL, "suite-check", "widgets"], { cwd: ROOT, encoding: "utf8", env: { ...process.env, HOLDOUT_TASKS: path.join(dir, "absent.json") } });
   if (!fs.existsSync(path.join(ROOT, T.SUITES.holdout))) {
     assert.equal(clean.status, 0, clean.stderr);

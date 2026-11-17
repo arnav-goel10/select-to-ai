@@ -41,8 +41,7 @@
    "difficulty": "medium",
    "url": "https://bevacqua.github.io/dragula/",
    "task": "In the first example (two containers side by side), drag the item \"Moving them anywhere else isn't quite possible\" from the left container into the right one, as the first item there. Tell me the first two items of the right container afterward.",
-   "expect": "In the first example on the final page, the right container starts with \"Moving them anywhere else isn't quite possible\" and the left container no longer holds it. Judge from the page text and the screenshots.",
-   "pattern": "moving them anywhere else"
+   "expect": "In the first example on the final page, the right container starts with \"Moving them anywhere else isn't quite possible\" and the left container no longer holds it. Judge from the page text and the screenshots."
   },
   {
    "id": "widget-drag-kanban-card",
@@ -62,8 +61,7 @@
    "difficulty": "medium",
    "url": "https://react-dnd.github.io/react-dnd/examples/dustbin/multiple-targets",
    "task": "Drag the Banana box into the dustbin that accepts food. Tell me what that dustbin shows as last dropped.",
-   "expect": "The food dustbin on the final page shows Banana as the last item dropped into it.",
-   "pattern": "banana"
+   "expect": "The food dustbin on the final page shows Banana as the last item dropped into it."
   },
   {
    "id": "widget-slider-two-thumbs",
@@ -105,8 +103,7 @@
    "difficulty": "medium",
    "url": "https://ant.design/components/time-picker",
    "task": "In the first demo (Basic), set the time to 14:35:20 with the picker and tell me what the field shows.",
-   "expect": "The Basic demo's time field holds 14:35:20. Judge the value from the harness's list of the final page's form controls.",
-   "pattern": "14:35:20"
+   "expect": "The Basic demo's time field holds 14:35:20. Judge the value from the harness's list of the final page's form controls."
   },
   {
    "id": "widget-date-leap-day",
@@ -147,8 +144,7 @@
    "difficulty": "medium",
    "url": "https://react-select.com/home",
    "task": "In the Multi example, make the select hold exactly two colours, Ocean and Forest, and nothing else.",
-   "expect": "The Multi example's select shows exactly the two chips Ocean and Forest on the final page, with any default colours removed. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass.",
-   "pattern": "(?=[\\s\\S]*ocean)(?=[\\s\\S]*forest)"
+   "expect": "The Multi example's select shows exactly the two chips Ocean and Forest on the final page, with any default colours removed. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
   },
   {
    "id": "widget-autocomplete-dictionary",
@@ -158,8 +154,7 @@
    "difficulty": "medium",
    "url": "https://www.wordreference.com/",
    "task": "Type \"serendip\" into the dictionary search box and choose the suggestion \"serendipity\" from the list that drops down. Tell me which word's entry opens.",
-   "expect": "The run ends on the WordReference entry for serendipity, reached by choosing it from the search suggestions.",
-   "pattern": "serendipity"
+   "expect": "The final page is the WordReference entry for serendipity, reached by choosing it from the search suggestions, not by typing the whole word and pressing Enter."
   },
   {
    "id": "widget-accordion-faq",
@@ -167,9 +162,9 @@
    "widget": "disclosure",
    "source": "real-site",
    "difficulty": "easy",
-   "url": "https://www.netflix.com/sg/",
-   "task": "In the Frequently Asked Questions near the bottom, open the question about how much Netflix costs and tell me the price range it gives.",
-   "expect": "The cost question's panel is open on the final page, and the answer gives the monthly price range that panel states (Plans range from $15.98 to $29.98/month when this was written). Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+   "url": "https://kagi.com/pricing",
+   "task": "In the questions near the bottom of the pricing page, open the one about the limitations of the Trial plan and tell me the limits it gives.",
+   "expect": "The Trial plan question's panel is open on the final page, and the answer gives the limits that panel states (100 searches and 100 interactions with Kagi Assistant when this was written). Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
   },
   {
    "id": "widget-tabs-install-command",
@@ -211,8 +206,7 @@
    "difficulty": "easy",
    "url": "https://shoelace.style/components/rating",
    "task": "Give the first rating on the page 4 stars and tell me its value.",
-   "expect": "The first rating component holds 4. It lives in shadow DOM; judge from the harness's list of the final page's form controls (its value) or a screenshot showing four stars lit.",
-   "pattern": "\\b4\\b"
+   "expect": "The first rating component holds 4. It lives in shadow DOM; judge from the harness's list of the final page's form controls (its value) or a screenshot showing four stars lit."
   },
   {
    "id": "widget-shadow-switch",
@@ -231,9 +225,9 @@
    "source": "real-site",
    "difficulty": "hard",
    "url": "https://lichess.org/editor",
-   "task": "On the board editor, drag the white pawn from e2 to e4. Tell me the FEN the editor then shows.",
-   "expect": "The editor's FEN field reads rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR followed by its side to move, castling and counters. Judge from the harness's list of the final page's form controls.",
-   "pattern": "8/8/4P3/8/PPPP1PPP"
+   "task": "On the board editor, drag the white pawn from e2 to e4 on the board, leaving White to move. Tell me the FEN the editor then shows.",
+   "expect": "The editor's FEN field reads rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq followed by its counters, with White (w) to move. Judge from the harness's list of the final page's form controls and the run's actions: the actions must show the pawn dragged on the board. A FEN typed into the field, or a position picked from the openings list (which sets Black to move), is a failure.",
+   "pattern": "4P3/8/PPPP1PPP/RNBQKBNR w "
   },
   {
    "id": "widget-canvas-pie-legend",
@@ -264,8 +258,7 @@
    "difficulty": "hard",
    "url": "https://handsontable.com/datagrid/demos/",
    "task": "In the data grid demo, double-click a cell in the first data row that holds text, change its text to \"Practice\" and confirm the edit with Enter. Tell me which column that cell is in.",
-   "expect": "A cell in the first data row of the grid shows Practice on the final page, and the answer names its column. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass.",
-   "pattern": "practice"
+   "expect": "A cell in the first data row of the grid shows Practice on the final page, and the answer names its column. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
   },
   {
    "id": "widget-long-press-button",
@@ -317,9 +310,8 @@
    "source": "library-demo",
    "difficulty": "medium",
    "url": "https://select2.org/tagging",
-   "task": "In the tagging example, keep orange selected and add a new tag \"teal\", which is not one of the options. Tell me what the select holds.",
-   "expect": "The tagging example's select holds orange and teal. Judge from the harness's list of the final page's form controls (the selected options).",
-   "pattern": "(?=[\\s\\S]*orange)(?=[\\s\\S]*teal)"
+   "task": "In the example under \"Tagging with multi-value select boxes\", remove purple, keep orange, and add a new tag \"teal\", which is not one of the options. Tell me what the select holds.",
+   "expect": "The multi-value tagging example's select holds exactly orange and teal, with purple no longer selected (the page starts with orange and purple selected). Judge from the harness's list of the final page's form controls (the selected options)."
   }
  ]
 }

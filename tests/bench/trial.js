@@ -821,19 +821,29 @@ function holdoutProblems(holdout, others) {
 
 /**
  * Problems with a suite that must keep to sites of its own, as sentences:
- * each of its tasks on a site another suite uses. A sentence names the
- * suite's own task and site, and the other suite's task only when that suite
- * is open: of a sealed suite (SEALED_SUITES) it names the suite and nothing
- * more. `others` maps a suite's name to its task list (null when absent).
+ * each of its tasks on a site another suite uses. A clash with an open suite
+ * names both tasks and the site. A clash with a sealed suite (SEALED_SUITES)
+ * is only counted, since this suite is open and naming its task or site would
+ * point at a sealed site in a public log. `detail: true` names those too, for
+ * the editor's own machine. `others` maps a suite's name to its task list
+ * (null when absent).
  */
-function siteOverlapProblems(own, list, others) {
+function siteOverlapProblems(own, list, others, { detail = false } = {}) {
   const problems = [];
+  const sealedCounts = {};
   const owner = new Map();
   for (const [suite, tasks] of Object.entries(others || {})) {
     if (suite === own) continue;
-    for (const t of tasks || []) for (const site of taskSites(t)) if (!owner.has(site) || SEALED_SUITES.includes(suite)) owner.set(site, SEALED_SUITES.includes(suite) ? `the ${suite} suite` : `${suite} (${t.id})`);
+    for (const t of tasks || []) for (const site of taskSites(t)) if (!owner.has(site) || SEALED_SUITES.includes(suite)) owner.set(site, SEALED_SUITES.includes(suite) ? { sealed: suite } : { text: `${suite} (${t.id})` });
   }
-  for (const t of list || []) for (const site of taskSites(t)) if (owner.has(site)) problems.push(`${t.id}: ${site} is also used by ${owner.get(site)}`);
+  for (const t of list || []) for (const site of taskSites(t)) {
+    const o = owner.get(site);
+    if (!o) continue;
+    if (!o.sealed) problems.push(`${t.id}: ${site} is also used by ${o.text}`);
+    else if (detail) problems.push(`${t.id}: ${site} is also used by the ${o.sealed} suite`);
+    else (sealedCounts[o.sealed] = sealedCounts[o.sealed] || new Set()).add(t.id);
+  }
+  for (const [suite, ids] of Object.entries(sealedCounts)) problems.push(`${ids.size} task(s) of this suite are on a site the ${suite} suite also uses (run suite-check --detail on your own machine to see which)`);
   return problems;
 }
 
@@ -1118,13 +1128,14 @@ function main(argv) {
   }
   if (cmd === "suite-check") {
     // The open practice suite: sound, shaped as its rule says, and on no site another suite uses,
-    // the holdout's too when its plain file is here. A clash with a sealed suite names only this suite's task.
+    // the holdout's too when its plain file is here. Counts only for a clash with a sealed suite: this
+    // command runs in the open part of the workflow. --detail names them, for the editor's own machine.
     const name = target || PRACTICE_SUITE;
     if (name !== PRACTICE_SUITE) { console.error(`suite-check knows the ${PRACTICE_SUITE} suite only.`); process.exit(1); }
     const all = readSuites();
     const file = JSON.parse(fs.readFileSync(path.join(__dirname, "../..", SUITES[name]), "utf8"));
     const list = all[name];
-    const problems = [...validateTasks(list), ...widgetsShapeProblems(file), ...siteOverlapProblems(name, list, all)];
+    const problems = [...validateTasks(list), ...widgetsShapeProblems(file), ...siteOverlapProblems(name, list, all, { detail: argv.includes("--detail") })];
     const compared = Object.keys(all).filter((k) => k !== name && all[k]);
     const kinds = new Set(list.map((t) => t.widget));
     console.log(`${name}: ${list.length} tasks on ${new Set(list.flatMap(taskSites)).size} sites, ${kinds.size} kinds of interaction; no site shared with ${compared.join(", ")}${all.holdout ? "" : " (not the holdout: no plain holdout file here)"}${problems.length ? `: NOT SO, ${problems.length} problem(s)` : ""}`);
