@@ -47,7 +47,9 @@ test("the repository holds the holdout tasks encrypted only, with the plain path
   assert.equal(spawnSync("git", ["check-ignore", "-q", T.SUITES.holdout], { cwd: ROOT }).status, 0, "the plain path is ignored");
   const readme = fs.readFileSync(path.join(ROOT, "tests/bench/README.md"), "utf8");
   for (const s of ["HOLDOUT_KEY", "openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -md sha256", "-d -aes-256-cbc", "holdout-check --detail", "HOLDOUT_TASKS"]) assert.ok(readme.includes(s), s);
-  assert.match(readme, /history still holds the first draft/);
+  // The plain first draft is in history and stays there: the README names both commits and the rule that follows.
+  for (const s of ["85cd008", "643cc72", "Nobody reads", "the repository is made public"]) assert.ok(readme.includes(s), s);
+  assert.ok(!/history copy is not the live set/.test(readme), "the README does not claim history holds no live task");
 });
 
 test("holdout-check needs the plain file and says how to get it, naming no task", () => {
@@ -73,7 +75,7 @@ test("the plain holdout file is sound and shaped as its rule says, and holdout-c
 
 test("no holdout task uses a site that any other suite uses", needsPlain, () => {
   const { holdout, ...others } = T.readSuites(ROOT);
-  assert.deepEqual(Object.keys(others).sort(), ["dev", "everyday", "learn"]);
+  assert.deepEqual(Object.keys(others).sort(), ["dev", "everyday", "learn", "reading-pdf", "reading-wild"]);
   assert.deepEqual(T.holdoutProblems(holdout, others), []);
   const used = new Set(Object.values(others).flat().flatMap(T.taskSites));
   assert.ok(used.has("wikipedia.org") && used.has("nasa.gov"), "subdomains fold into their registrable domain");
@@ -90,6 +92,25 @@ test("the overlap rule catches a shared domain by start page, by a named site an
   assert.deepEqual(T.holdoutProblems(h({ url: "https://formy-project.herokuapp.com/" }), others), []);
   assert.match(T.holdoutProblems(h({ difficulty: undefined }), others).join(), /needs a difficulty/);
   assert.equal(T.validateTasks(h({ difficulty: "tricky" })).length, 1);
+});
+
+test("the overlap rule covers every page of the reading checks, so a holdout task on one of their sites fails", () => {
+  const all = T.readSuites(ROOT);
+  const others = { "reading-wild": all["reading-wild"], "reading-pdf": all["reading-pdf"] };
+  const wild = require("../reading/wild-sites.js").SITES.map(([, url]) => url);
+  const pdfs = require("../reading/pdf-real-files.js").FILES.map((f) => f.url);
+  assert.ok(wild.length >= 40 && pdfs.length >= 2);
+  assert.deepEqual(others["reading-wild"].map((t) => t.url), wild);
+  assert.deepEqual(others["reading-pdf"].map((t) => t.url), pdfs);
+  const h = (url) => [{ id: "h1", level: "fact-lookup", difficulty: "easy", url, task: "x", expect: "y" }];
+  // Every page of both checks, and another page on the same registrable domain, is caught.
+  for (const url of [...wild, ...pdfs]) {
+    const u = new URL(url);
+    for (const probe of [url, `https://other.${T.taskSites({ url })[0]}/elsewhere`, `${u.origin}/another/page`]) {
+      assert.match(T.holdoutProblems(h(probe), others).join(), /is also used by reading-(wild|pdf) /, probe);
+    }
+  }
+  assert.deepEqual(T.holdoutProblems(h("https://www.standin-unused.example/"), others), []);
 });
 
 test("the shape check holds the suite to its spread and fixes no share of PDFs", () => {
@@ -268,6 +289,30 @@ test("a sealed shard's log lets through run counts and the numbers table, and wi
   for (const s of said.slice(1)) for (const line of s.split("\n")) assert.equal(line, T.SEALED_WITHHELD);
 });
 
+test("a sealed run turns an uncaught exception or an unhandled rejection into one generic line and exit 1", () => {
+  // In process: the handlers print the one line through the unfiltered console and exit with 1.
+  const { EventEmitter } = require("node:events");
+  const proc = new EventEmitter();
+  const exits = [];
+  proc.exit = (code) => exits.push(code);
+  const said = [];
+  const con = { log: (s) => said.push(s), info: (s) => said.push(s), warn: (s) => said.push(s), error: (s) => said.push(s) };
+  T.sealConsole(con, proc);
+  proc.emit("uncaughtException", new Error("stand-in-shopping-0 at agent.html?task=Find%20the%20price"));
+  proc.emit("unhandledRejection", new Error("stand-in-shopping-0 secret reason"));
+  assert.deepEqual(said, [T.SEALED_CRASH, T.SEALED_CRASH]);
+  assert.deepEqual(exits, [1, 1]);
+  // In a real process: Node's own stack trace never reaches the output.
+  const trial = JSON.stringify(TRIAL);
+  for (const fail of ['throw new Error("stand-in-shopping-0 secret reason")', 'Promise.reject(new Error("stand-in-shopping-0 secret reason"))']) {
+    const code = `require(${trial}).sealConsole(); setTimeout(() => { ${fail}; }, 0); setTimeout(() => {}, 2000);`;
+    const r = spawnSync(process.execPath, ["-e", code], { cwd: ROOT, encoding: "utf8", timeout: 10000 });
+    assert.equal(r.status, 1, fail);
+    assert.equal(r.stdout, "");
+    assert.equal(r.stderr.trim(), T.SEALED_CRASH, fail);
+  }
+});
+
 test("run.js seals its console first thing in a sealed run, and its own sealed lines are the allowed ones", () => {
   const src = fs.readFileSync(path.join(ROOT, "tests/bench/run.js"), "utf8");
   const sealAt = src.indexOf('if (process.env.BENCH_QUIET === "sealed") TRIAL.sealConsole();');
@@ -320,14 +365,19 @@ function plan(env) {
 test("the workflow decrypts the holdout tasks before planning and checks them there, and runs suite=holdout sealed", { skip: process.platform === "win32" }, () => {
   const y = fs.readFileSync(path.join(ROOT, ".github/workflows/real-tasks.yml"), "utf8");
   const decrypt = "openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 -in tests/bench/holdout-tasks.json.enc -out tests/bench/holdout-tasks.json -pass env:HOLDOUT_KEY";
-  // In the plan job, on every event, before the plan step and the checks; in the run and summary jobs when sealed.
+  // In the plan job on a push or a holdout run only, before the plan step and the check; in the run and summary jobs when sealed.
   assert.equal(y.split(decrypt).length - 1, 3);
   assert.equal(y.split("HOLDOUT_KEY: ${{ secrets.HOLDOUT_KEY }}").length - 1, 3);
   const jobText = (name) => { const start = y.indexOf(`\n  ${name}:\n`, y.indexOf("\njobs:\n")); const rest = y.slice(start + 1); const next = rest.slice(1).search(/\n  [a-z-]+:\n/); return next < 0 ? rest : rest.slice(0, next + 1); };
   const planJob = jobText("plan");
   assert.ok(planJob.indexOf(decrypt) < planJob.indexOf("name: Work out what to run"));
   assert.ok(planJob.indexOf(decrypt) < planJob.indexOf("node tests/bench/trial.js holdout-check"));
-  assert.ok(!/name: Decrypt the holdout tasks\n\s+if:/.test(planJob), "the plan job always decrypts: the overlap check runs on every push");
+  // Any other event reads no secret in the plan job: the key is read where holdout-check runs and nowhere else.
+  const onlyThere = "if: ${{ github.event_name == 'push' || inputs.suite == 'holdout' }}";
+  assert.match(planJob, /name: Decrypt the holdout tasks\n\s+if: \$\{\{ github\.event_name == 'push' \|\| inputs\.suite == 'holdout' \}\}/);
+  assert.match(planJob, /name: The holdout tasks are sound\n\s+if: \$\{\{ github\.event_name == 'push' \|\| inputs\.suite == 'holdout' \}\}\n\s+run: node tests\/bench\/trial\.js holdout-check/);
+  assert.equal(planJob.split(onlyThere).length - 1, 2);
+  assert.ok(!/never reads a\s*#?\s*secret/.test(y), "the header does not claim dry mode reads no secret");
   assert.match(planJob, /if \[ -z "\$HOLDOUT_KEY" \]; then echo "::error::/);
   for (const job of ["run", "summary"]) assert.match(jobText(job), /name: Decrypt the holdout tasks\n\s+if: \$\{\{ needs\.plan\.outputs\.sealed == 'true' \}\}/, job);
   assert.ok(jobText("run").indexOf(decrypt) < jobText("run").indexOf("node tests/bench/run.js"));

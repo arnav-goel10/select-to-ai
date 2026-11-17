@@ -20,7 +20,11 @@ What is in it: 50 tasks, none on a site any other suite uses (`node tests/bench/
 
 The repository holds the tasks encrypted only, at `tests/bench/holdout-tasks.json.enc`, so that nobody working in the repository reads them by accident. The workflow decrypts them with the repository secret `HOLDOUT_KEY` before it plans, to `tests/bench/holdout-tasks.json`, which git ignores. The plain file and the passphrase are kept outside the repository, on the owner's machine (`~/Documents/s2a-heldout/real-task-holdout/holdout-tasks.json` and `~/Documents/s2a-heldout/holdout-key.txt`). Unit tests that need the plain tasks skip when it is not there; the overlap and shape checks run in the workflow, after decryption.
 
-Git history still holds the first draft of the file in plain text (commit 85cd008). That is acceptable because the tasks changed when it was encrypted: thirteen were replaced, four were corrected, and the rest were reworded and reordered, so the history copy is not the live set. Never commit the plain file again.
+Git history holds a plain first draft of the file: commit 85cd008 added it and commit 643cc72 still has it in its tree (18d5814 removed it when the encrypted copy came in). That draft overlaps the live set heavily. At the second cold review on 17 Nov 2026, 36 of the 50 live tasks kept the draft's start page and 33 kept its answer pattern (after that review three tasks moved to new sites and one cross-site task changed its second site), so reading the draft is reading most of the live set. The history is not rewritten. The rule that follows:
+
+- **Nobody reads those two commits' copy of `tests/bench/holdout-tasks.json`**, by `git show`, `git checkout`, a diff of either commit, the pull request's file view or any other way. Treat it exactly as the decrypted file.
+- **Before the repository is made public, this branch is merged in a way that keeps the draft out of main**, so the public history never holds it. The owner decides how.
+- Never commit the plain file again.
 
 To edit the tasks:
 

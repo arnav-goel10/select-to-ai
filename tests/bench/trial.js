@@ -77,6 +77,13 @@ const SUITES = Object.freeze({
   holdout: "tests/bench/holdout-tasks.json",
 });
 const SEALED_SUITES = Object.freeze(["holdout"]);
+// The generality checks of the page reader and the PDF reader run on real
+// sites too. A holdout task may not share a site with them either: work on
+// those checks would then be work on a holdout task's site.
+const READING_CHECKS = Object.freeze({
+  "reading-wild": "tests/reading/wild-sites.js",
+  "reading-pdf": "tests/reading/pdf-real-files.js",
+});
 const HOLDOUT_ENCRYPTED = "tests/bench/holdout-tasks.json.enc";
 
 /** Where the plain holdout file is: HOLDOUT_TASKS, else the decrypted path. Null when it is not there. */
@@ -659,10 +666,18 @@ function holdoutProblems(holdout, others) {
   return problems;
 }
 
+/** The real pages of a reading check (READING_CHECKS), as tasks with an id and a start page, for the overlap rule. */
+function readingCheckPages(name, root = path.join(__dirname, "../..")) {
+  const mod = require(path.join(root, READING_CHECKS[name]));
+  const urls = name === "reading-wild" ? mod.SITES.map(([, url]) => url) : mod.FILES.map((f) => f.url);
+  return urls.map((url, i) => ({ id: `${name}-${i + 1}`, url }));
+}
+
 /**
- * Every suite's task list. The holdout suite's comes from the plain file
- * (holdoutFile) and is null when that is not there: the repository holds it
- * encrypted only.
+ * Every suite's task list, and the pages of each reading check
+ * (READING_CHECKS) as tasks with a start page only. The holdout suite's
+ * comes from the plain file (holdoutFile) and is null when that is not
+ * there: the repository holds it encrypted only.
  */
 function readSuites(root = path.join(__dirname, "../..")) {
   const read = (f) => taskList(JSON.parse(fs.readFileSync(f, "utf8")));
@@ -670,6 +685,7 @@ function readSuites(root = path.join(__dirname, "../..")) {
   for (const [name, file] of Object.entries(SUITES)) {
     if (name === "holdout") { const plain = holdoutFile(root); out[name] = plain ? read(plain) : null; } else out[name] = read(path.join(root, file));
   }
+  for (const name of Object.keys(READING_CHECKS)) out[name] = readingCheckPages(name, root);
   return out;
 }
 
@@ -848,13 +864,25 @@ function sealedLogText(text) {
   }).join("\n");
 }
 
-/** Puts the sealed filter in front of console.log and console.error: run.js calls this first thing in a sealed run. */
-function sealConsole(con = console) {
+// The one line a sealed run prints when it stops on an error.
+const SEALED_CRASH = "The harness stopped with an error; a sealed run withholds the detail.";
+
+/**
+ * Puts the sealed filter in front of console.log and console.error, and
+ * catches an uncaught exception or an unhandled rejection: Node would print
+ * its stack, which can carry a task's text, so the run prints SEALED_CRASH
+ * and exits with 1 instead. run.js calls this first thing in a sealed run.
+ */
+function sealConsole(con = console, proc = process) {
   const fmt = (args) => args.map((a) => (a instanceof Error ? a.stack || a.message : typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+  const rawError = con.error.bind(con);
   for (const name of ["log", "info", "warn", "error"]) {
     const out = con[name].bind(con);
     con[name] = (...args) => out(sealedLogText(fmt(args)));
   }
+  const crash = () => { try { rawError(SEALED_CRASH); } finally { proc.exit(1); } };
+  proc.on("uncaughtException", crash);
+  proc.on("unhandledRejection", crash);
 }
 
 function main(argv) {
@@ -977,7 +1005,7 @@ function main(argv) {
   process.exit(1);
 }
 
-module.exports = { FAMILIES, DIFFICULTIES, SUITES, SEALED_SUITES, SEALED_MIN_GROUP, SEALED_WITHHELD, HOLDOUT_ENCRYPTED, DRY_PORT, PRACTICE_SITES, validateTasks, taskSites, holdoutFile, holdoutProblems, holdoutShapeProblems, readSuites, groupTable, sealedReport, sealedMarkdown, sealedLogText, sealConsole, leaksIn, patternMatch, patternVerdict, learnPlan, plannedRuns, longPromptSurchargeUSD, spendOf, answerGrounding, countersOf, judgeCostUSD, bucketOf, failureOf, familyTable, markdown, armProblems, learnTable, learnMarkdown, recipeTable, recipeMarkdown, readRows, readShards, checkDry, checkLeg, readFormControls };
+module.exports = { FAMILIES, DIFFICULTIES, SUITES, SEALED_SUITES, READING_CHECKS, SEALED_CRASH, readingCheckPages, SEALED_MIN_GROUP, SEALED_WITHHELD, HOLDOUT_ENCRYPTED, DRY_PORT, PRACTICE_SITES, validateTasks, taskSites, holdoutFile, holdoutProblems, holdoutShapeProblems, readSuites, groupTable, sealedReport, sealedMarkdown, sealedLogText, sealConsole, leaksIn, patternMatch, patternVerdict, learnPlan, plannedRuns, longPromptSurchargeUSD, spendOf, answerGrounding, countersOf, judgeCostUSD, bucketOf, failureOf, familyTable, markdown, armProblems, learnTable, learnMarkdown, recipeTable, recipeMarkdown, readRows, readShards, checkDry, checkLeg, readFormControls };
 
 if (require.main === module) {
   const argv = process.argv.slice(2);

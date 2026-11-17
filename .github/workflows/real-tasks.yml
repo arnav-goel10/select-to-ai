@@ -13,12 +13,15 @@ name: Real-task trial
 # provider's, and for a real run whose key is missing. run.js checks the
 # pairing again (BENCH_KEY_PROVIDER) and refuses a judge on another host.
 #
-# Dry mode needs no secret: the scripted model in tests/e2e/server.js plays
+# Dry mode needs no model key: the scripted model in tests/e2e/server.js plays
 # the fixture tasks, a stub on the runner answers for the judge, and the same
 # artifacts and summary are produced. It runs when the dry box is ticked and
-# on every push to the branch this workflow was written on. It never reads a
-# secret. A manual run without the dry box is a real run or a failed one,
-# never a dry one.
+# on every push to the branch this workflow was written on. A dry run reads no
+# agent or judge key. It reads one secret, HOLDOUT_KEY, in the plan job only,
+# and only on a push (where holdout-check runs) or when suite is holdout: it
+# decrypts the holdout tasks so they can be checked. No other event reads it.
+# A manual run without the dry box is a real run or a failed one, never a dry
+# one.
 on:
   workflow_dispatch:
     inputs:
@@ -113,7 +116,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # The holdout tasks are committed encrypted. HOLDOUT_KEY decrypts them to the
       # git-ignored plain path; the key is never printed and nothing else reads it.
+      # Only a push (holdout-check runs) or a holdout run reads it here.
       - name: Decrypt the holdout tasks
+        if: ${{ github.event_name == 'push' || inputs.suite == 'holdout' }}
         env:
           HOLDOUT_KEY: ${{ secrets.HOLDOUT_KEY }}
         run: |
@@ -251,8 +256,10 @@ jobs:
       - name: The task files are sound
         run: |
           for f in everyday-tasks learn-tasks fixture-tasks fixture-learn-tasks; do node tests/bench/trial.js validate "tests/bench/$f.json"; done
-          # The decrypted holdout file: sound, shaped as its rule says, and on no site another suite uses. Counts only.
-          node tests/bench/trial.js holdout-check
+      # The decrypted holdout file: sound, shaped as its rule says, and on no site another suite uses. Counts only.
+      - name: The holdout tasks are sound
+        if: ${{ github.event_name == 'push' || inputs.suite == 'holdout' }}
+        run: node tests/bench/trial.js holdout-check
 
   # The packed 4.0 zip, built and checked the way ci.yml's package-integrity job does it.
   build:
