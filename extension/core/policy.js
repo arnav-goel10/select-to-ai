@@ -85,9 +85,35 @@
 
   // Keys that press what they land on: Enter (or Return) and Space, alone
   // or with modifiers held.
+  // A key is judged as the page will be sent it: "Ctrl-Enter", "Mod-Enter"
+  // and "ctrl+Return" are all Enter held with Control (agentTools.js
+  // parseKeyCombo, which the content script presses keys through).
   const ENTER_KEY = /(^|\+)\s*(enter|return|numpadenter)$/i;
   const SPACE_KEY = /(^|\+)\s*(space|spacebar| )$/i;
-  const activatingKey = (key) => ENTER_KEY.test(String(key || "")) || SPACE_KEY.test(String(key || ""));
+  const comboOf = (key) => {
+    try { return TOOLS.parseKeyCombo(String(key == null ? "" : key), false); } catch (_e) { return { key: String(key || ""), mods: {} }; }
+  };
+  const isEnter = (key) => ENTER_KEY.test(String(key || "")) || /^(enter|return|numpadenter)$/i.test(comboOf(key).key);
+  const isSpace = (key) => SPACE_KEY.test(String(key || "")) || comboOf(key).key === " ";
+  const activatingKey = (key) => isEnter(key) || isSpace(key);
+
+  /**
+   * True when a key, pressed in a text box the page leaves it to, puts
+   * text into the box or takes text out of it: a character, Backspace or
+   * Delete, or a paste or cut shortcut. On a Mac or elsewhere alike, so a
+   * shortcut written for the other computer is judged too.
+   */
+  function writesText(key) {
+    const c = comboOf(key);
+    if (/^(enter|return|numpadenter)$/i.test(c.key)) return false;
+    const m = c.mods || {};
+    if ((m.ctrlKey || m.metaKey) && /^[vx]$/i.test(c.key)) return true;
+    if (m.shiftKey && /^insert$/i.test(c.key)) return true;
+    return [false, true].some((mac) => {
+      const d = TOOLS.keyDefault(c.key, m, mac);
+      return !!d && (d.kind === "text" || d.kind === "delete");
+    });
+  }
 
   /**
    * True when a key pressed on this control does what a click on it does:
@@ -114,7 +140,7 @@
    * the focus is on one of these, or on nothing.
    */
   function pressLandsOn(a, page, run) {
-    if (!a || a.do !== "press" || a.ref !== undefined || !activatingKey(a.key)) return [];
+    if (!a || a.do !== "press" || a.ref !== undefined || !(activatingKey(a.key) || writesText(a.key))) return [];
     const els = (page && page.elements) || [];
     const ids = els.filter((e) => e.focused).map((e) => e.id);
     const last = run && run.focusRef;
@@ -125,10 +151,10 @@
   /** The same action in the shape the risk checks in agentTools.js read. */
   function asRiskAction(a, el) {
     if (a.do === "click") return { action: "click", id: a.ref };
-    if (a.do === "fill") return { action: "type", id: a.ref, text: a.value };
+    if (a.do === "fill" || a.do === "type") return { action: "type", id: a.ref, text: a.value };
     // A key that presses the control it lands on is a click on it.
     if (a.do === "press" && pressesControl(el, a.key)) return { action: "click", id: el.id };
-    if (a.do === "press" && ENTER_KEY.test(String(a.key || ""))) return { action: "keypress", id: a.ref, text: "Enter" };
+    if (a.do === "press" && isEnter(a.key)) return { action: "keypress", id: a.ref, text: "Enter" };
     if (a.do === "navigate") return { action: "navigate", url: a.url };
     if (a.do === "tabs" && a.op === "open") return { action: "open_tab", url: a.url };
     return null;
@@ -267,15 +293,13 @@
       return strongest;
     }
     const risky = asRiskAction(a, el);
-    if (!risky) return ALLOW;
 
     // A check that a person is visiting is the person's to pass.
-    if (TOOLS.guardHumanCheck(risky, page)) return { verdict: "handoff", kind: "human_check", question: HANDOVER.human_check };
-    // Secrets are typed by the user, never by the agent.
-    if (a.do === "fill" && el && el.sensitive) {
-      const kind = el.sensitive === "password" ? "sign_in" : el.sensitive === "payment" ? "payment" : el.sensitive === "code" ? "code" : "question";
-      return { verdict: "handoff", kind, question: HANDOVER[kind] || HANDOVER.id };
-    }
+    if (risky && TOOLS.guardHumanCheck(risky, page)) return { verdict: "handoff", kind: "human_check", question: HANDOVER.human_check };
+    // Secrets are typed by the user, never by the agent, by any action.
+    const secret = secretField(a, el);
+    if (secret) return secret;
+    if (!risky) return ALLOW;
     // The user asked for the form to be filled and left for them to send.
     const held = keptFromSending(a, el, page, run);
     if (held) return held;
@@ -352,9 +376,26 @@
     }
     const detail = [];
     if (risk.target) detail.push(`On: ${risk.target}`);
-    if (a.do === "fill" && risk.kind !== "secret") detail.push(`Text: ${String(a.value).slice(0, 160)}`);
+    if ((a.do === "fill" || a.do === "type") && risk.kind !== "secret") detail.push(`Text: ${String(a.value).slice(0, 160)}`);
     if (opinion) detail.push(`Second check: ${opinion}`);
     return { verdict: "confirm", kind: risk.kind, why: risk.why, detail, site: risk.site || "", url: risk.url || "", ...(check ? { check } : {}) };
+  }
+
+  /**
+   * A password, payment, one-time-code or identity field is the user's: an
+   * action that would put text in it or take text out of it (fill, type,
+   * a key that types, deletes, pastes or cuts) is handed to the user, and
+   * one that would read its text back (select_text) is refused. Every
+   * action that works on a field's text is judged here, so a new one is
+   * judged by what it does to the field, not by its name.
+   */
+  function secretField(a, el) {
+    if (!el || !el.sensitive) return null;
+    if (a.do === "select_text") return { verdict: "refuse", message: "That field holds something only the user types (a password, card number or code), so its text is not selected or read." };
+    const writes = a.do === "fill" || a.do === "type" || (a.do === "press" && writesText(a.key));
+    if (!writes) return null;
+    const kind = el.sensitive === "password" ? "sign_in" : el.sensitive === "payment" ? "payment" : el.sensitive === "code" ? "code" : "question";
+    return { verdict: "handoff", kind, question: HANDOVER[kind] || HANDOVER.id };
   }
 
   /**
@@ -370,7 +411,7 @@
     if (form && form.search) return null;
     const clicks = (a.do === "click" || (a.do === "press" && pressesControl(el, a.key))) && !!TOOLS.guardNoSubmit({ action: "click", id: el.id }, requestOf(run), page);
     // Enter in a message box with no form sends it as surely as in a form.
-    const enters = a.do === "press" && !pressesControl(el, a.key) && ENTER_KEY.test(String(a.key || ""))
+    const enters = a.do === "press" && !pressesControl(el, a.key) && isEnter(a.key)
       && ((!!form && form.fields > 0) || (!form && TOOLS.isMessageBox(el)));
     if (!clicks && !enters) return null;
     const what = clicks ? `"${TOOLS.elementLabel(el) || "that button"}"` : "Enter";
@@ -464,7 +505,7 @@
     return t;
   }
 
-  const api = Object.freeze({ decide, decideSwitch, keysToo, blockersOf, detourSite, detourMessage, remember, asRiskAction, keptFromSending, pressesControl, pressLandsOn, firstAddress, pointTarget, dropPoint, HANDOVER });
+  const api = Object.freeze({ decide, decideSwitch, keysToo, blockersOf, detourSite, detourMessage, remember, asRiskAction, keptFromSending, pressesControl, pressLandsOn, writesText, secretField, firstAddress, pointTarget, dropPoint, HANDOVER });
   root.SELECT_TO_AI_POLICY = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

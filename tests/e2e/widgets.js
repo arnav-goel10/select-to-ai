@@ -694,6 +694,138 @@ async function open(browser, url, html, opts) {
       assert.match(r.message, /Pressed ArrowUp 6 times/);
       assert.equal(await get(() => document.getElementById("spin").textContent), "6");
     });
+    // Text typed where the cursor is, as an editor hears it: beforeinput,
+    // then the browser's own edit, which a page may take over by cancelling
+    // beforeinput. A key the page leaves alone does what the browser does.
+    const EDITING = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Editing</title></head><body>
+      <div id="plain" contenteditable="true" aria-label="Draft" style="border:1px solid #888;min-height:40px"><p>Hello world</p></div>
+      <div id="self" contenteditable="true" aria-label="Self" style="border:1px solid #888;min-height:20px"></div>
+      <input id="line" aria-label="Line" value="abc">
+      <div id="spot" role="button" aria-label="Spot" style="width:40px;height:20px;background:#ccc"></div>
+      <div id="knob" role="slider" tabindex="0" aria-label="Knob" aria-valuenow="7" aria-valuemin="0" aria-valuemax="10" style="width:80px;height:10px;background:#ddd"></div>
+      <button id="mute" type="button" aria-pressed="true">Mute</button>
+      <script>
+        window.selfTyped = '';
+        document.getElementById('self').addEventListener('beforeinput', (e) => { if (e.inputType !== 'insertText') return; e.preventDefault(); window.selfTyped += e.data; document.getElementById('self').textContent = window.selfTyped; });
+        window.pageKeys = 0;
+        document.addEventListener('keydown', () => { window.pageKeys += 1; });
+      </script></body></html>`;
+    const ed = await open(browser, "https://editing.example/", EDITING);
+    const edScan = await ed.send({ action: "scan", limit: 500, task: "", whole: true });
+    const edRef = (i) => ed.page.evaluate((x) => Number(window.__selectToAiIdOf(document.getElementById(x))), i);
+    const edDo = async (action, i, more) => ed.send({ action: "interact", data: { action, id: await edRef(i), ...more } });
+    await check("type puts text at the end of an editable region, and keys the page leaves alone type, break lines and format", async () => {
+      let r = await edDo("insertText", "plain", { value: " again" });
+      assert.equal(r.success, true, r.error);
+      assert.match(r.message, /at the end of its text/);
+      r = await edDo("keypress", "plain", { text: "!" });
+      assert.equal(await ed.page.evaluate(() => document.getElementById("plain").innerText.trim()), "Hello world again!", r.message);
+      r = await edDo("insertText", "plain", { value: "\nNext line" });
+      assert.match(r.message, /now has 2 lines; the last 2 read "Hello world again!", "Next line"/, r.message || r.error);
+      r = await edDo("selectText", "plain", { value: "world" });
+      assert.match(r.message, /"world" is selected, and has no bold/, r.message || r.error);
+      r = await edDo("keypress", "plain", { text: "ctrl+b" });
+      assert.match(r.message, /"world" is selected, and is bold/, r.message);
+      assert.equal(await ed.page.evaluate(() => (document.querySelector("#plain b, #plain strong") || {}).textContent), "world");
+      r = await edDo("keypress", "plain", { text: "Backspace" });
+      assert.doesNotMatch(await ed.page.evaluate(() => document.getElementById("plain").innerText), /world/, r.message);
+    });
+    await check("an editor that puts typed text in itself is not given it twice", async () => {
+      const r = await edDo("insertText", "self", { value: "hey" });
+      assert.equal(r.success, true, r.error);
+      assert.equal(await ed.page.evaluate(() => [window.selfTyped, document.getElementById("self").textContent].join("|")), "hey|hey");
+    });
+    await check("type into a one-line box goes after its text; Backspace deletes there", async () => {
+      await edDo("insertText", "line", { value: "def" });
+      await edDo("keypress", "line", { text: "Backspace" });
+      assert.equal(await ed.page.evaluate(() => document.getElementById("line").value), "abcde");
+      const multi = await edDo("insertText", "line", { value: "a\nb" });
+      assert.match(multi.error, /one-line box/);
+    });
+    await check("a key named for a control that cannot hold the focus is not sent to the page as a whole; Escape is, and says so", async () => {
+      const before = await ed.page.evaluate(() => window.pageKeys);
+      const r = await edDo("keypress", "spot", { text: "ArrowRight" });
+      assert.equal(r.success, false);
+      assert.match(r.error, /cannot take the keyboard focus, so ArrowRight would go to the page as a whole/);
+      assert.equal(await ed.page.evaluate(() => window.pageKeys), before, "no key reached the page");
+      const esc = await edDo("keypress", "spot", { text: "Escape" });
+      assert.match(esc.message, /cannot take the keyboard focus, so it went to/);
+      const none = await ed.send({ action: "interact", data: { action: "keypress", text: "x" } });
+      assert.match(none.message, /Pressed x (on the page as a whole|in \[\d+\], which has the keyboard focus|in .*, which has the keyboard focus)/);
+    });
+    await check("the listing reads back a slider's value, a toggle's pressed state and an editor's text", async () => {
+      const lines = (await ed.send({ action: "scan", limit: 500, task: "", whole: true })).elements.map((e) => TOOLS.formatElementLine(e));
+      assert.ok(lines.some((l) => /div "Knob" role=slider value="7" min=0 max=10/.test(l)), lines.join(" | "));
+      assert.ok(lines.some((l) => /button "Mute" pressed=true/.test(l)), lines.join(" | "));
+      assert.ok(lines.some((l) => /"Draft" value="Hello/.test(l)), lines.join(" | "));
+      assert.ok(edScan.elements.length > 0);
+    });
+    // The rules that hold for fill and press hold for typing and keys too:
+    // a line break typed is not an Enter key (a chat box sends on Enter), a
+    // secret field is never typed in, selected or read back, and a key
+    // that presses what it lands on is pressed once.
+    const GUARDED = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Guarded</title></head><body>
+      <textarea id="msg" aria-label="Message"></textarea>
+      <div id="rich" contenteditable="true" role="textbox" aria-label="Reply" style="border:1px solid #888;min-height:40px"></div>
+      <form id="login" onsubmit="event.preventDefault()"><input id="pw" type="password" aria-label="Password" value="s3cret-value"><button type="submit">Sign in</button></form>
+      <input id="combo" role="combobox" aria-label="City" aria-controls="cities" aria-activedescendant="c1">
+      <ul id="cities" role="listbox"><li id="c1" role="option">Paris</li><li id="c2" role="option">Rome</li></ul>
+      <button id="send" type="button" aria-label="Send">Send</button>
+      <script>
+        window.sent = 0;
+        // Enter sends, as in many chat boxes; Shift+Enter would start a new line.
+        for (const id of ['msg', 'rich']) document.getElementById(id).addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.keyCode === 13 || e.which === 13) && !e.shiftKey) { e.preventDefault(); window.sent += 1; } });
+        window.comboKeys = 0;
+        document.getElementById('combo').addEventListener('keydown', (e) => { if (e.key === 'ArrowDown') window.comboKeys += 1; });
+        window.sends = 0;
+        document.getElementById('send').addEventListener('keydown', (e) => { if (e.key === ' ') window.sends += 1; });
+      </script></body></html>`;
+    const gd = await open(browser, "https://guarded.example/", GUARDED);
+    await gd.send({ action: "scan", limit: 500, task: "", whole: true });
+    const gdRef = (i) => gd.page.evaluate((x) => Number(window.__selectToAiIdOf(document.getElementById(x))), i);
+    const gdDo = async (action, i, more) => gd.send({ action: "interact", data: { action, ...(i ? { id: await gdRef(i) } : {}), ...more } });
+    await check("a line break typed into a box is a new line, not an Enter key that sends it", async () => {
+      let r = await gdDo("insertText", "msg", { value: "Thanks\nArnav" });
+      assert.equal(r.success, true, r.error);
+      r = await gdDo("insertText", "rich", { value: "Thanks\nArnav" });
+      assert.equal(r.success, true, r.error);
+      r = await gdDo("fill", "msg", { value: "Hi\r\nthere" });
+      assert.equal(r.success, true, r.error);
+      r = await gdDo("fill", "rich", { value: "Hi\nthere" });
+      assert.equal(r.success, true, r.error);
+      assert.equal(await gd.page.evaluate(() => window.sent), 0, "no box was sent");
+      assert.equal(await gd.page.evaluate(() => document.getElementById("rich").innerText.split(/\n+/).filter(Boolean).length), 2);
+    });
+    await check("a secret field is not typed in, selected or read back, by any action", async () => {
+      let r = await gdDo("insertText", "pw", { value: "x" });
+      assert.equal(r.success, false);
+      r = await gdDo("selectText", "pw", { value: "s3cret" });
+      assert.equal(r.success, false);
+      assert.doesNotMatch(JSON.stringify(r), /s3cret/);
+      r = await gdDo("keypress", "pw", { text: "ArrowLeft" });
+      assert.doesNotMatch(JSON.stringify(r), /s3cret/, "a key's result does not read the field");
+      r = await gdDo("keypress", "pw", { text: "x" });
+      assert.equal(r.success, false, "a key that types is not pressed there");
+      // With no ref, the key goes where the focus is: still the secret field.
+      await gd.page.evaluate(() => document.getElementById("pw").focus());
+      r = await gdDo("keypress", null, { text: "Backspace" });
+      assert.equal(r.success, false);
+      assert.doesNotMatch(JSON.stringify(r), /s3cret/);
+      assert.equal(await gd.page.evaluate(() => document.getElementById("pw").value), "s3cret-value");
+    });
+    await check("a key on an option goes to the box that moves through its list", async () => {
+      await gd.page.evaluate(() => document.getElementById("combo").focus());
+      const r = await gdDo("keypress", "c1", { text: "ArrowDown" });
+      assert.equal(r.success, true, r.error);
+      assert.equal(await gd.page.evaluate(() => window.comboKeys), 1);
+    });
+    await check("a key that presses what it lands on, and an approved press, are made once", async () => {
+      await gdDo("keypress", "send", { text: "Space", times: 5 });
+      assert.equal(await gd.page.evaluate(() => window.sends), 1);
+      const before = await gd.page.evaluate(() => window.comboKeys);
+      await gdDo("keypress", "combo", { text: "ArrowDown", times: 4, once: true });
+      assert.equal(await gd.page.evaluate(() => window.comboKeys), before + 1);
+    });
     await check("a plain button does not hold a value", async () => {
       const r = await fill("plain", "x");
       assert.equal(r.success, false);

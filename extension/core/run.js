@@ -1554,14 +1554,22 @@
     for (const key of r.used || []) if (!run.used.details.includes(key)) run.used.details.push(key);
     if (r.image) run.image = r.image;
     // What the agent typed, for a second opinion on the form it goes with.
-    if (r.ok && a.do === "fill" && !a.from && a.ref !== undefined) {
+    if (r.ok && (a.do === "fill" || a.do === "type") && !a.from && a.ref !== undefined) {
       run.typed = { ...(run.typed || {}), [a.ref]: String(a.value || "") };
       // Every text the agent typed in this run, to tell it from text a page put in a box.
       run.typedTexts = [...(run.typedTexts || []).filter((t) => t !== String(a.value || "")), String(a.value || "")].slice(-20);
     }
     // Where the focus was left, for a key the step presses next with no ref.
-    if (r.ok && ["click", "fill", "press"].includes(a.do) && a.ref !== undefined) run.focusRef = a.ref;
+    if (r.ok && ["click", "fill", "type", "select_text", "press"].includes(a.do) && a.ref !== undefined) run.focusRef = a.ref;
+    // Words the model wrote for select_text: a read-back that repeats them proves nothing.
+    if (r.ok && a.do === "select_text") run.selectedTexts = [...(run.selectedTexts || []).filter((t) => t !== String(a.value || "")), String(a.value || "")].slice(-20);
     record(run, a, r.ok, r.message);
+    // What the page said back, kept apart from the result's words (engine.js interactOnce).
+    if (r.ok && typeof r.reads === "string" && r.reads && run.current && run.current.actions.length) {
+      const entry = run.current.actions[run.current.actions.length - 1];
+      entry.reads = clip(r.reads, 600);
+      if (r.freeText) entry.freeText = true;
+    }
     // How long the page was waited on after this action, so the cost of waiting can be read per step.
     if (Number.isFinite(r.settleMs) && run.current && run.current.actions.length) run.current.actions[run.current.actions.length - 1].settle = r.settleMs;
     // Whether the pointer was a real one or events made by a script.
@@ -1581,7 +1589,7 @@
   }
 
   function stillThere(run, a, page) {
-    if (!a || a.ref === undefined || !page || !["click", "fill", "press"].includes(a.do)) return false;
+    if (!a || a.ref === undefined || !page || !["click", "fill", "type", "select_text", "press"].includes(a.do)) return false;
     const els = page.elements || [];
     const el = els.find((e) => e.id === a.ref);
     if (!el || run.labels[a.ref] === undefined || TOOLS.elementLabel(el) !== run.labels[a.ref]) return false;
@@ -1676,7 +1684,7 @@
         status(run, "executor", `Step ${run.step}…`);
         // What the user approved, by the control's words: the driver runs it
         // only while the control still says that.
-        const approved = a.ref !== undefined && ["click", "fill", "press"].includes(a.do) && run.labels[a.ref] !== undefined ? { ...a, approved: run.labels[a.ref] } : a;
+        const approved = a.ref !== undefined && ["click", "fill", "type", "select_text", "press"].includes(a.do) && run.labels[a.ref] !== undefined ? { ...a, approved: run.labels[a.ref] } : a;
         if (approved !== a) run.queue = [approved, ...run.queue.slice(1)];
         fx.push({ type: "act", action: approved });
         return fx;
@@ -1709,6 +1717,16 @@
   // --------------------------------------------------------------- finishing
 
   /** Every piece of text the run was shown, for checking quotes. */
+  /** Text with every text the run itself wrote, and each line of it, taken out. */
+  function withoutTyped(text, wrote) {
+    let out = String(text || "");
+    const pieces = [];
+    for (const t of wrote || []) for (const piece of [String(t), ...String(t).split(/\r\n|\r|\n/)]) if (piece.trim().length >= 2) pieces.push(piece.trim());
+    pieces.sort((a, b) => b.length - a.length);
+    for (const piece of pieces) out = out.split(piece).join(" \u2026 ");
+    return out;
+  }
+
   function textsOf(run, page, env) {
     const texts = run.seen.map((p) => ({ url: p.url, title: p.title, text: p.text }));
     if (page && page.innerText) texts.push({ url: page.url, title: page.title, text: shownText(page) });
@@ -1725,6 +1743,19 @@
     const today = CONTEXT.todayLine(env && env.now);
     if (today) texts.push({ url: "", title: "what the browser stated", text: today });
     for (const el of (page && page.elements) || []) if (el.value && !el.sensitive) texts.push({ url: page.url, title: "a field's value", text: String(el.value) });
+    // A read-back that repeats text the model wrote into the page only shows it was typed.
+    const wrote = [...(run.typedTexts || []), ...(run.selectedTexts || [])];
+    // What the run's own actions read back from the page (a control's value
+    // after it was set, the text of a box after typing) was shown too: only
+    // what the page said back (engine.js interactOnce), never the result's
+    // own words, which repeat the action the model wrote.
+    for (const h of [...run.history, ...(run.current ? [run.current] : [])]) {
+      for (const x of h.actions || []) {
+        if (!x.ok || !x.reads) continue;
+        const text = x.freeText ? withoutTyped(x.reads, wrote) : String(x.reads);
+        if (text.trim()) texts.push({ url: "", title: "what an action read back from the page", text });
+      }
+    }
     return texts;
   }
 
