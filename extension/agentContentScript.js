@@ -1674,7 +1674,24 @@
         if (tag !== 'canvas' && !(tag === 'svg' && !el.ownerSVGElement)) return false;
         if (el.closest && el.closest('a[href], button, [role="button"], [role="link"], label')) return false;
         const r = el.getBoundingClientRect();
-        return r.width >= 80 && r.height >= 50;
+        if (!(r.width >= 80 && r.height >= 50)) return false;
+        // What the page marks as only to be seen is not something to point at:
+        // hidden from assistive technology, or one the pointer goes through.
+        if (el.closest && el.closest('[aria-hidden="true"], [role="presentation"], [role="none"]')) return false;
+        try {
+            if (window.getComputedStyle(el).pointerEvents === 'none') return false;
+        } catch (_) { /* judged by its size alone */ }
+        // A backdrop drawn under the page: something else is on top of it at
+        // its middle and at each quarter of it. A label over the middle of a
+        // chart covers only the middle.
+        try {
+            const spots = [[0.5, 0.5], [0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]]
+                .map(([fx, fy]) => [r.left + r.width * fx, r.top + r.height * fy])
+                .filter(([x, y]) => x >= 0 && y >= 0 && x < (window.innerWidth || 0) && y < (window.innerHeight || 0));
+            const under = (x, y) => { const top = document.elementFromPoint(x, y); return !!top && top !== el && !el.contains(top) && !agentDrawn(top); };
+            if (spots.length === 5 && spots.every(([x, y]) => under(x, y))) return false;
+        } catch (_) { /* judged without it */ }
+        return true;
     }
 
     /** A box with no words of its own that holds a few short labels side by side. */
@@ -1742,7 +1759,7 @@
                     (role && INTERACTIVE_ROLES.has(role)) ||
                     hasTabindex ||
                     el.getAttribute('draggable') === 'true' ||
-                    tagName === 'canvas' || tagName === 'svg' ||
+                    tagName === 'canvas' || (tagName === 'svg' && !el.ownerSVGElement) ||
                     el.isContentEditable ||
                     offeredRows.has(el) ||
                     hoverPointers().has(el)
@@ -2195,7 +2212,7 @@
             };
             if (pinnedElements.has(el)) entry.pinned = true;
             // A drawing's size, for choosing a spot in it by fractions.
-            if (tag === 'canvas' || tag === 'svg') entry.size = { w: Math.round(rect.width), h: Math.round(rect.height) };
+            if ((tag === 'canvas' || tag === 'svg') && isDrawing(el)) entry.size = { w: Math.round(rect.width), h: Math.round(rect.height) };
             if (el.readOnly && (tag === 'input' || tag === 'textarea')) entry.readOnly = true;
             // A control with no words at all (an icon) is still called
             // something by its page: its class and id, the icon inside it,
@@ -2633,6 +2650,42 @@
     }
 
     /**
+     * Whether a gesture that changed none of the page's elements may be made
+     * again by touch, for a page that listens only for a finger. Never one
+     * the user approved (`data.once`): an approved press is made once. Never
+     * when the page may have answered where its elements do not show it:
+     * the gesture was made on a drawing it repaints (`drawn`), or it sent a
+     * request to its site or gave a field a new value (`unseen`, from
+     * watchUnseen). Then the result says so, rather than that the page did
+     * not answer. Returns { again, why }.
+     */
+    function touchAgain(data, unseen, what, drawn) {
+        const it = what === 'drag' ? 'drag' : 'press';
+        if (data && data.once) return { again: false, why: ` No change showed in the page's elements. The user approved this ${it}, so it was made once and not again another way. Look at the page before doing anything more.` };
+        const out = (unseen || []).filter((u) => u === 'request' || u === 'value');
+        if (!drawn && !out.length) return { again: true, why: '' };
+        const where = drawn ? `the ${it} was made on a drawing, and what changes in a drawing cannot be seen from here`
+            : out.includes('request') ? `the page sent a request to its site, and may be answering the ${it}`
+            : 'a field on the page was given a new value';
+        return { again: false, why: ` No change showed in the page's elements, but ${where}. It was not made again; look at the page before trying again.` };
+    }
+
+    /** True when a point of the window is on a canvas the page draws (what a gesture there changes is not in its elements). */
+    function onCanvas(points) {
+        try {
+            const canvases = Array.from(document.querySelectorAll('canvas')).map((c) => c.getBoundingClientRect()).filter((r) => r.width * r.height >= 2500);
+            return points.some((p) => p && canvases.some((r) => p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom));
+        } catch (_) { return false; }
+    }
+
+    /** What is said when neither way of a gesture changed anything the agent can see. */
+    function noAnswerSeen(what) {
+        return what === 'drag'
+            ? 'No change showed in the page\'s elements after the drag made with the mouse and pointer, nor after the same drag made as a touch. A change the page makes only in a drawing or later, after its site answers, cannot be seen from here: look at the page before trying again.'
+            : 'No change showed in the page\'s elements after the press made with the mouse, nor after the same press made as a touch. A change the page makes only in a drawing or later, after its site answers, cannot be seen from here: look at the page before trying again.';
+    }
+
+    /**
      * A press held in place for `ms`, then let go, as a mouse makes a long
      * press: the release still clicks. Returns the steps, for the same press
      * to be made by touch when the page did not answer this one.
@@ -2683,10 +2736,30 @@
             : { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height * f) };
     }
 
+    /** True when `text` holds the words `want` as whole words: "food" is in "Food bin", not in "Seafood". */
+    function holdsWords(text, want) {
+        const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        const w = norm(want);
+        if (!w) return false;
+        const t = norm(text);
+        const quoted = w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        try {
+            return new RegExp(`(^|[^\\p{L}\\p{N}])${quoted}($|[^\\p{L}\\p{N}])`, 'u').test(t);
+        } catch (_) {
+            return t.indexOf(w) >= 0;
+        }
+    }
+
+    /** All the words written on a place, as a person reads it: its own label and the text inside it, at most 200 characters. */
+    function wordsOfPlace(el) {
+        const said = [el.getAttribute && el.getAttribute('aria-label'), el.textContent].filter(Boolean).join(' ');
+        return String(said).replace(/\s+/g, ' ').trim().slice(0, 200);
+    }
+
     /**
      * The place on the page that has these words written on it: the
-     * innermost shown element whose text holds them, not the thing being
-     * dragged or inside it, on screen first. Null when none has.
+     * innermost shown element whose text holds them as whole words, not the
+     * thing being dragged or inside it, on screen first. Null when none has.
      */
     function placeNamed(words, dragged) {
         const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -2701,13 +2774,14 @@
             let visited = 0;
             for (let n = walker.nextNode(); n && visited < 50000 && found.length < 20; n = walker.nextNode()) {
                 visited++;
-                if (n.data.toLowerCase().indexOf(first) < 0) continue;
-                // Up from the words, to the first element that holds all of them.
+                if (!holdsWords(n.data, first)) continue;
+                // Up from the words, to the first element that holds all of
+                // them. None within a few steps up: these words are not the place.
                 let up = n.parentElement;
-                for (let depth = 0; up && depth < 5; depth++, up = up.parentElement) {
-                    if (norm(up.textContent).indexOf(want) >= 0) break;
-                }
-                if (!up || seen.has(up) || agentDrawn(up) || (dragged && (dragged === up || dragged.contains(up)))) continue;
+                let depth = 0;
+                while (up && depth < 5 && !holdsWords(up.textContent, want)) { up = up.parentElement; depth++; }
+                if (!up || !holdsWords(up.textContent, want)) continue;
+                if (seen.has(up) || agentDrawn(up) || (dragged && (dragged === up || dragged.contains(up) || up.contains(dragged)))) continue;
                 seen.add(up);
                 if (isRendered(up)) found.push(up);
             }
@@ -3877,17 +3951,24 @@
                 // The pointer arrives first: what leaving where it was sets off is not the press's doing.
                 movePointerTo(pointerTargetIn(el, at), at, modifiers);
                 const changes = createMutationCounter();
+                const unseen = watchUnseen();
                 const stateBefore = stateOf(el);
-                const steps = await scriptedHold(el, modifiers, at, ms);
-                await delay(150);
+                let steps;
+                try { steps = await scriptedHold(el, modifiers, at, ms); } finally { await delay(150); }
+                const outOfSight = unseen.stop();
                 let how = '';
-                // A page that answers only a finger: the same press, by touch.
+                // A page that answers only a finger: the same press, by touch,
+                // unless it may have answered where it cannot be seen.
                 if (!changes.stop() && el.isConnected && stateOf(el) === stateBefore && !cancelRequested) {
-                    const again = createMutationCounter();
-                    const touched = await touchGesture(steps);
-                    await delay(150);
-                    const seen = again.stop();
-                    if (touched) how = seen ? ' The page did not answer the press made with the mouse; it was made again as a touch, and the page answered that.' : ' The page answered neither the press made with the mouse nor the same press made as a touch.';
+                    const gate = touchAgain(data, outOfSight, 'press', onCanvas([at]));
+                    if (!gate.again) how = gate.why;
+                    else {
+                        const again = createMutationCounter();
+                        const touched = await touchGesture(steps);
+                        await delay(150);
+                        const seen = again.stop();
+                        if (touched) how = seen ? ' The page did not answer the press made with the mouse; it was made again as a touch, and the page answered that.' : ` ${noAnswerSeen('press')}`;
+                    }
                 }
                 return { success: true, pointer: 'synthetic', message: `Pressed [${id}]${spotWords(data)} and held it for ${ms / 1000} seconds before letting go.${how}` };
             }
@@ -3915,6 +3996,8 @@
                 // The place to let go on: a listed control, or the place with the words given.
                 const named = data.toText ? placeNamed(data.toText, el) : null;
                 if (data.toText && !named) return { success: false, error: `Nothing shown on the page has the words "${String(data.toText).slice(0, 80)}" written on it, so there is no place to let go. Nothing was dragged.` };
+                // The place was judged by all of its words just before (engine.js): it is let go on only while it still says them.
+                if (named && data.toWords !== undefined && wordsOfPlace(named) !== data.toWords) return { success: false, error: `The place with "${String(data.toText).slice(0, 60)}" on it changed before the drag, so nothing was dragged. Look at the page again.` };
                 const to = named || (data.to !== undefined && data.to !== null ? elementMap[data.to] : null);
                 const toName = named ? `the place with "${String(data.toText).slice(0, 60)}" on it` : `[${data.to}]`;
                 if (data.to !== undefined && data.to !== null && !to) return { success: false, error: `Element [${data.to}] not found. Re-scanning recommended.` };
@@ -3975,21 +4058,28 @@
                     // The pointer arrives first: what leaving where it was sets off is not the drag's doing.
                     movePointerTo(drawnAt(from.point.x, from.point.y) || el, from.point, {});
                     const changes = createMutationCounter();
+                    const unseen = watchUnseen();
                     followGesture(scripted, 'Drag').catch(() => {});
-                    const r = await syntheticDrag(el, scripted);
-                    await delay(100);
+                    let r;
+                    try { r = await syntheticDrag(el, scripted); } finally { await delay(100); }
+                    const outOfSight = unseen.stop();
                     const seen = changes.stop();
                     const landed = r.target ? nameOfDrawn(r.target) : '';
                     if (r.dropped) how.push(`The page took it as a drag and drop, and it was dropped on ${landed}.`);
                     else if (r.refused) how.push(`The page took it as a drag and drop, but ${landed} did not take the drop.`);
                     const stayed = () => { const p = el.isConnected ? placeOfNode(el) : null; const b = el.getBoundingClientRect(); return !!p && !!placeBefore && p.parent === placeBefore.parent && p.index === placeBefore.index && Math.abs(b.left - boxBefore.left) < 1 && Math.abs(b.top - boxBefore.top) < 1; };
-                    // A page that answers only a finger: the same drag, by touch.
+                    // A page that answers only a finger: the same drag, by touch,
+                    // unless it may have answered where it cannot be seen.
                     if (!seen && !r.dnd && stayed() && !cancelRequested) {
-                        const again = createMutationCounter();
-                        const touched = await touchGesture(scripted);
-                        await delay(100);
-                        const answered = again.stop();
-                        if (touched) how.push(answered ? 'The page did not answer the drag made with the mouse; it was made again as a touch, and the page answered that.' : 'The page answered the drag in none of the ways it was made: mouse, pointer and touch.');
+                        const gate = touchAgain(data, outOfSight, 'drag', onCanvas([from.point, end]));
+                        if (!gate.again) how.push(gate.why.trim());
+                        else {
+                            const again = createMutationCounter();
+                            const touched = await touchGesture(scripted);
+                            await delay(100);
+                            const answered = again.stop();
+                            if (touched) how.push(answered ? 'The page did not answer the drag made with the mouse; it was made again as a touch, and the page answered that.' : noAnswerSeen('drag'));
+                        }
                     }
                 }
                 const said = [`Dragged [${id}]${spotWords(data)} ${to ? `${data.place && !data.toFx ? `to just ${data.place} ` : 'onto '}${toName}${data.toFx !== undefined && data.toFx !== null ? ` at ${data.toFx},${data.toFy} of its box` : ''}` : `${data.direction} ${distance} px${edge ? ', stopping at the edge of the window' : ''}`}.`, ...how];
@@ -5722,6 +5812,16 @@
                 }
             })();
             return true; // keep channel open for async sendResponse
+        } else if (request.action === 'placeNamed') {
+            // The place a drag would let go on, by its words, and all the words
+            // written on it, for the engine to judge before the drag (core/policy.js).
+            try {
+                const dragged = elementMap[request.id] || null;
+                const place = placeNamed(request.toText, dragged);
+                sendResponse(place ? { success: true, words: wordsOfPlace(place) } : { success: false, error: `Nothing shown on the page has the words "${String(request.toText || '').slice(0, 80)}" written on it, so there is no place to let go. Nothing was dragged.` });
+            } catch (err) {
+                sendResponse({ success: false, error: err.message || String(err) });
+            }
         } else if (request.action === 'picture') {
             // One control's own picture, for a look at it (engine.js).
             const el = elementMap[request.id];

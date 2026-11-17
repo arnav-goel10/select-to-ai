@@ -36,7 +36,7 @@ test("the tool offers a double click, a right click and a long press, each on a 
   assert.match(about, /The pointer stays there until your next action/);
   assert.match(about, /to_text, words written on the place/);
   for (const f of ["fx", "fy", "to_text", "place", "to_fx", "to_fy"]) assert.ok(tool.parameters.properties[f], `${f} is a field`);
-  assert.ok(!/—/.test(about), "no long dashes in the tool");
+  assert.ok(!/\u2014/.test(about), "no long dashes in the tool");
   assert.deepEqual(check({ do: "double_click", ref: 3 }).action, { do: "double_click", ref: 3 });
   assert.match(check({ do: "right_click" }).error, /right_click needs ref/);
 });
@@ -94,9 +94,13 @@ test("a double click, a right click and a long press are judged as the press the
   const page = { url: "https://shop.example/", title: "Shop", innerText: "Account", elements: [{ id: 7, tagName: "button", text: "Delete account" }, { id: 8, tagName: "div", text: "Press and hold", role: "button" }, { id: 9, tagName: "span", text: "report.pdf" }] };
   const run = { task: "tidy my account", trust: { sites: [], urls: [] }, opinions: {} };
   const settings = { riskConfirmation: true };
-  for (const kind of ["click", "double_click", "hold", "right_click"]) {
+  for (const kind of ["click", "hold", "right_click"]) {
     assert.equal(POLICY.decide({ do: kind, ref: 7 }, page, run, settings, null).verdict, "confirm", `${kind} on a delete button is held`);
   }
+  // A double click would press it twice: one press is approved, by click.
+  const twice = POLICY.decide({ do: "double_click", ref: 7 }, page, run, settings, null);
+  assert.equal(twice.verdict, "refuse");
+  assert.match(twice.message, /presses "Delete account" twice[^.]*\. Use click instead\./);
   // A press-and-hold human check is the person's to pass, however it is pressed.
   const v = POLICY.decide({ do: "hold", ref: 8, seconds: 3 }, page, run, settings, null);
   assert.equal(v.verdict, "handoff");
@@ -109,11 +113,11 @@ test("a double click, a right click and a long press are judged as the press the
 // ------------------------------------------------------------ the engine
 
 test("the engine sends each gesture to the page with its spot and where it lets go", () => {
-  assert.match(ENGINE, /case "double_click": return interact\(session, a, \{ action: "double_click", id: a\.ref, \.\.\.spotOf\(a\) \}, true\);/);
-  assert.match(ENGINE, /case "right_click": return interact\(session, a, \{ action: "right_click", id: a\.ref, \.\.\.spotOf\(a\) \}, false\);/);
-  assert.match(ENGINE, /case "hold": return interact\(session, a, \{ action: "hold", id: a\.ref, seconds: a\.seconds, \.\.\.spotOf\(a\) \}, true\);/);
+  assert.match(ENGINE, /case "double_click": return interact\(session, a, \{ action: "double_click", id: a\.ref, \.\.\.spotOf\(a\), \.\.\.onceIf\(a\) \}, true\);/);
+  assert.match(ENGINE, /case "right_click": return interact\(session, a, \{ action: "right_click", id: a\.ref, \.\.\.spotOf\(a\), \.\.\.onceIf\(a\) \}, false\);/);
+  assert.match(ENGINE, /case "hold": return interact\(session, a, \{ action: "hold", id: a\.ref, seconds: a\.seconds, \.\.\.spotOf\(a\), \.\.\.onceIf\(a\) \}, true\);/);
   assert.match(ENGINE, /case "hover": return interact\(session, a, \{ action: "hover", id: a\.ref, \.\.\.spotOf\(a\) \}, false\);/);
-  assert.match(ENGINE, /toText: a\.to_text, \.\.\.spotOf\(a\), \.\.\.dropSpot\(a\)/);
+  assert.match(ENGINE, /toText: a\.to_text, toWords: place\.words, \.\.\.spotOf\(a\), \.\.\.dropSpot\(a\), \.\.\.onceIf\(a\)/);
   // A look at one control asks the page for its own picture before the tab's.
   assert.match(ENGINE, /send\(tabId, \{ action: "picture", id: at\.id \}, at\.frameId\)/);
   for (const name of ["double_click", "right_click", "hold"]) assert.ok(require("../../extension/core/view.js").PAGE_ACTIONS.has(name), `${name} acts on the page`);
@@ -124,8 +128,8 @@ test("the engine sends each gesture to the page with its spot and where it lets 
 test("a drawing is listed with its size, to aim at spots inside it", () => {
   assert.match(TOOLS.formatElementLine({ id: 4, tagName: "canvas", size: { w: 400, h: 300 }, at: { x: 200, y: 150 } }), /^\[4\] canvas no name at 200,150 drawing 400x300$/);
   assert.match(CONTENT, /if \(isDrawing\(el\)\) return true;/);
-  const { isDrawing } = build(["isDrawing"], {});
-  const box = (tag, w, h, extra) => ({ tagName: tag, ownerSVGElement: null, closest: () => null, getBoundingClientRect: () => ({ width: w, height: h }), ...(extra || {}) });
+  const { isDrawing } = build(["isDrawing"], { window: { innerWidth: 0, innerHeight: 0, getComputedStyle: () => ({ pointerEvents: "auto" }) }, document: {}, agentDrawn: () => false });
+  const box = (tag, w, h, extra) => ({ tagName: tag, ownerSVGElement: null, closest: () => null, contains: () => false, getBoundingClientRect: () => ({ left: 0, top: 0, width: w, height: h }), ...(extra || {}) });
   assert.equal(isDrawing(box("CANVAS", 400, 300)), true);
   assert.equal(isDrawing(box("svg", 600, 400)), true);
   assert.equal(isDrawing(box("svg", 16, 16)), false, "an icon is not a drawing");
@@ -398,9 +402,177 @@ test("the words a gesture brought up are what is on screen after that was not be
   assert.match(CONTENT, /Text that appeared on screen: /);
 });
 
-test("the drag result says how the page took it, and when it took it in none of the ways", () => {
+test("the drag result says how the page took it, and says only what it could see when it saw no change", () => {
   assert.match(CONTENT, /The page took it as a drag and drop, and it was dropped on /);
   assert.match(CONTENT, /did not take the drop\./);
-  assert.match(CONTENT, /The page answered the drag in none of the ways it was made: mouse, pointer and touch\./);
   assert.match(CONTENT, /it was made again as a touch, and the page answered that\./);
+  // Never that the page answered in none of the ways: a drawing or a late answer cannot be seen.
+  assert.ok(!/none of the ways|answered neither/.test(CONTENT));
+  const { noAnswerSeen } = build(["noAnswerSeen"], {});
+  for (const what of ["drag", "press"]) assert.match(noAnswerSeen(what), /^No change showed in the page's elements after .* cannot be seen from here: look at the page before trying again\.$/);
+});
+
+// ------------------------------------------- every rule for a click, for every press
+
+const POLICY = require("../../extension/core/policy.js");
+const RUN = require("../../extension/core/run.js");
+const PRESSES = ["click", "double_click", "right_click", "hold"];
+const decideOn = (a, page, task) => POLICY.decide(a, page, { task, trust: { sites: [], urls: [] }, opinions: {} }, { riskConfirmation: true }, null);
+
+test("\"fill it in but don't send it\" holds for every way of pressing the send button", () => {
+  const page = {
+    url: "https://forms.example/apply", title: "Apply", innerText: "Apply",
+    elements: [{ id: 1, tagName: "input", accName: "Name", formId: 0 }, { id: 2, tagName: "button", accName: "Submit application", submits: true, formId: 0 }],
+    forms: [{ id: 0, search: false, fields: 1 }],
+  };
+  for (const kind of PRESSES) {
+    const v = decideOn({ do: kind, ref: 2 }, page, "fill in the application but don't submit it");
+    assert.equal(v.verdict, "refuse", `${kind} on the send button is refused`);
+    assert.match(v.message, /filled in but not sent/);
+  }
+  // A drag let go on it is a press on it too.
+  const page2 = { ...page, elements: [...page.elements, { id: 3, tagName: "div", text: "Photo", draggable: true }] };
+  assert.equal(decideOn({ do: "drag", ref: 3, to_ref: 2 }, page2, "fill in the application but don't submit it").verdict, "refuse");
+});
+
+test("the pay button is the user's to press, however the agent would press it", () => {
+  const page = {
+    url: "https://shop.example/checkout", title: "Checkout", innerText: "Checkout",
+    elements: [
+      { id: 1, tagName: "input", accName: "Card number", sensitive: "payment", formId: 0 },
+      { id: 2, tagName: "button", accName: "Pay now", submits: true, formId: 0 },
+    ],
+    forms: [{ id: 0, search: false, fields: 1 }],
+  };
+  for (const kind of PRESSES) {
+    const v = decideOn({ do: kind, ref: 2 }, page, "buy the blue widget");
+    assert.equal(v.verdict, "handoff", `${kind} on the pay button is handed to the user`);
+    assert.equal(v.kind, "payment");
+  }
+});
+
+test("one place says which actions press a control, and each is judged by it", () => {
+  assert.deepEqual([...POLICY.POINTER_PRESSES], PRESSES);
+  for (const kind of PRESSES) assert.equal(POLICY.pressesOn({ do: kind, ref: 1 }, { tagName: "div" }), true);
+  assert.equal(POLICY.pressesOn({ do: "press", key: "Enter", ref: 1 }, { tagName: "button" }), true);
+  assert.equal(POLICY.pressesOn({ do: "hover", ref: 1 }, { tagName: "button" }), false);
+  const src = fs.readFileSync(path.join(__dirname, "../../extension/core/policy.js"), "utf8");
+  assert.ok(!/a\.do === "click" \|\| a\.do === "press"/.test(src), "no rule names click alone");
+});
+
+test("an approved gesture or drag is marked to be made once, and a drag only onto the control approved", () => {
+  const page = {
+    url: "https://files.example/", title: "Files", scrollY: 0, viewportHeight: 900, pageHeight: 900, visibleText: "Files", innerText: "Files",
+    elements: [
+      { id: 1, tagName: "div", accName: "report.pdf", draggable: true },
+      { id: 2, tagName: "div", accName: "Delete forever", role: "button" },
+      { id: 3, tagName: "button", accName: "Delete account" },
+    ],
+    forms: [],
+  };
+  const env = { now: 1000, page, settings: { riskConfirmation: true, allowlist: "", verify: true }, extras: {} };
+  const approve = (action) => {
+    const run = RUN.newRun({ id: "r1", task: "tidy up my files", tabId: 7, startUrl: page.url, marker: "PAGE-abcd1234", now: 1 });
+    RUN.advance(run, { type: "start" }, env);
+    RUN.advance(run, { type: "observed", page }, env);
+    RUN.advance(run, { type: "model_replied", reply: { memory: "", goal: "g", actions: [action] }, usage: {} }, env);
+    assert.equal(run.status, "waiting", `${action.do} waits for the user`);
+    return RUN.advance(run, { type: "approved", id: run.wait.id }, env)[0].action;
+  };
+  const held = approve({ do: "hold", ref: 3 });
+  assert.equal(held.approved, "Delete account");
+  const dragged = approve({ do: "drag", ref: 1, to_ref: 2 });
+  assert.equal(dragged.approved, "report.pdf");
+  assert.equal(dragged.approvedTo, "Delete forever");
+  // The driver passes "once" for every approved gesture; the page never makes one again another way.
+  for (const name of ["click", "double_click", "right_click", "hold"]) assert.match(ENGINE, new RegExp(`case "${name}": return interact\\(session, a, \\{[^\\n]*onceIf\\(a\\)`));
+  assert.match(ENGINE, /\.\.\.spotOf\(a\), expect, \.\.\.onceIf\(a\) \}, true\);/);
+  assert.match(ENGINE, /const onceIf = \(a\) => \(a\.once \|\| a\.approved !== undefined \? \{ once: true \} : \{\}\);/);
+  // A drag's drop target that changed while the user decided stops the step.
+  assert.match(ENGINE, /a\.approvedTo !== undefined && a\.to_ref !== undefined \? \[\[a\.to_ref, a\.approvedTo\]\]/);
+});
+
+test("a gesture the page showed no answer to is made again by touch only when nothing says it was answered out of sight", () => {
+  const { touchAgain } = build(["touchAgain"], {});
+  assert.deepEqual(touchAgain({}, [], "drag", false), { again: true, why: "" });
+  assert.deepEqual(touchAgain({}, ["focus", "scroll"], "press", false), { again: true, why: "" });
+  const approved = touchAgain({ once: true }, [], "press", false);
+  assert.equal(approved.again, false);
+  assert.match(approved.why, /The user approved this press, so it was made once and not again another way\./);
+  const drawn = touchAgain({}, [], "drag", true);
+  assert.equal(drawn.again, false);
+  assert.match(drawn.why, /made on a drawing/);
+  const asked = touchAgain({}, ["request"], "press", false);
+  assert.equal(asked.again, false);
+  assert.match(asked.why, /sent a request to its site, and may be answering the press/);
+  assert.equal(touchAgain({}, ["value"], "drag", false).again, false);
+  // Both gestures that can be made again go through it, with what was watched.
+  assert.equal(CONTENT.split("touchAgain(data, outOfSight,").length - 1, 2);
+  assert.match(CONTENT, /touchAgain\(data, outOfSight, 'press', onCanvas\(\[at\]\)\)/);
+  assert.match(CONTENT, /touchAgain\(data, outOfSight, 'drag', onCanvas\(\[from\.point, end\]\)\)/);
+});
+
+test("a gesture on a canvas is a gesture on a drawing", () => {
+  const canvases = [{ getBoundingClientRect: () => ({ left: 0, top: 0, right: 300, bottom: 150, width: 300, height: 150 }) }];
+  const { onCanvas } = build(["onCanvas"], { document: { querySelectorAll: () => canvases } });
+  assert.equal(onCanvas([{ x: 100, y: 100 }]), true);
+  assert.equal(onCanvas([{ x: 500, y: 100 }, { x: 600, y: 10 }]), false);
+});
+
+test("a place named by its words holds them as whole words, and is never a container that lacks them", () => {
+  const { holdsWords } = build(["holdsWords"], {});
+  assert.equal(holdsWords("This tray takes: china", "takes: china"), true);
+  assert.equal(holdsWords("Seafood", "food"), false);
+  assert.equal(holdsWords("Food bin", "food"), true);
+  assert.equal(holdsWords("Delete  forever", "delete forever"), true);
+  // A fake page: a text node with the first word only, under a few containers.
+  const el = (text, parent, extra) => ({ textContent: text, parentElement: parent || null, contains(x) { for (let y = x; y; y = y.parentElement) if (y === this) return true; return false; }, getBoundingClientRect: () => ({ top: 0, bottom: 10, width: 10, height: 10 }), ...(extra || {}) });
+  const body = el("Delete this note");
+  const card = el("Delete this note", body);
+  const words = { data: "Delete this note", parentElement: card };
+  const scope = (nodes) => ({
+    document: { body, createTreeWalker: () => { let i = 0; return { nextNode: () => nodes[i++] || null }; } },
+    NodeFilter: { SHOW_TEXT: 4 }, openRoots: () => [], agentDrawn: () => false, isRendered: () => true,
+    window: { innerHeight: 800 }, holdsWords,
+  });
+  const { placeNamed } = build(["placeNamed"], scope([words]));
+  assert.equal(placeNamed("Delete forever", null), null, "no element holds the whole phrase, so there is no place");
+  const bin = el("Delete forever", body);
+  const binWords = { data: "Delete forever", parentElement: bin };
+  const found = build(["placeNamed"], scope([words, binWords])).placeNamed("delete forever", null);
+  assert.equal(found, bin);
+});
+
+test("a drop on a place named by part of its words is judged by all the words on it", () => {
+  const page = { url: "https://files.example/", title: "Files", innerText: "Files", elements: [{ id: 9, tagName: "span", text: "report.pdf" }] };
+  const run = { task: "tidy up my files", trust: { sites: [], urls: [] }, opinions: {} };
+  const settings = { riskConfirmation: true };
+  const a = { do: "drag", ref: 9, to_text: "forever" };
+  assert.equal(POLICY.decide(a, page, run, settings, null).verdict, "allow", "the words alone sound harmless");
+  const held = POLICY.placeRiskier(a, "Delete forever", page, run, settings, null);
+  assert.equal(held.verdict, "refuse");
+  assert.match(held.message, /says "Delete forever" in full/);
+  // Named by all its words, it is decided (and approved) the usual way, and the place says no more than that.
+  assert.equal(POLICY.decide({ ...a, to_text: "Delete forever" }, page, run, settings, null).verdict, "confirm");
+  assert.equal(POLICY.placeRiskier({ ...a, to_text: "Delete forever" }, "Delete forever", page, run, settings, null), null);
+  assert.equal(POLICY.placeRiskier({ ...a, to_text: "Archive" }, "Archive 2024", page, run, settings, null), null);
+  // The engine finds the place and judges it before the drag, and the page drops only while it says the same.
+  assert.match(ENGINE, /send\(tabId, \{ action: "placeNamed", id: from\.id, toText: a\.to_text \}, from\.frameId\)/);
+  assert.match(ENGINE, /POLICY\.placeRiskier\(a, place\.words, page, run, session\.settings, memory\)/);
+  assert.match(CONTENT, /wordsOfPlace\(named\) !== data\.toWords/);
+});
+
+test("only a drawing is listed with a size, and a drawing the page marks as only to be seen is not one", () => {
+  assert.match(CONTENT, /if \(\(tag === 'canvas' \|\| tag === 'svg'\) && isDrawing\(el\)\) entry\.size = /);
+  const base = { innerWidth: 1000, innerHeight: 800, getComputedStyle: () => ({ pointerEvents: "auto" }) };
+  const make = (win, doc) => build(["isDrawing"], { window: win || base, document: doc || { elementFromPoint: () => null }, agentDrawn: () => false }).isDrawing;
+  const chart = (extra) => ({ tagName: "CANVAS", ownerSVGElement: null, closest: () => null, contains: () => false, getBoundingClientRect: () => ({ left: 100, top: 100, width: 400, height: 200 }), ...(extra || {}) });
+  const c = chart();
+  assert.equal(make(base, { elementFromPoint: () => c })(c), true);
+  assert.equal(make(base, { elementFromPoint: () => c })(chart({ closest: (sel) => (/aria-hidden/.test(sel) ? {} : null) })), false, "hidden from assistive technology");
+  assert.equal(make({ ...base, getComputedStyle: () => ({ pointerEvents: "none" }) }, { elementFromPoint: () => c })(c), false, "the pointer goes through it");
+  const cover = {};
+  assert.equal(make(base, { elementFromPoint: () => cover })(c), false, "a backdrop under the page's content");
+  // A label over the middle of a chart covers only the middle.
+  assert.equal(make(base, { elementFromPoint: (x, y) => (x === 300 && y === 200 ? cover : c) })(c), true);
 });

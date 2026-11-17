@@ -734,13 +734,13 @@ async function main() {
         await refuseDebugger(false);
         await mainModel("e2e-scripted-model");
         const at = await r.fixture.evaluate(() => Object.fromEntries(["s-cell", "s-menu", "s-press", "s-legend", "s-order", "s-bin", "s-token"].map((id) => [id, document.getElementById(id).textContent])));
-        const want = { "s-cell": "Cell: editing", "s-menu": "Menu: open", "s-press": "Button: activated by a long press", "s-legend": "Red: hidden", "s-order": "Order: Gamma, Alpha, Beta", "s-bin": "Dropped: Banana in food", "s-token": "Token: moved by touch" };
+        const want = { "s-cell": "Cell: editing", "s-menu": "Menu: open", "s-press": "Button: activated by a long press", "s-legend": "North: hidden", "s-order": "Order: Gamma, Alpha, Beta", "s-bin": "Dropped: Teacup in china", "s-token": "Token: moved by touch" };
         const wrong = Object.keys(want).filter((k) => at[k] !== want[k]);
         if (wrong.length) return `the page shows ${JSON.stringify(at)}: ${String(r.log).replace(/\s+/g, " ").slice(0, 900)}`;
         const told = (re, what) => (r.prompts.some((p) => re.test(p)) ? null : `the model was not told ${what}`);
-        return told(/Text that appeared on screen: "[^"]*08:00 to 09:00 Users 1204/, "the tooltip the hover brought up")
+        return told(/Text that appeared on screen: "[^"]*08:00 to 09:00 Visits 1204/, "the tooltip the hover brought up")
           || told(/A picture of \[\d+\] \(a canvas, drawn 300 by 150 pixels\) is attached/, "that the drawing's own picture was attached")
-          || told(/The page took it as a drag and drop, and it was dropped on /, "that the banana was dropped")
+          || told(/The page took it as a drag and drop, and it was dropped on /, "that the teacup was dropped")
           || told(/it was made again as a touch, and the page answered that/, "that the token answered only a touch");
       }, "gestures", { before: async () => { await refuseDebugger(true); await mainModel("e2e-vision-model"); } }],
       ["pointerCanvas", "/pointer-canvas", async () => false, async (r) => {

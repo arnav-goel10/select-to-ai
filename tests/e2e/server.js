@@ -508,21 +508,21 @@ const FIXTURES = {
      <p id="s-cell">Cell: not editing</p>
      <table><tr><td id="cell" tabindex="0" aria-label="Order SO-1" style="padding:6px;border:1px solid #999">SO-1</td></tr></table>
      <p id="s-menu">Menu: closed</p>
-     <span id="node" tabindex="0" aria-label="Root node" style="padding:4px;border:1px solid #999">Root node</span>
-     <div id="menu" role="menu" hidden><button type="button" role="menuitem">Create node</button></div>
+     <span id="node" tabindex="0" aria-label="Folder A" style="padding:4px;border:1px solid #999">Folder A</span>
+     <div id="menu" role="menu" hidden><button type="button" role="menuitem">New item</button></div>
      <p id="s-press">Button: Activate</p>
      <button type="button" id="press">Activate</button>
-     <svg id="chart" aria-label="Users chart" width="400" height="200" style="display:block;border:1px solid #ccc;margin-top:12px">
+     <svg id="chart" aria-label="Visits chart" width="400" height="200" style="display:block;border:1px solid #ccc;margin-top:12px">
        <polyline points="20,180 120,150 220,40 320,120" fill="none" stroke="#36c" stroke-width="2"></polyline>
        <g id="tip" visibility="hidden"><rect x="240" y="10" width="150" height="24" fill="#fff" stroke="#333"></rect><text id="tip-text" x="246" y="27" font-size="12"></text></g>
      </svg>
-     <p id="s-legend">Red: shown</p>
+     <p id="s-legend">North: shown</p>
      <canvas id="pie" aria-label="Pie chart" width="300" height="150" style="display:block;border:1px solid #000"></canvas>
      <p id="s-order">Order: Alpha, Beta, Gamma</p>
      <ul id="sortable"><li tabindex="0" aria-label="Alpha">Alpha</li><li tabindex="0" aria-label="Beta">Beta</li><li tabindex="0" aria-label="Gamma">Gamma</li></ul>
      <p id="s-bin">Dropped: nothing</p>
-     <div><div class="bin" data-accepts="glass">This bin accepts: glass</div><div class="bin" data-accepts="food">This bin accepts: food</div></div>
-     <div id="banana" draggable="true" style="display:inline-block;padding:6px;margin-top:8px;background:#fd5">Banana</div>
+     <div><div class="bin" data-accepts="paper">This tray takes: paper</div><div class="bin" data-accepts="china">This tray takes: china</div></div>
+     <div id="teacup" draggable="true" style="display:inline-block;padding:6px;margin-top:8px;background:#fd5">Teacup</div>
      <p id="s-token">Token: at start</p>
      <div style="position:relative;width:320px;height:40px;background:#eee"><div id="token" tabindex="0" aria-label="Token" style="position:absolute;left:0;top:0;width:40px;height:40px;background:#c63;touch-action:none"></div></div>
      <script>
@@ -539,15 +539,15 @@ const FIXTURES = {
          let best = null;
          for (const p of points) { const d = Math.hypot(p[0] - x, p[1] - y); if (d < 30 && (!best || d < best.d)) best = { p, d }; }
          if (!best) return;
-         $('tip-text').textContent = best.p[2] + ' Users ' + best.p[3];
+         $('tip-text').textContent = best.p[2] + ' Visits ' + best.p[3];
          $('tip').setAttribute('visibility', 'visible');
        });
        $('chart').addEventListener('mouseleave', () => $('tip').setAttribute('visibility', 'hidden'));
        const g = $('pie').getContext('2d');
-       g.fillStyle = '#c33'; g.fillRect(20, 10, 16, 16); g.fillStyle = '#000'; g.fillText('Red', 42, 22);
-       g.fillStyle = '#36c'; g.fillRect(100, 10, 16, 16); g.fillStyle = '#000'; g.fillText('Blue', 122, 22);
+       g.fillStyle = '#c33'; g.fillRect(20, 10, 16, 16); g.fillStyle = '#000'; g.fillText('North', 42, 22);
+       g.fillStyle = '#36c'; g.fillRect(100, 10, 16, 16); g.fillStyle = '#000'; g.fillText('South', 122, 22);
        g.fillStyle = '#c33'; g.beginPath(); g.moveTo(150, 95); g.arc(150, 95, 45, 0, 4); g.fill();
-       $('pie').addEventListener('click', (e) => { if (e.offsetX >= 18 && e.offsetX <= 70 && e.offsetY >= 6 && e.offsetY <= 32) $('s-legend').textContent = 'Red: hidden'; });
+       $('pie').addEventListener('click', (e) => { if (e.offsetX >= 18 && e.offsetX <= 70 && e.offsetY >= 6 && e.offsetY <= 32) $('s-legend').textContent = 'North: hidden'; });
        let press = null, lifted = null;
        const list = $('sortable');
        list.addEventListener('pointerdown', (e) => { const li = e.target.closest('li'); if (li && e.button === 0) press = { li, x: e.clientX, y: e.clientY, at: performance.now(), id: e.pointerId }; });
@@ -566,9 +566,9 @@ const FIXTURES = {
          list.insertBefore(lifted, e.clientY < r.top + r.height / 2 ? over : over.nextSibling);
        });
        document.addEventListener('pointerup', () => { if (lifted) $('s-order').textContent = 'Order: ' + [...list.children].map((li) => li.textContent).join(', '); press = null; lifted = null; });
-       $('banana').addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', 'food:Banana'); e.dataTransfer.effectAllowed = 'move'; });
+       $('teacup').addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', 'china:Teacup'); e.dataTransfer.effectAllowed = 'move'; });
        for (const bin of document.querySelectorAll('.bin')) {
-         bin.addEventListener('dragover', (e) => { if (bin.dataset.accepts === 'food') e.preventDefault(); });
+         bin.addEventListener('dragover', (e) => { if (bin.dataset.accepts === 'china') e.preventDefault(); });
          bin.addEventListener('drop', (e) => { e.preventDefault(); const [, name] = e.dataTransfer.getData('text/plain').split(':'); $('s-bin').textContent = 'Dropped: ' + name + ' in ' + bin.dataset.accepts; });
        }
        let touch = null;
@@ -1249,15 +1249,15 @@ function buildStepPolicies(baseUrl) {
     gestures(ctx) {
       const did = (re) => re.test(ctx.userText);
       if (!did(/double_click \[\d+\]/)) return step("Open the cell for editing", [{ do: "double_click", ref: named(ctx, /^order so-1$/i).id }]);
-      if (!did(/right_click \[\d+\]/)) return step("Open the node's own menu", [{ do: "right_click", ref: named(ctx, /^root node$/i).id }]);
+      if (!did(/right_click \[\d+\]/)) return step("Open the node's own menu", [{ do: "right_click", ref: named(ctx, /^folder a$/i).id }]);
       if (!did(/hold \[\d+\]/)) return step("Long-press the button", [{ do: "hold", ref: named(ctx, /^activate$/i).id, seconds: 2 }]);
-      if (!did(/hover \[\d+\] at /)) return step("Point at the highest point of the line", [{ do: "hover", ref: named(ctx, /^users chart$/i).id, fx: 0.55, fy: 0.2 }]);
+      if (!did(/hover \[\d+\] at /)) return step("Point at the highest point of the line", [{ do: "hover", ref: named(ctx, /^visits chart$/i).id, fx: 0.55, fy: 0.2 }]);
       if (!did(/look \[\d+\]/)) return step("See the pie chart", [{ do: "look", ref: named(ctx, /^pie chart$/i).id }]);
-      if (!did(/click \[\d+\] at 0\.167/)) return step("Hide Red in the legend", [{ do: "click", ref: named(ctx, /^pie chart$/i).id, fx: 0.167, fy: 0.133 }]);
+      if (!did(/click \[\d+\] at 0\.167/)) return step("Hide North in the legend", [{ do: "click", ref: named(ctx, /^pie chart$/i).id, fx: 0.167, fy: 0.133 }]);
       if (!did(/drag \[\d+\][^\n]* before \[/)) return step("Put Gamma first", [{ do: "drag", ref: named(ctx, /^gamma$/i).id, to_ref: named(ctx, /^alpha$/i).id, place: "before" }]);
-      if (!did(/drag \[\d+\][^\n]* onto "/)) return step("Put the banana in the food bin", [{ do: "drag", ref: named(ctx, /^banana$/i).id, to_text: "This bin accepts: food" }]);
+      if (!did(/drag \[\d+\][^\n]* onto "/)) return step("Put the teacup on the china tray", [{ do: "drag", ref: named(ctx, /^teacup$/i).id, to_text: "This tray takes: china" }]);
       if (!did(/drag \[\d+\][^\n]* right 200px/)) return step("Slide the token", [{ do: "drag", ref: named(ctx, /^token$/i).id, direction: "right", distance: 200 }]);
-      return done("Each gesture was made.", ["Dropped: Banana in food"]);
+      return done("Each gesture was made.", ["Dropped: Teacup in china"]);
     },
     // The same page with the debugger refused: a click and a drag by script.
     pointerNoDebugger(ctx) {
@@ -1544,7 +1544,7 @@ function createE2EServer(port = 8907) {
   scenarios.pointerFrame = { task: "Pick seat 12A.", stepDelayMs: 1200 };
   scenarios.pointerDrag = { task: "Turn the volume up, move Apples to the end of the list, and attach the invoice." };
   scenarios.pointerNoDebugger = { task: "Count once and move Apples to the end of the list." };
-  scenarios.gestures = { task: "Edit the cell, open the node's menu, long-press the button, read the chart's highest point, hide Red, put Gamma first, bin the banana as food and slide the token." };
+  scenarios.gestures = { task: "Edit the cell, open the node's menu, long-press the button, read the chart's highest point, hide North, put Gamma first, put the teacup on the china tray and slide the token." };
   scenarios.pointerCanvas = { task: "Press the drawing a little right of its middle, then press the hidden button." };
   scenarios.pointerRisk = { task: "Tidy up my account." };
   scenarios.hoverScripted = { task: "Choose Pricing from the Products menu." };
