@@ -396,6 +396,31 @@ const FIXTURES = {
      </script>`,
   ),
 
+  // A shop that says "Product added." in a browser alert once its request
+  // is back, and asks with a confirm before it empties the cart. A dialog
+  // stops the page, the extension's script in it included: a step that set
+  // one off waited on the page until the run's time was out.
+  "/dialogs": pageShell(
+    "Cart",
+    `<h1>Cart</h1>
+     <button type="button" id="add">Add to cart</button>
+     <button type="button" id="empty">Empty the cart</button>
+     <p id="state">Cart: empty</p>
+     <script>
+       let n = 0;
+       const show = (t) => { document.getElementById('state').textContent = t; };
+       document.getElementById('add').addEventListener('click', async () => {
+         await fetch('/api/slow-ok');
+         n++;
+         alert('Product added.');
+         show('Cart: ' + n + ' item');
+       });
+       document.getElementById('empty').addEventListener('click', () => {
+         if (confirm('Empty the cart?')) { n = 0; show('Cart: empty'); } else show('Cart: ' + n + ' item, kept');
+       });
+     </script>`,
+  ),
+
   // A page that never stops by itself: a clock, and a request every 800 ms.
   // Its button shows a link at once.
   "/busy-page": pageShell(
@@ -1007,6 +1032,12 @@ function buildStepPolicies(baseUrl) {
       if (/Flight 101/.test(ctx.userText)) return done("The cheapest is **Flight 101** at **$420**.", ["Flight 101, $420"]);
       return step("Search", [{ do: "click", ref: named(ctx, /search flights/i).id }]);
     },
+    // An alert after a request, then a confirm: each press comes back with what its dialog said.
+    dialogs(ctx) {
+      if (/answered Cancel/.test(ctx.userText) && /Cart: 1 item, kept/.test(ctx.userText)) return done("The cart has **1 item**. Emptying it asks for an OK in a browser dialog, which I leave to you, so it was kept.", ["Cart: 1 item, kept"]);
+      if (/browser alert: "Product added\."/.test(ctx.userText)) return step("Empty the cart", [{ do: "click", ref: named(ctx, /empty the cart/i).id }]);
+      return step("Add to cart", [{ do: "click", ref: named(ctx, /add to cart/i).id }]);
+    },
     // A page that is never still by itself: a simple press is not held up by it.
     busyPage(ctx) {
       if (/Read the note/.test(ctx.userText)) return done("The note is shown.", ["Read the note"]);
@@ -1394,6 +1425,7 @@ function createE2EServer(port = 8907) {
   scenarios.slowResults = { task: "Search for flights and tell me the cheapest." };
   scenarios.stillLoading = { task: "How much do Item C and Item D cost?" };
   scenarios.busyPage = { task: "Show the note." };
+  scenarios.dialogs = { task: "Add the item to the cart, then empty the cart, and tell me what the cart shows." };
   scenarios.realKeys = { task: "Move from the first box to the second with the keyboard." };
   scenarios.hoverMenu = { task: "Choose Pricing from the Products menu." };
   scenarios.pointerHover = { task: "Choose Pricing from the Products menu." };

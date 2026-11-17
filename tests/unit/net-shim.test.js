@@ -35,7 +35,7 @@ test("the shim says it is there under the name it was given, and leaves no mark 
   const w = world();
   const before = Object.getOwnPropertyNames(w.window).sort();
   assert.equal(w.run(), true);
-  assert.deepEqual(w.said, [{ name: NAME, t: "hello" }]);
+  assert.deepEqual(w.said, [{ name: NAME, t: "hello", net: true, dialogs: true }]);
   assert.deepEqual(Object.getOwnPropertyNames(w.window).sort(), before, "nothing new on the window");
   assert.ok(!/__selectToAi|select-to-ai/.test(INJECT.netShim.toString()), "no fixed name in what is sent to the page");
   assert.match(NAME, INJECT.NET_EVENT);
