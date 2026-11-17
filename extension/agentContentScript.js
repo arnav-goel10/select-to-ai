@@ -4832,6 +4832,9 @@
                     forms: lastScanExtras.forms,
                     url: window.location.href,
                     title: document.title,
+                    // A PDF the browser draws in its own viewer has no text here; the engine reads the file (pdfText.js).
+                    contentType: document.contentType || '',
+                    pdfEmbed: !!(document.body && document.body.children.length <= 2 && document.querySelector('body > embed[type="application/pdf"]')),
                     innerText: content.text,
                     textFormat: content.format,
                     media: content.media,

@@ -29,6 +29,7 @@
   const LEARN = root.SELECT_TO_AI_LEARN;
   const VIEW = root.SELECT_TO_AI_VIEW;
   const INJECT = root.SELECT_TO_AI_INJECT;
+  const PDF = root.SELECT_TO_AI_PDF;
   // Recipes (recipes/service.js): a run's page actions are recorded so a
   // successful run can be saved and repeated. Recording only watches.
   const RECIPES = root.SELECT_TO_AI_RECIPES || null;
@@ -592,7 +593,33 @@
     if (!res.netView && !nets.has(tab.id)) countRequests(tab.id, res.netEvent);
     session.frames = [];
     if (!near && res.frames) { try { await readFrames(session, tab, res); } catch (_e) { session.frames = []; } }
+    if (PDF && PDF.isPdfPage(res)) return PDF.withPdfText(res, await pdfTextOf(tab, res.url || tab.url));
     return res;
+  }
+
+  // The text of the PDFs read lately, by tab and address: a run looks at its
+  // page every step, and the file is read once.
+  const pdfTexts = new Map();
+  const PDF_MS = 25000;
+
+  /**
+   * The text of the PDF a tab shows. The browser's viewer gives an extension
+   * no text, so the file is fetched again from inside the tab and read there
+   * (pdfText.js): the same address, from the browser's cache, with the tab's
+   * own cookies, and no permission beyond the site access the scan used.
+   */
+  async function pdfTextOf(tab, url) {
+    const key = `${tab.id} ${url}`;
+    if (pdfTexts.has(key)) return pdfTexts.get(key);
+    await INJECT.injectNow(chrome, { tabId: tab.id }, { files: ["pdfText.js"] });
+    const ran = await INJECT.injectNow(chrome, { tabId: tab.id }, { func: () => (self.SELECT_TO_AI_PDF ? self.SELECT_TO_AI_PDF.readHere() : null) }, { injectMs: PDF_MS });
+    const got = (ran && ran[0] && ran[0].result) || null;
+    // A file that was read, or that cannot be (a password), is not fetched again; a failed fetch is tried at the next look.
+    if (got && (!got.error || got.locked)) {
+      pdfTexts.set(key, got);
+      while (pdfTexts.size > 4) pdfTexts.delete(pdfTexts.keys().next().value);
+    }
+    return got;
   }
 
   /** What the user had selected and the other tabs their words point at. */
@@ -2190,7 +2217,7 @@
   /**
    * Where a run starts when the tab it was given is one the agent cannot
    * work in: the new-tab page or an empty tab is used as it is; any other
-   * (a browser page, the Web Store, a PDF) is left as the user had it, and
+   * (a browser page, the Web Store) is left as the user had it, and
    * the run opens a new tab beside it. No tab at all also gets a new one.
    * Returns {tab, openedTab, fromNothing}, with fromNothing null for a web page.
    */
