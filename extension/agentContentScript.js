@@ -2472,11 +2472,15 @@
         return { point: null };
     }
 
-    /** The result when what was aimed at is covered: said, and nothing pressed. */
+    /**
+     * The result when what was aimed at is covered: said, and nothing
+     * pressed. No pointer was used, real or made by script, so the result
+     * names none: the trace and the count of real presses leave it out.
+     */
     function coveredResult(id, what, hovering) {
         const who = /^\d+$/.test(String(id)) ? `[${id}]` : String(id);
         return {
-            success: false, covered: true, pointer: 'real',
+            success: false, covered: true,
             error: `${who} is covered: ${what} is drawn over it where it is on screen, so the ${hovering ? 'pointer' : 'press'} would reach that instead. Nothing was ${hovering ? 'moved over it' : 'pressed'}.`,
         };
     }

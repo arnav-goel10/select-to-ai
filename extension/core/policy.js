@@ -55,6 +55,30 @@
     id: "This field asks for an identity number. Please enter it yourself on the page.",
   });
 
+  /**
+   * The site of a page the run went to by itself and the task does not
+   * need, or "". The task's own sites are the ones the request names, the
+   * one the run began on and the first web page it worked on. A page on
+   * another site, opened by an address the agent wrote (a search engine,
+   * say), is a detour: a human check there is no reason to stop and ask the
+   * user, since the run can go back and answer from what it has read. A
+   * page reached by a link or a redirect from the task's site is not, so a
+   * check the task leads to is still the user's to pass.
+   */
+  function detourSite(page, run) {
+    const site = TOOLS.siteOf(String((page && page.url) || ""));
+    if (!site || !run || !(run.wentTo || []).includes(site)) return "";
+    const own = new Set(TOOLS.sitesNamedIn(requestOf(run)));
+    if (run.startSite) own.add(run.startSite);
+    const first = (run.history || []).find((h) => /^https?:/i.test(String(h.url || "")));
+    if (first) own.add(TOOLS.siteOf(first.url));
+    own.delete("");
+    return own.size && !own.has(site) ? site : "";
+  }
+
+  // What the model is told when it would hand a detour's check to the user.
+  const detourMessage = (site) => `Not handed to the user: this human check is on ${site}, a site you opened yourself that the request does not need. Leave it. Go back, or open a page on the site the task is about, and finish from what you have already read. Say in your answer what you could not confirm.`;
+
   // Keys that press what they land on: Enter (or Return) and Space, alone
   // or with modifiers held.
   const ENTER_KEY = /(^|\+)\s*(enter|return|numpadenter)$/i;
@@ -436,7 +460,7 @@
     return t;
   }
 
-  const api = Object.freeze({ decide, decideSwitch, keysToo, blockersOf, remember, asRiskAction, keptFromSending, pressesControl, pressLandsOn, firstAddress, pointTarget, dropPoint, HANDOVER });
+  const api = Object.freeze({ decide, decideSwitch, keysToo, blockersOf, detourSite, detourMessage, remember, asRiskAction, keptFromSending, pressesControl, pressLandsOn, firstAddress, pointTarget, dropPoint, HANDOVER });
   root.SELECT_TO_AI_POLICY = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

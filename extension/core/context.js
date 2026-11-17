@@ -242,7 +242,8 @@ In this browser your pointer and your keys are made by script: the page is sent 
     // What the helper model did in the steps it took, said once when it hands back.
     if (run.handBack) facts.push(run.handBack.replace(/\n/g, "\n  "));
     for (const b of (page && page.blockers) || []) {
-      if (b.kind === "human_check") facts.push(b.whole === false ? "This page has a human-check widget. Only the user can complete it." : "This page is a check that a person is visiting. Only the user can pass it.");
+      if (b.kind === "human_check" && b.away) facts.push(`This page is a human check on ${b.away}, a site you opened yourself that the request does not need. It is not handed to the user: go back and finish from what you have already read, saying what you could not confirm.`);
+      else if (b.kind === "human_check") facts.push(b.whole === false ? "This page has a human-check widget. Only the user can complete it." : "This page is a check that a person is visiting. Only the user can pass it.");
       // A sign-in box in the corner of a page that can be read without it is not in the way.
       if (b.kind === "sign_in" && b.whole) facts.push("This page is a sign-in form.");
       if (b.kind === "code") facts.push("This page asks for a one-time code.");
