@@ -462,6 +462,8 @@
     const s = Math.max(1, Math.round(ms / 1000));
     if (s < 90) return `${s} second${s === 1 ? "" : "s"}`;
     const m = Math.round(s / 60);
+    // A hold for a day's allowance is hours long.
+    if (m >= 120) return `about ${Math.round(m / 60)} hours`;
     return `${m} minute${m === 1 ? "" : "s"}`;
   }
 
@@ -863,7 +865,7 @@
     // A picture the model asked for goes with this step only.
     const image = run.image || null;
     run.image = null;
-    fx.push({ type: "model", system: messages.system, user: image ? `${messages.user}\nA picture of the page as it is on screen is attached.` : messages.user, tool, tier: taker.by === "helper" ? "helper" : "pro", purpose: "step", effort, ...(image ? { image } : {}) });
+    fx.push({ type: "model", system: messages.system, user: image ? `${messages.user}\nA picture of the page as it is on screen is attached.` : messages.user, tool, tier: taker.by === "helper" ? "helper" : "pro", purpose: "step", effort, ...(image ? { image } : {}), ...(run.askedOut ? { reasks: 0 } : {}) });
     return fx;
   }
 
@@ -918,6 +920,9 @@
     if (budget > 0 && run.usage.cost >= budget) {
       return end(run, fx, env, { state: "error", kind: "budget", text: `Cost budget reached: this task has used $${run.usage.cost.toFixed(4)} of the $${budget.toFixed(4)} limit set in Settings.` });
     }
+    // The model called the tool this time: whatever is wrong with the step,
+    // the single asks that follow a reply with no call are over.
+    if (event.reply && typeof event.reply === "object") run.askedOut = false;
     const check = STEP.checkStep(event.reply, { page, labels: run.labels, labelOf: TOOLS.elementLabel, maxActions: run.maxActions, finalStep: run.finalStep, notes: run.memory, canDelegate: !run.sub });
     if (!check.ok) {
       // Notes written in a reply that could not be run are still the model's notes.
@@ -1552,7 +1557,7 @@
     // What was in the page's fields, for a wait the user may answer on the page.
     run.waitSnapshot = page && !["approval", "check_in", "pause"].includes(wait.kind) ? { url: page.url, elements: (page.elements || []).map((el) => ({ id: el.id, value: el.sensitive ? "" : el.value || "" })) } : null;
     run.wait = { id: `${run.id}-w${run.waits}`, since: env.now || 0, tabId: run.tabId, ...wait };
-    run.journal.push({ k: "ask", wait: { id: run.wait.id, kind: wait.kind, risk: wait.risk || "", question: wait.question || "", detail: wait.detail || [], tabId: run.tabId, ...(wait.kind === "check_in" ? { notes: wait.notes, active: wait.active, period: wait.period, reason: wait.reason } : {}), ...(wait.until ? { until: wait.until } : {}) } });
+    run.journal.push({ k: "ask", wait: { id: run.wait.id, kind: wait.kind, risk: wait.risk || "", question: wait.question || "", detail: wait.detail || [], tabId: run.tabId, ...(wait.kind === "check_in" ? { notes: wait.notes, active: wait.active, period: wait.period, reason: wait.reason } : {}), ...(wait.until ? { until: wait.until } : {}), ...(wait.hold ? { hold: wait.hold } : {}) } });
     status(run, "idle", wait.kind === "approval" ? "Waiting for your go-ahead" : wait.kind === "pause" ? "Waiting for the provider" : "Waiting for you");
     fx.push({ type: "attention", wait: run.wait });
     return fx;
@@ -1846,14 +1851,30 @@
    */
   function pause(run, event, env) {
     addUsage(run, event.usage);
+    const now = env.now || 0;
+    const inRow = run.pausedInRow || { n: 0, ms: 0 };
+    // The day's allowance or the account's credit is spent: the run is
+    // held, not ended, and goes on from here when the allowance is back, a
+    // backup is connected, or the user says to try again.
+    if (event.kind === "limit") {
+      const limit = event.limit || {};
+      // It comes back by itself only at a time the provider named, and not
+      // again and again when the provider's answer at that time is the same.
+      const until = limit.resetAt > 0 && inRow.n < PAUSES_IN_ROW ? Math.max(limit.resetAt, now + PAUSE_FIRST_MS) : 0;
+      const said = String(limit.short || event.message || "The provider's usage limit is reached.").trim();
+      log(run, "system", "Out Of Requests", `${said} Holding the task here${until ? ` for ${duration(until - now)}` : ""}.`);
+      return hold(run, env, { why: "limit", said, until, outcome: { state: "limit", kind: "limit", text: event.message || "The model request failed." } });
+    }
     const named = event.waitMs > 0;
     const ms = named ? event.waitMs : Math.min(PAUSE_LONGEST_MS, PAUSE_FIRST_MS * 2 ** (run.pauses || 0));
     const said = String(event.message || "The provider asked to wait.").trim();
-    // Waiting has a limit: past it the run ends with what it found.
-    const inRow = run.pausedInRow || { n: 0, ms: 0 };
+    // Waiting by itself has a limit: past it the run is held for the user,
+    // who can try again, switch to a backup, or take what it found.
     if (inRow.n >= PAUSES_IN_ROW || inRow.ms + ms > PAUSED_IN_ROW_MS) {
-      log(run, "system", "Provider Still Refusing", `${said} Stopping after ${inRow.n} wait${inRow.n === 1 ? "" : "s"} in a row.`);
-      return end(run, [], env, { state: "error", kind: "rate_limited", text: `The provider kept turning requests away${inRow.n ? ` after ${inRow.n} wait${inRow.n === 1 ? "" : "s"} (${duration(inRow.ms)} in all)` : ""}, so I stopped here. ${said} Try again later or pick another model in Settings.${found(run)}` });
+      log(run, "system", "Provider Still Refusing", `${said} Holding the task here after ${inRow.n} wait${inRow.n === 1 ? "" : "s"} in a row.`);
+      const text = `The provider kept turning requests away${inRow.n ? ` after ${inRow.n} wait${inRow.n === 1 ? "" : "s"} (${duration(inRow.ms)} in all)` : ""}, so I stopped here. ${said} Try again later or pick another model in Settings.`;
+      // One long wait the provider named is waited out; a row of refusals is not started again unasked.
+      return hold(run, env, { why: "crowded", said, until: named && inRow.n === 0 ? now + ms : 0, outcome: { state: "error", kind: "rate_limited", text } });
     }
     run.pausedInRow = { n: inRow.n + 1, ms: inRow.ms + ms };
     if (!named) run.pauses = (run.pauses || 0) + 1;
@@ -1861,6 +1882,31 @@
     run.queue = [];
     log(run, "system", "Provider Asked To Wait", `${said} Waiting ${duration(ms)}.`);
     return waitFor(run, [], env, { kind: "pause", until: (env.now || 0) + ms, question: `${said} I will carry on by myself in ${duration(ms)}.` });
+  }
+
+  /**
+   * The provider will not answer for now (a spent allowance, a model that
+   * stays crowded). The run keeps everything it has and waits on the same
+   * card as a pause, with the choices on it: go on at `until` when there is
+   * one, go on when the user says so or connects a backup (pause_over), or
+   * stop with what was found (wrap_up), which is the ending the run used to
+   * be given straight away.
+   */
+  function hold(run, env, h) {
+    const now = env.now || 0;
+    const inRow = run.pausedInRow || { n: 0, ms: 0 };
+    if (h.until) run.pausedInRow = { n: inRow.n + 1, ms: inRow.ms + (h.until - now) };
+    run.step = Math.max(0, run.step - 1);
+    run.queue = [];
+    const next = h.until ? `I will carry on from here by myself in ${duration(h.until - now)}, or sooner if you connect a backup or say to try again.` : "I will carry on from here when you connect a backup or say to try again.";
+    return waitFor(run, [], env, { kind: "pause", hold: h.why, ...(h.until ? { until: h.until } : {}), outcome: h.outcome, question: `${h.said} Nothing is lost. ${next}` });
+  }
+
+  /** The user chose to stop at a hold: the run ends as it would have, with what it found. */
+  function endHold(run, env) {
+    const w = run.wait;
+    run.journal.push({ k: "ask_done", id: w.id, how: "wrap_up" });
+    return end(run, [], env, { ...w.outcome, text: `${w.outcome.text}${found(run)}` });
   }
 
   // ------------------------------------------------------------------ events
@@ -1942,18 +1988,25 @@
         // The model answered, but with nothing that names a step: the same as a step that cannot be used.
         if (event.kind === "no_action" && event.purpose !== "verify" && page) {
           addUsage(run, event.usage);
+          // The call already asked again as often as one step may (llm.js):
+          // the asks that follow here are single ones, so a model that names
+          // no step costs six requests before the run stops, not twelve.
+          run.askedOut = true;
           return unusable(run, page, e, [], "It did not call the step tool. Reply only by calling it.");
         }
         // The provider wants a while before it takes more: the run waits,
         // and carries on by itself when the time is up. The step was not
         // taken, so it is taken again then, on the page as it is then.
-        if (event.kind === "rate_limited") return pause(run, event, e);
+        // A spent allowance holds the run the same way, for the user or the
+        // reset to carry it on: what it has done so far is not thrown away.
+        if (event.kind === "rate_limited" || event.kind === "limit") return pause(run, event, e);
         // What the failed call used is still the run's cost.
         addUsage(run, event.usage);
-        return end(run, [], e, { state: event.kind === "limit" ? "limit" : "error", text: `${event.message || "The model request failed."}${found(run)}`, kind: event.kind || "model" });
+        return end(run, [], e, { state: "error", text: `${event.message || "The model request failed."}${found(run)}`, kind: event.kind || "model" });
       }
       case "keep_going":
       case "wrap_up":
+        if (event.type === "wrap_up" && run.status === "waiting" && run.wait && run.wait.kind === "pause" && run.wait.hold && (!event.id || event.id === run.wait.id)) return endHold(run, e);
         return onCheckIn(run, event, e);
       case "pause_over": {
         const w = run.wait;
@@ -1961,7 +2014,9 @@
         run.status = "running";
         run.wait = null;
         run.journal.push({ k: "ask_done", id: w.id, how: "pause_over" });
-        log(run, "system", "Carrying On", "The wait the provider asked for is over.");
+        // Asked for by the user (try again, a backup connected): the waits start from the shortest again.
+        if (event.by === "user") { run.pauses = 0; run.pausedInRow = { n: 0, ms: 0 }; }
+        log(run, "system", "Carrying On", event.by === "user" ? "Trying the provider again." : "The wait the provider asked for is over.");
         status(run, "executor", "Carrying on…");
         return [{ type: "observe" }];
       }
@@ -2080,6 +2135,7 @@
       running: run.status === "running",
       waitingForUser: run.status === "waiting",
       waitKind: run.wait ? run.wait.kind : "",
+      waitHold: run.wait ? run.wait.hold || "" : "",
       stopState: run.outcome ? run.outcome.state : "",
       endKind: run.outcome ? run.outcome.kind || "" : "",
       validated: !!(run.outcome && run.outcome.verified === true),

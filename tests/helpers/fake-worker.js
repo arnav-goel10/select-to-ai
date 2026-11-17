@@ -11,7 +11,7 @@ const EXT = path.join(__dirname, "../../extension");
 const FILES = [
   "config.js", "defaults.js", "security.js", "commonWords.js", "core/grants.js", "publicSuffixes.js", "agentTools.js", "agentPrompt.js",
   "usageLimits.js", "pageSearch.js", "core/step.js", "core/observe.js", "core/memory.js", "core/context.js", "core/policy.js", "core/run.js",
-  "core/llm.js", "core/learn.js", "core/view.js", "core/inject.js", "engine.js",
+  "core/llm.js", "core/learn.js", "core/view.js", "core/inject.js", "setup.js", "engine.js",
 ];
 
 /**
@@ -20,14 +20,18 @@ const FILES = [
  *   notifications  whether the user granted notifications
  *   restoreDelayMs how long reading session storage takes (a cold worker)
  *   onTabMessage   (tabId, message, frameId) => reply, for chrome.tabs.sendMessage
- *   granted        origins granted, as "https://site.example"
+ *   granted        origins granted, as "https://site.example" (the returned `granted` set may be added to)
  *   injectFails    chrome.scripting.executeScript rejects (no access to the page)
  *   tabs           {id: tab} the tabs that exist
+ *   local, sync    what chrome.storage.local and .sync hold (a test may change them later)
+ *   fetch          the worker's fetch, for a test that plays a provider's replies
  */
 function fakeWorker(o = {}) {
   const listeners = {};
-  const calls = { notices: [], cleared: [], tabMessages: [], badges: [], alarms: [], executes: 0 };
+  const calls = { notices: [], cleared: [], tabMessages: [], badges: [], alarms: [], localSets: [], executes: 0 };
   const session = { ...(o.saved || {}) };
+  const local = { ...(o.local || {}) };
+  const sync = { ...(o.sync || {}) };
   const event = (name) => ({
     addListener: (fn) => { (listeners[name] = listeners[name] || []).push(fn); },
     removeListener: (fn) => { listeners[name] = (listeners[name] || []).filter((f) => f !== fn); },
@@ -81,8 +85,8 @@ function fakeWorker(o = {}) {
         set: async (items) => { Object.assign(session, JSON.parse(JSON.stringify(items))); },
         remove: async (k) => { for (const key of [].concat(k)) delete session[key]; },
       },
-      local: { get: async () => ({}), set: async () => {}, remove: async () => {} },
-      sync: { get: async () => ({}), set: async () => {} },
+      local: { get: async () => ({ ...local }), set: async (items) => { calls.localSets.push(items); Object.assign(local, JSON.parse(JSON.stringify(items))); }, remove: async (k) => { for (const key of [].concat(k)) delete local[key]; } },
+      sync: { get: async () => ({ ...sync }), set: async (items) => { Object.assign(sync, JSON.parse(JSON.stringify(items))); } },
       onChanged: event("storage.onChanged"),
     },
     ...(o.notifications ? {
@@ -95,7 +99,7 @@ function fakeWorker(o = {}) {
   }, { get: (t, k) => (k in t ? t[k] : k === "notifications" || k === "debugger" ? undefined : anything()) });
 
   const timer = (fn, ms) => { const t = setTimeout(fn, ms); t.unref(); return t; };
-  const root = { chrome, console, setTimeout: timer, clearTimeout, setInterval: () => 0, clearInterval: () => {}, URL, URLSearchParams, Promise, AbortController, TextEncoder, TextDecoder, crypto: globalThis.crypto, fetch: async () => { throw new Error("no network in tests"); } };
+  const root = { chrome, console, setTimeout: timer, clearTimeout, setInterval: () => 0, clearInterval: () => {}, URL, URLSearchParams, Promise, AbortController, TextEncoder, TextDecoder, crypto: globalThis.crypto, fetch: o.fetch || (async () => { throw new Error("no network in tests"); }) };
   root.globalThis = root;
   root.self = root;
   vm.createContext(root);
@@ -119,7 +123,7 @@ function fakeWorker(o = {}) {
     return { posted, post, hello: () => post({ type: "hello", windowId }) };
   }
 
-  return { root, engine: root.SELECT_TO_AI_ENGINE, RUN: root.SELECT_TO_AI_RUN, calls, listeners, fire, connect, session, tabs };
+  return { root, engine: root.SELECT_TO_AI_ENGINE, RUN: root.SELECT_TO_AI_RUN, calls, listeners, fire, connect, session, tabs, local, sync, granted };
 }
 
 /** Lets queued promises and short timers run. */

@@ -655,7 +655,7 @@
 
   // ---------- memory ----------
   // What Reset removes from local storage besides the API keys.
-  const RESET_LOCAL_KEYS = ["agentDataConsent", "agentUserMemory", "agentSkills", "agentCrossSessionMemory", "agentKnown", "recipesStore", "chatgptAccount", "chatgptCredentials", "chatgptHostId", "agentProviderPause", "sidePanelState"];
+  const RESET_LOCAL_KEYS = ["agentDataConsent", "agentUserMemory", "agentSkills", "agentCrossSessionMemory", "agentKnown", "recipesStore", "chatgptAccount", "chatgptCredentials", "chatgptHostId", "agentProviderPause", "agentAllowance", "sidePanelState"];
   $("manageMemoryBtn").onclick = () => chrome.tabs.create({ url: chrome.runtime.getURL("agent.html#memory") });
 
   $("resetBtn").onclick = async () => {

@@ -104,6 +104,7 @@
     code: "Waiting for a code from you", payment: "Waiting for you to pay", site_access: "Waiting for access to this site",
     question: "Waiting for your answer", check_in: "Waiting for you: keep going?", pause: "Paused by the provider",
   });
+  const HELD_WORDS = Object.freeze({ timed: "On hold until the provider takes requests again", open: "On hold: waiting for you" });
   const ENDED = Object.freeze({
     success: { state: "done", text: "Done. The answer is on the agent page." },
     unconfirmed: { state: "done", text: "Done, not confirmed. The answer is on the agent page." },
@@ -122,6 +123,8 @@
     if (run.outcome) return ENDED[run.outcome.state] || { state: "stopped", text: "Stopped." };
     if (run.status === "waiting") {
       const kind = run.wait && run.wait.kind;
+      // A held run is not paused for a moment: it waits for the reset, or for the user.
+      if (kind === "pause" && run.wait.hold) return run.wait.until ? { state: "working", text: HELD_WORDS.timed } : { state: "needs", text: HELD_WORDS.open };
       return { state: kind === "pause" ? "working" : "needs", text: WAIT_WORDS[kind] || "Waiting for you" };
     }
     const goal = run.current && String(run.current.goal || "").trim();

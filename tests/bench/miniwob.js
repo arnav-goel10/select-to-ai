@@ -211,6 +211,9 @@ async function runEpisode(browser, extensionId, task, episode) {
       // At a check-in the user says to keep going; a run there or paused for its provider is still under way.
       const keep = document.querySelector('.confirmation-bubble[data-wait-kind="check_in"] .checkin-keep-btn');
       if (keep) keep.click();
+      // A run held for its provider is ended with what it has, as it ended by itself before holds.
+      const holdStop = document.querySelector(".confirmation-bubble[data-hold] .hold-stop-btn");
+      if (holdStop) holdStop.click();
       const held = !!keep || !!(t && t.waitingForUser && ["check_in", "pause"].includes(t.waitKind));
       return { running: held || document.getElementById("actionBtn").classList.contains("stop-btn"), trace: t };
     }).catch(() => ({ running: false, trace: null }));

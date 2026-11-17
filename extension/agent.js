@@ -981,7 +981,7 @@
     chrome.storage.sync.get(
       [...CONFIG.STORAGE.SETTINGS, ...syncedKeys],
       (syncItems) => {
-        chrome.storage.local.get([...syncedKeys, "agentProviderPause", "chatgptAccount", "agentDataConsent"], (localItems) => {
+        chrome.storage.local.get([...syncedKeys, "agentProviderPause", "agentAllowance", "chatgptAccount", "agentDataConsent"], (localItems) => {
           const migratedKeys = {};
           syncedKeys.forEach((key) => {
             if (!localItems[key] && syncItems[key]) migratedKeys[key] = syncItems[key];
@@ -1059,6 +1059,9 @@
           ? `Using your backup, ${providerCapitalized}, until ${clockTime(backupActive.until)}: ${friendlyProviderName(backupActive.from)}'s limit ran out.\nChange it in Settings.`
           : `Provider: ${providerCapitalized}\nModel: ${resolvedModel}\nChange both in Settings.`;
       }
+      if (selectedModelName) pillBase = { text: selectedModelName.textContent, title: headerModel ? headerModel.title : "" };
+      allowance = items.agentAllowance || null;
+      paintAllowance();
 
       // Restore the drawer's open or closed state, once, when the page opens.
       if (sidebar && !sidebarRestored) { sidebarRestored = true; setSidebar(!(items.sidebarCollapsed === true || isNarrow())); }
@@ -1081,10 +1084,25 @@
     );
   }
 
+  // What the provider last said is left of the key's requests (the engine
+  // keeps it), shown in the model pill beside the model in use.
+  let allowance = null;
+  let pillBase = null;
+  function paintAllowance() {
+    const name = document.getElementById("selectedModelName");
+    const header = document.getElementById("headerModel");
+    if (!name || !pillBase) return;
+    const left = SELECT_TO_AI_DEFAULTS.allowanceLabel(allowance, config.agentActiveProvider, Date.now());
+    name.textContent = left ? `${pillBase.text} · ${left.short}` : pillBase.text;
+    if (header) header.title = left ? `${pillBase.title}\n${left.title}` : pillBase.title;
+  }
+
   // Settings storage changed listener
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === "sync" || namespace === "local") {
-      if (namespace === "local" && Object.keys(changes).every((k) => k === "agentCrossSessionMemory" || k === CONFIG.STORAGE.SIDE_PANEL_STATE)) return;
+      // The count of requests left changes with every call: only the pill is redrawn.
+      if (namespace === "local" && changes.agentAllowance) { allowance = changes.agentAllowance.newValue || null; paintAllowance(); }
+      if (namespace === "local" && Object.keys(changes).every((k) => k === "agentAllowance" || k === "agentCrossSessionMemory" || k === CONFIG.STORAGE.SIDE_PANEL_STATE)) return;
       loadSettings();
     }
   });
@@ -1600,7 +1618,9 @@
 
     // A word to a run already going was agreed to when that run started. A
     // handed task always starts a new run, so it is checked like any other.
-    const steering = !handoff && (engineStatus === "running" || engineStatus === "waiting");
+    // A run held with no time to carry on at takes no word: what is typed
+    // then is a new request, and is checked like one.
+    const steering = !handoff && !heldOpen() && (engineStatus === "running" || engineStatus === "waiting");
     if (!steering && !readyToSend(() => startAgentWithLoadedSettings(handoff))) return;
 
     if (handoff) {
@@ -1626,6 +1646,52 @@
 
   let consentShown = null;
   let hostsChecked = "";
+
+  // The held wait the card in the consent slot was put up for, if any: it goes when that wait ends.
+  let askedForHold = "";
+  function holdOver(id) {
+    if (!askedForHold || askedForHold !== id) return;
+    askedForHold = "";
+    consentShown = null;
+    const slot = consentSlot();
+    if (slot) slot.textContent = "";
+  }
+
+  /** The wait of a run held until the user acts (no time named for it to carry on at), or null. */
+  function heldOpen() {
+    return engineStatus === "waiting" && engineWait && engineWait.kind === "pause" && engineWait.hold && !engineWait.until ? engineWait : null;
+  }
+
+  /**
+   * A held run is tried again, on what is connected now. That may be a
+   * provider the run did not start with (a backup set up meanwhile), so it
+   * is checked like a first request: the consent card and the host come
+   * first, and the run goes on from that click.
+   */
+  function tryHeldAgain(id) {
+    const go = () => enginePost({ type: "try_again", id });
+    if (readyToSend(go)) go();
+  }
+
+  /**
+   * The engine kept a run held: its settings now name a provider the user
+   * has not agreed to, or one Chrome does not let the extension reach.
+   * What is saved is read again, and the same card asks.
+   */
+  function holdNeeds(m) {
+    hostsChecked = "";
+    askedForHold = m.id;
+    loadSettings(() => {
+      if (!readyToSend(() => enginePost({ type: "try_again", id: m.id }))) return;
+      // This page sees nothing missing where the engine does: say so, and send nothing.
+      const slot = consentSlot();
+      if (!slot) return;
+      slot.textContent = "";
+      const note = el("p", "consent-said", "The task is still on hold and nothing was sent. Open Settings, test the connection there, then try again.");
+      slot.appendChild(note);
+      setTimeout(() => note.remove(), 12000);
+    });
+  }
   /**
    * True when the task can go now. Otherwise it shows what is needed (the
    * consent card, or a button to let Chrome reach the provider), calls
@@ -1734,7 +1800,7 @@
     const row = el("div", "confirm-actions handoff-actions");
     const choose = (choice) => {
       row.remove();
-      enginePost({ type: "handoff", text: m.text, tabId: m.tabId, choice });
+      enginePost({ type: "handoff", text: m.text, tabId: m.tabId, choice, ...(m.selection ? { selection: m.selection } : {}) });
     };
     const stopBtn = el("button", "handoff-stop-btn btn btn-primary");
     stopBtn.type = "button";
@@ -1760,7 +1826,8 @@
     // a task, or the answer to what it asked.
     const keep = document.querySelector(".confirmation-bubble.needs-you .keep-answer-box");
     // A new request carries the selection it is about; a word to a run in progress does not.
-    const fresh = !(engineStatus === "waiting" || engineStatus === "running");
+    // Nor does one to a run held until the user acts: that is a new request too.
+    const fresh = !(engineStatus === "waiting" || engineStatus === "running") || !!heldOpen();
     const selection = fresh && aboutSelection ? aboutSelection : null;
     enginePost({ type: "send", text: task, tabId: engineTabId(), keep: !!(keep && keep.checked), ...(selection ? { selection } : {}) });
     if (selection) dropSelection();
@@ -1921,7 +1988,7 @@
     const waiting = engineStatus === "waiting" || (engineStatus === "running" && counts.waiting > 0 && !counts.running);
     liveHeader.dataset.state = waiting || counts.waiting ? "needs" : "working";
     let words;
-    if (engineStatus === "waiting") words = WAIT_WORDS[engineWait && engineWait.kind] || "Waiting for you";
+    if (engineStatus === "waiting") words = engineWait && engineWait.kind === "pause" && engineWait.hold ? (engineWait.until ? "On hold until the provider takes requests again" : "On hold: waiting for you") : WAIT_WORDS[engineWait && engineWait.kind] || "Waiting for you";
     else if (counts.running || counts.waiting) {
       // While sub-tasks work, the header counts them.
       const parts = [];
@@ -2094,7 +2161,7 @@
     taskInput.placeholder = steering
       ? "Add guidance for its next step"
       : kind === "approval" ? "Decide on the step above, or stop the task"
-        : kind === "pause" ? "It carries on by itself when the wait is over"
+        : kind === "pause" ? (engineWait.hold ? "On hold: choose above, or connect a backup in Settings" : "It carries on by itself when the wait is over")
           : kind === "check_in" ? "Add something and keep going"
             : kind === "question" ? "Type your answer"
               : asking ? "Reply here, or do it on the page" : aboutSelection ? "Ask about the selected text" : "Ask anything, or tell it what to do";
@@ -2151,7 +2218,8 @@
     content.className = "bubble-content";
     const title = document.createElement("p");
     title.className = "confirm-title";
-    title.textContent = titles[wait.kind] || "Needs you";
+    title.textContent = wait.hold === "limit" ? "On hold: out of requests for now" : wait.hold ? "On hold: the model is busy" : titles[wait.kind] || "Needs you";
+    if (wait.hold) card.dataset.hold = wait.hold;
     // A sub-task asks in its own name, so it is clear which part of the errand this is.
     if (wait.sub) {
       const from = el("p", "card-from");
@@ -2218,14 +2286,26 @@
         const ms = Math.max(0, (wait.until || 0) - Date.now());
         const m = Math.floor(ms / 60000);
         const sec = Math.floor((ms % 60000) / 1000);
-        left.textContent = ms > 0 ? `Carrying on by itself in ${m}:${String(sec).padStart(2, "0")}` : "Carrying on";
+        // A long hold is told by the clock, a short wait by a countdown.
+        left.textContent = !wait.until ? "Waiting for you: nothing it has done is lost."
+          : ms > 3600000 ? `Carrying on by itself at ${clockTime(wait.until)}`
+            : ms > 0 ? `Carrying on by itself in ${m}:${String(sec).padStart(2, "0")}` : "Carrying on";
         // The card is taken away when the wait ends.
         if (!first && (ms <= 0 || !card.isConnected)) clearInterval(timer);
       };
-      const timer = setInterval(tick, 1000);
+      const timer = wait.until ? setInterval(tick, 1000) : null;
       tick(true);
       content.appendChild(left);
-      button("Stop instead", "pause-stop-btn secondary-btn btn", () => enginePost({ type: "stop" }));
+      if (wait.hold) {
+        // A held run: go on with a backup, try the provider again, or take what it has.
+        const backup = usableBackup(config.agentActiveProvider);
+        button(backup ? `Use my backup (${friendlyProviderName(backup)})` : "Set up a free backup", "hold-backup-btn primary-btn btn btn-primary", () => {
+          if (backup) tryHeldAgain(wait.id);
+          else chrome.tabs.create({ url: chrome.runtime.getURL("options.html#backup") });
+        });
+        button(wait.until ? "Try again now" : "Try again", "hold-retry-btn secondary-btn btn", () => tryHeldAgain(wait.id));
+        button("Stop and answer with what you have", "hold-stop-btn secondary-btn btn", () => enginePost({ type: "wrap_up", id: wait.id }));
+      } else button("Stop instead", "pause-stop-btn secondary-btn btn", () => enginePost({ type: "stop" }));
     } else if (wait.kind === "question") {
       const hint = document.createElement("p");
       hint.className = "confirm-text hint";
@@ -2400,7 +2480,7 @@
     else if (entry.k === "provisional_replaced") provisionalSentBack(entry);
     else if (entry.k === "status") setStatus(entry.role, entry.text);
     else if (entry.k === "ask") { engineWait = entry.wait; engineAsked = entry.wait.kind === "question" ? entry.wait.question : ""; drawWait(entry.wait); }
-    else if (entry.k === "ask_done") { const card = engineCards.get(entry.id); if (live) removeCard(card); else if (card) card.remove(); engineCards.delete(entry.id); if (!engineWait || engineWait.id === entry.id) engineWait = null; }
+    else if (entry.k === "ask_done") { holdOver(entry.id); const card = engineCards.get(entry.id); if (live) removeCard(card); else if (card) card.remove(); engineCards.delete(entry.id); if (!engineWait || engineWait.id === entry.id) engineWait = null; }
     // What the user typed is already on screen when it arrives live. The
     // run carries on underneath it, so the conversation reads in order.
     else if (entry.k === "user") {
@@ -2721,6 +2801,7 @@
       return;
     }
     if (m.type === "handoff_live") { askAboutHandoff(m); return; }
+    if (m.type === "hold_needs") { holdNeeds(m); return; }
     if (m.type === "handoff_queued") { appendSimpleAssistantBubble(`Queued: "${String(m.text).slice(0, 200).replace(/[*_`#>[\]]/g, "")}" starts when the task in progress ends.`); return; }
     if (m.type === "started") {
       engineRunId = m.runId;

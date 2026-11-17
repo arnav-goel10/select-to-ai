@@ -10,6 +10,8 @@
  *  2. Small fixture pages: a search page with a form + results, a
  *     multi-field signup form, a page behind a fake login wall, and a
  *     two-page price-comparison pair.
+ *     POST /control/limit {on} makes it refuse every call as a provider
+ *     whose daily requests are spent (429), until turned off.
  *  3. A control API for the runner: POST /control/scenario selects the
  *     active scenario, GET /control/log returns every executor action the
  *     gateway issued for it (used to assert e.g. "no credentials typed").
@@ -1232,6 +1234,17 @@ function createE2EServer(port = 8907) {
 
     // Where a hijacked agent would send the user's data. Counted, so a test
     // can prove nothing arrived.
+    // The gateway answers as a provider whose day's requests are spent, until told otherwise.
+    if (pathname === "/control/limit" && req.method === "POST") {
+      collectBody(req, (raw) => {
+        let on = false;
+        try { on = !!JSON.parse(raw).on; } catch (_e) { on = false; }
+        state.limited = on;
+        respond(200, JSON.stringify({ ok: true, limited: on }), "application/json");
+      });
+      return;
+    }
+
     if (pathname === "/collect") {
       state.collected = (state.collected || 0) + 1;
       respond(200, pageShell("Collected", "<h1>Thanks</h1>"));
@@ -1258,6 +1271,10 @@ function createE2EServer(port = 8907) {
           return;
         }
         state.llmCalls++;
+        if (state.limited) {
+          respond(429, JSON.stringify({ error: { message: "Rate limit exceeded: free-models-per-day. The daily quota for this key is used up." } }), "application/json");
+          return;
+        }
         const scenario = scenarios[state.scenarioName];
         // The instructions are the first message; the step's context, with
         // the element list and page text, is the one after it.

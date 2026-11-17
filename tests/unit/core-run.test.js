@@ -433,8 +433,16 @@ test("paging through results, a list that grows, and filling different fields ar
 test("a failed model call, a closed tab and Stop each end the run with a plain outcome", () => {
   const page = shop();
   let r = begin("t", page).run;
+  // A spent allowance holds the run; stopping there is the user's choice, and ends it as a limit.
   RUN.advance(r, { type: "model_failed", kind: "limit", message: "Out of requests until 8:00." }, env(page));
+  assert.equal(r.outcome, null);
+  assert.equal(r.wait.hold, "limit");
+  assert.deepEqual(RUN.advance(r, { type: "wrap_up", id: r.wait.id }, env(page)), [{ type: "end" }]);
   assert.equal(r.outcome.state, "limit");
+  r = begin("t", page).run;
+  RUN.advance(r, { type: "model_failed", kind: "auth", message: "Key not accepted." }, env(page));
+  assert.equal(r.outcome.state, "error");
+  assert.equal(r.outcome.kind, "auth");
   r = begin("t", page).run;
   RUN.advance(r, { type: "tab_closed" }, env(page));
   assert.match(r.outcome.text, /tab .* was closed/);
@@ -1673,14 +1681,19 @@ test("a provider that asks to wait pauses the run, which carries on by itself at
   assert.match(run.outcome.text, /^Stopped\.\n\nWhat I had found:\nStep 1: Found \$19\./);
 });
 
-test("a spent daily allowance still ends the run, with what it had found", () => {
+test("a spent daily allowance holds the run, and stopping there ends it with what it had found", () => {
   const page = shop();
   const { run } = begin("t", page);
   reply(run, page, [{ do: "click", ref: 3 }], "Blue Widget $19.");
   RUN.advance(run, { type: "acted", result: { ok: true, message: "Done.", pageChanged: true } }, env(page));
   RUN.advance(run, { type: "observed", page }, env(page));
-  RUN.advance(run, { type: "model_failed", purpose: "step", kind: "limit", message: "Today's free requests are used up." }, env(page));
+  const fx = RUN.advance(run, { type: "model_failed", purpose: "step", kind: "limit", message: "Today's free requests are used up." }, env(page));
+  assert.equal(fx[0].type, "attention");
+  assert.equal(run.status, "waiting");
+  assert.equal(run.outcome, null, "not ended");
+  assert.deepEqual(RUN.advance(run, { type: "wrap_up", id: run.wait.id }, env(page)), [{ type: "end" }]);
   assert.equal(run.outcome.state, "limit");
+  assert.equal(run.outcome.kind, "limit");
   assert.match(run.outcome.text, /^Today's free requests are used up\.\n\nWhat I had found:\nStep 1: Blue Widget \$19\./);
 });
 
