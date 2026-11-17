@@ -255,6 +255,9 @@
       // not need is left, not handed to the user (policy.js detourSite).
       startSite: o.startUrl && /^https?:/i.test(o.startUrl) ? TOOLS.siteOf(o.startUrl) : "",
       wentTo: [],
+      // Detour sites whose check the model was already told to leave: a
+      // second ask there goes to the user (detourToLeave).
+      leftDetours: [],
       trust: { sites: [...new Set(sites.filter(Boolean))], urls: [] },
       current: null,
       queue: [],
@@ -364,7 +367,7 @@
     if (!run.wrapUp && run.usage.calls >= run.callCeiling) return checkIn(run, fx, env, "calls");
     page.blockers = POLICY.blockersOf(page);
     // A check on a site the run went to by itself is said to be one (core/context.js).
-    const away = page.blockers.some((b) => b.kind === "human_check") ? POLICY.detourSite(page, run) : "";
+    const away = page.blockers.some((b) => b.kind === "human_check") ? detourToLeave(run, page) : "";
     if (away) page.blockers = page.blockers.map((b) => (b.kind === "human_check" ? { ...b, away } : b));
     // Sentences the page hides from people looking at it (agentContentScript.js
     // leaves them out of the reading) are put to a narrow question, by
@@ -1560,14 +1563,28 @@
   }
 
   /**
+   * The detour site whose human check the model should leave, or "". Only
+   * when the run has something to answer from (notes or text it read), and
+   * only once per site: with nothing gathered, or when the model asks again
+   * after being told to leave, the check goes to the user, who may still
+   * want to pass it.
+   */
+  function detourToLeave(run, page) {
+    const site = POLICY.detourSite(page, run);
+    if (!site || (run.leftDetours || []).includes(site)) return "";
+    return run.memory || (run.reads || []).length ? site : "";
+  }
+
+  /**
    * A human check on a site the run went to by itself and the task does not
    * need: nothing is handed to the user. The model is told to leave it and
    * finish from what it has read, and the step ends. Null when the check is
    * on the task's own site, which stays the user's to pass.
    */
   function leaveDetour(run, a, page, fx) {
-    const site = POLICY.detourSite(page, run);
+    const site = detourToLeave(run, page);
     if (!site) return null;
+    run.leftDetours = [...(run.leftDetours || []), site];
     record(run, a, false, POLICY.detourMessage(site));
     log(run, "system", "Not Handed Over", `A human check on ${site}, a site the task does not need. The agent is told to go back and answer from what it has read.`);
     return closeStep(run, fx, "refused");

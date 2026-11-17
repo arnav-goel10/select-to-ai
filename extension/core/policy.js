@@ -63,12 +63,16 @@
    * say), is a detour: a human check there is no reason to stop and ask the
    * user, since the run can go back and answer from what it has read. A
    * page reached by a link or a redirect from the task's site is not, so a
-   * check the task leads to is still the user's to pass.
+   * check the task leads to is still the user's to pass. Whether the check
+   * is left also depends on what the run has (run.js detourToLeave).
    */
   function detourSite(page, run) {
     const site = TOOLS.siteOf(String((page && page.url) || ""));
     if (!site || !run || !(run.wentTo || []).includes(site)) return "";
-    const own = new Set(TOOLS.sitesNamedIn(requestOf(run)));
+    // run.trust.sites holds the sites the request names (by domain or by a
+    // well-known name), the start site, the tabs open at the start and any
+    // site the user approved.
+    const own = new Set([...TOOLS.sitesNamedIn(requestOf(run)), ...((run.trust && run.trust.sites) || [])]);
     if (run.startSite) own.add(run.startSite);
     const first = (run.history || []).find((h) => /^https?:/i.test(String(h.url || "")));
     if (first) own.add(TOOLS.siteOf(first.url));

@@ -91,8 +91,9 @@ test("a site the request names is the task's own, even when the run opened it by
   const run = RUN.newRun({ id: "r1", task: "on google.com, search for the table", tabId: 7, startUrl: table.url, marker: "PAGE-abcd1234", now: 1 });
   run.wentTo = ["google.com"];
   assert.equal(POLICY.detourSite(sorry(), run), "");
-  run.task = "who is top?";
-  assert.equal(POLICY.detourSite(sorry(), run), "google.com");
+  const other = RUN.newRun({ id: "r2", task: "who is top?", tabId: 7, startUrl: table.url, marker: "PAGE-abcd1234", now: 1 });
+  other.wentTo = ["google.com"];
+  assert.equal(POLICY.detourSite(sorry(), other), "google.com");
 });
 
 test("a hand-off to the user carries what the run had found before it", () => {
@@ -126,4 +127,50 @@ test("a press refused because something covers the control names no pointer: not
   assert.equal(r.covered, true);
   assert.equal(r.pointer, undefined, "a refused press is not counted as a real pointer press");
   assert.match(r.error, /Nothing was pressed/);
+});
+
+test("a site the user names by a plain word is the task's own: its check still reaches the user", () => {
+  const mail = { ...table, url: "https://mail.google.com/mail/u/0/#inbox", title: "Inbox", innerText: "Inbox", elements: [] };
+  const run = RUN.newRun({ id: "r1", task: "Check the status of my last order on Amazon", tabId: 7, startUrl: mail.url, trustedSites: ["amazon.com"], marker: "PAGE-abcd1234", now: 1 });
+  RUN.advance(run, { type: "start" }, env(mail));
+  RUN.advance(run, { type: "observed", page: mail }, env(mail));
+  reply(run, mail, [{ do: "navigate", url: "https://www.amazon.com/gp/your-account/order-history" }], "Started from the inbox.");
+  const page = sorry("https://www.amazon.com/errors/validateCaptcha");
+  RUN.advance(run, { type: "acted", result: { ok: true, message: "Opened the page.", pageChanged: true } }, env(page));
+  RUN.advance(run, { type: "observed", page }, env(page));
+  assert.deepEqual(run.wentTo, ["amazon.com"]);
+  assert.equal(POLICY.detourSite(page, run), "");
+  reply(run, page, [{ do: "ask_user", kind: "human_check", question: "Please pass the check." }]);
+  assert.equal(run.status, "waiting");
+  assert.equal(run.wait.kind, "human_check");
+});
+
+test("a detour check with nothing gathered yet still reaches the user", () => {
+  const hn = { ...table, url: "https://news.ycombinator.com/", title: "Hacker News", innerText: "Hacker News", elements: [] };
+  const run = RUN.newRun({ id: "r1", task: "Find the cheapest flight SIN to BKK next Friday", tabId: 7, startUrl: hn.url, marker: "PAGE-abcd1234", now: 1 });
+  RUN.advance(run, { type: "start" }, env(hn));
+  RUN.advance(run, { type: "observed", page: hn }, env(hn));
+  reply(run, hn, [{ do: "navigate", url: "https://www.skyscanner.com/transport/flights/sin/bkk/" }]);
+  const page = sorry("https://www.skyscanner.com/sttc/px/captcha-v2/index.html");
+  RUN.advance(run, { type: "acted", result: { ok: true, message: "Opened the page.", pageChanged: true } }, env(page));
+  const seen = RUN.advance(run, { type: "observed", page }, env(page));
+  assert.equal(POLICY.detourSite(page, run), "skyscanner.com", "it is a detour by the site rule");
+  assert.equal(run.memory, "");
+  assert.doesNotMatch(seen[0].user, /It is not handed to the user/);
+  reply(run, page, [{ do: "ask_user", kind: "human_check", question: "Please pass the check." }]);
+  assert.equal(run.status, "waiting", "with nothing to answer from, the user is offered the check");
+  assert.equal(run.wait.kind, "human_check");
+});
+
+test("a detour check is refused once: asking again on it reaches the user", () => {
+  const page = sorry();
+  const { run } = detoured(page);
+  reply(run, page, [{ do: "ask_user", kind: "human_check", question: "Please pass the check." }]);
+  assert.notEqual(run.status, "waiting");
+  const again = RUN.advance(run, { type: "observed", page }, env(page));
+  assert.doesNotMatch(again[0].user, /It is not handed to the user/, "the page no longer says it will be left");
+  reply(run, page, [{ do: "ask_user", kind: "human_check", question: "I still need this check passed." }]);
+  assert.equal(run.status, "waiting");
+  assert.equal(run.wait.kind, "human_check");
+  assert.equal(run.history.filter((h) => (h.actions || []).some((x) => /Not handed to the user/.test(x.result || ""))).length, 1, "one refusal, not one per ask");
 });
