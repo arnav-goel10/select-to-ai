@@ -606,3 +606,13 @@ test("a drop is made where the page takes it though the browser ignores a drop e
   assert.deepEqual([s.dnd, s.dropped, s.refused], [true, false, true]);
   void china;
 });
+
+test("a control's own picture is the size of what it draws, without its border", async () => {
+  const out = { getContext: () => ({ fillRect() {}, drawImage() {} }), toDataURL: () => "data:image/jpeg;base64,AA" };
+  const { pictureOf } = build(["pictureOf"], { document: { createElement: () => out }, isRendered: () => true });
+  const pie = { tagName: "CANVAS", clientWidth: 300, clientHeight: 150, getBoundingClientRect: () => ({ width: 302, height: 152 }) };
+  const got = await pictureOf(pie, 4);
+  assert.match(got.message, /^A picture of \[4\] \(a canvas, drawn 300 by 150 pixels\) is attached/);
+  assert.equal(out.width, 300);
+  assert.equal(out.height, 150);
+});

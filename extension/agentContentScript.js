@@ -2855,7 +2855,9 @@
             if (!inner) return { error: `[${id}] draws nothing of its own to picture (no canvas, drawing or image in it).` };
             box = inner;
         }
-        const r = box.getBoundingClientRect();
+        // What it draws, without its border: a canvas's pixels fill the inside of its box.
+        const outer = box.getBoundingClientRect();
+        const r = { width: box.clientWidth || outer.width, height: box.clientHeight || outer.height };
         const scale = Math.min(1, 1024 / Math.max(1, r.width), 1024 / Math.max(1, r.height));
         const w = Math.max(1, Math.round(r.width * scale));
         const h = Math.max(1, Math.round(r.height * scale));
