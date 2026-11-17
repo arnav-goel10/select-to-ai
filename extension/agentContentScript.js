@@ -3290,18 +3290,19 @@
         const dnd = (type, target, s, extra) => target.dispatchEvent(new DragEvent(type, { ...at(s, /^(drop|dragend)$/.test(type) ? 0 : 1), dataTransfer: data, ...(extra || {}) }));
         // What the browser offers a place before it says whether it takes the
         // drop, from what the dragged thing allows; the place may change it.
-        // A DataTransfer made by script is not one of the browser's own drags,
-        // and Chrome ignores a drop effect set on it: it then reads "none"
-        // whatever is offered. The offer is kept here too, and the
-        // DataTransfer's own is read only where setting it holds.
+        // A DataTransfer made by script is not one of the browser's own drags:
+        // Chrome reads "none" for both its effects and ignores setting them.
+        // Then what the dragged thing allows cannot be read, and a place is
+        // offered what the browser offers when nothing was said (copy); the
+        // place takes the drop by cancelling dragover. Where the effects can
+        // be set, they are read as the browser reads them.
         let offered = 'none';
         let settable = false;
         const offer = () => {
             if (!data) return;
-            const allowed = String(data.effectAllowed || 'uninitialized');
+            const allowed = settable ? String(data.effectAllowed || 'uninitialized') : 'uninitialized';
             offered = /^(move|linkMove)$/.test(allowed) ? 'move' : allowed === 'link' ? 'link' : allowed === 'none' ? 'none' : 'copy';
-            try { data.dropEffect = offered; } catch (_) { /* kept as it is */ }
-            settable = data.dropEffect === offered;
+            if (settable) { try { data.dropEffect = offered; } catch (_) { /* kept as it is */ } }
         };
         // The drop effect the place chose, by the last dragover.
         let chosen = 'none';
@@ -3329,6 +3330,8 @@
                         data = typeof DataTransfer === 'function' ? new DataTransfer() : null;
                         // As the browser starts one: nothing allowed or refused until the page says.
                         if (data) { try { data.effectAllowed = 'uninitialized'; } catch (_) { /* kept as it is */ } }
+                        // Whether this DataTransfer keeps what is set on it.
+                        settable = !!data && data.effectAllowed === 'uninitialized';
                         if (dnd('dragstart', drag, s)) {
                             source = drag;
                             report.dnd = true;

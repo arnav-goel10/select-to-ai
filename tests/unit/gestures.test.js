@@ -578,12 +578,12 @@ test("only a drawing is listed with a size, and a drawing the page marks as only
 });
 
 test("a drop is made where the page takes it though the browser ignores a drop effect set on a DataTransfer made by script", async () => {
-  // As Chrome makes one with `new DataTransfer()`: not the browser's own drag, so its drop effect stays "none".
+  // As Chrome makes one with `new DataTransfer()`: not the browser's own drag, so both its effects read "none" and cannot be set.
   class ScriptDataTransfer {
-    constructor() { this.store = {}; this.allowed = "uninitialized"; }
+    constructor() { this.store = {}; }
     get dropEffect() { return "none"; }
     set dropEffect(_v) { /* ignored */ }
-    get effectAllowed() { return this.allowed; }
+    get effectAllowed() { return "none"; }
     set effectAllowed(_v) { /* ignored */ }
     setData(k, v) { this.store[k] = v; }
     getData(k) { return this.store[k] || ""; }
