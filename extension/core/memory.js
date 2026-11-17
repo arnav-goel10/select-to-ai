@@ -154,6 +154,9 @@
   // a run that was verified; learned from your correction.
   const SOURCES = Object.freeze(["you_said", "you_confirmed", "you_filled", "you_mentioned", "run", "correction"]);
   const USER_SOURCES = new Set(["you_said", "you_confirmed", "you_filled", "you_mentioned"]);
+  // What the user taught: their own words, and a lesson from their
+  // correction. Nothing a run does by itself removes or displaces these.
+  const taught = (e) => USER_SOURCES.has(e.source) || e.source === "correction";
   // How much of an earlier request's words a new one must share for its
   // routine to be shown (ROUTINE_NEAR), and to be called alike (ROUTINE_LIKE).
   const ROUTINE_NEAR = 1 / 3;
@@ -239,7 +242,9 @@
       }
       : {};
     const steps = Array.isArray(entry.steps) && entry.steps.length ? entry.steps.slice(0, 8).map((s) => clean(s, 120)).filter(Boolean) : null;
-    const added = { id: newId(kind[0], now), kind, text, scope, source, created: now, lastUsed: 0, helped: 0, hurt: 0, ...facts, ...(entry.candidate ? { candidate: true } : {}), ...(entry.task ? { task: clean(entry.task, 200) } : {}), ...(steps ? { steps } : {}) };
+    // The run a note came from, so the user's word on that run can reach it.
+    const origin = !facts.origin && entry.origin && entry.origin.runId ? { origin: { runId: clean(entry.origin.runId, 80), at: now } } : {};
+    const added = { id: newId(kind[0], now), kind, text, scope, source, created: now, lastUsed: 0, helped: 0, hurt: 0, ...facts, ...origin, ...(entry.candidate ? { candidate: true } : {}), ...(entry.task ? { task: clean(entry.task, 200) } : {}), ...(steps ? { steps } : {}) };
     let entries = [added, ...store.entries];
     // The least recently useful of a kind makes room for a new one. For
     // context, what the user wrote in Memory goes last, then the facts that
@@ -250,7 +255,7 @@
     const netHelp = (e) => (e.helped || 0) - (e.hurt || 0);
     const order = kind === "context"
       ? (a, b) => (a.source === "you_said") - (b.source === "you_said") || worth(a) - worth(b) || recent(a) - recent(b)
-      : (a, b) => netHelp(a) - netHelp(b) || (a.lastUsed || a.created) - (b.lastUsed || b.created);
+      : (a, b) => taught(a) - taught(b) || netHelp(a) - netHelp(b) || (a.lastUsed || a.created) - (b.lastUsed || b.created);
     const cap = (list, limit) => {
       const others = list.filter((e) => e.id !== added.id && live(e));
       if (others.length < limit) return new Set();
@@ -258,11 +263,39 @@
     };
     const drop = new Set([...cap(entries.filter((e) => e.kind === kind), LIMITS[kind])]);
     if (scope !== "global") for (const id of cap(entries.filter((e) => e.scope === scope && e.kind !== "preference"), LIMITS.perSite)) drop.add(id);
+    // What a run learned by itself never pushes out what the user taught.
+    if (!taught(added) && entries.some((e) => drop.has(e.id) && taught(e))) return { store, added: null, why: "there is no room beside what the user taught" };
     entries = entries.filter((e) => !drop.has(e.id));
     return { store: { ...store, entries }, added };
   }
 
   const removeEntry = (store, id) => ({ ...store, entries: store.entries.filter((e) => e.id !== id) });
+
+  /**
+   * Takes back what one run taught by itself (its routine, its site notes):
+   * for when the user says that run's answer was not right. What the user
+   * said in it stays. Returns {store, removed}.
+   */
+  function forgetRun(store, runId) {
+    const from = (e) => !!runId && e.source === "run" && !!e.origin && e.origin.runId === runId;
+    const removed = store.entries.filter(from);
+    return removed.length ? { store: { ...store, entries: store.entries.filter((e) => !from(e)) }, removed } : { store, removed };
+  }
+
+  /**
+   * Keeps the route a run took (core/learn.js routineOf) with `scope`, in
+   * place of an earlier route there for the same request, or one worded
+   * almost the same. When the new route is refused (addEntry), the store is
+   * returned as it was: the earlier route is not lost for nothing.
+   * Returns {store, added, replaced}.
+   */
+  function learnRoutine(store, routine, scope, now) {
+    const alike = (e) => e.task === routine.task || (overlap(e.task, routine.task) >= 0.8 && overlap(routine.task, e.task) >= 0.8);
+    const twin = store.entries.find((e) => e.kind === "routine" && e.scope === scope && alike(e));
+    const base = twin ? removeEntry(store, twin.id) : store;
+    const r = addEntry(base, { kind: "routine", text: routine.text, task: routine.task, steps: routine.steps, scope, source: "run", origin: { runId: routine.runId } }, now);
+    return r.added ? { store: r.store, added: r.added, replaced: !!twin } : { store, added: null, replaced: false, why: r.why };
+  }
 
   function updateEntry(store, id, text, now) {
     const t = clean(text, LIMITS.chars);
@@ -270,7 +303,11 @@
     return { ...store, entries: store.entries.map((e) => (e.id === id ? { ...e, text: t, updated: now } : e)) };
   }
 
-  /** Marks entries as used now, and as having helped or hurt the run they were used in. */
+  /**
+   * Marks entries as used now, and as having helped or hurt the run they
+   * were used in. "unhelped" takes back one "helped": the run's own end
+   * counted it, and the user then said the answer was not right.
+   */
   function mark(store, ids, how, now) {
     const set = new Set(ids || []);
     if (!set.size) return store;
@@ -279,11 +316,13 @@
       const next = { ...e, lastUsed: now };
       if (how === "helped") next.helped = (e.helped || 0) + 1;
       if (how === "hurt") next.hurt = (e.hurt || 0) + 1;
+      if (how === "unhelped") next.helped = Math.max(0, (e.helped || 0) - 1);
       return next;
     })
       // What was learned from a run and keeps misleading is dropped; what
-      // the user said themselves stays until they remove it.
-      .filter((e) => USER_SOURCES.has(e.source) || !((e.hurt || 0) >= 2 && (e.hurt || 0) > (e.helped || 0)));
+      // the user said themselves, or taught by correcting a run, stays
+      // until they remove it.
+      .filter((e) => taught(e) || !((e.hurt || 0) >= 2 && (e.hurt || 0) > (e.helped || 0)));
     return { ...store, entries };
   }
 
@@ -330,18 +369,25 @@
     // (a paraphrase shares few), and two at a time keeps the cost to a few
     // lines. ROUTINE_NEAR is a guess, not a measurement.
     const routineMatchesSite = (scope) => (site ? siteMatches(scope, site) || (startSite && siteMatches(scope, startSite)) : true);
-    const routines = store.entries.filter((e) => e.kind === "routine" && e.scope !== "global" && routineMatchesSite(e.scope) && use(e))
-      .map((e) => ({ e, share: overlap(e.task, task) }))
-      .filter((r) => r.share >= (site ? ROUTINE_NEAR : ROUTINE_LIKE))
+    // A routine is kept with the site its steps ran on. One that begins by
+    // opening its own address does not depend on where the run starts, so
+    // from any other site it is shown as it is from a blank tab: when the
+    // requests are alike.
+    // Only before the run has done anything: once it is working on a
+    // site, another site's route is no longer a way to begin, and showing
+    // it at every step could pull a like-worded task off the site it is on.
+    const begun = !!(opts && opts.begun);
+    const opensItself = (e) => !begun && Array.isArray(e.steps) && /^open https?:/i.test(e.steps[0] || "");
+    const routines = store.entries.filter((e) => e.kind === "routine" && e.scope !== "global" && use(e))
+      .map((e) => ({ e, share: overlap(e.task, task), here: routineMatchesSite(e.scope) }))
+      .filter((r) => (r.here ? r.share >= (site ? ROUTINE_NEAR : ROUTINE_LIKE) : opensItself(r.e) && r.share >= ROUTINE_LIKE))
       .sort((a, b) => b.share - a.share)
       .slice(0, 2);
     const close = new Map(routines.map((r) => [r.e.id, r.share]));
     const siteEntries = site
       ? store.entries.filter((e) => e.scope !== "global" && siteMatches(e.scope, site) && use(e) && (e.kind !== "routine" || close.has(e.id))).slice(0, LIMITS.perSite)
       : routines.map((r) => r.e);
-    const extraRoutines = site && startSite && !siteMatches(startSite, site)
-      ? routines.map((r) => r.e).filter((e) => !siteEntries.some((x) => x.id === e.id))
-      : [];
+    const extraRoutines = site ? routines.map((r) => r.e).filter((e) => !siteEntries.some((x) => x.id === e.id)) : [];
     const here = [...siteEntries, ...extraRoutines].slice(0, LIMITS.perSite);
     const notes = [];
     const shown = [];
@@ -736,7 +782,7 @@
       .map((x) => x.e);
   }
 
-  const api = Object.freeze({ wordsOf, overlap, FIELDS, FIELD_LABEL, KINDS, SOURCES, LIMITS, CONTEXT_SAME, prefsFor, contextFor, searchMemory, provenance, groundContext, putFact, noteContextSite, hostOf, empty, fieldKindOf, isStorable, fieldValue, setField, addEntry, removeEntry, updateEntry, mark, knownBlock, knownSites, annotate, planFill, userFilled, saidByUser, migrate, sanitizeStore, profileOf });
+  const api = Object.freeze({ wordsOf, overlap, FIELDS, FIELD_LABEL, KINDS, SOURCES, LIMITS, CONTEXT_SAME, prefsFor, contextFor, searchMemory, provenance, groundContext, putFact, noteContextSite, hostOf, empty, fieldKindOf, isStorable, fieldValue, setField, addEntry, removeEntry, forgetRun, learnRoutine, updateEntry, mark, knownBlock, knownSites, annotate, planFill, userFilled, saidByUser, migrate, sanitizeStore, profileOf });
   root.SELECT_TO_AI_KNOWN = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -294,12 +294,10 @@
       else if (change.op === "replace" && change.store && change.store.v === 2) memory = KNOWN.sanitizeStore ? KNOWN.sanitizeStore(change.store, now) : { ...KNOWN.empty(), ...change.store };
       else if (change.op === "mark") memory = KNOWN.mark(memory, change.ids, change.how, now);
       else if (change.op === "learn_routine" && change.routine && change.scope) {
-        const twin = memory.entries.find((e) => e.kind === "routine" && e.scope === change.scope && (e.task === change.routine.task || (KNOWN.overlap && KNOWN.overlap(e.task, change.routine.task) >= 0.8 && KNOWN.overlap(change.routine.task, e.task) >= 0.8)));
-        let base = twin ? KNOWN.removeEntry(memory, twin.id) : memory;
-        const r = KNOWN.addEntry(base, { kind: "routine", text: change.routine.text, task: change.routine.task, steps: change.routine.steps, scope: change.scope, source: "run" }, now);
-        memory = r.store;
-        result = { added: r.added, replaced: !!twin };
+        result = KNOWN.learnRoutine(memory, change.routine, change.scope, now);
+        memory = result.store;
       }
+      else if (change.op === "forget_run") { result = KNOWN.forgetRun(memory, change.runId); memory = result.store; }
       else if (change.op === "learn_apply" && change.run && change.flags) {
         result = LEARN.applyLearned(memory, change.run, change.reply, change.site, change.flags, now);
         memory = result.store;
@@ -670,7 +668,7 @@
     await loadMemory();
     KNOWN.annotate(page.elements, memory);
     const startSite = TOOLS.siteOf(LEARN.startUrl(run) || "");
-    const known = KNOWN.knownBlock(memory, TOOLS.siteOf(page.url || ""), run.task, { page, startSite });
+    const known = KNOWN.knownBlock(memory, TOOLS.siteOf(page.url || ""), run.task, { page, startSite, begun: LEARN.begun(run) });
     session.extras.known = known.text;
     session.extras.siteNotes = known.site;
     session.extras.knownIds = known.ids;
@@ -1870,9 +1868,13 @@
    * it is worth remembering (core/learn.js). One small call, in the
    * background; a failure here costs the user nothing.
    */
+  // A run's learning goes one call after another: the user's thumbs can
+  // come while the learning from the run's end is still out, and what a
+  // thumbs-down takes back must already be written (core/learn.js inTurn).
+  const learnInTurn = LEARN.inTurn();
   async function learn(session, run, feedback) {
     learning += 1;
-    try { await learnFrom(session, run, feedback); } finally { learning -= 1; }
+    try { await learnInTurn(run.id, () => learnFrom(session, run, feedback)); } finally { learning -= 1; }
   }
 
   async function learnFrom(session, run, feedback) {
@@ -1895,15 +1897,21 @@
       });
       if (how && ids.length) await changeMemory({ op: "mark", ids, how });
     }
-    if (feedback && feedback.up === false && used.length) await changeMemory({ op: "mark", ids: used.filter((id) => memory.entries.some((e) => e.id === id && e.scope !== "global")), how: "hurt" });
-    if (feedback && feedback.up === true && used.length) await changeMemory({ op: "mark", ids: used, how: "helped" });
+    // The user's thumbs and the run's end are one decision about the notes
+    // the run was shown (core/learn.js feedbackMarks). A thumbs-down also
+    // takes back what this same run taught by itself: its route, its notes.
+    if (feedback) {
+      for (const m of LEARN.feedbackMarks(run, feedback, used.map((id) => memory.entries.find((e) => e.id === id)))) await changeMemory({ op: "mark", ...m });
+      if (feedback.up === false) await changeMemory({ op: "forget_run", runId: run.id });
+    }
     const learningOn = !session.items || session.items.agentLearning !== false;
     // How it was done, kept for the next request like it. No model call: the
     // run's own steps, by the words on the controls. Kept with the site the
-    // steps begin on, where a like request starts.
-    const routine = !feedback && learningOn && !memory.paused && site ? LEARN.routineOf(run) : null;
+    // steps ran on. At the run's end for a checked answer; on a thumbs-up
+    // for one the check gave no verdict on (core/learn.js confirmedBy).
+    const routine = learningOn && !memory.paused && site ? LEARN.routineOf(run, feedback) : null;
     if (routine) {
-      const scope = TOOLS.siteOf(LEARN.startUrl(run)) || site;
+      const scope = LEARN.routineSite(run) || TOOLS.siteOf(LEARN.startUrl(run)) || site;
       const added = await changeMemory({ op: "learn_routine", routine, scope });
       if (added && added.added) post(session, { type: "learned", runId: run.id, changes: [`${added.replaced ? "new steps" : "the steps"} for this request on ${scope}`] });
     }

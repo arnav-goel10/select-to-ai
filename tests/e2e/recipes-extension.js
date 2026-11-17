@@ -18,6 +18,10 @@
  *              publishes the note to every customer: the run stops before
  *              the press, and the server never receives the form
  *
+ * Last, "Save as recipe" itself: a run that filled the note from the user's
+ * saved details shows why it cannot be saved, and a finished run can still
+ * be saved after the worker's memory is gone.
+ *
  * Repair and meaning checks use the extension's configured provider. With
  * ANTHROPIC_API_KEY in ~/.config/select-to-ai/keys.env that is Anthropic,
  * whose lite model is claude-haiku-5-5; without it, the scripted gateway
@@ -82,7 +86,7 @@ function elementsOf(text) {
 }
 
 function startServer() {
-  const state = { mode: "base", saves: [], calls: { step: 0, verdict: 0, answer: 0, other: [] } };
+  const state = { mode: "base", fromDetails: false, saves: [], calls: { step: 0, verdict: 0, answer: 0, other: [] } };
   const server = http.createServer((req, res) => {
     const u = new URL(req.url, "http://x");
     const body = () => new Promise((r) => { let b = ""; req.on("data", (d) => { b += d; }); req.on("end", () => r(b)); });
@@ -113,7 +117,9 @@ function startServer() {
             const box = els.find((e) => /note/i.test(e.name) && /text/i.test(e.tag));
             const save = els.find((e) => /save draft/i.test(e.name));
             if (!box || !save) throw new Error(`fixture controls not listed:\n${user.slice(0, 2000)}`);
-            args = { memory: "", goal: "Save the note as a draft", actions: [{ do: "fill", ref: box.id, value: "Ship it Friday" }, { do: "click", ref: save.id }] };
+            // With state.fromDetails the note is filled from the user's saved details, which a recipe does not keep.
+            const fill = state.fromDetails ? { do: "fill", ref: box.id, from: "profile.email" } : { do: "fill", ref: box.id, value: "Ship it Friday" };
+            args = { memory: "", goal: "Save the note as a draft", actions: [fill, { do: "click", ref: save.id }] };
           }
         } else if (tool === "verdict") {
           state.calls.verdict++;
@@ -268,6 +274,71 @@ async function main() {
       assert.match(receipt.end.why, /Save draft/);
       assert.equal(state.saves.length, before, "the form was never sent");
       console.log(`     why: ${receipt.end.why}`);
+    });
+
+    // 3. "Save as recipe" does not go missing: a run that cannot be saved
+    // says why, and a run that can is still saveable after the worker
+    // restarted. Both on the scripted gateway, as in step 1.
+    await set("sync", { agentActiveProvider: "custom", agentModel: "e2e-scripted-model" });
+    await agent.close();
+    const panelText = (page) => page.evaluate(() => document.body.innerText.slice(-600)).catch(() => "");
+    /** A new agent page that runs `task` on the fixture's note page, from a fresh conversation. */
+    async function runOnNote(task) {
+      state.mode = "base";
+      await fixture.goto(`${base}/note`);
+      const page = await context.newPage();
+      page.on("pageerror", (e) => console.log(`  [agent pageerror] ${e.message}`));
+      await page.goto(`chrome-extension://${extensionId}/agent.html?task=${encodeURIComponent(task)}&autostart=1&fresh=1&tabId=${tabId}`);
+      return page;
+    }
+
+    await check("a run that filled in the user's saved details says why it cannot be saved", async () => {
+      // An email on file, and the user's standing yes to filling forms on this site.
+      await worker.evaluate(async (site) => {
+        await self.SELECT_TO_AI_ENGINE.changeMemory({ op: "field", key: "email", value: "ada@example.com", source: "you_said" });
+        await self.SELECT_TO_AI_ENGINE.changeMemory({ op: "consent", site, value: true });
+      }, new URL(base).hostname);
+      state.fromDetails = true;
+      const before = state.saves.length;
+      const page = await runOnNote("Save a draft note on this page with my email address in it");
+      try {
+        await page.waitForSelector(".recipe-save-why", { timeout: 60000 }).catch(async (e) => { throw new Error(`${e.message.split("\n")[0]}\npanel: ${await panelText(page)}`); });
+        const said = await page.evaluate(() => document.querySelector(".recipe-save").textContent);
+        assert.match(said, /^This run cannot be saved as a recipe: it filled in your saved details, which a recipe does not keep\.$/);
+        assert.equal(await page.locator(".recipe-save-btn").count(), 0, "no Save button is offered");
+        assert.equal(state.saves.length, before + 1, "the run itself went through");
+        assert.equal(state.saves[state.saves.length - 1].note, "ada@example.com");
+        console.log(`     shown: ${said}`);
+      } finally {
+        state.fromDetails = false;
+        await page.close().catch(() => {});
+      }
+    });
+
+    await check("a finished run is still saveable after the worker restarted", async () => {
+      const recipesBefore = (await worker.evaluate(() => chrome.storage.local.get("recipesStore"))).recipesStore.recipes.length;
+      const first = await runOnNote("Save a draft note on this page that says Ship it Friday");
+      await first.waitForSelector(".recipe-save-btn", { timeout: 60000 }).catch(async (e) => { throw new Error(`${e.message.split("\n")[0]}\npanel: ${await panelText(first)}`); });
+      await first.close();
+      // A worker that Chrome stopped and started again has nothing in its
+      // memory, only what it kept in storage. Played from inside, as in
+      // run-v4.js: stopping the real worker under automation leaves it stopped.
+      const lost = await worker.evaluate(() => { const r = self.SELECT_TO_AI_RECIPES._recordings; const n = r.size; r.clear(); return n; });
+      assert.ok(lost >= 1, "there was a recording in the worker's memory to lose");
+      // The user comes back to the conversation and saves it.
+      const again = await context.newPage();
+      again.on("pageerror", (e) => console.log(`  [agent pageerror] ${e.message}`));
+      await again.goto(`chrome-extension://${extensionId}/agent.html`);
+      try {
+        await again.waitForSelector(".recipe-save-btn", { timeout: 30000 }).catch(async (e) => { throw new Error(`${e.message.split("\n")[0]}\npanel: ${await panelText(again)}`); });
+        await again.click(".recipe-save-btn");
+        await again.waitForFunction(() => /Saved as a recipe/.test(document.querySelector(".recipe-save")?.textContent || ""), null, { timeout: 10000 });
+        const recipes = (await worker.evaluate(() => chrome.storage.local.get("recipesStore"))).recipesStore.recipes;
+        assert.equal(recipes.length, recipesBefore + 1);
+        assert.deepEqual(recipes[0].recipe.steps.map((s) => `${s.action.do}:${s.class}`), ["navigate:read", "fill:edit", "click:commit"]);
+      } finally {
+        await again.close().catch(() => {});
+      }
     });
   } finally {
     if (context) await context.close().catch(() => {});

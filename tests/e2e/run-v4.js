@@ -910,6 +910,24 @@ async function main() {
         if (lesson.source !== "correction" || lesson.scope === "global") return `the lesson is ${lesson.scope} from ${lesson.source}`;
         return null;
       }, "lesson", { keepOpen: true, before: async () => { await setMemory([{ op: "wipe" }]); await learning(true); } }],
+      // "Not right" on a run that had already taught something: what that
+      // run wrote by itself (its site note, its route) is taken back.
+      ["compare", "/home", async () => false, async (r) => {
+        const agent = r.agent;
+        const mine = (store) => store.entries.filter((e) => e.source === "run" && e.origin && e.origin.runId === r.trace.id);
+        const taught = await until(async () => { const got = mine(await memory()); return got.some((e) => e.kind === "site_note") ? got : null; });
+        if (!taught) { await learning(false); await agent.close().catch(() => {}); return `the run taught no note that carries its id: ${JSON.stringify((await memory()).entries.map((e) => [e.kind, e.source, e.origin]))}`; }
+        await agent.bringToFront();
+        await click(agent, ".feedback-down");
+        await click(agent, ".feedback-send");
+        const gone = await until(async () => mine(await memory()).length === 0);
+        await until(() => worker.evaluate(() => self.__selectToAiMemoryState().then((m) => m.learning === 0)));
+        const left = mine(await memory());
+        await learning(false);
+        await agent.close().catch(() => {});
+        if (!gone || left.length) return `after the thumbs-down the run's own notes are still kept: ${JSON.stringify(left.map((e) => [e.kind, e.text]))}`;
+        return null;
+      }, "thumbsDownForgets", { keepOpen: true, before: async () => { await setMemory([{ op: "wipe" }]); await learning(true); } }],
       // Run 1: the agent asks where the user's assignments are, the user
       // names a service, and a lasting fact about them is kept from their
       // words and the site the checked run used; a line on the page about

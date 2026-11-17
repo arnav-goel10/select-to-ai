@@ -5,9 +5,10 @@
  * knows. What it may add depends on what happened, and the user's own
  * signals count for more than the run's opinion of itself:
  *
- *   - a multi-step run whose answer was checked and passed, and that the
- *     user did not correct, may leave one or two notes about how the site
- *     works;
+ *   - a multi-step run whose answer was checked and passed (or, where
+ *     the check gave no verdict, that the user said was right), and that
+ *     the user did not correct, may leave one or two notes about how the
+ *     site works;
  *   - a run the user corrected (they added something mid-run, declined a
  *     step, or said the answer was not right) may leave a lesson;
  *   - answers the user asked to have remembered become profile fields or
@@ -40,6 +41,21 @@
   }
 
   /**
+   * Who confirmed the run's answer, for what it may teach by itself: "check"
+   * when the answer check passed; "you" when the check gave no verdict
+   * (a model that could not produce one) and the user then said the answer
+   * was right; "" otherwise. At the run's end only the check can have
+   * spoken; a thumbs-up adds nothing to a run the check already passed, so
+   * nothing is learned twice.
+   */
+  function confirmedBy(run, feedback) {
+    const o = run && run.outcome;
+    if (!o || o.state !== "success" || run.injectionSeen) return "";
+    if (!feedback) return o.verified === true ? "check" : "";
+    return feedback.up === true && o.verified !== true && o.verified !== false && o.success !== false ? "you" : "";
+  }
+
+  /**
    * What this run may teach, or null when nothing. `feedback` is the
    * user's thumbs, when they gave one after the run.
    */
@@ -48,7 +64,7 @@
     const corrections = correctionsOf(run, feedback);
     const steps = (run.history || []).length;
     const flags = {
-      notes: run.outcome.state === "success" && run.outcome.verified === true && steps >= 3 && !corrections.length && !run.injectionSeen,
+      notes: !!confirmedBy(run, feedback) && steps >= 3 && !corrections.length,
       lesson: corrections.length > 0 && steps >= 1,
       about: (run.keep || []).length > 0,
     };
@@ -56,10 +72,12 @@
   }
 
   /**
-   * How a checked, uncorrected run got its answer, as steps a later run on
+   * How a confirmed, uncorrected run got its answer, as steps a later run on
    * the same site could repeat: where it went, what it pressed, what it
    * typed. No model writes this; it is the run's own record, by the words
    * on the controls. Null when there is too little to be worth keeping.
+   * With the user's thumbs (`feedback`) it is the route of a run whose
+   * check gave no verdict and that the user said was right.
    */
   const SECRET_QUERY_PARAM = /^(?:token|access_token|id_token|refresh_token|api_?key|key|secret|auth|session|session_?id|sid|code|password|passwd|sig|signature|state|csrf|nonce)$/i;
   const looksLikeOpaqueToken = (v) => v.length >= 24 && !/\s/.test(v) && /[0-9]/.test(v) && /[a-z]/i.test(v);
@@ -81,8 +99,9 @@
     }
   }
 
-  function routineOf(run) {
-    if (!run || !run.outcome || run.outcome.state !== "success" || run.outcome.verified !== true || run.injectionSeen) return null;
+  function routineOf(run, feedback) {
+    const confirmed = confirmedBy(run, feedback);
+    if (!confirmed) return null;
     if ((run.said || []).some((t) => !(run.answers || []).includes(t))) return null;
     // A run in which the user declined an action is not a way to repeat.
     if (correctionsOf(run).some((c) => c.startsWith("declined: "))) return null;
@@ -93,7 +112,47 @@
     }
     if (ways.length < 2) return null;
     const steps = ways.slice(0, 8);
-    return { task: run.task, text: `"${clip(run.task, 120)}": ${steps.join("; then ")}`, steps };
+    return { task: run.task, text: `"${clip(run.task, 120)}": ${steps.join("; then ")}`, steps, runId: run.id || "", confirmed };
+  }
+
+  /** Whether the run has yet gone anywhere or pressed or typed anything. */
+  function begun(run) {
+    const acted = (h) => (h && h.actions ? h.actions : []).some((a) => !!a.way);
+    return ((run && run.history) || []).some(acted) || acted(run && run.current);
+  }
+
+  /**
+   * Runs jobs that share a key one after another, in the order they were
+   * asked for; jobs under different keys do not wait for each other. A job
+   * that fails does not hold up the next. Returns the job's own promise.
+   */
+  function inTurn() {
+    const tails = new Map();
+    return (key, job) => {
+      const done = (tails.get(key) || Promise.resolve()).then(job);
+      const tail = done.catch(() => {});
+      tails.set(key, tail);
+      tail.then(() => { if (tails.get(key) === tail) tails.delete(key); });
+      return done;
+    };
+  }
+
+  /**
+   * The site a run's route ran on: where its first recorded step went (the
+   * address it opened) or acted (the page it pressed or typed on). A
+   * request made from an unrelated tab is filed with the site that did the
+   * work, not with the tab it happened to start in. "" when the run
+   * recorded no step on a web page.
+   */
+  function routineSite(run) {
+    for (const h of (run && run.history) || []) {
+      for (const a of h.actions || []) {
+        if (!a.way) continue;
+        const url = a.way.startsWith("open ") ? a.way.slice(5).trim() : String(h.url || "");
+        return /^https?:/i.test(url) && TOOLS ? TOOLS.siteOf(url) : "";
+      }
+    }
+    return "";
   }
 
   /**
@@ -203,6 +262,31 @@
     return "";
   }
 
+  /**
+   * What the user's thumbs say about the notes the run was shown
+   * (`entries`), as marks for memory.js mark, given what the run's own end
+   * already counted (markOf): one decision, not two added together. A
+   * thumbs-up counts as help once, so not again where the check already
+   * said so. A thumbs-down takes back the help the run's end counted and
+   * counts against the site's notes, once. A routine the run did not
+   * follow is neither credited nor blamed.
+   * @returns {{ids: string[], how: string}[]}
+   */
+  function feedbackMarks(run, feedback, entries) {
+    if (!feedback) return [];
+    const auto = markOf(run);
+    const shown = (entries || []).filter((e) => e && routineFollowed(run, e));
+    const ids = (list) => list.map((e) => e.id);
+    if (feedback.up === true) return auto === "helped" || !shown.length ? [] : [{ ids: ids(shown), how: "helped" }];
+    const here = shown.filter((e) => e.scope !== "global");
+    // The run's end counts against only what a run wrote.
+    const again = auto === "hurt" ? here.filter((e) => e.source !== "run") : here;
+    return [
+      ...(auto === "helped" ? [{ ids: ids(here), how: "unhelped" }] : []),
+      { ids: ids(again), how: "hurt" },
+    ].filter((m) => m.ids.length);
+  }
+
   const LEARNED_TOOL = Object.freeze({
     name: "learned",
     description: "What this task is worth remembering for next time. Leave a list empty, or lesson empty, when there is nothing.",
@@ -296,7 +380,7 @@ Call the learned tool.`;
         // site the run began on, where a like request starts.
         const text = note && typeof note === "object" ? note.text : note;
         const where = noteSite(run, note && typeof note === "object" ? note.step : null) || site;
-        const res = KNOWN.addEntry(store, { kind: "site_note", text, scope: where, source: "run" }, now);
+        const res = KNOWN.addEntry(store, { kind: "site_note", text, scope: where, source: "run", origin: { runId: run.id } }, now);
         if (res.added) { store = res.store; changes.push(`a note about ${where}: ${res.added.text}`); }
       }
     }
@@ -509,7 +593,7 @@ Write facts, not rules: what is true of the user, never what the assistant shoul
     return { store, changes };
   }
 
-  const api = Object.freeze({ worth, correctionsOf, learnMessages, applyLearned, routineOf, routineFollowed, parseWay, resolveRoutineStep, compileRoutinePrefix, startUrl, markOf, noteSite, LEARNED_TOOL, INSTRUCTIONS, userWordsOf, servedOn, contextWorth, contextMessages, contextOps, applyContext, CONTEXT_TOOL, CONTEXT_INSTRUCTIONS });
+  const api = Object.freeze({ worth, confirmedBy, correctionsOf, learnMessages, applyLearned, routineOf, routineSite, begun, inTurn, feedbackMarks, routineFollowed, parseWay, resolveRoutineStep, compileRoutinePrefix, startUrl, markOf, noteSite, LEARNED_TOOL, INSTRUCTIONS, userWordsOf, servedOn, contextWorth, contextMessages, contextOps, applyContext, CONTEXT_TOOL, CONTEXT_INSTRUCTIONS });
   root.SELECT_TO_AI_LEARN = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

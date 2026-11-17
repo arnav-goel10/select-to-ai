@@ -480,7 +480,7 @@
   let recipesOpener = null;
   function recipesAsk(message, onProgress) {
     if (!recipesPort) {
-      try { recipesPort = chrome.runtime.connect({ name: "recipesView" }); } catch (_e) { return Promise.resolve({ ok: false, why: "The extension is restarting. Try again." }); }
+      try { recipesPort = chrome.runtime.connect({ name: "recipesView" }); } catch (_e) { return Promise.resolve({ ok: false, lost: true, why: "The extension is restarting. Try again." }); }
       recipesPort.onMessage.addListener((m) => {
         const w = m && recipesWaiting.get(m.rid);
         if (!w) return;
@@ -490,26 +490,56 @@
       });
       recipesPort.onDisconnect.addListener(() => {
         recipesPort = null;
-        for (const w of recipesWaiting.values()) w.resolve({ ok: false, why: "The extension restarted." });
+        for (const w of recipesWaiting.values()) w.resolve({ ok: false, lost: true, why: "The extension restarted." });
         recipesWaiting.clear();
       });
     }
     const rid = ++recipesRid;
     return new Promise((resolve) => {
       recipesWaiting.set(rid, { resolve, onProgress });
-      try { recipesPort.postMessage({ ...message, rid }); } catch (_e) { recipesWaiting.delete(rid); resolve({ ok: false, why: "The extension is restarting. Try again." }); }
+      try { recipesPort.postMessage({ ...message, rid }); } catch (_e) { recipesWaiting.delete(rid); resolve({ ok: false, lost: true, why: "The extension is restarting. Try again." }); }
     });
   }
 
-  /** "Save as recipe" under a run that succeeded, when the run can be repeated. */
+  /**
+   * "Save as recipe" under a run that succeeded. When the run cannot be
+   * saved, the line says why instead of going missing; it stays out only
+   * for a run that did nothing on a page, which has nothing to repeat.
+   */
   function drawSaveRecipe(runId) {
     const host = activeBubbleAnswer ? activeBubbleAnswer.parentElement : null;
     if (!host || !runId || host.querySelector(".recipe-save")) return;
     const note = el("div", "memory-note recipe-save");
     note.hidden = true;
     host.appendChild(note);
-    recipesAsk({ type: "can_save", runId }).then((can) => {
-      if (!can || !can.ok) return;
+    const saved = () => {
+      const view = el("button", "", "View");
+      view.type = "button";
+      view.addEventListener("click", openRecipesModal);
+      note.textContent = "";
+      note.append(el("span", "", "Saved as a recipe."), view);
+      note.hidden = false;
+    };
+    const say = (text) => {
+      note.textContent = "";
+      note.append(el("span", "recipe-save-why", text));
+      note.hidden = false;
+    };
+    // The worker may be waking up: one more try before saying so.
+    const ask = async () => {
+      const first = await recipesAsk({ type: "can_save", runId });
+      if (!first || !first.lost) return first;
+      await new Promise((r) => setTimeout(r, 600));
+      return recipesAsk({ type: "can_save", runId });
+    };
+    ask().then((can) => {
+      if (can && can.saved) { saved(); return; }
+      if (!can || !can.ok) {
+        if (can && (can.nothing || can.pending)) return;
+        if (!can || can.lost) say("Save as recipe could not be checked: the extension is restarting. Reopen this page to try again.");
+        else say(`This run cannot be saved as a recipe: ${can.why || "it was not recorded"}.`);
+        return;
+      }
       const label = el("span", "", `Repeat this without the AI: ${can.steps} step${can.steps === 1 ? "" : "s"} on the page.`);
       const save = el("button", "recipe-save-btn", "Save as recipe");
       save.type = "button";
@@ -517,11 +547,8 @@
         save.disabled = true;
         const r = await recipesAsk({ type: "save", runId });
         note.textContent = "";
-        if (!r.ok) { note.append(el("span", "", `Not saved: ${r.why || "it could not be saved"}.`)); return; }
-        const view = el("button", "", "View");
-        view.type = "button";
-        view.addEventListener("click", openRecipesModal);
-        note.append(el("span", "", "Saved as a recipe."), view);
+        if (!r.ok) { say(`Not saved: ${r.why || "it could not be saved"}.`); return; }
+        saved();
       });
       note.append(label, save);
       note.hidden = false;
