@@ -1554,13 +1554,13 @@
     for (const key of r.used || []) if (!run.used.details.includes(key)) run.used.details.push(key);
     if (r.image) run.image = r.image;
     // What the agent typed, for a second opinion on the form it goes with.
-    if (r.ok && a.do === "fill" && !a.from && a.ref !== undefined) {
+    if (r.ok && (a.do === "fill" || a.do === "type") && !a.from && a.ref !== undefined) {
       run.typed = { ...(run.typed || {}), [a.ref]: String(a.value || "") };
       // Every text the agent typed in this run, to tell it from text a page put in a box.
       run.typedTexts = [...(run.typedTexts || []).filter((t) => t !== String(a.value || "")), String(a.value || "")].slice(-20);
     }
     // Where the focus was left, for a key the step presses next with no ref.
-    if (r.ok && ["click", "fill", "press"].includes(a.do) && a.ref !== undefined) run.focusRef = a.ref;
+    if (r.ok && ["click", "fill", "type", "select_text", "press"].includes(a.do) && a.ref !== undefined) run.focusRef = a.ref;
     record(run, a, r.ok, r.message);
     // How long the page was waited on after this action, so the cost of waiting can be read per step.
     if (Number.isFinite(r.settleMs) && run.current && run.current.actions.length) run.current.actions[run.current.actions.length - 1].settle = r.settleMs;
@@ -1581,7 +1581,7 @@
   }
 
   function stillThere(run, a, page) {
-    if (!a || a.ref === undefined || !page || !["click", "fill", "press"].includes(a.do)) return false;
+    if (!a || a.ref === undefined || !page || !["click", "fill", "type", "select_text", "press"].includes(a.do)) return false;
     const els = page.elements || [];
     const el = els.find((e) => e.id === a.ref);
     if (!el || run.labels[a.ref] === undefined || TOOLS.elementLabel(el) !== run.labels[a.ref]) return false;
@@ -1676,7 +1676,7 @@
         status(run, "executor", `Step ${run.step}…`);
         // What the user approved, by the control's words: the driver runs it
         // only while the control still says that.
-        const approved = a.ref !== undefined && ["click", "fill", "press"].includes(a.do) && run.labels[a.ref] !== undefined ? { ...a, approved: run.labels[a.ref] } : a;
+        const approved = a.ref !== undefined && ["click", "fill", "type", "select_text", "press"].includes(a.do) && run.labels[a.ref] !== undefined ? { ...a, approved: run.labels[a.ref] } : a;
         if (approved !== a) run.queue = [approved, ...run.queue.slice(1)];
         fx.push({ type: "act", action: approved });
         return fx;
@@ -1725,6 +1725,12 @@
     const today = CONTEXT.todayLine(env && env.now);
     if (today) texts.push({ url: "", title: "what the browser stated", text: today });
     for (const el of (page && page.elements) || []) if (el.value && !el.sensitive) texts.push({ url: page.url, title: "a field's value", text: String(el.value) });
+    // What the run's own actions read back from the page (a control's value
+    // after it was set, the text of a box after typing) was shown too. Only
+    // the result, which the page gave: not the action, which the model wrote.
+    for (const h of [...run.history, ...(run.current ? [run.current] : [])]) {
+      for (const x of h.actions || []) if (x.ok && x.result && !["done", "ask_user", "recall", "remember"].includes(x.do)) texts.push({ url: "", title: "what an action read back from the page", text: String(x.result) });
+    }
     return texts;
   }
 

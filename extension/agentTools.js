@@ -671,6 +671,7 @@
     } else if (el.ariaChecked !== undefined && el.ariaChecked !== null) {
       line += ` checked=${el.ariaChecked}`;
     }
+    if (el.ariaPressed !== undefined && el.ariaPressed !== null) line += ` pressed=${el.ariaPressed}`;
     if (el.ariaSelected === "true") line += " selected";
     if (el.expanded !== undefined && el.expanded !== null) line += ` expanded=${el.expanded}`;
     else if (el.ariaHaspopup && el.ariaHaspopup !== "false") line += ` opens=${el.ariaHaspopup === "true" ? "menu" : el.ariaHaspopup}`;
@@ -1788,6 +1789,121 @@
     return { text, title: tidy(document.title).slice(0, 200), url: location.href, heading, passage, row, column };
   }
 
+  // ------------------------------------------------------------- keys and text
+
+  // Key names as people and models write them, to the names the browser
+  // gives its keys (KeyboardEvent.key).
+  const KEY_NAMES = Object.freeze({
+    enter: "Enter", return: "Enter", tab: "Tab", escape: "Escape", esc: "Escape", backspace: "Backspace",
+    delete: "Delete", del: "Delete", space: " ", spacebar: " ", up: "ArrowUp", down: "ArrowDown", left: "ArrowLeft",
+    right: "ArrowRight", arrowup: "ArrowUp", arrowdown: "ArrowDown", arrowleft: "ArrowLeft", arrowright: "ArrowRight",
+    home: "Home", end: "End", pageup: "PageUp", pagedown: "PageDown", pgup: "PageUp", pgdn: "PageDown", plus: "+",
+  });
+  const MODIFIER_NAMES = Object.freeze({
+    ctrl: "ctrlKey", control: "ctrlKey", ctl: "ctrlKey", shift: "shiftKey", alt: "altKey", option: "altKey", opt: "altKey",
+    meta: "metaKey", cmd: "metaKey", command: "metaKey", super: "metaKey", win: "metaKey", windows: "metaKey",
+    mod: "mod", cmdorctrl: "mod", commandorcontrol: "mod", primary: "mod",
+  });
+
+  /**
+   * A key as written ("Enter", "ctrl+b", "Shift+ArrowLeft", "Mod-z", "+")
+   * in the browser's terms: {key, mods}. "mod" is the key that holds
+   * shortcuts on this computer: Command on a Mac, Control elsewhere. A key
+   * with no modifier is given back as it is, so a name the browser knows
+   * and this list does not still reaches the page.
+   */
+  function parseKeyCombo(text, mac) {
+    const raw = String(text == null ? "" : text).trim();
+    const mods = { ctrlKey: false, shiftKey: false, altKey: false, metaKey: false };
+    if (!raw) return { key: "Enter", mods };
+    if (raw.length === 1) return { key: raw, mods };
+    // "ctrl++" is Control with the plus key; "ctrl+-" Control with minus.
+    const parts = raw.replace(/([+-])([+-])$/, "$1\u0000").split(/\s*[+-]\s*(?=.)/).map((p) => p.replace("\u0000", raw.slice(-1)));
+    if (parts.length > 1 && parts.slice(0, -1).every((p) => MODIFIER_NAMES[p.toLowerCase()])) {
+      for (const p of parts.slice(0, -1)) {
+        const m = MODIFIER_NAMES[p.toLowerCase()];
+        mods[m === "mod" ? (mac ? "metaKey" : "ctrlKey") : m] = true;
+      }
+      const last = parts[parts.length - 1];
+      let key = KEY_NAMES[last.toLowerCase()] || last;
+      if (/^[a-z]$/i.test(key)) key = mods.shiftKey ? key.toUpperCase() : key.toLowerCase();
+      return { key, mods };
+    }
+    return { key: KEY_NAMES[raw.toLowerCase()] || raw, mods };
+  }
+
+  /**
+   * The same shortcut as this computer holds it, or null: a model writes
+   * ctrl+b where a Mac's pages listen for Command-B, and cmd+b where
+   * others listen for Control-B. Only for a letter, a digit or a sign held
+   * with that one key, and tried only when the first press went unheard.
+   */
+  function shortcutHere(key, mods, mac) {
+    const m = mods || {};
+    if (!/^[\w\p{P}\p{S}]$/u.test(String(key || "")) || m.altKey) return null;
+    if (mac && m.ctrlKey && !m.metaKey) return { ...m, ctrlKey: false, metaKey: true };
+    if (!mac && m.metaKey && !m.ctrlKey) return { ...m, metaKey: false, ctrlKey: true };
+    return null;
+  }
+
+  /**
+   * What the browser itself does with a key in a text box when the page
+   * leaves the key alone: a scripted key has no such default, so the
+   * content script does it. Null for a key that does nothing there.
+   *   {kind: "text", text}      a character typed
+   *   {kind: "paragraph"}       Enter
+   *   {kind: "delete", back}    Backspace (back) or Delete
+   *   {kind: "caret", dir, unit, extend}  arrows, Home, End, with Shift to select
+   *   {kind: "all"}             select all (ctrl or cmd + a)
+   *   {kind: "format", command} bold, italic or underline (ctrl or cmd + b, i, u)
+   */
+  function keyDefault(key, mods, mac) {
+    const m = mods || {};
+    const shortcut = mac ? m.metaKey && !m.ctrlKey : m.ctrlKey && !m.metaKey;
+    if (shortcut && !m.altKey && /^a$/i.test(key)) return { kind: "all" };
+    // A browser makes selected words bold, italic or underlined in an editable region by itself.
+    if (shortcut && !m.altKey && !m.shiftKey && /^[biu]$/i.test(key)) return { kind: "format", command: { b: "bold", i: "italic", u: "underline" }[key.toLowerCase()] };
+    const word = mac ? m.altKey : m.ctrlKey;
+    const line = mac && m.metaKey;
+    if (/^Arrow(Left|Right|Up|Down)$/.test(key)) {
+      const dir = /Left|Up/.test(key) ? "backward" : "forward";
+      const vertical = /Up|Down/.test(key);
+      return { kind: "caret", dir, unit: vertical ? (line || word ? "documentboundary" : "line") : line ? "lineboundary" : word ? "word" : "character", extend: !!m.shiftKey };
+    }
+    if (key === "Home" || key === "End") return { kind: "caret", dir: key === "Home" ? "backward" : "forward", unit: m.ctrlKey || m.metaKey ? "documentboundary" : "lineboundary", extend: !!m.shiftKey };
+    if (m.ctrlKey || m.metaKey || (m.altKey && !mac)) return null;
+    if (key === "Enter") return { kind: "paragraph" };
+    if (key === "Backspace" || key === "Delete") return { kind: "delete", back: key === "Backspace" };
+    if (key === " " || key === "Space" || key === "Spacebar") return { kind: "text", text: " " };
+    if ([...String(key)].length === 1) return { kind: "text", text: String(key) };
+    return null;
+  }
+
+  /**
+   * Where words are in a box's text: the start of the match to take, or
+   * -1. Exact case before any case; a match that is a whole word before
+   * one inside a longer word; among equals, the one nearest `near` (the
+   * cursor), else the first. `count` says how many equals there were.
+   */
+  function findTextIn(text, want, near) {
+    const hay = String(text || "");
+    const needle = String(want || "");
+    if (!needle) return { at: -1, count: 0 };
+    const isWord = (c) => /[\p{L}\p{N}_]/u.test(c || "");
+    const find = (h, n) => { const out = []; for (let i = h.indexOf(n); i >= 0; i = h.indexOf(n, i + 1)) out.push(i); return out; };
+    let all = find(hay, needle);
+    if (!all.length) all = find(hay.toLowerCase(), needle.toLowerCase());
+    if (!all.length) return { at: -1, count: 0 };
+    const whole = all.filter((i) => !isWord(hay[i - 1]) && !isWord(hay[i + needle.length]));
+    const pool = whole.length ? whole : all;
+    let at = pool[0];
+    if (Number.isFinite(near) && near >= 0) {
+      const gap = (i) => (near < i ? i - near : near > i + needle.length ? near - i - needle.length : 0);
+      for (const i of pool) if (gap(i) < gap(at)) at = i;
+    }
+    return { at, count: pool.length };
+  }
+
   const api = Object.freeze({
     selectionPlace,
     createResponsesAccumulator,
@@ -1818,6 +1934,10 @@
     guardNoSubmit,
     formatElementLine,
     colourName,
+    parseKeyCombo,
+    shortcutHere,
+    keyDefault,
+    findTextIn,
     taskKeywords,
     relevantPassages,
     digestPage,

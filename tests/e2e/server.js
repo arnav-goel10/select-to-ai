@@ -660,6 +660,130 @@ const FIXTURES = {
        });
      </script>`,
   ),
+  // A text editor that keeps its own model of the text, as rich text
+  // editors do: it takes typing only from beforeinput (and cancels it, to
+  // make the change itself), puts back any other change to its text, and
+  // makes the selected words bold on this computer's shortcut key or its
+  // toolbar button. No library: the events are the ones editors use.
+  "/editor": pageShell(
+    "Notes",
+    `<h1>Notes</h1>
+     <div id="toolbar"><button type="button" id="bold-btn" aria-label="Bold">B</button></div>
+     <div id="editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Note" style="border:1px solid #888;min-height:60px;padding:6px"></div>
+     <p id="state">Not changed</p>
+     <script>
+       const ed = document.getElementById('editor');
+       const model = [[...'Original text here.'].map((c) => ({ c, b: false }))];
+       window.editorModel = model;
+       window.editorEdits = 0;
+       let rendering = false;
+       const at = (node, off) => {
+         let p = node.nodeType === 1 ? node : node.parentElement;
+         while (p && p.parentElement !== ed) p = p.parentElement;
+         if (!p) { const last = model.length - 1; return node === ed && off === 0 ? { p: 0, o: 0 } : { p: last, o: model[last].length }; }
+         const r = document.createRange(); r.setStart(p, 0); r.setEnd(node, off);
+         return { p: Array.prototype.indexOf.call(ed.children, p), o: r.toString().length };
+       };
+       const getSel = () => { const s = getSelection(); if (!s.rangeCount) return null; const r = s.getRangeAt(0); if (!ed.contains(r.startContainer)) return null; return { a: at(r.startContainer, r.startOffset), b: at(r.endContainer, r.endOffset) }; };
+       const point = (q) => { const p = ed.children[q.p]; let left = q.o; const w = document.createTreeWalker(p, NodeFilter.SHOW_TEXT); for (let t = w.nextNode(); t; t = w.nextNode()) { if (left <= t.data.length) return [t, left]; left -= t.data.length; } return [p, 0]; };
+       const setSel = (s) => { const r = document.createRange(); r.setStart(...point(s.a)); r.setEnd(...point(s.b)); const x = getSelection(); x.removeAllRanges(); x.addRange(r); };
+       const render = (s) => {
+         rendering = true;
+         ed.innerHTML = '';
+         for (const par of model) {
+           const p = document.createElement('p'); p.style.margin = '0';
+           for (let i = 0; i < par.length;) { let j = i; while (j < par.length && par[j].b === par[i].b) j++; const t = document.createTextNode(par.slice(i, j).map((x) => x.c).join('')); if (par[i].b) { const b = document.createElement('strong'); b.appendChild(t); p.appendChild(b); } else p.appendChild(t); i = j; }
+           if (!par.length) p.appendChild(document.createElement('br'));
+           ed.appendChild(p);
+         }
+         if (s) setSel(s);
+         watch.takeRecords();
+         rendering = false;
+       };
+       const cut = (s) => {
+         if (s.a.p === s.b.p) model[s.a.p].splice(s.a.o, s.b.o - s.a.o);
+         else { const tail = model[s.b.p].slice(s.b.o); model[s.a.p].splice(s.a.o); model[s.a.p].push(...tail); model.splice(s.a.p + 1, s.b.p - s.a.p); }
+         return s.a;
+       };
+       ed.addEventListener('beforeinput', (e) => {
+         e.preventDefault();
+         const s = getSel(); if (!s) return;
+         window.editorEdits += 1;
+         if (e.inputType === 'insertText') { const q = cut(s); const add = [...e.data].map((c) => ({ c, b: false })); model[q.p].splice(q.o, 0, ...add); const n = { p: q.p, o: q.o + add.length }; render({ a: n, b: n }); }
+         else if (e.inputType === 'insertParagraph') { const q = cut(s); model.splice(q.p + 1, 0, model[q.p].splice(q.o)); const n = { p: q.p + 1, o: 0 }; render({ a: n, b: n }); }
+         else if (e.inputType === 'deleteContentBackward') { let q = s.a; if (s.a.p === s.b.p && s.a.o === s.b.o) { if (q.o > 0) { model[q.p].splice(q.o - 1, 1); q = { p: q.p, o: q.o - 1 }; } } else q = cut(s); render({ a: q, b: q }); }
+         document.getElementById('state').textContent = 'Changed';
+       });
+       const bold = () => {
+         const s = getSel(); if (!s || (s.a.p === s.b.p && s.a.o === s.b.o)) return;
+         const chars = []; for (let p = s.a.p; p <= s.b.p; p++) model[p].slice(p === s.a.p ? s.a.o : 0, p === s.b.p ? s.b.o : undefined).forEach((x) => chars.push(x));
+         const on = !chars.every((x) => x.b); chars.forEach((x) => { x.b = on; }); render(s);
+       };
+       ed.addEventListener('keydown', (e) => { const mod = /Mac/.test(navigator.platform) ? e.metaKey : e.ctrlKey; if (mod && e.key.toLowerCase() === 'b') { e.preventDefault(); bold(); } });
+       document.getElementById('bold-btn').addEventListener('mousedown', (e) => e.preventDefault());
+       document.getElementById('bold-btn').addEventListener('click', bold);
+       // A change to the text the editor did not make is put back.
+       const watch = new MutationObserver(() => { if (!rendering) render(getSel()); });
+       render(null);
+       watch.observe(ed, { childList: true, characterData: true, subtree: true });
+     </script>`,
+  ),
+  // A button in a frame within a frame, both of this site and too small to
+  // fill the window, beside a frame from a site the agent has no access to.
+  "/frames": (base) => pageShell(
+    "Frames",
+    `<h1>Frames</h1>
+     <p>The button is in a frame within a frame.</p>
+     <iframe id="outer" src="/frames/outer" style="width:360px;height:220px;border:1px solid #888"></iframe>
+     <iframe id="away" title="Partner offers" src="${base.replace("127.0.0.1", "127.0.0.2")}/frames/inner" style="width:300px;height:120px;border:1px solid #888"></iframe>`,
+  ),
+  "/frames/outer": pageShell(
+    "Outer box",
+    `<h2>Outer frame</h2><button type="button" id="b1">Click Me (outer)</button>
+     <iframe id="inner" title="Inner" src="/frames/inner" style="width:300px;height:110px;border:1px solid #888"></iframe>`,
+  ),
+  "/frames/inner": pageShell(
+    "Inner box",
+    `<button type="button" id="nested" onclick="this.textContent = 'Clicked, thank you'; window.clicked = (window.clicked || 0) + 1">Click Me</button>`,
+  ),
+  // A rating drawn by its own element, its slider inside a shadow root:
+  // its value is stated for a screen reader and nowhere in the text.
+  "/rating": pageShell(
+    "Rate it",
+    `<h1>Rate this recipe</h1>
+     <star-rating id="stars"></star-rating>
+     <script>
+       customElements.define('star-rating', class extends HTMLElement {
+         constructor() {
+           super();
+           this.value = 0;
+           const root = this.attachShadow({ mode: 'open' });
+           root.innerHTML = '<div role="slider" tabindex="0" aria-label="Rating" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0" style="display:inline-block;font-size:24px;letter-spacing:4px">☆☆☆☆☆</div>';
+           const s = root.firstElementChild;
+           const show = () => { s.setAttribute('aria-valuenow', String(this.value)); s.textContent = '★'.repeat(this.value) + '☆'.repeat(5 - this.value); };
+           s.addEventListener('keydown', (e) => {
+             if (e.key === 'ArrowRight' || e.key === 'ArrowUp') this.value = Math.min(5, this.value + 1);
+             else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') this.value = Math.max(0, this.value - 1);
+             else return;
+             e.preventDefault(); show();
+           });
+         }
+       });
+     </script>`,
+  ),
+  // A chart whose points cannot take the keyboard, on a page that goes to
+  // another page on ArrowRight, and a zoom control that takes keys.
+  "/chart-keys": pageShell(
+    "Visitors chart",
+    `<h1>Visitors</h1>
+     <svg width="300" height="120" style="border:1px solid #888"><circle id="point" role="button" aria-label="Peak point" cx="150" cy="30" r="8" fill="#36c"></circle></svg>
+     <div id="zoom" role="slider" tabindex="0" aria-label="Zoom" aria-valuemin="1" aria-valuemax="5" aria-valuenow="1">Zoom 1</div>
+     <script>
+       const zoom = document.getElementById('zoom');
+       zoom.addEventListener('keydown', (e) => { if (e.key !== 'ArrowRight') return; e.preventDefault(); e.stopPropagation(); const v = Math.min(5, Number(zoom.getAttribute('aria-valuenow')) + 1); zoom.setAttribute('aria-valuenow', String(v)); zoom.textContent = 'Zoom ' + v; });
+       document.addEventListener('keydown', (e) => { if (e.key === 'ArrowRight' && !e.defaultPrevented) location.href = '/home'; });
+     </script>`,
+  ),
   // A chart only a picture shows, and a button that puts its legend in words.
   "/chart": pageShell(
     "Sales",
@@ -1142,6 +1266,37 @@ function buildStepPolicies(baseUrl) {
       if (/The title lost the cursor/.test(ctx.userText)) return done("The button did nothing: the title lost the cursor.", [], false);
       return step("Put the cursor in the title and press Upper case", [{ do: "click", ref: named(ctx, /^title$/i).id }, { do: "click", ref: named(ctx, /upper case/i).id }]);
     },
+    // An editor that keeps its own model: a new paragraph typed at the end,
+    // a word in it selected by its text, and the shortcut that makes it bold.
+    editorBold(ctx) {
+      const note = named(ctx, /^note$/i);
+      if (/"Practice" is selected, and is bold/.test(ctx.userText)) return done("The note ends with **Practice line**, and *Practice* is bold.", ["Practice line"]);
+      if (/select_text \[/.test(ctx.userText)) return done("policy error: the word was selected and pressed, but it was not said to be bold", [], false);
+      if (/Practice line/.test(note.attrs.value || "")) return step("Make Practice bold", [{ do: "select_text", ref: note.id, value: "Practice" }, { do: "press", key: "ctrl+b", ref: note.id }]);
+      if (/type \[/.test(ctx.userText)) return done("policy error: the typing did not reach the editor", [], false);
+      return step("Add the line at the end", [{ do: "type", ref: note.id, value: "\nPractice line" }]);
+    },
+    // A button in a frame within a frame.
+    nestedFrame(ctx) {
+      if (/Clicked, thank you/.test(ctx.userText)) return done("The button now says \"Clicked, thank you\".", ["Clicked, thank you"]);
+      const button = findElement(ctx.elements, (e) => e.text === "Click Me" && e.id >= 100000);
+      if (!button) return done("policy error: the button in the inner frame is not listed", [], false);
+      return step("Press the button in the inner frame", [{ do: "click", ref: button.id }]);
+    },
+    // A rating in a shadow root: set, then read back from the listing.
+    shadowRating(ctx) {
+      const rating = named(ctx, /^rating$/i);
+      if ((rating.attrs.value || "") === "4") return done("The rating holds 4 of 5 stars.", [`[${rating.id}] now shows "4"`]);
+      if (/fill \[/.test(ctx.userText)) return done("policy error: the rating's value was not in the listing after it was set", [], false);
+      return step("Give it 4 stars", [{ do: "fill", ref: rating.id, value: "4" }]);
+    },
+    // A key named for a control that cannot hold the focus is not sent to the page as a whole.
+    keysWhere(ctx) {
+      const zoom = named(ctx, /^zoom$/i);
+      if (zoom && (zoom.attrs.value || "") === "2") return done("Zoomed in once; the peak point takes no keys.", []);
+      if (/cannot take the keyboard focus/.test(ctx.userText)) return step("Zoom in instead", [{ do: "press", key: "ArrowRight", ref: zoom.id }]);
+      return step("Step from the peak point", [{ do: "press", key: "ArrowRight", ref: named(ctx, /^peak point$/i).id }]);
+    },
     // A page with a chart: the model asks for a picture once its tab is in front.
     lookPerSite(ctx) {
       if (/A picture of the page as it is on screen is attached/.test(ctx.userText)) return done("I looked at the chart: sales by month.", ["Legend: sales by month"]);
@@ -1461,6 +1616,10 @@ function createE2EServer(port = 8907) {
   scenarios.pressKept = { task: "Refresh the feed." };
   scenarios.shadowClick = { task: "Add this to my basket." };
   scenarios.toolbar = { task: "Make the title upper case." };
+  scenarios.editorBold = { task: "Add a new paragraph at the end of the note that reads \"Practice line\", and make the word Practice bold." };
+  scenarios.nestedFrame = { task: "Click the button in the frame inside the frame and tell me what it says then." };
+  scenarios.shadowRating = { task: "Give this recipe 4 stars and tell me its rating." };
+  scenarios.keysWhere = { task: "Press the right arrow key on the chart's peak point." };
   scenarios.lookPerSite = { task: "What does the sales chart show?" };
   scenarios.framed = { task: "How much is Item B?" };
   scenarios.findQuote = { task: "How much is the garden hose?" };

@@ -125,7 +125,7 @@
   /** The same action in the shape the risk checks in agentTools.js read. */
   function asRiskAction(a, el) {
     if (a.do === "click") return { action: "click", id: a.ref };
-    if (a.do === "fill") return { action: "type", id: a.ref, text: a.value };
+    if (a.do === "fill" || a.do === "type") return { action: "type", id: a.ref, text: a.value };
     // A key that presses the control it lands on is a click on it.
     if (a.do === "press" && pressesControl(el, a.key)) return { action: "click", id: el.id };
     if (a.do === "press" && ENTER_KEY.test(String(a.key || ""))) return { action: "keypress", id: a.ref, text: "Enter" };
@@ -352,7 +352,7 @@
     }
     const detail = [];
     if (risk.target) detail.push(`On: ${risk.target}`);
-    if (a.do === "fill" && risk.kind !== "secret") detail.push(`Text: ${String(a.value).slice(0, 160)}`);
+    if ((a.do === "fill" || a.do === "type") && risk.kind !== "secret") detail.push(`Text: ${String(a.value).slice(0, 160)}`);
     if (opinion) detail.push(`Second check: ${opinion}`);
     return { verdict: "confirm", kind: risk.kind, why: risk.why, detail, site: risk.site || "", url: risk.url || "", ...(check ? { check } : {}) };
   }
