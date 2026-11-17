@@ -593,32 +593,40 @@
     if (!res.netView && !nets.has(tab.id)) countRequests(tab.id, res.netEvent);
     session.frames = [];
     if (!near && res.frames) { try { await readFrames(session, tab, res); } catch (_e) { session.frames = []; } }
-    if (PDF && PDF.isPdfPage(res)) return PDF.withPdfText(res, await pdfTextOf(tab, res.url || tab.url));
+    if (PDF && PDF.isPdfPage(res)) return PDF.withPdfText(res, await pdfTextOf(run, tab, PDF.pdfAddress({ ...res, url: res.url || tab.url })));
     return res;
   }
 
-  // The text of the PDFs read lately, by tab and address: a run looks at its
-  // page every step, and the file is read once.
+  // The text of the PDFs read in each run, by run, tab and address: a run
+  // looks at its page every step, and the file is read once. A file that
+  // could not be read is not tried again on every step, and what a run read
+  // goes when the run ends (release).
   const pdfTexts = new Map();
   const PDF_MS = 25000;
+  // A reading still going when the first look gave up is waited on this
+  // long at each later look, a few times, and then given up on for the run.
+  const PDF_AGAIN_MS = 2000;
+  const PDF_TRIES = 4;
+  const pdfKey = (run, tabId, url) => `${(run && run.id) || ""} ${tabId} ${url}`;
 
   /**
    * The text of the PDF a tab shows. The browser's viewer gives an extension
    * no text, so the file is fetched again from inside the tab and read there
-   * (pdfText.js): the same address, from the browser's cache, with the tab's
-   * own cookies, and no permission beyond the site access the scan used.
+   * (pdfText.js): from the browser's cache, with the tab's own cookies, and
+   * no permission beyond the site access the scan used. The tab keeps one
+   * reading per file, so a later look joins a reading still going.
    */
-  async function pdfTextOf(tab, url) {
-    const key = `${tab.id} ${url}`;
-    if (pdfTexts.has(key)) return pdfTexts.get(key);
+  async function pdfTextOf(run, tab, url) {
+    const key = pdfKey(run, tab.id, url);
+    const had = pdfTexts.get(key);
+    if (had && had.got) return had.got;
+    if (had && had.tries >= PDF_TRIES) return { error: "The text of this PDF took too long to read." };
     await INJECT.injectNow(chrome, { tabId: tab.id }, { files: ["pdfText.js"] });
-    const ran = await INJECT.injectNow(chrome, { tabId: tab.id }, { func: () => (self.SELECT_TO_AI_PDF ? self.SELECT_TO_AI_PDF.readHere() : null) }, { injectMs: PDF_MS });
+    const ran = await INJECT.injectNow(chrome, { tabId: tab.id }, { func: (at) => (self.SELECT_TO_AI_PDF ? self.SELECT_TO_AI_PDF.readHere(at) : null), args: [url] }, { injectMs: had ? PDF_AGAIN_MS : PDF_MS });
     const got = (ran && ran[0] && ran[0].result) || null;
-    // A file that was read, or that cannot be (a password), is not fetched again; a failed fetch is tried at the next look.
-    if (got && (!got.error || got.locked)) {
-      pdfTexts.set(key, got);
-      while (pdfTexts.size > 4) pdfTexts.delete(pdfTexts.keys().next().value);
-    }
+    // What the file gave, text or why there is none, holds for the run.
+    pdfTexts.set(key, got ? { got } : { tries: ((had && had.tries) || 0) + 1 });
+    while (pdfTexts.size > 8) pdfTexts.delete(pdfTexts.keys().next().value);
     return got;
   }
 
@@ -1425,6 +1433,8 @@
    * next run.
    */
   function release(owner) {
+    const runId = owner && owner.run && owner.run.id;
+    if (runId) for (const k of [...pdfTexts.keys()]) if (k.startsWith(`${runId} `)) pdfTexts.delete(k);
     for (const id of touchedBy(owner)) {
       if (heldElsewhere(id, owner)) continue;
       send(id, { action: "clear" });

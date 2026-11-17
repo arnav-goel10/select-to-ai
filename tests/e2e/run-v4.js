@@ -597,6 +597,14 @@ async function main() {
         const said = r.prompts.map((p) => (p.match(/"Garden Hose" is in [^\n]*/) || [""])[0]).find(Boolean) || "";
         return /The text there \(in "[^"]{1,61}"\) reads: "[^"]*Garden Hose, 30 m, \$24\.99/.test(said) ? null : `find did not quote the words it found: ${said || String(r.log).replace(/\s+/g, " ").slice(0, 900)}`;
       }],
+      // A PDF the browser draws in its own viewer: the scan gives the file's
+      // text page by page, and find names the page a passage is on.
+      ["pdfText", "/files/statement.pdf", async () => false, (r) => {
+        if (!r.answer.includes("$81.40")) return `answer: ${JSON.stringify(r.answer)}; log: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (!r.prompts.some((p) => /## Page 1 of 2\nNorthwind Utilities/.test(p))) return "the scan did not give the PDF's text under its page headings";
+        const said = r.prompts.map((p) => (p.match(/"Amount due" is in [^\n]*/) || [""])[0]).find(Boolean) || "";
+        return /Page 2 of 2/.test(said) && /Amount due: \$81\.40/.test(said) ? null : `find did not find the passage on page 2: ${said || "no find result"}`;
+      }],
       ["newTab", "/catalogue", async () => false, async (r) => {
         if (!r.answer.includes("$18")) return `the run did not follow the link into its new tab: ${JSON.stringify(r.answer)}`;
         if (!/It opened in a new tab, and you are on that tab now/.test(r.log)) return `the result did not say a new tab was opened: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;

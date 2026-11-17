@@ -563,25 +563,37 @@
       return data;
     }
 
-    /** The pages in order, each {dict, resources}. */
-    pages() {
+    /**
+     * The first `cap` pages in order, each {dict, resources}, and how many
+     * pages the document has in all: a long file is labelled with its real
+     * length, and its text is marked as cut short.
+     */
+    pages(cap) {
+      const limit = cap || LIMITS.pages;
       const out = [];
+      let total = 0;
       const seen = new Set();
       const walk = (node, inherited, depth) => {
         const d = this.get(node);
-        if (!isDict(d) || depth > 64 || out.length >= LIMITS.pages) return;
+        if (!isDict(d) || depth > 64) return;
         if (node instanceof Ref) { if (seen.has(node.num)) return; seen.add(node.num); }
         const res = d.Resources !== undefined ? d.Resources : inherited;
         const kids = this.get(d.Kids);
         if (Array.isArray(kids)) { for (const k of kids) walk(k, res, depth + 1); return; }
-        out.push({ dict: d, resources: res });
+        total += 1;
+        if (out.length < limit) out.push({ dict: d, resources: res });
       };
       const cat = this.get(this.rootRef);
       if (isDict(cat)) walk(cat.Pages, null, 0);
       if (!out.length) {
-        for (const o of this.objects.values()) if (isDict(o.value) && isName(o.value.Type, "Page")) out.push({ dict: o.value, resources: o.value.Resources });
+        total = 0;
+        for (const o of this.objects.values()) {
+          if (!isDict(o.value) || !isName(o.value.Type, "Page")) continue;
+          total += 1;
+          if (out.length < limit) out.push({ dict: o.value, resources: o.value.Resources });
+        }
       }
-      return out;
+      return { list: out, total };
     }
   }
 
@@ -947,18 +959,17 @@
     if (!/%PDF-/.test(latin1(u8.subarray(0, 1024)))) return { error: "This is not a PDF file." };
     const doc = new Doc(u8);
     try { await doc.open(); } catch (e) { return { error: e && e.locked ? "This PDF is locked with a password, so its text cannot be read." : "This PDF could not be read.", locked: !!(e && e.locked) }; }
-    const all = doc.pages();
+    const all = doc.pages(o.pages);
     const pages = [];
     const budget = { chars: o.chars };
-    let cut = false;
-    for (const p of all.slice(0, o.pages)) {
+    let cut = all.total > all.list.length;
+    for (const p of all.list) {
       if (budget.chars <= 0 || Date.now() - began > o.ms) { cut = true; break; }
       let t = "";
       try { t = await pageText(doc, p, budget); } catch (_e) { t = ""; }
       pages.push(t);
     }
-    if (all.length > o.pages) cut = true;
-    return { pages, total: all.length, cut, text: pages.join("\n\n") };
+    return { pages, total: all.total, cut, text: pages.join("\n\n") };
   }
 
   /**
@@ -972,19 +983,33 @@
     return `${body}${more}`;
   }
 
+  const isPdfType = (page) => /^application\/pdf\b/i.test(String((page && page.contentType) || ""));
+  const isWebAddress = (u) => typeof u === "string" && /^https?:\/\//i.test(u);
+
   /**
-   * True when what a scan of the tab found is the browser's PDF viewer: a
-   * document of type PDF, or a page that is one embedded PDF.
+   * True when what a scan of the tab found is a PDF the browser draws: a
+   * document of type PDF (the browser's own viewer), or a page that is only
+   * one embedded PDF with a web address of its own.
    */
   function isPdfPage(page) {
     if (!page || typeof page !== "object") return false;
-    if (/^application\/pdf\b/i.test(String(page.contentType || ""))) return true;
-    return !!page.pdfEmbed;
+    return isPdfType(page) || isWebAddress(page.pdfEmbed);
+  }
+
+  /**
+   * Where the file of a PDF page is: the document's own address when the
+   * document is the PDF, or else the embedded file's. Never the address of
+   * an HTML page that only holds the PDF.
+   */
+  function pdfAddress(page) {
+    if (!isPdfPage(page)) return "";
+    return isPdfType(page) ? String(page.url || "") : page.pdfEmbed;
   }
 
   /**
    * The scan's page with the PDF's text as its text. `got` is what readHere
-   * gave: the text, or why there is none. The page keeps its controls.
+   * gave: the text, or why there is none. The page keeps its controls, and
+   * keeps what the scan read when the file gave no text.
    */
   function withPdfText(page, got) {
     const out = { ...page, pdf: true };
@@ -998,17 +1023,18 @@
     const why = got && got.error ? got.error
       : got && Array.isArray(got.pages) ? `This PDF has ${got.total || got.pages.length} page${(got.total || got.pages.length) === 1 ? "" : "s"} but no text in it: its pages may be pictures of print. look shows the page as drawn.`
         : "The text of this PDF could not be read.";
-    out.innerText = `[${why}]`;
+    const scanned = String(page.innerText || "").trim();
+    const had = scanned && !/^\[No text content found\]$/i.test(scanned);
+    out.innerText = had ? `${page.innerText}\n\n[${why}]` : `[${why}]`;
     return out;
   }
 
-  const kept = new Map(); // address -> result, in this document
+  // Address -> the reading of it, in this document. One reading per file:
+  // a later look while the first is still going waits for that one, and a
+  // file that could not be read is not fetched again.
+  const kept = new Map();
 
-  /** Run in the PDF's own tab: fetches the document again and reads its text. */
-  async function readHere(opts) {
-    const url = String(root.location && root.location.href || "");
-    if (kept.has(url)) return kept.get(url);
-    let got;
+  async function readOnce(url, opts) {
     try {
       const res = await fetch(url, { credentials: "include", cache: "force-cache" });
       if (!res.ok) return { error: `The PDF could not be fetched again (the site answered ${res.status}).` };
@@ -1016,15 +1042,23 @@
       if (len > LIMITS.bytes) return { error: "This PDF is too large to read here." };
       const buf = new Uint8Array(await res.arrayBuffer());
       if (buf.length > LIMITS.bytes) return { error: "This PDF is too large to read here." };
-      got = await extract(buf, opts);
+      return await extract(buf, opts);
     } catch (_e) {
       return { error: "The PDF could not be fetched again from its address." };
     }
-    if (!got.error) kept.set(url, got);
-    return got;
   }
 
-  const api = { extract, asPageText, isPdfPage, withPdfText, readHere, parseCMap, glyphText, md5, rc4, LIMITS };
+  /**
+   * Run in the PDF's own tab: fetches the file again and reads its text.
+   * `url` is the file's address (pdfAddress), the document's own by default.
+   */
+  function readHere(url, opts) {
+    const at = String(url || (root.location && root.location.href) || "");
+    if (!kept.has(at)) kept.set(at, readOnce(at, opts));
+    return kept.get(at);
+  }
+
+  const api = { extract, asPageText, isPdfPage, pdfAddress, withPdfText, readHere, parseCMap, glyphText, md5, rc4, LIMITS };
   root.SELECT_TO_AI_PDF = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

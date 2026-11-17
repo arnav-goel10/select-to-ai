@@ -12,7 +12,6 @@ const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
-const zlib = require("node:zlib");
 
 const EXT = path.join(__dirname, "../../extension");
 const PDF = require(path.join(EXT, "pdfText.js"));
@@ -20,37 +19,8 @@ const PAGE = require(path.join(EXT, "pageSearch.js"));
 
 // ------------------------------------------------------------ a PDF writer
 
+const { writePdf, flate, simplePdf } = require("../helpers/pdf-writer.js");
 const hex = (s) => Buffer.from(s, "latin1").toString("hex");
-const pad = (n, w) => String(n).padStart(w, "0");
-
-/**
- * objects: [{num, dict, data?}] where dict is the object's text (a
- * dictionary for a stream) and data its stream bytes. seal(num, bytes)
- * encrypts a stream's bytes. Returns the file as a Buffer.
- */
-function writePdf(objects, trailer, seal) {
-  const parts = [Buffer.from("%PDF-1.7\n%\xe2\xe3\xcf\xd3\n", "latin1")];
-  let size = parts[0].length;
-  const offsets = {};
-  for (const o of objects) {
-    offsets[o.num] = size;
-    let chunk;
-    if (o.data) {
-      const data = seal ? seal(o.num, o.data) : o.data;
-      const dict = o.dict.replace(/>>\s*$/, ` /Length ${data.length} >>`);
-      chunk = Buffer.concat([Buffer.from(`${o.num} 0 obj\n${dict}\nstream\n`, "latin1"), data, Buffer.from("\nendstream\nendobj\n", "latin1")]);
-    } else chunk = Buffer.from(`${o.num} 0 obj\n${o.dict}\nendobj\n`, "latin1");
-    parts.push(chunk);
-    size += chunk.length;
-  }
-  const max = Math.max(...objects.map((o) => o.num));
-  let xref = `xref\n0 ${max + 1}\n0000000000 65535 f \n`;
-  for (let i = 1; i <= max; i++) xref += offsets[i] !== undefined ? `${pad(offsets[i], 10)} 00000 n \n` : "0000000000 65535 f \n";
-  parts.push(Buffer.from(`${xref}trailer\n<< /Size ${max + 1} ${trailer} >>\nstartxref\n${size}\n%%EOF\n`, "latin1"));
-  return Buffer.concat(parts);
-}
-
-const flate = (s) => zlib.deflateSync(Buffer.from(s, "latin1"));
 const WIDTHS = `/FirstChar 32 /LastChar 126 /Widths [${Array(95).fill(500).join(" ")}]`;
 
 // Codes of the composite font: 0x100 + the character, so "a" is <0161>.
@@ -224,7 +194,7 @@ test("the PDF's text becomes the page's text, and find finds a passage with its 
   const scan = { url: "https://example.org/form.pdf", title: "form.pdf", contentType: "application/pdf", elements: [{ id: 1, tagName: "embed" }], innerText: "", visibleText: "" };
   assert.equal(PDF.isPdfPage(scan), true);
   assert.equal(PDF.isPdfPage({ ...scan, contentType: "text/html" }), false);
-  assert.equal(PDF.isPdfPage({ contentType: "text/html", pdfEmbed: true }), true);
+  assert.equal(PDF.pdfAddress(scan), "https://example.org/form.pdf", "the viewer's document is the file");
   const page = PDF.withPdfText(scan, got);
   assert.deepEqual(page.elements, scan.elements, "the page keeps its controls");
   assert.match(page.innerText, /^## Page 1 of 2\nForm W-9 \(Rev\. March 2024\)/);
@@ -265,14 +235,140 @@ test("in the tab, the PDF is fetched again from its own address once, and read",
   }
 });
 
+test("an HTML page that only embeds a PDF is read from the embed's address, and keeps its own text when the file gives none", () => {
+  const html = { url: "https://example.org/viewer", contentType: "text/html", pdfEmbed: "https://example.org/files/a.pdf", innerText: "Quarterly report, see below", elements: [] };
+  assert.equal(PDF.isPdfPage(html), true);
+  assert.equal(PDF.pdfAddress(html), "https://example.org/files/a.pdf", "the file, not the HTML page");
+  assert.equal(PDF.isPdfPage({ ...html, pdfEmbed: "" }), false, "an embed with no web address of its own is no PDF to read");
+  assert.equal(PDF.isPdfPage({ ...html, pdfEmbed: "about:blank" }), false);
+  const kept = PDF.withPdfText(html, { error: "This is not a PDF file." });
+  assert.equal(kept.innerText, "Quarterly report, see below\n\n[This is not a PDF file.]", "what the scan read stays");
+});
+
+test("a PDF longer than the pages read is labelled with its real length and marked as cut short", async () => {
+  const n = PDF.LIMITS.pages + 2;
+  const file = simplePdf(Array.from({ length: n }, (_x, i) => [`Sheet ${i + 1}`]));
+  const got = await PDF.extract(file);
+  assert.equal(got.total, n, "every page is counted");
+  assert.equal(got.pages.length, PDF.LIMITS.pages);
+  assert.equal(got.cut, true);
+  const text = PDF.asPageText(got);
+  assert.match(text, new RegExp(`^## Page 1 of ${n}\\nSheet 1`));
+  assert.match(text, new RegExp(`\\[The text stops here: the rest of this ${n}-page PDF was not read\\.\\]$`));
+});
+
+test("in the tab, two looks at once share one reading, and a file that failed is not fetched again", async () => {
+  const file = simplePdf([["Shared reading"]]);
+  const saved = globalThis.fetch;
+  const calls = [];
+  let answer = 200;
+  globalThis.fetch = async (url) => {
+    calls.push(url);
+    await new Promise((r) => setTimeout(r, 20));
+    return { ok: answer === 200, status: answer, headers: { get: () => String(file.length) }, arrayBuffer: async () => file.buffer.slice(file.byteOffset, file.byteOffset + file.length) };
+  };
+  try {
+    const [a, b] = await Promise.all([PDF.readHere("https://example.org/once.pdf"), PDF.readHere("https://example.org/once.pdf")]);
+    assert.equal(calls.length, 1, "the second look joins the reading still going");
+    assert.match(a.pages[0], /Shared reading/);
+    assert.equal(a, b);
+    answer = 503;
+    const failed = await PDF.readHere("https://example.org/gone.pdf");
+    assert.match(failed.error, /answered 503/);
+    await PDF.readHere("https://example.org/gone.pdf");
+    assert.equal(calls.length, 2, "a failure is kept too");
+  } finally {
+    globalThis.fetch = saved;
+  }
+});
+
 // ------------------------------------------------------------ the engine's use of it
 
-test("the engine reads a PDF tab's file where the scan finds the PDF viewer, with no new permission", () => {
+const { fakeWorker } = require("../helpers/fake-worker.js");
+
+/**
+ * The engine's scan of tab 9 in a worker of stand-ins. The content script
+ * answers with `page`; chrome.scripting runs the injected function in the
+ * worker's own copy of pdfText.js, against `fetch`. `hang` makes the
+ * reading never answer, as a slow file does.
+ */
+function pdfWorker(page, fetch, o = {}) {
+  const runs = [];
+  const w = fakeWorker({
+    timerScale: 50,
+    tabs: { 9: { id: 9, url: page.url, title: "file", windowId: 1, active: true } },
+    onTabMessage: (_tab, m) => (m.action === "scan" ? { elements: [], frames: 0, netView: true, ...page } : { ok: true }),
+    fetch,
+    executeScript: async (req) => {
+      if (req.files) return [{ result: undefined }];
+      runs.push(req.args || []);
+      if (o.hang) return new Promise(() => {});
+      return [{ result: await req.func(...(req.args || [])) }];
+    },
+  });
+  const session = { windowId: 1, run: { id: o.runId || "r1", task: "What does the form say?", status: "running" }, items: { agentPressables: "off" }, runners: new Map() };
+  return { w, runs, session, scan: () => w.engine.scan(session, w.tabs[9], () => {}) };
+}
+
+const served = (file, status = 200) => {
+  const calls = [];
+  const fetch = async (url, init) => {
+    calls.push({ url, init });
+    return { ok: status === 200, status, headers: { get: () => String(file.length) }, arrayBuffer: async () => file.buffer.slice(file.byteOffset, file.byteOffset + file.length) };
+  };
+  return { calls, fetch };
+};
+
+test("the engine's scan of a PDF tab gives the file's text page by page, read once per run", async () => {
+  const file = simplePdf([["Form W-9 (Rev. March 2024)"], ["Part II Certification"]]);
+  const net = served(file);
+  const t = pdfWorker({ url: "https://www.irs.gov/pub/irs-pdf/fw9.pdf", contentType: "application/pdf", innerText: "" }, net.fetch);
+  const page = await t.scan();
+  assert.match(page.innerText, /^## Page 1 of 2\nForm W-9 \(Rev\. March 2024\)/);
+  assert.match(page.innerText, /## Page 2 of 2\nPart II Certification/);
+  assert.equal(net.calls[0].url, "https://www.irs.gov/pub/irs-pdf/fw9.pdf");
+  assert.equal(net.calls[0].init.credentials, "include");
+  await t.scan();
+  assert.equal(t.runs.length, 1, "the next look in the same run does not read the file again");
+  // The run ends: what it read goes with it.
+  t.w.engine.release(t.session);
+  await t.scan();
+  assert.equal(t.runs.length, 2, "kept only for the run that read it");
+});
+
+test("a PDF that could not be fetched is not tried again on every step", async () => {
+  const net = served(simplePdf([["x"]]), 500);
+  const t = pdfWorker({ url: "https://example.org/broken.pdf", contentType: "application/pdf", innerText: "" }, net.fetch);
+  assert.equal((await t.scan()).innerText, "[The PDF could not be fetched again (the site answered 500).]");
+  await t.scan();
+  await t.scan();
+  assert.equal(t.runs.length, 1);
+  assert.equal(net.calls.length, 1);
+});
+
+test("a reading that runs past the wait is waited on briefly a few times, then given up on for the run", async () => {
+  const t = pdfWorker({ url: "https://example.org/huge.pdf", contentType: "application/pdf", innerText: "" }, async () => { throw new Error("unused"); }, { hang: true });
+  const t0 = Date.now();
+  assert.match((await t.scan()).innerText, /could not be read/);
+  const first = Date.now() - t0;
+  for (let i = 0; i < 6; i++) await t.scan();
+  assert.equal(t.runs.length, 4, "the first wait and three short ones, then no more");
+  assert.match((await t.scan()).innerText, /took too long/);
+  assert.ok(first >= 400, `the first look waits the full time (${first} ms at 1/50)`);
+});
+
+test("the engine reads a page that only embeds a PDF from the embed's address, keeping the page's text on failure", async () => {
+  const net = served(Buffer.from("<!doctype html><p>not a pdf</p>"));
+  const t = pdfWorker({ url: "https://example.org/viewer", contentType: "text/html", pdfEmbed: "https://example.org/files/report.pdf", innerText: "Annual report" }, net.fetch);
+  const page = await t.scan();
+  assert.equal(t.runs[0][0], "https://example.org/files/report.pdf", "the embed's file, not the HTML page's address");
+  assert.equal(page.innerText, "Annual report\n\n[This is not a PDF file.]");
+  await t.scan();
+  assert.equal(net.calls.length, 1, "and not fetched again on the next look");
+});
+
+test("the PDF reader ships in the worker with no new permission", () => {
   const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8");
-  const engine = read("engine.js");
-  assert.match(engine, /if \(PDF && PDF\.isPdfPage\(res\)\) return PDF\.withPdfText\(res, await pdfTextOf\(tab, res\.url \|\| tab\.url\)\);/);
-  assert.match(engine, /files: \["pdfText\.js"\]/);
-  assert.match(read("agentContentScript.js"), /contentType: document\.contentType \|\| ''/);
   assert.match(read("background.js"), /importScripts\([^)]*'pdfText\.js'/s);
   const manifest = JSON.parse(read("manifest.json"));
   assert.ok(!manifest.permissions.includes("debugger"));
