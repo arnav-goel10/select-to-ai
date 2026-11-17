@@ -346,8 +346,11 @@ test("a PDF that could not be fetched is not tried again on every step", async (
   assert.equal(net.calls.length, 1);
 });
 
-test("a reading that runs past the wait is waited on briefly a few times, then given up on for the run", async () => {
+test("a reading that runs past the wait is waited on briefly a few times, then given up on for the run", async (ctx) => {
   const t = pdfWorker({ url: "https://example.org/huge.pdf", contentType: "application/pdf", innerText: "" }, async () => { throw new Error("unused"); }, { hang: true });
+  // The worker's timers do not hold the process open, and the reading never answers.
+  const open = setInterval(() => {}, 1000);
+  ctx.after(() => clearInterval(open));
   const t0 = Date.now();
   assert.match((await t.scan()).innerText, /could not be read/);
   const first = Date.now() - t0;
