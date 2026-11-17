@@ -12,5 +12,6 @@
 - [Held-out v2](results-heldout-v2.md) and [held-out v1](results-heldout-v1.md): the two earlier held-out sets, each run once.
 - [Recipes calibration](recipes-calibration.md): tuning on the dev mutations only, before any held-out run.
 - [Agent v4 status](agent-v4-status.md): the engine measurements behind 4.0.
+- [Real-task trial](real-task-trial.md): 93 everyday tasks on live sites in the packed build, run in GitHub Actions. How to run it and read it.
 
 The distributable browser-extension package is isolated in `extension/`; repository tooling and documentation are never required at runtime.

@@ -37,4 +37,6 @@ async function main() {
   if (failed) process.exit(1);
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+// The holdout check (tests/bench/trial.js) reads FILES; only a run from the command line downloads them.
+if (require.main === module) main().catch((e) => { console.error(e); process.exit(1); });
+module.exports = { FILES };
