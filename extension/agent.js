@@ -2239,13 +2239,6 @@
       for (const line of wait.detail) { const row = document.createElement("div"); row.textContent = line; detail.appendChild(row); }
       content.appendChild(detail);
     }
-    // A hand-off carries what the run found before it, for a user who cannot do this part.
-    if (wait.found && wait.kind !== "check_in") {
-      const found = document.createElement("div");
-      found.className = "confirm-detail checkin-notes";
-      found.textContent = `What I have found so far:\n${wait.found}`;
-      content.appendChild(found);
-    }
     const actions = document.createElement("div");
     actions.className = "confirm-actions";
     const button = (label, cls, onClick) => cardButton(actions, label, cls, onClick);

@@ -58,106 +58,58 @@
   }
 
   // The name of the event the page's own world tells the content script
-  // about its requests and dialogs with is made by the content script,
-  // anew for each page, and comes to the engine with the listing. This is
-  // the shape a name must have to be used.
+  // about its requests with is made by the content script, anew for each
+  // page, and comes to the engine with the listing. This is the shape a
+  // name must have to be used.
   const NET_EVENT = /^n[0-9a-f]{12,40}$/;
 
   /**
-   * Runs in the page's own world, where the page's fetch, XMLHttpRequest
-   * and dialogs live. A build without the debugger has no other way to see
-   * either.
+   * Runs in the page's own world, where the page's fetch and XMLHttpRequest
+   * live. It says when each call begins and when it ends, so the wait after
+   * an action can tell a page that is still waiting for an answer from one
+   * that has nothing more to do. A build without the debugger has no other
+   * way to know. Only that a call began or ended, its kind and its address
+   * are said; nothing of what was sent or came back is read, and each call
+   * goes to the page's own function unchanged. Nothing is left on the
+   * window to say it ran: the content script knows from its "hello", and
+   * the engine does not send it to a page that has said so.
    *
-   * Requests (o.net): it says when each call begins and when it ends, so
-   * the wait after an action can tell a page that is still waiting for an
-   * answer from one that has nothing more to do. Only that a call began or
-   * ended, its kind and its address are said; nothing of what was sent or
-   * came back is read, and each call goes to the page's own function
-   * unchanged.
-   *
-   * Dialogs (o.dialogs): a browser alert, confirm or prompt stops the page
-   * until someone closes it, and the extension cannot see or close one, so
-   * a step that set one off waited on the page for the rest of the run
-   * (shop-demoblaze-cart-total, 17 Nov 2026: 1021 s, stopped after two
-   * steps). Each is said first, with its words. While the agent is working
-   * on the page the content script answers that it has it (the event is
-   * cancelled), and the page is given what closing the dialog gives: OK
-   * for an alert, Cancel for a confirm or a prompt. Otherwise the page's
-   * own dialog opens as before, so the user's own use of the page is not
-   * changed. The check before leaving a page (beforeunload) is never
-   * touched: it guards what the user typed and has not saved, and only the
-   * user decides to drop that. A step it holds up ends at the bound on
-   * every wait (ask), and the agent is told the page may be holding it.
-   *
-   * Nothing is left on the window to say it ran: the content script knows
-   * from its "hello", and the engine does not send a part to a page that
-   * has said it has it. It is sent to the page as its source, so it uses
-   * nothing from this file.
+   * It is sent to the page as its source, so it uses nothing from this file.
    */
-  function pageShim(name, o) {
+  function netShim(name) {
     const w = window;
-    const want = o || { net: true, dialogs: true };
-    // True when the content script took the event: the agent has the page.
-    const say = (d) => { try { return !document.dispatchEvent(new CustomEvent(name, { detail: JSON.stringify(d), cancelable: true })); } catch (_e) { return false; } };
-    if (want.net) {
-      let count = 0;
-      const begin = (kind, url) => { const id = `${kind}${++count}`; say({ t: "start", id, kind, url: String(url || "").slice(0, 300) }); return id; };
-      const end = (id) => say({ t: "end", id });
-      const pageFetch = w.fetch;
-      if (typeof pageFetch === "function") {
-        w.fetch = function fetch(input) {
-          const id = begin("Fetch", input && typeof input === "object" && "url" in input ? input.url : input);
-          let answer;
-          try { answer = pageFetch.apply(this, arguments); } catch (e) { end(id); throw e; }
-          if (answer && typeof answer.then === "function") answer.then(() => end(id), () => end(id));
-          else end(id);
-          return answer;
-        };
-      }
-      const proto = w.XMLHttpRequest && w.XMLHttpRequest.prototype;
-      if (proto && typeof proto.open === "function" && typeof proto.send === "function") {
-        const pageOpen = proto.open;
-        const pageSend = proto.send;
-        const asked = new WeakMap();
-        proto.open = function open(_method, url) { asked.set(this, url); return pageOpen.apply(this, arguments); };
-        proto.send = function send() {
-          const id = begin("XHR", asked.get(this));
-          try { this.addEventListener("loadend", () => end(id), { once: true }); } catch (_e) { /* ended below if it throws */ }
-          try { return pageSend.apply(this, arguments); } catch (e) { end(id); throw e; }
-        };
-      }
+    const say = (d) => { try { document.dispatchEvent(new CustomEvent(name, { detail: JSON.stringify(d) })); } catch (_e) { /* the page goes on regardless */ } };
+    let count = 0;
+    const begin = (kind, url) => { const id = `${kind}${++count}`; say({ t: "start", id, kind, url: String(url || "").slice(0, 300) }); return id; };
+    const end = (id) => say({ t: "end", id });
+    const pageFetch = w.fetch;
+    if (typeof pageFetch === "function") {
+      w.fetch = function fetch(input) {
+        const id = begin("Fetch", input && typeof input === "object" && "url" in input ? input.url : input);
+        let answer;
+        try { answer = pageFetch.apply(this, arguments); } catch (e) { end(id); throw e; }
+        if (answer && typeof answer.then === "function") answer.then(() => end(id), () => end(id));
+        else end(id);
+        return answer;
+      };
     }
-    if (want.dialogs) {
-      const closed = { alert: undefined, confirm: false, prompt: null };
-      for (const kind of ["alert", "confirm", "prompt"]) {
-        const own = w[kind];
-        if (typeof own !== "function") continue;
-        w[kind] = function dialog(message) {
-          if (say({ t: "dialog", kind, text: String(message === undefined ? "" : message).slice(0, 300) })) return closed[kind];
-          return own.apply(this, arguments);
-        };
-      }
+    const proto = w.XMLHttpRequest && w.XMLHttpRequest.prototype;
+    if (proto && typeof proto.open === "function" && typeof proto.send === "function") {
+      const pageOpen = proto.open;
+      const pageSend = proto.send;
+      const asked = new WeakMap();
+      proto.open = function open(_method, url) { asked.set(this, url); return pageOpen.apply(this, arguments); };
+      proto.send = function send() {
+        const id = begin("XHR", asked.get(this));
+        try { this.addEventListener("loadend", () => end(id), { once: true }); } catch (_e) { /* ended below if it throws */ }
+        try { return pageSend.apply(this, arguments); } catch (e) { end(id); throw e; }
+      };
     }
-    say({ t: "hello", net: !!want.net, dialogs: !!want.dialogs });
+    say({ t: "hello" });
     return true;
   }
 
-  /**
-   * A message to a page's content script, waited on for at most `ms`.
-   * A page held by a browser dialog, or busy in a script that never ends,
-   * runs no script at all, the extension's included, so its answer can
-   * never come; the wait for it is bounded like every other. Resolves with
-   * { reply } (null when the page could not be reached), or { late: true }
-   * when the page did not answer in time.
-   */
-  function ask(chrome, tabId, message, opts, ms) {
-    let timer = null;
-    const sent = Promise.resolve().then(() => chrome.tabs.sendMessage(tabId, message, opts)).then((reply) => ({ reply: reply === undefined ? null : reply }), () => ({ reply: null }));
-    return Promise.race([sent, new Promise((resolve) => { timer = setTimeout(() => resolve({ reply: null, late: true }), ms); })]).finally(() => clearTimeout(timer));
-  }
-
-  // netShim is the older name, kept for what still calls it that.
-  const api = Object.freeze({ IDLE_WAIT_MS, INJECT_MS, NET_EVENT, inject, injectNow, ask, pageShim, netShim: pageShim });
+  const api = Object.freeze({ IDLE_WAIT_MS, INJECT_MS, NET_EVENT, inject, injectNow, netShim });
   root.SELECT_TO_AI_INJECT = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

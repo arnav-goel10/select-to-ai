@@ -33,19 +33,14 @@
   };
 
   // The text of the pages the run read, kept for checking the quotes in its
-  // answer, by total size: the oldest page's text goes first. Most pages
-  // are far under PAGE_SEEN, so this holds a dozen-product comparison with
-  // room to spare. The run is saved to the browser's session storage after
-  // every step (10 MB for the whole extension); at up to three bytes a
-  // character this stays under a quarter of it.
+  // answer, by total size: the oldest page's text goes first. A page as the
+  // page reader gives it is at most about 80,000 characters
+  // (agentContentScript.js), and most are far less, so this holds ten pages
+  // at that size and a dozen-product comparison with room to spare. The run
+  // is saved to the browser's session storage after every step (10 MB for
+  // the whole extension); at up to three bytes a character this stays under
+  // a quarter of it.
   const SEEN_BUDGET = 800000;
-  // One page's share of it. The page reader keeps up to 700,000 characters
-  // of a long document (a specification, a manual), which alone would push
-  // every earlier page out. Past this, a page keeps its start and the parts
-  // of it the run was shown: what it found or read there, the passages
-  // matching the task, and the section its address points to.
-  const PAGE_SEEN = SEEN_BUDGET / 4;
-  const SEEN_SEAM = "\n\u241e\n"; // between the kept parts of a long page, so a quote never spans two
   const DROPPED_KEPT = 50; // pages whose text was let go, named in the feedback on a quote
   const SEEN_URLS = 1500; // addresses seen on pages, for "did the agent make this address up"
   const INVALID_LIMIT = 3; // unusable replies in a row before the run gives up on the model
@@ -251,18 +246,10 @@
       tabId: o.tabId === undefined ? null : o.tabId,
       openedTabs: o.openedTab !== undefined && o.openedTab !== null ? [o.openedTab] : [],
       // Set when the run began where the agent cannot work (the new-tab
-      // page, a browser page, the Web Store, an error page): what it
+      // page, a browser page, the Web Store, a PDF, an error page): what it
       // began on, whether that tab was reused, and, once a web page has been
       // read, left: true.
       fromNothing: o.fromNothing || null,
-      // The site the run began on, and the sites it opened by an address
-      // (navigate, a new tab): a human check on one of those the task does
-      // not need is left, not handed to the user (policy.js detourSite).
-      startSite: o.startUrl && /^https?:/i.test(o.startUrl) ? TOOLS.siteOf(o.startUrl) : "",
-      wentTo: [],
-      // Detour sites whose check the model was already told to leave: a
-      // second ask there goes to the user (detourToLeave).
-      leftDetours: [],
       trust: { sites: [...new Set(sites.filter(Boolean))], urls: [] },
       current: null,
       queue: [],
@@ -371,9 +358,6 @@
     if (!run.wrapUp && run.checkInMs > 0 && run.activeMs >= run.nextCheckIn) return checkIn(run, fx, env, "time");
     if (!run.wrapUp && run.usage.calls >= run.callCeiling) return checkIn(run, fx, env, "calls");
     page.blockers = POLICY.blockersOf(page);
-    // A check on a site the run went to by itself is said to be one (core/context.js).
-    const away = page.blockers.some((b) => b.kind === "human_check") ? detourToLeave(run, page) : "";
-    if (away) page.blockers = page.blockers.map((b) => (b.kind === "human_check" ? { ...b, away } : b));
     // Sentences the page hides from people looking at it (agentContentScript.js
     // leaves them out of the reading) are put to a narrow question, by
     // meaning and in any language: does one speak to an AI? Pages with no
@@ -457,28 +441,7 @@
    * quote from it can be said to be one that could not be checked.
    */
   function keepSeen(run, page) {
-    const entry = { url: page.url, title: page.title || "", digest: TOOLS.digestPage(page.innerText, 600) };
-    const text = shownText(page);
-    if (text.length <= PAGE_SEEN) return keepText(run, { ...entry, text });
-    const full = String(page.innerText || "");
-    const before = run.seen.find((p) => p.url === page.url);
-    const at = page.anchor ? full.indexOf(String(page.anchor)) : -1;
-    const pieces = [];
-    let used = 0;
-    const add = (t) => {
-      const v = String(t || "").trim();
-      if (!v || used + v.length + SEEN_SEAM.length > PAGE_SEEN / 2 || pieces.some((x) => x.includes(v))) return;
-      pieces.push(v);
-      used += v.length + SEEN_SEAM.length;
-    };
-    // Newest first, so a long stay on one page keeps what it was shown last.
-    for (const r of run.reads.filter((x) => x.url === page.url).reverse()) add(r.text);
-    if (at >= 0) add(full.slice(at, at + 1600));
-    for (const p of TOOLS.relevantPassages(full, run.task, { max: 3, maxChars: 600 })) add(p);
-    // What earlier looks at this page kept, after the start of its text.
-    if (before && before.tail >= 0) for (const p of before.text.slice(before.tail).split(SEEN_SEAM)) add(p);
-    const head = text.slice(0, PAGE_SEEN - used);
-    keepText(run, { ...entry, text: head + pieces.map((p) => SEEN_SEAM + p).join(""), tail: head.length });
+    keepText(run, { url: page.url, title: page.title || "", digest: TOOLS.digestPage(page.innerText, 600), text: shownText(page).slice(0, SEEN_BUDGET) });
   }
 
   /** One page's kept text ({url, title, digest, text}), within the budget. */
@@ -1075,7 +1038,6 @@
     if (!a) return closeStep(run, fx);
     if (a.do === "done") return onDone(run, a, page, env, fx);
     if (a.do === "ask_user") {
-      if (a.kind === "human_check") { const left = leaveDetour(run, a, page, fx); if (left) return left; }
       const question = a.kind !== "question" && POLICY.HANDOVER[a.kind] && !a.question ? POLICY.HANDOVER[a.kind] : a.question;
       // A control the user is asked to press themselves is marked on the page for them.
       return waitFor(run, fx, env, { kind: a.kind, question, action: a, ...(a.kind === "press" && a.ref !== undefined ? { press: a.ref } : {}) });
@@ -1136,7 +1098,6 @@
       return closeStep(run, fx, "refused");
     }
     if (verdict.verdict === "handoff") {
-      if (verdict.kind === "human_check") { const left = leaveDetour(run, act, page, fx); if (left) return left; }
       // The action is not run: the user does this part, in the page.
       return waitFor(run, fx, env, { kind: verdict.kind, question: verdict.question, action: act, byPolicy: true, press: verdict.press });
     }
@@ -1544,10 +1505,6 @@
     tally(run, a, r.ok, r.noEffect, page && page.url, !!r.miss);
     searched(run, a, r, page);
     if (r.tabId !== undefined && r.tabId !== null) run.tabId = r.tabId;
-    if (r.ok && (a.do === "navigate" || (a.do === "tabs" && a.op === "open")) && a.url) {
-      const site = TOOLS.siteOf(a.url);
-      if (site && !(run.wentTo || []).includes(site)) run.wentTo = [...(run.wentTo || []), site];
-    }
     if (r.openedTab !== undefined) run.openedTabs = [...run.openedTabs, r.openedTab];
     if (r.closedTab !== undefined) run.openedTabs = run.openedTabs.filter((t) => t !== r.closedTab);
     if (r.read) run.reads = [...run.reads.filter((x) => !(x.url === r.read.url && x.label === r.read.label)), r.read].slice(-4);
@@ -1588,34 +1545,6 @@
     return el.onTop || !els.some((e) => e.onTop && run.labels[e.id] === undefined);
   }
 
-  /**
-   * The detour site whose human check the model should leave, or "". Only
-   * when the run has something to answer from (notes or text it read), and
-   * only once per site: with nothing gathered, or when the model asks again
-   * after being told to leave, the check goes to the user, who may still
-   * want to pass it.
-   */
-  function detourToLeave(run, page) {
-    const site = POLICY.detourSite(page, run);
-    if (!site || (run.leftDetours || []).includes(site)) return "";
-    return run.memory || (run.reads || []).length ? site : "";
-  }
-
-  /**
-   * A human check on a site the run went to by itself and the task does not
-   * need: nothing is handed to the user. The model is told to leave it and
-   * finish from what it has read, and the step ends. Null when the check is
-   * on the task's own site, which stays the user's to pass.
-   */
-  function leaveDetour(run, a, page, fx) {
-    const site = detourToLeave(run, page);
-    if (!site) return null;
-    run.leftDetours = [...(run.leftDetours || []), site];
-    record(run, a, false, POLICY.detourMessage(site));
-    log(run, "system", "Not Handed Over", `A human check on ${site}, a site the task does not need. The agent is told to go back and answer from what it has read.`);
-    return closeStep(run, fx, "refused");
-  }
-
   // ---------------------------------------------------------------- waiting
 
   function waitFor(run, fx, env, wait) {
@@ -1624,16 +1553,13 @@
       const print = run.lastPrint || "";
       const last = run.handoff;
       run.handoff = last && last.kind === wait.kind && last.print === print ? { ...last, n: last.n + 1 } : { kind: wait.kind, print, n: 1 };
-      // What the run has found so far goes with the hand-off, so a user who
-      // cannot do this part still has it.
-      if (run.memory && !wait.found) wait = { ...wait, found: run.memory };
     }
     run.status = "waiting";
     const page = env && env.page;
     // What was in the page's fields, for a wait the user may answer on the page.
     run.waitSnapshot = page && !["approval", "check_in", "pause"].includes(wait.kind) ? { url: page.url, elements: (page.elements || []).map((el) => ({ id: el.id, value: el.sensitive ? "" : el.value || "" })) } : null;
     run.wait = { id: `${run.id}-w${run.waits}`, since: env.now || 0, tabId: run.tabId, ...wait };
-    run.journal.push({ k: "ask", wait: { id: run.wait.id, kind: wait.kind, risk: wait.risk || "", question: wait.question || "", detail: wait.detail || [], tabId: run.tabId, ...(wait.found ? { found: wait.found } : {}), ...(wait.kind === "check_in" ? { notes: wait.notes, active: wait.active, period: wait.period, reason: wait.reason } : {}), ...(wait.until ? { until: wait.until } : {}), ...(wait.hold ? { hold: wait.hold } : {}) } });
+    run.journal.push({ k: "ask", wait: { id: run.wait.id, kind: wait.kind, risk: wait.risk || "", question: wait.question || "", detail: wait.detail || [], tabId: run.tabId, ...(wait.kind === "check_in" ? { notes: wait.notes, active: wait.active, period: wait.period, reason: wait.reason } : {}), ...(wait.until ? { until: wait.until } : {}), ...(wait.hold ? { hold: wait.hold } : {}) } });
     status(run, "idle", wait.kind === "approval" ? "Waiting for your go-ahead" : wait.kind === "pause" ? "Waiting for the provider" : "Waiting for you");
     fx.push({ type: "attention", wait: run.wait });
     return fx;

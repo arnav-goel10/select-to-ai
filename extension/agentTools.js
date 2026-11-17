@@ -1162,10 +1162,9 @@
    * What kind of page a run is starting on, when it is one the agent cannot
    * work in: "newtab" (the browser's new-tab page), "blank" (an empty tab),
    * "browser" (chrome://, an extension's page, a file, any address that is
-   * not a web page) or "store" (the Web Store, which no extension may
-   * script). "" for a web page, a PDF on the web among them: its text is
-   * read from the file (pdfText.js). A page that fails to load is only known
-   * once it has been looked at.
+   * not a web page), "store" (the Web Store, which no extension may script)
+   * or "pdf" (a document shown by the browser's PDF viewer). "" for a web
+   * page. A page that fails to load is only known once it has been looked at.
    */
   function startPageKind(url) {
     const u = String(url || "").trim();
@@ -1176,6 +1175,7 @@
     try { parsed = new URL(u); } catch (_e) { return "browser"; }
     const host = parsed.hostname.toLowerCase();
     if (host === "chromewebstore.google.com" || (host === "chrome.google.com" && /^\/webstore\b/i.test(parsed.pathname)) || host === "microsoftedge.microsoft.com") return "store";
+    if (/\.pdf$/i.test(parsed.pathname)) return "pdf";
     return "";
   }
 
