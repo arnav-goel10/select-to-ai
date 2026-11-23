@@ -133,6 +133,10 @@ function startServer() {
           } else if (/^You check whether one step/m.test(text)) {
             args = /customer/i.test(user) ? { same: "different", why: "Saving now publishes the note to customers." } : { same: "same", why: "Only the wording changed." };
           } else args = { same: "same", why: "The same control." };
+        } else if (tool === "press_check") {
+          // The page-blind press check, answered by the test's stand-in judge.
+          state.calls.other.push(tool);
+          args = require("../helpers/fake-judge.js").answer({ user });
         } else {
           state.calls.other.push(tool || "(none)");
           args = tool === "learned" ? { site_notes: [], lesson: "", about_user: [], drop: [] } : tool === "context" ? { items: [] } : {};
