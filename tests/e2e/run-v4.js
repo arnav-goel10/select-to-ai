@@ -740,7 +740,8 @@ async function main() {
         if (!at.spot || Math.abs(at.spot[0] - 190) > 1 || Math.abs(at.spot[1] - 55) > 1 || at.spot[2] !== true) return `the drawing was not pressed at 190,55 by a real press: ${JSON.stringify(at.spot)} ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
         if (at.under) return "the covered button was pressed";
         if (!/\[\d+\] is covered: a div with no words is drawn over it/.test(r.log)) return `the press on the covered button was not reported as covered: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
-        return pointers(r, ["real", "real"]);
+        // The covered button was not pressed at all, so only the drawing's press used a pointer (c873739).
+        return pointers(r, ["real"]);
       }],
       // Input made by script (the build has no debugger). The first press is
       // the pointer events of a click; a page that does not answer them is
