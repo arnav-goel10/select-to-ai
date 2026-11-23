@@ -19,7 +19,7 @@ Send selected text to ChatGPT, Claude, Gemini or Perplexity, or ask an AI agent 
 ```
 Highlight text on any page, right-click, and send it to ChatGPT, Gemini or Perplexity. The chat opens in Chrome's side panel or a new tab with your text already in it. This part needs no account with us and no API key. Right-click sending works exactly as before. Claude can be added in one click, when you allow claude.ai.
 
-The agent does tasks on websites for you. Type what you want, for example "what's the top story on Hacker News" or "find the cheapest of these three laptops", and it opens pages, clicks, types, scrolls and reads in your tab, then gives you the answer with the pages it came from. Before it answers, it checks its quotes against the pages it read. You can follow each step as it happens, send it a message to change course, or stop it.
+The agent does tasks on websites for you. Type what you want, for example "what's the top story on Hacker News" or "find the cheapest of these three laptops", and it opens pages, clicks, types, drags, scrolls and reads in your tab, then gives you the answer with the pages it came from. Before it answers, it checks its quotes against the pages it read. You can follow each step as it happens, send it a message to change course, or stop it.
 
 Start it from the side panel, the toolbar button or the quick box (Alt+K on Windows and Linux, Control+Shift+Q on Mac).
 
