@@ -4498,19 +4498,26 @@
                 const unseen = watchUnseen();
                 const stateBefore = stateOf(el);
                 let steps;
-                try { steps = await scriptedHold(el, modifiers, at, ms); } finally { await delay(150); }
-                const outOfSight = unseen.stop();
+                let outOfSight = [];
+                let moved = 0;
+                // The watchers stop even when the press fails partway.
+                try {
+                    try { steps = await scriptedHold(el, modifiers, at, ms); } finally { await delay(150); }
+                } finally {
+                    outOfSight = unseen.stop();
+                    moved = changes.stop();
+                }
                 let how = '';
                 // A page that answers only a finger: the same press, by touch,
                 // unless it may have answered where it cannot be seen.
-                if (!changes.stop() && el.isConnected && stateOf(el) === stateBefore && !cancelRequested) {
+                if (!moved && el.isConnected && stateOf(el) === stateBefore && !cancelRequested) {
                     const gate = touchAgain(data, outOfSight, 'press', onCanvas([at]));
                     if (!gate.again) how = gate.why;
                     else {
                         const again = createMutationCounter();
-                        const touched = await touchGesture(steps);
-                        await delay(150);
-                        const seen = again.stop();
+                        let touched;
+                        let seen = 0;
+                        try { touched = await touchGesture(steps); await delay(150); } finally { seen = again.stop(); }
                         if (touched) how = seen ? ' The page did not answer the press made with the mouse; it was made again as a touch, and the page answered that.' : ` ${noAnswerSeen('press')}`;
                     }
                 }
@@ -4606,9 +4613,15 @@
                     const unseen = watchUnseen();
                     followGesture(scripted, 'Drag').catch(() => {});
                     let r;
-                    try { r = await syntheticDrag(el, scripted); } finally { await delay(100); }
-                    const outOfSight = unseen.stop();
-                    const seen = changes.stop();
+                    let outOfSight = [];
+                    let seen = 0;
+                    // The watchers stop even when the drag fails partway.
+                    try {
+                        try { r = await syntheticDrag(el, scripted); } finally { await delay(100); }
+                    } finally {
+                        outOfSight = unseen.stop();
+                        seen = changes.stop();
+                    }
                     const landed = r.target ? nameOfDrawn(r.target) : '';
                     if (r.dropped) how.push(`The page took it as a drag and drop, and it was dropped on ${landed}.`);
                     else if (r.refused) how.push(`The page took it as a drag and drop, but ${landed} did not take the drop.`);
@@ -4620,9 +4633,9 @@
                         if (!gate.again) how.push(gate.why.trim());
                         else {
                             const again = createMutationCounter();
-                            const touched = await touchGesture(scripted);
-                            await delay(100);
-                            const answered = again.stop();
+                            let touched;
+                            let answered = 0;
+                            try { touched = await touchGesture(scripted); await delay(100); } finally { answered = again.stop(); }
                             if (touched) how.push(answered ? 'The page did not answer the drag made with the mouse; it was made again as a touch, and the page answered that.' : noAnswerSeen('drag'));
                         }
                     }
