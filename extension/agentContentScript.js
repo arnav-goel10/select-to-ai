@@ -2632,14 +2632,37 @@
     /**
      * A spot of a control asked for by fractions, on screen: { point } when
      * the control is what is drawn there, { point: null, cover } when
-     * something else is drawn over it, null when no spot was asked for.
+     * something else is drawn over it, { point: null, inner } when a listed
+     * control of its own sits inside it there (a button on a card), null
+     * when no spot was asked for. The events would reach that inner control,
+     * which the checks before the action never judged, so it is not aimed at.
      */
     function aimAtSpot(el, data) {
         if (!data || data.fx === undefined || data.fx === null) return null;
         bringIntoView(el);
         const point = spotIn(el, data.fx, data.fy);
         const hit = drawnAt(point.x, point.y);
-        return pressesOn(el, hit) ? { point, hit } : { point: null, cover: hit };
+        if (!pressesOn(el, hit)) return { point: null, cover: hit };
+        const inner = numberedOf(hit);
+        if (inner && inner !== el && insideOf(inner, el)) return { point: null, inner };
+        return { point, hit };
+    }
+
+    /** True when `n` sits inside `el`, through shadow roots. */
+    function insideOf(n, el) {
+        for (let x = upOf(n); x; x = upOf(x)) if (x === el) return true;
+        return false;
+    }
+
+    /** The result when a spot asked for cannot be used: covered, or on a listed control inside this one. */
+    function missedSpot(id, spot, hovering) {
+        if (!spot.inner) return coveredResult(id, nameOfDrawn(spot.cover), hovering);
+        const who = /^\d+$/.test(String(id)) ? `[${id}]` : String(id);
+        const inner = nameOfDrawn(spot.inner);
+        return {
+            success: false,
+            error: `At that spot of ${who} is ${inner}, a control of its own inside it, so the ${hovering ? 'pointer' : 'press'} would reach that instead. Nothing was ${hovering ? 'moved over it' : 'pressed'}. To use ${inner}, give its own ref; to use ${who}, pick a spot of it outside that control.`,
+        };
     }
 
     /**
@@ -4410,7 +4433,7 @@
                 const picker = opensPicker(el) || (el.tagName === 'LABEL' && opensPicker(el.control));
                 // A spot inside it, when one was asked for (a point of a chart or a board).
                 const spot = aimAtSpot(el, data);
-                if (spot && !spot.point) return coveredResult(id, nameOfDrawn(spot.cover), false);
+                if (spot && !spot.point) return missedSpot(id, spot, false);
                 const pressed = plain && !picker ? await pointerOnControl(el, id, "Click", false, spot && spot.point) : { real: false };
                 if (pressed.fail) return pressed.fail;
                 let went = true;
@@ -4442,7 +4465,7 @@
             // ----- double_click -----
             if (action === 'double_click') {
                 const spot = aimAtSpot(el, data);
-                if (spot && !spot.point) return coveredResult(id, nameOfDrawn(spot.cover), false);
+                if (spot && !spot.point) return missedSpot(id, spot, false);
                 await moveAgentCursorToElement(el, "Double click");
                 await pulseAgentCursor("Double click");
                 const went = await scriptedDoubleClick(el, modifiers, spot ? spotIn(el, data.fx, data.fy) : null);
@@ -4452,7 +4475,7 @@
             // ----- right_click -----
             if (action === 'right_click') {
                 const spot = aimAtSpot(el, data);
-                if (spot && !spot.point) return coveredResult(id, nameOfDrawn(spot.cover), false);
+                if (spot && !spot.point) return missedSpot(id, spot, false);
                 await moveAgentCursorToElement(el, "Right click");
                 await pulseAgentCursor("Right click");
                 const { taken } = scriptedRightClick(el, modifiers, spot ? spotIn(el, data.fx, data.fy) : null);
@@ -4465,7 +4488,7 @@
             if (action === 'hold') {
                 const ms = Math.round(Math.min(10, Math.max(0.3, Number(data.seconds) || 1)) * 1000);
                 const spot = aimAtSpot(el, data);
-                if (spot && !spot.point) return coveredResult(id, nameOfDrawn(spot.cover), false);
+                if (spot && !spot.point) return missedSpot(id, spot, false);
                 await moveAgentCursorToElement(el, "Press and hold");
                 const at = spot ? spotIn(el, data.fx, data.fy) : centreOf(el);
                 if (agentCursor) placeAgentCursor(at.x, at.y, "Press and hold: holding");
@@ -4500,7 +4523,7 @@
                 // while the pointer is over it (CSS :hover), or a tooltip,
                 // stays open.
                 const spot = aimAtSpot(el, data);
-                if (spot && !spot.point) return coveredResult(id, nameOfDrawn(spot.cover), true);
+                if (spot && !spot.point) return missedSpot(id, spot, true);
                 const moved = await pointerOnControl(el, id, "Hover", true, spot && spot.point);
                 if (moved.fail) return moved.fail;
                 if (!moved.real) {
@@ -4542,6 +4565,7 @@
                 }
                 // Where it is taken hold of: a spot asked for, or where a person would press it.
                 const grip = aimAtSpot(el, data);
+                if (grip && grip.inner) return missedSpot(id, grip, false);
                 const from = grip || aimAt(el);
                 if (!from.point) return from.cover !== undefined ? coveredResult(id, nameOfDrawn(from.cover), false) : { success: false, error: `[${id}] is not drawn on screen, so it cannot be dragged.` };
                 let end;
