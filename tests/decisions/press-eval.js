@@ -87,8 +87,9 @@ async function main() {
       const ms = Date.now() - t0;
       if (out && out.usage) spent += out.usage.cost || 0;
       const said = out ? TOOLS.readLabels(g.entries, out.reply) : null;
-      batches.push({ page: g.name, round: r + 1, ms, controls: g.entries.length, promptChars: m.system.length + m.user.length, usable: !!said, error, prompt: out && out.usage ? out.usage.prompt : 0, completion: out && out.usage ? out.usage.completion : 0, cost: out && out.usage ? out.usage.cost : 0 });
-      console.log(`${g.name} (round ${r + 1}): ${(ms / 1000).toFixed(1)} s, ${g.entries.length} controls${said ? "" : `, NO USABLE ANSWER${error ? `: ${error.slice(0, 160)}` : ""}`}`);
+      const why = out && !said ? unusableWhy(g.entries, out.reply) : "";
+      batches.push({ page: g.name, round: r + 1, ms, controls: g.entries.length, promptChars: m.system.length + m.user.length, usable: !!said, error, ...(out && !said ? { why, reply: out.reply } : {}), prompt: out && out.usage ? out.usage.prompt : 0, completion: out && out.usage ? out.usage.completion : 0, cost: out && out.usage ? out.usage.cost : 0 });
+      console.log(`${g.name} (round ${r + 1}): ${(ms / 1000).toFixed(1)} s, ${g.entries.length} controls${said ? "" : `, NO USABLE ANSWER${error ? `: ${error.slice(0, 160)}` : ""}${why ? `: ${why}` : ""}`}`);
       g.entries.forEach((e, i) => {
         const does = said ? said[i] : "unanswered";
         const holds = does !== "none";
@@ -123,6 +124,22 @@ async function main() {
   console.log(`  spend                $${spent.toFixed(4)} in all, $${perPage.toFixed(5)} per page (cap $${CAP.toFixed(2)}${capped ? ", reached" : ""})`);
   console.log(`  tokens per page      median ${median(ok.map((b) => b.prompt))} in, ${median(ok.map((b) => b.completion))} out`);
   if (process.env.PRESS_EVAL_REPORT) fs.writeFileSync(process.env.PRESS_EVAL_REPORT, JSON.stringify({ model: `${PROVIDER}/${cfg.model}`, repeat: REPEAT, spent, perPage, capped, batches, rows }, null, 2));
+}
+
+/** Why readLabels would not use a reply, in words, for the log. */
+function unusableWhy(entries, reply) {
+  if (!reply || typeof reply !== "object") return `the reply is ${JSON.stringify(reply)}`;
+  const n = entries.length;
+  const parts = [];
+  if (Number(reply.count) !== n) parts.push(`count ${JSON.stringify(reply.count)} for ${n} controls`);
+  for (const k of ["commits", "unsure"]) if (reply[k] !== undefined && reply[k] !== null && !Array.isArray(reply[k])) parts.push(`${k} is a ${typeof reply[k]}`);
+  for (const c of Array.isArray(reply.commits) ? reply.commits : []) {
+    if (!c || typeof c !== "object") { parts.push(`a commits item is ${JSON.stringify(c)}`); continue; }
+    if (!(Number(c.n) >= 1 && Number(c.n) <= n)) parts.push(`n ${JSON.stringify(c.n)} out of range`);
+    if (!["pays", "sends", "deletes", "decides", "pay", "send", "delete", "decide"].includes(String(c.does || "").trim().toLowerCase())) parts.push(`does ${JSON.stringify(c.does)}`);
+  }
+  for (const u of Array.isArray(reply.unsure) ? reply.unsure : []) if (!(Number(u) >= 1 && Number(u) <= n)) parts.push(`unsure ${JSON.stringify(u)} out of range`);
+  return parts.join("; ").slice(0, 400) || JSON.stringify(reply).slice(0, 400);
 }
 
 /** Wrong rows folded by control, with how many rounds each was wrong in. */

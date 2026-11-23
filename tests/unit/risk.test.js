@@ -135,6 +135,8 @@ test("the press check is shown each control as the site's markup names it, and i
   const four = entries.slice(0, 4);
   assert.deepEqual(T.readLabels(four, { commits: [{ n: 1, does: "sends" }, { n: 3, does: "decides" }], unsure: [2], count: 4 }), ["send", "unsure", "decide", "none"]);
   assert.deepEqual(T.readLabels(four, { commits: [], count: "4" }), ["none", "none", "none", "none"]);
+  // A list a provider handed over as its JSON text is the same list.
+  assert.deepEqual(T.readLabels(four, { commits: '[{"n": 2, "does": "pays"}]', unsure: "[4]", count: 4 }), ["none", "pay", "none", "unsure"]);
   for (const bad of [null, [], { commits: [], unsure: [], count: 3 }, { commits: [{ n: 5, does: "pays" }], count: 4 }, { commits: [{ n: 1, does: "maybe" }], count: 4 }, { commits: [{ n: 1 }], count: 4 }, { commits: "1", count: 4 }, { commits: [], unsure: [9], count: 4 }]) {
     assert.equal(T.readLabels(four, bad), null, JSON.stringify(bad));
   }
