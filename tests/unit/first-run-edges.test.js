@@ -362,6 +362,33 @@ test("an upgrade keeps Perplexity as it was", async () => {
   assert.equal(chose.chrome.storage.sync.data.showPerplexity, false);
 });
 
+test("Reset in Settings gives back what a fresh install shows, Perplexity included", async () => {
+  let reloaded = 0;
+  const options = loadPage({
+    html: "options.html",
+    sync: { showPerplexity: true, showChatGPT: false, theme: "dark" },
+    globals: { confirm: () => true, location: { search: "", hash: "", href: "chrome-extension://testextensionid/options.html", reload: () => { reloaded += 1; } } },
+  });
+  await settle(10);
+  options.$("resetBtn").click();
+  for (const until = Date.now() + 2000; !reloaded && Date.now() < until;) await settle(5);
+  assert.equal(reloaded, 1, "Reset finished");
+  const sync = options.chrome.storage.sync.data;
+  assert.equal(sync.showChatGPT, undefined, "the user's choices are gone");
+  assert.equal(sync.theme, undefined);
+  assert.equal(sync.showPerplexity, true, "as a fresh install has it");
+
+  // The worker after Reset builds the same menu as after a fresh install.
+  const fresh = loadBackground();
+  fresh.chrome.runtime.onInstalled.fire({ reason: "install" });
+  await bgSettle(20);
+  const afterReset = loadBackground({ sync: { ...sync } });
+  await bgSettle(20);
+  const titles = (bg) => bg.currentMenu().map((m) => m.title).sort();
+  assert.ok(titles(fresh).includes("Send to Perplexity"));
+  assert.deepEqual(titles(afterReset), titles(fresh));
+});
+
 // ---------------------------------------------- 2.0's page right-click item
 
 test("right-clicking the page itself offers the side panel again, whatever is turned on", async () => {

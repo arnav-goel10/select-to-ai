@@ -171,6 +171,11 @@ const CONFIG = {
             'agentExtraInstructions',
             'agentLearning',
         ],
+        // What a new install starts with where that differs from how an unset
+        // key reads (an unset key keeps meaning what it meant to upgraders).
+        // Written on a fresh install (background.js) and again by Reset in
+        // Settings, so a Reset gives back what a new install shows.
+        FRESH_SETTINGS: Object.freeze({ showPerplexity: true }),
         API_KEYS: [
             'agentOpenRouterKey',
             'agentAnthropicKey',

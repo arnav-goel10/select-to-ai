@@ -234,15 +234,18 @@ function keepClaudeChoice() {
 }
 
 /**
- * A new install shows Perplexity in the right-click menu, as the welcome
- * page and the store listing say. Its host is a required permission, so
- * nothing more is asked. Only a fresh install: an upgrade keeps what that
- * user's version was showing (see v2SettingsFix and keepClaudeChoice).
+ * A new install starts with CONFIG.STORAGE.FRESH_SETTINGS (Perplexity in
+ * the right-click menu: its host is a required permission, so nothing more
+ * is asked). A key already set is kept. Only a fresh install: an upgrade
+ * keeps what that user's version was showing (see v2SettingsFix and
+ * keepClaudeChoice). Reset in Settings writes the same settings.
  */
-function showPerplexityOnFreshInstall() {
-    chrome.storage.sync.get(['showPerplexity'], (items) => {
-        if (chrome.runtime.lastError || !items || items.showPerplexity !== undefined) return;
-        chrome.storage.sync.set({ showPerplexity: true });
+function writeFreshSettings() {
+    const fresh = CONFIG.STORAGE.FRESH_SETTINGS;
+    chrome.storage.sync.get(Object.keys(fresh), (items) => {
+        if (chrome.runtime.lastError || !items) return;
+        const unset = Object.fromEntries(Object.entries(fresh).filter(([k]) => items[k] === undefined));
+        if (Object.keys(unset).length) chrome.storage.sync.set(unset);
     });
 }
 
@@ -263,7 +266,7 @@ function onInstalledHandler(details) {
         migrateFrozenSettings();
     }
     if (reason === 'install') {
-        showPerplexityOnFreshInstall();
+        writeFreshSettings();
         chrome.tabs.create({ url: chrome.runtime.getURL('welcome.html') });
     }
 }
