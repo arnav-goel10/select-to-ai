@@ -226,3 +226,21 @@ test("once the user says something, a question about the step is theirs to answe
   reply(run, [{ do: "ask_user", kind: "question", question: "Remove the Purple Mug now?" }]);
   assert.equal(run.status, "waiting");
 });
+
+test("after a decline, typing into the declined control or selecting its text is the user's to allow again, and a secret field stays theirs", () => {
+  const box = { id: 5, tagName: "textarea", accName: "Message to seller", rect: { x: 100, y: 400, w: 300, h: 60 } };
+  const withBox = { ...shop, elements: [...shop.elements, box] };
+  const fresh = RUN.newRun({ id: "f", task: "tidy my basket", tabId: 7, startUrl: shop.url, marker: "PAGE-abcd1234", now: 1 });
+  assert.equal(POLICY.decide({ do: "select_text", ref: 1 }, withBox, fresh, { riskConfirmation: true }).verdict, "allow", "not held without the decline");
+  const run = declinedRun();
+  look(run);
+  for (const a of [{ do: "type", ref: 1, value: "x" }, { do: "select_text", ref: 1 }]) {
+    const v = POLICY.decide(a, withBox, run, { riskConfirmation: true });
+    assert.equal(v.verdict, "confirm", JSON.stringify(a));
+    assert.ok([v.why, ...(v.detail || [])].some((t) => /^You declined "Remove Purple Mug" a moment ago/.test(t)), JSON.stringify(v));
+  }
+  assert.equal(POLICY.decide({ do: "type", ref: 5, value: "hello" }, withBox, run, { riskConfirmation: true }).verdict, "allow", "another control is judged alone");
+  const pw = { ...shop, elements: [{ id: 1, tagName: "input", type: "password", sensitive: "password", accName: "Password" }] };
+  assert.equal(POLICY.decide({ do: "type", ref: 1, value: "hunter2" }, pw, run, { riskConfirmation: true }).verdict, "handoff");
+  assert.equal(POLICY.decide({ do: "select_text", ref: 1 }, pw, run, { riskConfirmation: true }).verdict, "refuse");
+});
