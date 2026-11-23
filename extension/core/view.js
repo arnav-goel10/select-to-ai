@@ -26,7 +26,7 @@
 
   // Actions that work the page itself, where what the page draws in
   // answer (a menu opening, a list of suggestions) is part of the result.
-  const PAGE_ACTIONS = Object.freeze(new Set(["click", "click_at", "hover", "drag", "fill", "type", "select_text", "fill_details", "press", "scroll"]));
+  const PAGE_ACTIONS = Object.freeze(new Set(["click", "click_at", "double_click", "right_click", "hold", "hover", "drag", "fill", "type", "select_text", "fill_details", "press", "scroll"]));
   // Waits the user meets on the page itself, where a banner asks them.
   const ON_PAGE_WAITS = Object.freeze(new Set(["sign_in", "human_check", "code", "payment", "press"]));
 

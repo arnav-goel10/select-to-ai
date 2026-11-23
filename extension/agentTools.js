@@ -654,6 +654,8 @@
       if (el.at && !o.withGeometry) line += ` at ${el.at.x},${el.at.y}`;
     }
     if (el.role && !["button", "link"].includes(el.role)) line += ` role=${el.role}`;
+    // A drawing is pressed and pointed at by spots inside it (fx, fy).
+    if (el.size && !o.withGeometry) line += ` drawing ${el.size.w}x${el.size.h}`;
     if (el.placeholder && el.placeholder !== name) line += ` placeholder=${q(clip(el.placeholder, 50))}`;
     if (tag === "select") {
       if (el.selected) line += ` = ${q(clip(el.selected, 40))}`;

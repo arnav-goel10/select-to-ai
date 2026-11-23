@@ -148,9 +148,25 @@
     return ids;
   }
 
+  // The actions that press the control they are given with the pointer.
+  // Every rule for a click holds for each of them, here and nowhere else:
+  // a new way to press a control goes in this list and inherits them all.
+  const POINTER_PRESSES = Object.freeze(["click", "double_click", "right_click", "hold"]);
+
+  /**
+   * True when the action presses the control `el`: one of the pointer
+   * presses, or a key that does what a click on it does.
+   */
+  function pressesOn(a, el) {
+    if (!a) return false;
+    if (POINTER_PRESSES.includes(a.do)) return true;
+    return a.do === "press" && pressesControl(el, a.key);
+  }
+
   /** The same action in the shape the risk checks in agentTools.js read. */
   function asRiskAction(a, el) {
-    if (a.do === "click") return { action: "click", id: a.ref };
+    // A double click, a right click and a long press are presses on the control.
+    if (POINTER_PRESSES.includes(a.do)) return { action: "click", id: a.ref };
     if (a.do === "fill" || a.do === "type") return { action: "type", id: a.ref, text: a.value };
     // A key that presses the control it lands on is a click on it.
     if (a.do === "press" && pressesControl(el, a.key)) return { action: "click", id: el.id };
@@ -211,11 +227,19 @@
    * frame the agent cannot read could be anything there, so it is the
    * user's to allow.
    */
-  function decidePointer(a, page, run, settings, store) {
+  function decidePointer(a, page0, run, settings, store) {
     const refs = [];
     let blind = false;
+    let page = page0;
     if (a.do === "drag") refs.push(a.ref);
-    const at = a.do === "click_at" ? { x: a.x, y: a.y } : a.to_ref !== undefined ? null : dropPoint(a, page);
+    // A place to let go named by its words is decided as a press on a
+    // control with those words: a bin that says "Delete forever" is a delete.
+    if (a.do === "drag" && a.to_text !== undefined) {
+      const named = { id: -1, tagName: "div", text: String(a.to_text), accName: String(a.to_text) };
+      page = { ...(page0 || {}), elements: [...((page0 && page0.elements) || []), named] };
+      refs.push(named.id);
+    }
+    const at = a.do === "click_at" ? { x: a.x, y: a.y } : a.to_ref !== undefined || a.to_text !== undefined ? null : dropPoint(a, page);
     if (a.do === "drag" && a.to_ref !== undefined) refs.push(a.to_ref);
     if (at) {
       const hit = pointTarget(page, at.x, at.y);
@@ -233,6 +257,25 @@
       if (STRENGTH(v) > STRENGTH(strongest)) strongest = v;
     }
     return strongest;
+  }
+
+  /**
+   * A drop on a place named by its words was judged by those words. The
+   * place the page found holds `found`, all the words written on it: when
+   * a drop there is judged more strongly than on the words given ("forever"
+   * on a bin that says "Delete forever"), the drop is refused, and the model
+   * is told to name the place by all its words, which is then decided, and
+   * approved or not, the usual way. Null when the place is no riskier.
+   */
+  function placeRiskier(a, found, page, run, settings, store) {
+    if (!a || a.do !== "drag" || a.to_text === undefined) return null;
+    const words = String(found || "").replace(/\s+/g, " ").trim().slice(0, 200);
+    if (!words) return null;
+    const given = decidePointer(a, page, run, settings || {}, store);
+    const there = decidePointer({ ...a, to_text: words }, page, run, settings || {}, store);
+    const level = (v) => (v.verdict === "refuse" ? 4 : v.verdict === "handoff" ? 3 : v.verdict === "confirm" ? 2 : 0);
+    if (level(there) <= level(given)) return null;
+    return { verdict: "refuse", message: `The place with "${String(a.to_text).slice(0, 60)}" on it says "${words.slice(0, 120)}" in full, and a drop there is judged by all of it. Nothing was dragged. Drag again with to_text set to all of its words, or with to_ref.` };
   }
 
   /**
@@ -438,10 +481,16 @@
     // The button that pays is pressed by the user: the agent fills the form,
     // points at the button and waits. Other spending steps (to the basket,
     // to checkout) are approved in the panel.
-    const paysNow = risk.kind === "pay" && (a.do === "click" || a.do === "press") && el
+    const paysNow = risk.kind === "pay" && pressesOn(a, el) && el
       && ((page.blockers || []).some((b) => b.kind === "payment") || els.some((e) => e.sensitive === "payment" && e.formId !== undefined && e.formId === el.formId));
     if (paysNow) {
       return { verdict: "handoff", kind: "payment", press: a.ref, question: `Everything is filled in. Please check it and press "${TOOLS.elementLabel(el) || "the button"}" yourself; I'll carry on after.` };
+    }
+    // A double click presses the control twice. One the user must approve
+    // is pressed once, by click, so an approval never becomes two orders,
+    // two payments or two messages.
+    if (a.do === "double_click") {
+      return { verdict: "refuse", message: `A double click presses ${risk.target ? `"${String(risk.target).slice(0, 80)}"` : "that control"} twice, and a press there needs the user's approval for one press. Use click instead.` };
     }
     const detail = [];
     if (risk.target) detail.push(`On: ${risk.target}`);
@@ -478,7 +527,7 @@
     if (!el || !TOOLS.saysNotToSubmit(requestOf(run))) return null;
     const form = el.formId !== undefined ? ((page && page.forms) || []).find((f) => f.id === el.formId) : null;
     if (form && form.search) return null;
-    const clicks = (a.do === "click" || (a.do === "press" && pressesControl(el, a.key))) && !!TOOLS.guardNoSubmit({ action: "click", id: el.id }, requestOf(run), page);
+    const clicks = pressesOn(a, el) && !!TOOLS.guardNoSubmit({ action: "click", id: el.id }, requestOf(run), page);
     // Enter in a message box with no form sends it as surely as in a form.
     const enters = a.do === "press" && !pressesControl(el, a.key) && isEnter(a.key)
       && ((!!form && form.fields > 0) || (!form && TOOLS.isMessageBox(el)));
@@ -574,7 +623,7 @@
     return t;
   }
 
-  const api = Object.freeze({ decide, decideSwitch, keysToo, blockersOf, detourSite, detourMessage, remember, asRiskAction, keptFromSending, pressesControl, pressLandsOn, writesText, secretField, firstAddress, pointTarget, dropPoint, declinedMark, declinedAgain, HANDOVER });
+  const api = Object.freeze({ decide, decideSwitch, placeRiskier, pressesOn, POINTER_PRESSES, keysToo, blockersOf, detourSite, detourMessage, remember, asRiskAction, keptFromSending, pressesControl, pressLandsOn, writesText, secretField, firstAddress, pointTarget, dropPoint, declinedMark, declinedAgain, HANDOVER });
   root.SELECT_TO_AI_POLICY = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
