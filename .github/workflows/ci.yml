@@ -341,8 +341,9 @@ jobs:
           path: store-screens
           if-no-files-found: warn
 
-  # Not a required check: the debugger is not in the 4.0 build. Its known
-  # busyPage timing failure on the current runner image is tracked here.
+  # Not a required check: the debugger is not in the 4.0 build. run-v4.js
+  # adds the debugger permission to its test copy of the extension, so this
+  # job tests the real-input path the shipped build cannot use.
   e2e-debugger-on-nightly:
     name: e2e debugger on (nightly)
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly)

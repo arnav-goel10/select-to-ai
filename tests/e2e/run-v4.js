@@ -4,6 +4,7 @@
  *   node tests/e2e/run-v4.js            every scenario
  *   E2E_ONLY=signin,reopen node tests/e2e/run-v4.js
  *   E2E_DEBUGGER=off node tests/e2e/run-v4.js   (as if the debugger permission were absent)
+ *   (otherwise the test copy is given the debugger permission the shipped manifest leaves out)
  *   E2E_EXT=dir      load the extension from dir (for example the unzipped package)
  *   E2E_NOT_APPLICABLE=tests/e2e/not-applicable-4.0.json   skip the scenarios listed there
  *
@@ -22,7 +23,10 @@ const TOOLS = require("../../extension/agentTools.js");
 
 const PORT = parseInt(process.env.E2E_PORT || "8917", 10);
 // The local test server is granted, as after Allow on the site-access card.
-const EXT = require("../helpers/granted-build.js").grantedBuild(path.resolve(process.env.E2E_EXT || path.join(__dirname, "../../extension")));
+// Unless E2E_DEBUGGER=off, the test copy also gets the debugger permission,
+// which the shipped manifest leaves out, so the debugger-on run really has it.
+const DEBUGGER_ON = process.env.E2E_DEBUGGER !== "off";
+const EXT = require("../helpers/granted-build.js").grantedBuild(path.resolve(process.env.E2E_EXT || path.join(__dirname, "../../extension")), undefined, { debugger: DEBUGGER_ON });
 const ONLY = (process.env.E2E_ONLY || "").split(",").filter(Boolean);
 // Scenarios that do not apply to the build under test, with the reason, from a checked-in file.
 const NOT_APPLICABLE = process.env.E2E_NOT_APPLICABLE ? require(path.resolve(process.env.E2E_NOT_APPLICABLE)) : { scenarios: [] };
@@ -59,6 +63,8 @@ async function main() {
     const workerTarget = await browser.waitForTarget((t) => t.type() === "service_worker" && t.url().includes("background.js"), { timeout: 20000 });
     const extensionId = new URL(workerTarget.url()).host;
     const worker = await workerTarget.worker();
+    // A debugger-on run without the debugger would quietly test the wrong build.
+    if (DEBUGGER_ON && !(await worker.evaluate(() => !!chrome.debugger))) throw new Error("E2E_DEBUGGER is on but the extension under test has no chrome.debugger");
     await worker.evaluate((s) => new Promise((r) => chrome.storage.sync.set(s, r)), {
       agentActiveProvider: "custom", agentCustomUrl: `${server.baseUrl}/v1`, agentModel: "e2e-scripted-model", showAgent: true,
       agentRiskConfirmation: true, agentDomainAllowlist: "", openingMode: "tab", agentLearning: false,
