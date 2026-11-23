@@ -1308,7 +1308,7 @@ body {
   flex-direction: column;
   gap: 6px;
   padding: 12px 10px 10px 14px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--control-edge);
   border-radius: var(--radius-xl);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
@@ -1488,7 +1488,7 @@ body {
 .known-fields input {
   height: 32px;
   padding: 0 10px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--control-edge);
   border-radius: var(--radius-md);
   background: var(--surface);
   color: var(--text);

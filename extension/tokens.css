@@ -7,41 +7,47 @@
  * data-theme="light" or "dark" from the stored preference, so there is no
  * flash of the wrong theme while the page loads.
  *
- * Palette: warm paper and soft greys in light, graphite in dark, one
- * blue-violet accent for what can be acted on now and for live work, and
- * four state colours (working, needs you, done, failed). Contrast of every
- * text colour against every surface it sits on is at least 4.5:1.
+ * Palette: ink and paper. Warm paper and soft greys in light, the graphite
+ * of the logo tile in dark. There is no hue in the accent: primary actions,
+ * focus rings and selected states are graphite ink in light and silver in
+ * dark, like the mark on the icon. Four state colours (working, needs you,
+ * done, failed) are the only hues. Contrast of every text colour against
+ * every surface it sits on is at least 4.5:1.
  */
 
 :root {
   color-scheme: light dark;
 
   /* Surfaces */
-  --bg: light-dark(#fafaf9, #141517);
-  --surface: light-dark(#ffffff, #1b1c1e);
-  --surface-2: light-dark(#f3f2f0, #242528);
-  --surface-3: light-dark(#eae9e6, #2c2d31);
+  --bg: light-dark(#fafaf9, #161719);
+  --surface: light-dark(#ffffff, #1d1e21);
+  --surface-2: light-dark(#f3f2f0, #26272a);
+  --surface-3: light-dark(#eae9e6, #2f3034);
   --surface-sunken: light-dark(#f4f3f1, #111214);
-  --border: light-dark(#e4e3df, #2a2b2f);
-  --border-strong: light-dark(#d2d1cc, #3a3b40);
-  --scrim: light-dark(rgb(20 20 24 / 0.32), rgb(0 0 0 / 0.55));
+  --border: light-dark(#e4e3df, #2d2e32);
+  --border-strong: light-dark(#d2d1cc, #3f4045);
+  /* The outline of a field the user types into: a pencil line, 3:1 on its surface. */
+  --control-edge: light-dark(#8b8a85, #707277);
+  --scrim: light-dark(rgb(22 23 25 / 0.32), rgb(0 0 0 / 0.55));
 
   /* Text */
-  --text: light-dark(#17181b, #eaebee);
-  --text-muted: light-dark(#595a61, #acaeb4);
-  --text-subtle: light-dark(#6d6e75, #90929a);
+  --text: light-dark(#17181b, #e9eaec);
+  --text-muted: light-dark(#595a61, #b0b2b6);
+  --text-subtle: light-dark(#66676e, #9a9ca1);
 
-  /* Accent: what the user can act on now, and the agent's live state. */
-  --accent: light-dark(#5051cf, #8f9bfb);
-  --accent-hover: light-dark(#4243b8, #a7b1ff);
-  --accent-fill: light-dark(#5051cf, #5c62d2);
-  --accent-fill-hover: light-dark(#4243b8, #6a70de);
-  --accent-contrast: #ffffff;
-  --accent-soft: light-dark(rgb(80 81 207 / 0.08), rgb(143 155 251 / 0.12));
-  --accent-ring: light-dark(rgb(80 81 207 / 0.28), rgb(143 155 251 / 0.38));
+  /* Accent: ink in light, silver in dark. What the user can act on now,
+     and the agent's live state. No hue. */
+  --accent: light-dark(#2a2b30, #d4d6da);
+  --accent-hover: light-dark(#17181b, #eceef0);
+  --accent-fill: light-dark(#25262a, #d0d2d6);
+  --accent-fill-hover: light-dark(#3a3b40, #e4e6e9);
+  --accent-contrast: light-dark(#ffffff, #141517);
+  --accent-soft: light-dark(rgb(23 24 27 / 0.06), rgb(212 214 218 / 0.10));
+  --accent-ring: light-dark(rgb(23 24 27 / 0.22), rgb(212 214 218 / 0.34));
   --link: var(--accent);
 
-  /* State: working uses the accent; the other three have their own hue. */
+  /* State: working uses the ink or silver accent, with the pulse and the
+     shimmer to mark it; the other three have their own hue. */
   --working: var(--accent);
   --needs: light-dark(#a35a00, #eeb563);
   --needs-soft: light-dark(rgb(196 120 10 / 0.1), rgb(238 181 99 / 0.1));
@@ -56,8 +62,8 @@
   --press-overlay: light-dark(rgb(23 24 27 / 0.08), rgb(255 255 255 / 0.08));
 
   /* Elevation: soft and layered, used sparingly. */
-  --shadow-color: light-dark(rgb(20 20 30 / 0.06), rgb(0 0 0 / 0.4));
-  --shadow-color-2: light-dark(rgb(20 20 30 / 0.08), rgb(0 0 0 / 0.5));
+  --shadow-color: light-dark(rgb(22 23 25 / 0.06), rgb(0 0 0 / 0.4));
+  --shadow-color-2: light-dark(rgb(22 23 25 / 0.08), rgb(0 0 0 / 0.5));
   --shadow-xs: 0 1px 2px var(--shadow-color);
   --shadow-sm: 0 1px 2px var(--shadow-color), 0 2px 6px var(--shadow-color);
   --shadow-md: 0 1px 2px var(--shadow-color), 0 4px 12px var(--shadow-color-2);

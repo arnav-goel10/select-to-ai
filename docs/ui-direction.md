@@ -11,8 +11,8 @@ The logo is a silver mark on graphite. It is never replaced or redrawn; the inte
 ## Colour
 
 - **Neutral base.** Graphite and warm greys in dark mode, near-white paper with soft grey surfaces in light mode. Both are designed, not inverted from each other. Dark is first-class.
-- **One accent,** used only for what the user can act on now and for the agent's live state. A single cool hue that sits well beside the silver logo (a clear blue-violet, around `oklch(65% 0.17 270)` in dark, a deeper one in light). It is never used for decoration.
-- **State colours,** quiet and consistent everywhere: working (accent), needs you (amber), done (green), stopped or failed (red). Each also has an icon and words, so colour is never the only signal.
+- **One accent, and it is ink.** Used only for what the user can act on now and for the agent's live state. It has no hue, like the logo: graphite ink in light mode, silver in dark mode. Primary buttons, focus rings and selected states all use it. No purple, violet or blue anywhere.
+- **State colours,** quiet and consistent everywhere: working (the ink accent, carried by a pulsing dot and the shimmer on the current step), needs you (amber), done (green), stopped or failed (red). Each also has an icon and words, so colour is never the only signal.
 - Colours are defined once, as tokens, in one shared stylesheet that every page uses: panel, side panel, options, welcome, popup.
 
 ## Type and space

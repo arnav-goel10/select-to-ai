@@ -312,7 +312,7 @@
             .select-to-ai-badge {
                 position: absolute;
                 pointer-events: none;
-                background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+                background: linear-gradient(135deg, #3a3b40 0%, #1d1e21 100%);
                 color: #ffffff;
                 font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
                 font-size: 11px;
@@ -320,7 +320,7 @@
                 padding: 3px 7px;
                 border-radius: 12px;
                 border: 2px solid #ffffff;
-                box-shadow: 0 4px 12px rgba(124, 58, 237, 0.4), 0 0 0 1px rgba(0,0,0,0.1);
+                box-shadow: 0 4px 12px rgba(22, 23, 25, 0.35), 0 0 0 1px rgba(0,0,0,0.1);
                 transform: translate(-50%, -50%) scale(0.9);
                 opacity: 0;
                 z-index: 2147483647;
@@ -386,8 +386,8 @@
                 width: 8px;
                 height: 8px;
                 border-radius: 999px;
-                background: #8b5cf6;
-                box-shadow: 0 0 0 6px rgba(139, 92, 246, 0.22);
+                background: #25262a;
+                box-shadow: 0 0 0 2px #ffffff, 0 0 0 6px rgba(37, 38, 42, 0.22);
             }
 
             .select-to-ai-agent-cursor.clicking::after {
@@ -403,7 +403,7 @@
                 opacity: 0;
                 transform: translate3d(44px, 24px, 0);
                 transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease;
-                background: rgba(17, 24, 39, 0.92);
+                background: rgba(23, 24, 27, 0.92);
                 color: #ffffff;
                 border: 1px solid rgba(255, 255, 255, 0.16);
                 border-radius: 999px;
@@ -428,9 +428,9 @@
             }
 
             @keyframes selectToAiCursorClick {
-                0% { transform: scale(1); box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.3); }
-                50% { transform: scale(0.72); box-shadow: 0 0 0 12px rgba(139, 92, 246, 0.2); }
-                100% { transform: scale(1); box-shadow: 0 0 0 18px rgba(139, 92, 246, 0); }
+                0% { transform: scale(1); box-shadow: 0 0 0 4px rgba(37, 38, 42, 0.3); }
+                50% { transform: scale(0.72); box-shadow: 0 0 0 12px rgba(37, 38, 42, 0.2); }
+                100% { transform: scale(1); box-shadow: 0 0 0 18px rgba(37, 38, 42, 0); }
             }
         `;
         document.head.appendChild(style);
