@@ -85,9 +85,35 @@
 
   // Keys that press what they land on: Enter (or Return) and Space, alone
   // or with modifiers held.
+  // A key is judged as the page will be sent it: "Ctrl-Enter", "Mod-Enter"
+  // and "ctrl+Return" are all Enter held with Control (agentTools.js
+  // parseKeyCombo, which the content script presses keys through).
   const ENTER_KEY = /(^|\+)\s*(enter|return|numpadenter)$/i;
   const SPACE_KEY = /(^|\+)\s*(space|spacebar| )$/i;
-  const activatingKey = (key) => ENTER_KEY.test(String(key || "")) || SPACE_KEY.test(String(key || ""));
+  const comboOf = (key) => {
+    try { return TOOLS.parseKeyCombo(String(key == null ? "" : key), false); } catch (_e) { return { key: String(key || ""), mods: {} }; }
+  };
+  const isEnter = (key) => ENTER_KEY.test(String(key || "")) || /^(enter|return|numpadenter)$/i.test(comboOf(key).key);
+  const isSpace = (key) => SPACE_KEY.test(String(key || "")) || comboOf(key).key === " ";
+  const activatingKey = (key) => isEnter(key) || isSpace(key);
+
+  /**
+   * True when a key, pressed in a text box the page leaves it to, puts
+   * text into the box or takes text out of it: a character, Backspace or
+   * Delete, or a paste or cut shortcut. On a Mac or elsewhere alike, so a
+   * shortcut written for the other computer is judged too.
+   */
+  function writesText(key) {
+    const c = comboOf(key);
+    if (/^(enter|return|numpadenter)$/i.test(c.key)) return false;
+    const m = c.mods || {};
+    if ((m.ctrlKey || m.metaKey) && /^[vx]$/i.test(c.key)) return true;
+    if (m.shiftKey && /^insert$/i.test(c.key)) return true;
+    return [false, true].some((mac) => {
+      const d = TOOLS.keyDefault(c.key, m, mac);
+      return !!d && (d.kind === "text" || d.kind === "delete");
+    });
+  }
 
   /**
    * True when a key pressed on this control does what a click on it does:
@@ -114,7 +140,7 @@
    * the focus is on one of these, or on nothing.
    */
   function pressLandsOn(a, page, run) {
-    if (!a || a.do !== "press" || a.ref !== undefined || !activatingKey(a.key)) return [];
+    if (!a || a.do !== "press" || a.ref !== undefined || !(activatingKey(a.key) || writesText(a.key))) return [];
     const els = (page && page.elements) || [];
     const ids = els.filter((e) => e.focused).map((e) => e.id);
     const last = run && run.focusRef;
@@ -141,10 +167,10 @@
   function asRiskAction(a, el) {
     // A double click, a right click and a long press are presses on the control.
     if (POINTER_PRESSES.includes(a.do)) return { action: "click", id: a.ref };
-    if (a.do === "fill") return { action: "type", id: a.ref, text: a.value };
+    if (a.do === "fill" || a.do === "type") return { action: "type", id: a.ref, text: a.value };
     // A key that presses the control it lands on is a click on it.
     if (a.do === "press" && pressesControl(el, a.key)) return { action: "click", id: el.id };
-    if (a.do === "press" && ENTER_KEY.test(String(a.key || ""))) return { action: "keypress", id: a.ref, text: "Enter" };
+    if (a.do === "press" && isEnter(a.key)) return { action: "keypress", id: a.ref, text: "Enter" };
     if (a.do === "navigate") return { action: "navigate", url: a.url };
     if (a.do === "tabs" && a.op === "open") return { action: "open_tab", url: a.url };
     return null;
@@ -268,7 +294,76 @@
    */
   const requestOf = (run) => String((run && (run.request || run.task)) || "");
 
+  // Actions that only look: they change nothing, so a declined control may still be read.
+  const LOOKS = new Set(["hover", "scroll", "read", "look", "find", "wait", "recall"]);
+  const addressOf = (url) => String(url || "").split("#")[0];
+  // A control as the user saw it: its words and the row they sit in, since
+  // refs are renumbered when the page is redrawn and two rows may each have a "Remove".
+  const controlKey = (el) => (el ? `${TOOLS.elementLabel(el)}\u0001${el.group || ""}` : "");
+  const opensUrl = (a) => (a.do === "navigate" || (a.do === "tabs" && a.op === "open") ? addressOf(a.url) : "");
+
+  /**
+   * What an action the user declined touched: the controls it pressed,
+   * typed into, dragged or let go on, a key's landing place and a point's
+   * control, and the address it would open. Kept by the run (run.declined)
+   * until the user says something new.
+   */
+  function declinedMark(a, page, run) {
+    const els = (page && page.elements) || [];
+    const refs = [a.ref, a.to_ref, ...(a.landsOn || [])].filter((r) => r !== undefined && r !== null);
+    if (a.do === "click_at" || (a.do === "drag" && a.to_ref === undefined)) {
+      const at = a.do === "click_at" ? { x: a.x, y: a.y } : dropPoint(a, page);
+      const hit = at ? pointTarget(page, at.x, at.y) : null;
+      if (hit && hit.el) refs.push(hit.el.id);
+    }
+    const found = refs.map((r) => els.find((e) => e.id === r)).filter(Boolean);
+    const labels = (run && run.labels) || {};
+    const names = [...new Set([...found.map(TOOLS.elementLabel), ...refs.map((r) => labels[r]).filter(Boolean)])];
+    const rows = [...new Set(found.map((e) => e.group).filter(Boolean))];
+    return { page: addressOf(page && page.url), keys: [...new Set(found.map(controlKey))], names, rows, urls: opensUrl(a) ? [opensUrl(a)] : [] };
+  }
+
+  /**
+   * The declined step an action would reach again, or null: its control
+   * (by its words and row, so a redraw's new ref is the same control) on
+   * the same page, or its address.
+   */
+  function declinedAgain(a, el, page, run) {
+    const gone = (run && run.declined) || [];
+    if (!gone.length || LOOKS.has(a.do)) return null;
+    const here = addressOf(page && page.url);
+    const key = controlKey(el);
+    const url = opensUrl(a);
+    return gone.find((d) => (key && d.page === here && d.keys.includes(key)) || (url && d.urls.includes(url))) || null;
+  }
+
+  /**
+   * Every action is decided here. The user has just declined a step: until
+   * they say something new, any action that reaches what they declined is
+   * theirs to allow again, however the rules would judge it alone. "No" is
+   * to the result, so a key pressed on the same control (Delete, Enter), a
+   * press at its spot, a drag onto it or the same address opened another
+   * way does not get round it. Actions decided by parts (a drag, a press at
+   * a point, a key with no ref) come back through here for each part, and
+   * a new action is held to this as well.
+   */
   function decide(a, page, run, settings, store, tabs) {
+    const v = judge(a, page, run, settings, store, tabs);
+    if ((settings || {}).riskConfirmation === false || STRENGTH(v) > 2) return v;
+    // A key with no ref lands where the focus is: on the control the page
+    // shows focused, or the one this step last used.
+    const els = (page && page.elements) || [];
+    const on = a.ref !== undefined ? els.filter((e) => e.id === a.ref)
+      : a.do === "press" ? els.filter((e) => e.focused || (run && e.id === run.focusRef)) : [];
+    const hit = [...on, null].map((el) => declinedAgain(a, el, page, run)).find(Boolean);
+    if (!hit) return v;
+    const what = hit.names[0] || hit.urls[0] || "that step";
+    const said = `You declined "${String(what).slice(0, 80)}" a moment ago. This would do it again${a.do === "click" ? "" : " another way"}.`;
+    if (v.verdict === "confirm") return { ...v, detail: [said, ...(v.detail || [])] };
+    return { verdict: "confirm", kind: hit.risk || "send", why: said, detail: [], declined: true };
+  }
+
+  function judge(a, page, run, settings, store, tabs) {
     const s = settings || {};
     const els = (page && page.elements) || [];
     const el = a.ref !== undefined ? els.find((e) => e.id === a.ref) : null;
@@ -310,15 +405,13 @@
       return strongest;
     }
     const risky = asRiskAction(a, el);
-    if (!risky) return ALLOW;
 
     // A check that a person is visiting is the person's to pass.
-    if (TOOLS.guardHumanCheck(risky, page)) return { verdict: "handoff", kind: "human_check", question: HANDOVER.human_check };
-    // Secrets are typed by the user, never by the agent.
-    if (a.do === "fill" && el && el.sensitive) {
-      const kind = el.sensitive === "password" ? "sign_in" : el.sensitive === "payment" ? "payment" : el.sensitive === "code" ? "code" : "question";
-      return { verdict: "handoff", kind, question: HANDOVER[kind] || HANDOVER.id };
-    }
+    if (risky && TOOLS.guardHumanCheck(risky, page)) return { verdict: "handoff", kind: "human_check", question: HANDOVER.human_check };
+    // Secrets are typed by the user, never by the agent, by any action.
+    const secret = secretField(a, el);
+    if (secret) return secret;
+    if (!risky) return ALLOW;
     // The user asked for the form to be filled and left for them to send.
     const held = keptFromSending(a, el, page, run);
     if (held) return held;
@@ -401,9 +494,26 @@
     }
     const detail = [];
     if (risk.target) detail.push(`On: ${risk.target}`);
-    if (a.do === "fill" && risk.kind !== "secret") detail.push(`Text: ${String(a.value).slice(0, 160)}`);
+    if ((a.do === "fill" || a.do === "type") && risk.kind !== "secret") detail.push(`Text: ${String(a.value).slice(0, 160)}`);
     if (opinion) detail.push(`Second check: ${opinion}`);
     return { verdict: "confirm", kind: risk.kind, why: risk.why, detail, site: risk.site || "", url: risk.url || "", ...(check ? { check } : {}) };
+  }
+
+  /**
+   * A password, payment, one-time-code or identity field is the user's: an
+   * action that would put text in it or take text out of it (fill, type,
+   * a key that types, deletes, pastes or cuts) is handed to the user, and
+   * one that would read its text back (select_text) is refused. Every
+   * action that works on a field's text is judged here, so a new one is
+   * judged by what it does to the field, not by its name.
+   */
+  function secretField(a, el) {
+    if (!el || !el.sensitive) return null;
+    if (a.do === "select_text") return { verdict: "refuse", message: "That field holds something only the user types (a password, card number or code), so its text is not selected or read." };
+    const writes = a.do === "fill" || a.do === "type" || (a.do === "press" && writesText(a.key));
+    if (!writes) return null;
+    const kind = el.sensitive === "password" ? "sign_in" : el.sensitive === "payment" ? "payment" : el.sensitive === "code" ? "code" : "question";
+    return { verdict: "handoff", kind, question: HANDOVER[kind] || HANDOVER.id };
   }
 
   /**
@@ -419,7 +529,7 @@
     if (form && form.search) return null;
     const clicks = pressesOn(a, el) && !!TOOLS.guardNoSubmit({ action: "click", id: el.id }, requestOf(run), page);
     // Enter in a message box with no form sends it as surely as in a form.
-    const enters = a.do === "press" && !pressesControl(el, a.key) && ENTER_KEY.test(String(a.key || ""))
+    const enters = a.do === "press" && !pressesControl(el, a.key) && isEnter(a.key)
       && ((!!form && form.fields > 0) || (!form && TOOLS.isMessageBox(el)));
     if (!clicks && !enters) return null;
     const what = clicks ? `"${TOOLS.elementLabel(el) || "that button"}"` : "Enter";
@@ -513,7 +623,7 @@
     return t;
   }
 
-  const api = Object.freeze({ decide, decideSwitch, placeRiskier, pressesOn, POINTER_PRESSES, keysToo, blockersOf, detourSite, detourMessage, remember, asRiskAction, keptFromSending, pressesControl, pressLandsOn, firstAddress, pointTarget, dropPoint, HANDOVER });
+  const api = Object.freeze({ decide, decideSwitch, placeRiskier, pressesOn, POINTER_PRESSES, keysToo, blockersOf, detourSite, detourMessage, remember, asRiskAction, keptFromSending, pressesControl, pressLandsOn, writesText, secretField, firstAddress, pointTarget, dropPoint, declinedMark, declinedAgain, HANDOVER });
   root.SELECT_TO_AI_POLICY = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -97,6 +97,30 @@ const SEARCHES = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Search
 <form id="profile" action="/profil" method="post"><label>Jméno <input name="jmeno"></label><button>Uložit</button></form>
 </body></html>`;
 
+// Fields of chosen values, each with an x on its values, and controls
+// built the same way that delete something saved. Only the x on a value
+// that sits in a picker, before its typing box, is a field edit.
+const x = (label) => `<button type="button" aria-label="${label}">\u00d7</button>`;
+const icon = (label) => `<div role="button" tabindex="0" aria-label="${label}"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 1L9 9M9 1L1 9" stroke="#000"/></svg></div>`;
+const CHIPS = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Profile</title>
+<style>body{margin:0;font-family:system-ui} .case{margin:12px;max-width:520px} .row{display:flex;gap:6px;align-items:center}</style></head><body>
+<div class="case"><label for="colours">Favourite colours</label>
+  <div class="row" id="flat"><span>Purple ${x("Remove Purple")}</span><span>Red ${x("Remove Red")}</span><input id="colours" role="combobox" aria-autocomplete="list" aria-expanded="false"></div></div>
+<div class="case"><div class="control"><div class="value-container">
+  <div class="multi-value"><div class="multi-label">Ocean</div>${icon("Remove Ocean")}</div>
+  <div class="multi-value"><div class="multi-label">Forest</div>${icon("Remove Forest")}</div>
+  <div class="input-container"><input aria-autocomplete="list" aria-expanded="false" aria-label="Themes"></div>
+  </div><div class="indicators"><span></span></div></div></div>
+<div class="case"><ul role="listbox" aria-label="Saved addresses"><li role="option">Home, 1 Main St ${x("Remove Home")}</li><li role="option">Work, 2 Side St ${x("Remove Work")}</li></ul></div>
+<div class="case"><div><input role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="history" aria-label="Search the shop">
+  <div id="history"><div>red shoes ${x("Remove red shoes")}</div></div></div></div>
+<div class="case"><div><input aria-autocomplete="list" aria-label="Search orders">
+  <div><div>blue kettle ${x("Remove blue kettle")}</div></div></div></div>
+<div class="case"><div class="card"><span>Home</span><input aria-autocomplete="list" value="1 Main St" aria-label="Street">${x("Delete Home address")}</div></div>
+<div class="case"><div class="card"><span>Work <button type="button">Delete</button></span><input aria-autocomplete="list" value="2 Side St" aria-label="Work street"></div></div>
+<div class="case"><ul><li><a href="/p/mug">Purple Mug</a> $8 ${x("Remove Purple Mug")}</li></ul></div>
+</body></html>`;
+
 async function open(browser, url, html) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 800 });
@@ -130,6 +154,7 @@ const check = (name, fn) => checks.push([name, fn]);
     const news = await (await open(browser, "https://news.example/ai", ARTICLE(false))).scan("summarise this");
     const planted = await (await open(browser, "https://news.example/ai2", ARTICLE(true))).scan("summarise this");
     const searchScan = await (await open(browser, "https://www.portal.example/", SEARCHES)).scan("find kettles");
+    const chipScan = await (await open(browser, "https://profile.example/edit", CHIPS)).scan("take purple out of my colours");
 
     check("three same-named buttons are told apart by their card", () => {
       const adds = named(plain, /^Add to cart$/);
@@ -305,6 +330,27 @@ const check = (name, fn) => checks.push([name, fn]);
       assert.equal(searchScan.forms[naver.formId].action, "https://search.naver.com/search.naver");
       const name = named(searchScan, /Jméno/)[0];
       assert.equal(T.actionRisk({ action: "type", id: name.id, text: "Ada" }, searchScan, ctx).kind, "site");
+    });
+
+    check("the x on a chosen value is a field edit; look-alikes that delete saved things are still deletes", () => {
+      const one = (label) => {
+        const el = chipScan.elements.find((e) => (e.accName || e.text) === label);
+        assert.ok(el, `${label} is listed`);
+        return el;
+      };
+      for (const label of ["Remove Purple", "Remove Red", "Remove Ocean", "Remove Forest"]) {
+        const el = one(label);
+        assert.equal(el.inField, true, `${label} sits on a value in a picker`);
+        assert.equal(T.actionRisk({ action: "click", id: el.id }, chipScan), null, `${label} is not held`);
+      }
+      // A list of saved entries, a search history under its box (named by
+      // the box, or only placed after it), a saved record's Delete beside an
+      // address box, one with words on it, and a cart line.
+      for (const label of ["Remove Home", "Remove Work", "Remove red shoes", "Remove blue kettle", "Delete Home address", "Delete", "Remove Purple Mug"]) {
+        const el = one(label);
+        assert.ok(!el.inField, `${label} is not taken for a value's x`);
+        assert.equal((T.actionRisk({ action: "click", id: el.id }, chipScan) || {}).kind, "delete", `${label} is held as a delete`);
+      }
     });
 
     let failed = 0;

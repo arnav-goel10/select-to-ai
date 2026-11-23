@@ -200,6 +200,10 @@
       pausedInRow: { n: 0, ms: 0 },
       // Sites the user would not let the agent onto, by origin, for this run.
       declinedSites: [],
+      // Steps the user has just declined (policy.js declinedMark), until they say something new.
+      declined: [],
+      // Questions about them sent back to the model since.
+      declinedAsks: 0,
       // The last hand-off to the user: its kind, the page it was on, how many in a row.
       handoff: null,
       // What the step in hand is shown and may do: the main model's, or the helper's on its steps.
@@ -1018,6 +1022,8 @@
       const w = run.finalStep && run.wrapUp;
       return end(run, fx, env, w && w.by === "stuck"
         ? { state: "error", kind: "stuck", text: `I stopped at step ${run.step} because I was going round without getting anywhere (${w.why}), and the model's last replies could not be used.${found(run)}` }
+        : w && w.by === "declined"
+          ? { state: "error", kind: "declined", text: `You declined "${clip(w.what || "a step", 80)}", so it was not done, and the model's last replies could not be used.${found(run)}` }
         : w
           ? { state: "error", kind: "wrap_up", text: `You asked for the answer now, and the model's last replies could not be used.${found(run)}` }
           : { state: "error", kind: "model", text: `The model sent ${run.facts.invalid} replies in a row that named no step I could take, so I stopped at step ${run.step}. Try again, or pick a different model in Settings.${found(run)}` });
@@ -1076,6 +1082,14 @@
     if (a.do === "done") return onDone(run, a, page, env, fx);
     if (a.do === "ask_user") {
       if (a.kind === "human_check") { const left = leaveDetour(run, a, page, fx); if (left) return left; }
+      // The user has just said no to a step. Asking them whether they still
+      // want it, or to do it themselves, would leave the run waiting on a
+      // question they have in effect answered: it is sent back to the model,
+      // which carries on with the rest or finishes with what it did and did
+      // not do. The second time, the next step is the last; the third, the
+      // run ends with its answer. A question about something else is asked.
+      const about = aboutDeclined(run, a, page);
+      if (about) return bounceDeclined(run, a, about, env, fx);
       const question = a.kind !== "question" && POLICY.HANDOVER[a.kind] && !a.question ? POLICY.HANDOVER[a.kind] : a.question;
       // A control the user is asked to press themselves is marked on the page for them.
       return waitFor(run, fx, env, { kind: a.kind, question, action: a, ...(a.kind === "press" && a.ref !== undefined ? { press: a.ref } : {}) });
@@ -1141,7 +1155,8 @@
       return waitFor(run, fx, env, { kind: verdict.kind, question: verdict.question, action: act, byPolicy: true, press: verdict.press });
     }
     if (verdict.verdict === "confirm") {
-      return waitFor(run, fx, env, { kind: "approval", risk: verdict.kind, question: verdict.why, detail: [...(verdict.detail || []), run.current && run.current.goal && verdict.kind !== "share" ? `Why: ${run.current.goal}` : ""].filter(Boolean), action: act, confirm: verdict });
+      // What it touches, as the page shows it now, kept in case the user says no.
+      return waitFor(run, fx, env, { kind: "approval", risk: verdict.kind, question: verdict.why, detail: [...(verdict.detail || []), run.current && run.current.goal && verdict.kind !== "share" ? `Why: ${run.current.goal}` : ""].filter(Boolean), action: act, confirm: verdict, mark: POLICY.declinedMark(act, page, run) });
     }
     log(run, "executor", "Action", STEP.describe(act));
     // A click the page shows no answer to may be made with Enter or Space there, where those are allowed as the click was.
@@ -1275,6 +1290,8 @@
       });
       // What this run has seen, and what the user allowed in it, holds for its sub-tasks.
       child.trust = { ...child.trust, urls: [...run.trust.urls], ...(run.trust.searches ? { searches: [...run.trust.searches] } : {}), ...(run.trust.shared ? { shared: [...run.trust.shared] } : {}) };
+      // So is what the user has just declined: a sub-task does not do it another way.
+      child.declined = (run.declined || []).map((d) => ({ ...d }));
       run.children.push({ id, task: t.task, url: t.url || "", state: "queued", tabId: null, held: [], result: null, run: child });
       ids.push(id);
     }
@@ -1433,6 +1450,9 @@
     const declined = [];
     for (const h of child.history || []) for (const a of h.actions || []) if (/The user declined this step/.test(a.result || "")) declined.push(a.text);
     if (declined.length) run.subDeclined = [...(run.subDeclined || []), ...declined];
+    // A step declined in the sub-task, the user not having spoken since, is
+    // not done by this run another way either.
+    for (const d of child.declined || []) if (!(run.declined = run.declined || []).some((x) => JSON.stringify(x) === JSON.stringify(d))) run.declined.push(d);
   }
 
   /**
@@ -1554,14 +1574,25 @@
     for (const key of r.used || []) if (!run.used.details.includes(key)) run.used.details.push(key);
     if (r.image) run.image = r.image;
     // What the agent typed, for a second opinion on the form it goes with.
-    if (r.ok && a.do === "fill" && !a.from && a.ref !== undefined) {
+    if (r.ok && (a.do === "fill" || a.do === "type") && !a.from && a.ref !== undefined) {
       run.typed = { ...(run.typed || {}), [a.ref]: String(a.value || "") };
       // Every text the agent typed in this run, to tell it from text a page put in a box.
       run.typedTexts = [...(run.typedTexts || []).filter((t) => t !== String(a.value || "")), String(a.value || "")].slice(-20);
+      // And the pages it typed on, whose text now holds that typing.
+      const at = String((run.current && run.current.url) || (page && page.url) || "").split("#")[0];
+      if (at) run.typedAt = [...(run.typedAt || []).filter((u) => u !== at), at].slice(-20);
     }
     // Where the focus was left, for a key the step presses next with no ref.
-    if (r.ok && ["click", "fill", "press"].includes(a.do) && a.ref !== undefined) run.focusRef = a.ref;
+    if (r.ok && ["click", "fill", "type", "select_text", "press"].includes(a.do) && a.ref !== undefined) run.focusRef = a.ref;
+    // Words the model wrote for select_text: a read-back that repeats them proves nothing.
+    if (r.ok && a.do === "select_text") run.selectedTexts = [...(run.selectedTexts || []).filter((t) => t !== String(a.value || "")), String(a.value || "")].slice(-20);
     record(run, a, r.ok, r.message);
+    // What the page said back, kept apart from the result's words (engine.js interactOnce).
+    if (r.ok && typeof r.reads === "string" && r.reads && run.current && run.current.actions.length) {
+      const entry = run.current.actions[run.current.actions.length - 1];
+      entry.reads = clip(r.reads, 600);
+      if (r.freeText) entry.freeText = true;
+    }
     // How long the page was waited on after this action, so the cost of waiting can be read per step.
     if (Number.isFinite(r.settleMs) && run.current && run.current.actions.length) run.current.actions[run.current.actions.length - 1].settle = r.settleMs;
     // Whether the pointer was a real one or events made by a script.
@@ -1581,7 +1612,7 @@
   }
 
   function stillThere(run, a, page) {
-    if (!a || a.ref === undefined || !page || !["click", "fill", "press"].includes(a.do)) return false;
+    if (!a || a.ref === undefined || !page || !["click", "fill", "type", "select_text", "press"].includes(a.do)) return false;
     const els = page.elements || [];
     const el = els.find((e) => e.id === a.ref);
     if (!el || run.labels[a.ref] === undefined || TOOLS.elementLabel(el) !== run.labels[a.ref]) return false;
@@ -1639,6 +1670,50 @@
     return fx;
   }
 
+  // Words that name nothing, left out when a question is matched to a step,
+  // with the parts of an address every address has.
+  const PLAIN = new Set("this that these those with your yours from have will what which when where they them then there into about want still should would could please here http https html index".split(" "));
+  const namingWords = (text) => KNOWN.wordsOf(String(text || "").replace(/\b[a-z][a-z0-9+.-]*:\/\/(www\.)?/gi, " "), 4).filter((w) => !PLAIN.has(w));
+
+  /**
+   * The declined step an ask_user is about, or null: one that hands its
+   * control to the user to press, or a question that names it (its
+   * control's words, the row it sits in, or its address).
+   */
+  function aboutDeclined(run, a, page) {
+    const gone = run.declined || [];
+    if (!gone.length) return null;
+    if (a.ref !== undefined) {
+      const by = POLICY.declinedAgain({ do: "click", ref: a.ref }, ((page && page.elements) || []).find((e) => e.id === a.ref), page, run);
+      if (by) return by;
+    }
+    if (a.kind !== "question" && a.kind !== "press") return null;
+    const asked = new Set(namingWords(a.question));
+    return gone.find((d) => (d.words || []).some((w) => asked.has(w))) || null;
+  }
+
+  /** An ask_user about a step the user has just declined, sent back to the model; bounded. */
+  function bounceDeclined(run, a, d, env, fx) {
+    run.declinedAsks = (run.declinedAsks || 0) + 1;
+    const what = d.names[0] || d.urls[0] || "a step";
+    if (run.declinedAsks >= DECLINED_ASKS) {
+      log(run, "system", "Not Asked", `You declined "${clip(what, 80)}", and the agent kept asking about it, so it stopped.`);
+      return end(run, fx, env, { state: "error", kind: "declined", text: `You declined "${clip(what, 80)}", so it was not done, and I stopped there.${found(run)}` });
+    }
+    const last = run.declinedAsks === DECLINED_ASKS - 1;
+    if (last && !run.wrapUp) run.wrapUp = { by: "declined", what };
+    record(run, a, false, `Not asked: the user has just declined "${clip(what, 80)}", and that is their answer. ${DECLINED_NEXT}${last ? " Your next step is the last: finish then." : ""}`);
+    log(run, "system", "Not Asked", "You declined a step, so the agent goes on without asking you about it.");
+    return closeStep(run, fx, "refused");
+  }
+
+  // Questions about a declined step sent back before the run ends with its answer.
+  const DECLINED_ASKS = 3;
+
+  // What the model is told when the user declines a step. The user said no
+  // to the result, not to one control: getting it another way is not allowed.
+  const DECLINED_NEXT = "Do not ask them about it again, and do not try to get the same result another way (another control, a key, a drag, another page or address): the user said no to the result, not to one button. Carry on with any part of the request that does not need it. Then finish and say what you did, what you did not do and why.";
+
   /** The user did, answered, approved, declined or skipped what the run was waiting for. */
   function onUser(run, event, page, env) {
     const fx = [];
@@ -1655,7 +1730,7 @@
     const handedOff = HANDOFFS.has(w.kind) && (event.type === "cleared" || event.type === "user_done");
     if (!handedOff) {
       run.stuck = { steps: 0, helper: 0, at: run.step };
-      if (run.wrapUp && run.wrapUp.by === "stuck") run.wrapUp = null;
+      if (run.wrapUp && ["stuck", "declined"].includes(run.wrapUp.by)) run.wrapUp = null;
     }
     // "Skip" on letting the agent onto a site: it is not asked again in this run.
     if (w.kind === "site_access" && event.type === "skipped") {
@@ -1678,7 +1753,7 @@
         // only while the control still says that.
         // Whatever the action, the press the user approved is made once: the
         // page is not pressed again another way when it shows no answer.
-        const labelled = a.ref !== undefined && [...POLICY.POINTER_PRESSES, "drag", "fill", "press"].includes(a.do) && run.labels[a.ref] !== undefined;
+        const labelled = a.ref !== undefined && [...POLICY.POINTER_PRESSES, "drag", "fill", "type", "select_text", "press"].includes(a.do) && run.labels[a.ref] !== undefined;
         // A drag is let go only on the control they approved, too.
         const onto = a.do === "drag" && a.to_ref !== undefined && run.labels[a.to_ref] !== undefined ? { approvedTo: run.labels[a.to_ref] } : {};
         // The control's words, when the run has them, mark it approved (the
@@ -1688,8 +1763,13 @@
         fx.push({ type: "act", action: approved });
         return fx;
       }
-      record(run, a, false, `The user declined this step${w.risk ? ` (it would ${{ pay: "spend money", send: "send or submit something", delete: "delete something", share: "put their details into this site", address: "open an address that was not on any page", site: "type on a site outside the request", secret: "type into a secret field" }[w.risk] || "need their go-ahead"})` : ""}. It was not done.`);
+      record(run, a, false, `The user declined this step${w.risk ? ` (it would ${{ pay: "spend money", send: "send or submit something", delete: "delete something", share: "put their details into this site", address: "open an address that was not on any page", site: "type on a site outside the request", secret: "type into a secret field" }[w.risk] || "need their go-ahead"})` : ""}. It was not done. ${DECLINED_NEXT}`);
       log(run, "system", "Declined", "You declined this step.");
+      // Until the user says something new, whatever reaches what they declined
+      // is held for them again (policy.js decide), and a question back to
+      // them about it is not put to them.
+      const mark = w.mark || POLICY.declinedMark(a, page, run);
+      run.declined = [...(run.declined || []), { ...mark, risk: w.risk || "", words: [...new Set(namingWords([...mark.names, ...mark.rows, ...mark.urls].join(" ")))] }];
       return closeStep(run, fx, "refused");
     }
     const said = String(event.text || "").trim();
@@ -1702,6 +1782,8 @@
           : "The user says it is done.";
     record(run, a || { do: "ask_user", kind: w.kind }, event.type !== "skipped", w.byPolicy ? `Not run: only the user can do this. ${result}` : result);
     if (event.type === "answered" && said) {
+      run.declined = [];
+      run.declinedAsks = 0;
       run.journal.push({ k: "user", text: said });
       run.said.push(said);
       run.answers.push(said);
@@ -1715,24 +1797,117 @@
 
   // --------------------------------------------------------------- finishing
 
-  /** Every piece of text the run was shown, for checking quotes. */
+  // A text the run wrote, as words: whole, and each line of it.
+  function typedWords(wrote) {
+    const out = [];
+    for (const t of wrote || []) for (const piece of [String(t), ...String(t).split(/\r\n|\r|\n/)]) {
+      const w = CONTEXT.wordsOf(piece);
+      if (w.length && w.join("").length >= 2) out.push(w);
+    }
+    return out;
+  }
+  const holds = (outer, inner, at) => inner.every((w, k) => outer[at + k] === w);
+  const insideOf = (q, pieces) => q.length > 0 && pieces.some((p) => p.length >= q.length && p.some((_w, i) => holds(p, q, i)));
+  const TYPED_RUN = 3; // words in a row shared with a typed text that are taken to be that typing, clipped or not
+
+  /**
+   * The parts of a text that are not text the run itself wrote, as a list
+   * of passages. A typed text is taken out wherever it is, whole or as a
+   * run of at least TYPED_RUN of its words in a row, so a read-back that
+   * clips the typing, collapses its spaces or starts partway into it still
+   * loses it. What is left on either side is a passage of its own, so no
+   * quote joins words the typing stood between.
+   */
+  function withoutTyped(text, wrote) {
+    const pieces = Array.isArray(wrote && wrote[0]) ? wrote : typedWords(wrote);
+    const words = CONTEXT.wordsOf(text);
+    if (!pieces.length) return words.length ? [String(text)] : [];
+    // Where each word stands in the typed texts, so a long text is gone through once.
+    const where = new Map();
+    pieces.forEach((p, k) => p.forEach((w, j) => { if (!where.has(w)) where.set(w, []); where.get(w).push([k, j]); }));
+    const out = [];
+    let kept = [];
+    for (let i = 0; i < words.length;) {
+      let gone = 0;
+      for (const [k, j] of where.get(words[i]) || []) {
+        const p = pieces[k];
+        let n = 0;
+        while (j + n < p.length && i + n < words.length && p[j + n] === words[i + n]) n++;
+        if ((n >= TYPED_RUN || n === p.length) && n > gone) gone = n;
+      }
+      if (gone) {
+        if (kept.length) out.push(kept.join(" "));
+        kept = [];
+        i += gone;
+      } else {
+        kept.push(words[i]);
+        i += 1;
+      }
+    }
+    if (kept.length) out.push(kept.join(" "));
+    return out;
+  }
+
+  /**
+   * Every piece of text the run was shown, for checking quotes. A text that
+   * holds what the agent typed (a field's value, what an action read back
+   * from a box, a page it typed on) is marked own: a quote that lies wholly
+   * in the agent's own typing is looked for only in the rest (onDone).
+   */
   function textsOf(run, page, env) {
-    const texts = run.seen.map((p) => ({ url: p.url, title: p.title, text: p.text }));
-    if (page && page.innerText) texts.push({ url: page.url, title: page.title, text: shownText(page) });
-    for (const r of run.reads) texts.push({ url: r.url, title: r.label, text: r.text });
+    const typedOn = new Set(run.typedAt || []);
+    const own = (url) => typedOn.has(String(url || "").split("#")[0]);
+    const texts = run.seen.map((p) => ({ url: p.url, title: p.title, text: p.text, ...(own(p.url) ? { own: true } : {}) }));
+    if (page && page.innerText) texts.push({ url: page.url, title: page.title, text: shownText(page), ...(own(page.url) ? { own: true } : {}) });
+    for (const r of run.reads) texts.push({ url: r.url, title: r.label, text: r.text, ...(own(r.url) ? { own: true } : {}) });
     const ex = (env && env.extras) || {};
     if (ex.selection) texts.push({ url: "", title: "the user's selection", text: ex.selection });
     // The passage around a captured selection was read from its page.
     const place = ex.selectionPlace;
     if (place && place.passage) texts.push({ url: place.url || "", title: place.title || "", text: place.passage });
-    for (const t of ex.openTabPages || []) texts.push({ url: t.url, title: t.title, text: t.digest });
+    for (const t of ex.openTabPages || []) texts.push({ url: t.url, title: t.title, text: t.digest, ...(own(t.url) ? { own: true } : {}) });
     // The user's own words are theirs to be quoted back.
     texts.push({ url: "", title: "the request", text: run.task });
     // So is what the browser stated as fact: the date, above all.
     const today = CONTEXT.todayLine(env && env.now);
     if (today) texts.push({ url: "", title: "what the browser stated", text: today });
-    for (const el of (page && page.elements) || []) if (el.value && !el.sensitive) texts.push({ url: page.url, title: "a field's value", text: String(el.value) });
+    // A field's value or a read-back that repeats text the model wrote into the page only shows it was typed.
+    const typed = typedWords(run.typedTexts);
+    const wrote = typedWords([...(run.typedTexts || []), ...(run.selectedTexts || [])]);
+    for (const el of (page && page.elements) || []) {
+      if (!el.value || el.sensitive) continue;
+      for (const text of withoutTyped(String(el.value), typed)) texts.push({ url: page.url, title: "a field's value", text, own: true });
+    }
+    // What the run's own actions read back from the page (a control's value
+    // after it was set, the text of a box after typing) was shown too: only
+    // what the page said back (engine.js interactOnce), never the result's
+    // own words, which repeat the action the model wrote.
+    for (const h of [...run.history, ...(run.current ? [run.current] : [])]) {
+      for (const x of h.actions || []) {
+        if (!x.ok || !x.reads) continue;
+        const parts = x.freeText ? withoutTyped(x.reads, wrote) : [String(x.reads)];
+        for (const text of parts) if (text.trim()) texts.push({ url: "", title: "what an action read back from the page", text, own: true });
+      }
+    }
     return texts;
+  }
+
+  /**
+   * Evidence quotes found in what the run was shown. A quote that lies
+   * wholly in a text the agent typed is found only in text the typing did
+   * not reach: a page the agent typed on, a field's value or a read-back
+   * holds it because the agent put it there, which is no evidence of it.
+   */
+  function locateQuotes(run, quotes, texts) {
+    const typed = typedWords(run.typedTexts);
+    const theirs = texts.filter((t) => !t.own);
+    return (quotes || []).map((q) => {
+      // A quote shortened with "..." is its pieces, as locateEvidence reads it.
+      const parts = String(q || "").split(/\.{3,}|\u2026/).map(CONTEXT.wordsOf).filter((w) => w.length);
+      const mine = typed.length > 0 && parts.length > 0 && parts.every((w) => insideOf(w, typed));
+      const [e] = CONTEXT.locateEvidence([q], mine ? theirs : texts);
+      return mine && !e.found ? { ...e, typed: true } : e;
+    });
   }
 
   /**
@@ -1787,7 +1962,7 @@
 
   function onDone(run, a, page, env, fx) {
     const texts = textsOf(run, page, env);
-    const located = CONTEXT.locateEvidence(a.evidence, texts);
+    const located = locateQuotes(run, a.evidence, texts);
     const missing = located.filter((e) => !e.found);
     // With some pages' text let go, a quote not in what is kept may be from one of them: it was not checked, not found wanting.
     const dropped = run.dropped || [];
@@ -1802,6 +1977,7 @@
         : `${which} in evidence ${are} not in anything you have been shown in this run: ${quotes}. Copy quotes exactly from the page text, read the page first, or leave the claim out.`);
       // What the shown text has nearest each quote, so the exact words can be copied.
       const near = missing.slice(0, 3).map((e) => {
+        if (e.typed) return `"${clip(e.quote, 100)}" is text you typed into the page yourself: the page holding it shows only that it was typed, not that it is so.`;
         const n = CONTEXT.nearestPassage(e.quote, texts, 240);
         return n
           ? `For "${clip(e.quote, 100)}", the nearest text you were shown${n.title ? ` (${clip(n.title, 60)})` : ""} reads: "${n.text}"`
@@ -2137,9 +2313,11 @@
         if (waitKind && !["approval", "check_in", "pause"].includes(waitKind)) return onUser(run, { type: "answered", text, keep: !!event.keep }, page, e);
         run.steers.push(text);
         run.said.push(text);
+        run.declined = [];
+        run.declinedAsks = 0;
         log(run, "system", "You Added", text);
         run.stuck = { steps: 0, helper: 0, at: run.step };
-        if (run.wrapUp && run.wrapUp.by === "stuck") run.wrapUp = null;
+        if (run.wrapUp && ["stuck", "declined"].includes(run.wrapUp.by)) run.wrapUp = null;
         // Something said at a check-in is said to go on with it in mind.
         if (waitKind === "check_in") return onCheckIn(run, { type: "keep_going", id: run.wait.id }, e);
         return [];

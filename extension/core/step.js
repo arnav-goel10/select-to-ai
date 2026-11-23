@@ -29,6 +29,8 @@
     drag: { needs: ["ref"], page: true, alone: true },
     click_at: { needs: ["x", "y"], page: true, alone: true },
     fill: { needs: ["ref", "value"], page: true },
+    type: { needs: ["ref", "value"], page: true },
+    select_text: { needs: ["ref", "value"], page: true },
     fill_details: { needs: [], page: true },
     recall: { needs: ["from"], page: false },
     remember: { needs: ["value"], page: false },
@@ -120,10 +122,12 @@
       drag: "drag: press on a control, move it while holding, and let go (ref; fx, fy for where to take hold of it). Where to let go: to_ref, a control; or to_text, words written on the place, for a place with no number (a box, a column, a bin); or direction and distance. With place \"before\" or \"after\", it lands just before or after the to_ref or to_text item in its list, as a person aims; with to_fx and to_fy, at that spot of the target's box (a square of a board). An item to move in a list, a thing to drop on a box, a knob that fill cannot set. To set a slider to a number, use fill. Nothing else runs in the same step: its result says what changed, and a drag that changed nothing was not followed by the page.",
       click_at: "click_at: press a point on the page that has no number in the listing, such as a spot on a map or a drawing (x, y: page pixels from its top left corner, as the listing gives them after \"at\").",
       fill: `fill: give a control a value (ref, value). It works on text boxes, dropdowns, checkboxes (value "on" or "off"), radio buttons, date fields and sliders, and replaces what was there.${opts.hasDetails ? " With from in place of value it puts in one of the user's details on file." : ""}`,
+      type: "type: type text into a text box or an editor where its cursor is, keeping what is there (ref, value). A line break (\\n) in value starts a new line or paragraph, as Enter does. With no cursor in the box yet, it types at the end of its text. Use fill to replace what a box holds.",
+      select_text: "select_text: select words inside a text box or an editor by their text (ref, value: the words as the box writes them), to format them with a key such as ctrl+b or a toolbar button, or to type over them. Its result says what is selected and how it is formatted.",
       fill_details: "fill_details: fill every field of a form that the user's details on file cover, in one go (ref: any control in that form). It says what it filled and what is left.",
       recall: "recall: read details on file when you have to write with them yourself (from). The user is shown what you read.",
       remember: "remember: keep something the user told you about themselves or how they want things done, for later tasks (value, scope).",
-      press: "press: a key such as Enter, Escape or ArrowDown (key; ref of the field to press it in).",
+      press: "press: a key such as Enter, Escape or ArrowDown, or a key held with others such as ctrl+b (key; ref of the field to press it in). It goes to that control, or with no ref to whatever has the keyboard focus, and its result says where it went.",
       scroll: "scroll: move down or up the page (direction), for a list that loads more as it is scrolled, or to bring later items of a long list into the listing. With a ref as well, it scrolls inside the box that control is in (a long text box, a panel with its own scroll bar). It is not needed to reach a control: every control can be acted on by its ref wherever it is.",
       navigate: "navigate: open an address (url).",
       back: "back: go back one page.",
@@ -139,7 +143,7 @@
     const action = {
       do: { type: "string", enum: names, description: names.map((n) => about[n]).join(" ") },
       ref: { type: "integer", description: "The number in [brackets] before a control in the page listing." },
-      value: { type: "string", description: "fill: the text to put in, the option to choose, \"on\"/\"off\" for a checkbox, or a date as the field shows it. remember: what to keep, in one short sentence." },
+      value: { type: "string", description: "fill: the text to put in, the option to choose, \"on\"/\"off\" for a checkbox, or a date as the field shows it. type: the text to type at the cursor. select_text: the words to select. remember: what to keep, in one short sentence." },
       ...(opts.hasDetails ? { from: { type: "string", description: "fill, recall: a detail on file, such as \"profile.email\". recall takes several, separated by commas." } } : {}),
       fx: { type: "number", description: "click, double_click, right_click, hold, hover, drag: where inside the control's box, as a fraction across it: 0 its left edge, 0.5 its middle, 1 its right edge. Leave fx and fy out for its middle." },
       fy: { type: "number", description: "As fx, a fraction down the control's box: 0 its top edge, 1 its bottom edge." },
@@ -213,7 +217,7 @@
               type: "array",
               maxItems: Math.max(1, opts.maxActions - 1),
               description: `Up to ${Math.max(1, opts.maxActions - 1)} more actions to run straight after this one, in order, when they do not depend on seeing its result: the other fields of a form, several boxes to tick, or Enter after typing a search. Leave it out otherwise. Example: [{"do":"press","key":"Enter","ref":4}]`,
-              items: { type: "object", properties: { ...strip(action, ["to_ref", "distance", "x", "y", "to_text", "place", "to_fx", "to_fy"]), do: { type: "string", enum: names.filter((n) => ["click", "fill", "press", "scroll"].includes(n)), description: "click, fill or press, as above." } }, required: ["do"] },
+              items: { type: "object", properties: { ...strip(action, ["to_ref", "distance", "x", "y", "to_text", "place", "to_fx", "to_fy"]), do: { type: "string", enum: names.filter((n) => ["click", "fill", "type", "select_text", "press", "scroll"].includes(n)), description: "click, fill, type, select_text or press, as above." } }, required: ["do"] },
             },
           }),
         },
@@ -256,14 +260,14 @@
     dblclick: "double_click", doubleclick: "double_click", double_tap: "double_click",
     rightclick: "right_click", contextmenu: "right_click", context_menu: "right_click",
     long_press: "hold", longpress: "hold", press_and_hold: "hold", press_hold: "hold",
-    type: "fill", input: "fill", select: "fill", select_option: "fill", set: "fill", check: "fill", checkbox_toggle: "fill",
+    type_text: "type", insert_text: "type", input: "fill", select: "fill", select_option: "fill", select_words: "select_text", set: "fill", check: "fill", checkbox_toggle: "fill",
     keypress: "press", key: "press", goto: "navigate", go_to: "navigate", open: "navigate", go_back: "back",
     finish: "done", answer: "done", complete: "done", ask: "ask_user", search_page: "find", search: "find", scroll_to: "scroll",
     drag_and_drop: "drag", drag_to: "drag", click_point: "click_at", click_xy: "click_at",
   });
 
   // The one piece of text each action takes, and the fields text can turn up in.
-  const TEXT_OF = Object.freeze({ fill: "value", remember: "value", press: "key", find: "query", ask_user: "question", done: "answer" });
+  const TEXT_OF = Object.freeze({ fill: "value", type: "value", select_text: "value", remember: "value", press: "key", find: "query", ask_user: "question", done: "answer" });
   const TEXT_FIELDS = Object.freeze(["value", "text", "answer", "question", "query", "key"]);
 
   const asInt = (v) => {
@@ -340,7 +344,7 @@
 
     const out = { do: name };
     const els = (ctx.page && ctx.page.elements) || [];
-    const needsRef = name === "fill" || AIMED.includes(name);
+    const needsRef = name === "fill" || name === "type" || name === "select_text" || AIMED.includes(name);
     if (name === "fill_details" && (a.ref === undefined || a.ref === null || a.ref === "")) delete a.ref;
     // A ref of 0, or one given to an action that takes none, means "no control".
     // Asking the user to press a control names it by its ref; no other ask takes one.
@@ -415,6 +419,10 @@
       if (keys.length && (a.value === undefined || a.value === null || a.value === "")) out.from = keys[0];
       else if (a.value === undefined || a.value === null) return { error: "fill needs value: the text, the option to choose, or \"on\"/\"off\"; or from: a detail on file such as \"profile.email\"." };
       else out.value = typeof a.value === "boolean" ? (a.value ? "on" : "off") : String(a.value);
+    }
+    if (name === "type" || name === "select_text") {
+      if (a.value === undefined || a.value === null || String(a.value) === "") return { error: `${name} needs value: ${name === "type" ? "the text to type" : "the words to select, as the box writes them"}.` };
+      out.value = String(a.value);
     }
     if (name === "recall") {
       const q = String(a.query || "").trim();
