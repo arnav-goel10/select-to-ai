@@ -193,6 +193,11 @@ function page(opts) {
     focusField: () => {},
     pointerOver: null,
     drawnAt: deepest,
+    // Nothing here is listed: every box is part of the control pressed.
+    idOf: () => null,
+    isShown: () => true,
+    CONTROL_SELECTOR: "button",
+    labelOf: (n) => n.name,
     delay: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 30))),
     cancelRequested: false,
     GESTURE: { HOVER_MOVES: 6, HOVER_STEP_MS: 40, CLICK_GAP_MS: 80, DRAG_HOLD_MS: 160, DRAG_MOVES: 16, DRAG_STEP_MS: 35, DROP_REST_MS: 150, DRAG_START_PX: 4 },
@@ -203,7 +208,7 @@ function page(opts) {
   scope.document.body = node("body", null, [0, 0, 1000, 800]);
   const fns = build(["centreOf", "pointerInit", "movePointerTo", "pointerTargetIn", "dispatchClickEvents", "dispatchHoverEvents", "spotIn", "dwellHover",
     "scriptedDoubleClick", "scriptedRightClick", "scriptedHold", "touchAt", "sendTouch", "touchGesture", "scriptedDragSteps", "syntheticDrag",
-    "listRunsAcross", "dropAim", "newWords"], scope);
+    "listRunsAcross", "dropAim", "newWords", "insideOf", "innerControlAt", "sameControl"], scope);
   return { log, node, ...fns, seen: (on) => log.filter((e) => !on || e.on === on).map((e) => e.type) };
 }
 

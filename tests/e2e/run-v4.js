@@ -786,6 +786,48 @@ async function main() {
       // page's elements (a field's value set from code; a change inside a
       // component's own shadow root) is pressed once: no other way is tried
       // on top, and the result says what was seen.
+      // A press with no spot on a row, a card or a label reaches that
+      // control, not a link or button of its own drawn at its middle, and
+      // a message under a pinned bar is scrolled clear and pressed.
+      ["pressInside", "/press-inside", async () => false, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ row: document.getElementById("s-row").textContent, card: document.getElementById("s-card").textContent, tax: document.getElementById("s-tax").textContent, inner: window.pressedInside }));
+        const log = String(r.log).replace(/\s+/g, " ");
+        if (at.inner.link || at.inner.quick || at.inner.notes) return `a control inside the one pressed was reached: ${JSON.stringify(at)} ${log.slice(0, 600)}`;
+        if (at.row !== "Row: opened invoice 1042" || at.card !== "Card: opened Blue teapot" || at.tax !== "Tax: shown") return `the page shows ${JSON.stringify(at)}: ${log.slice(0, 600)}`;
+        return r.actions.filter((a) => a.do === "click").length === 3 ? null : `the model pressed ${r.actions.filter((a) => a.do === "click").length} times, not 3`;
+      }],
+      // The press arrives where the message is drawn, not through the bar:
+      // events made by script reach the message wherever they are aimed,
+      // so only where they arrive tells a press a person could make.
+      ["pinnedHeader", "/pinned-header", async () => false, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ state: document.getElementById("state").textContent, through: window.pressedThroughBar }));
+        const log = String(r.log).replace(/\s+/g, " ");
+        if (/is covered/.test(log) || r.prompts.some((p) => /is covered:|is drawn over \[\d+\]/.test(p))) return `the message under the bar was called covered: ${log.slice(0, 600)}`;
+        if (at.state !== "Opened: Lunch on Friday") return `the page shows ${JSON.stringify(at.state)}: ${log.slice(0, 600)}`;
+        return at.through === false ? null : `the press arrived where the bar is drawn, not the message (${JSON.stringify(at.through)})`;
+      }],
+      // A card whose link is drawn over all of it is pressed through that
+      // link at once; a list item whose only action is its link is pressed
+      // on itself, and the result names the link it went round, which the
+      // model then presses.
+      ["pressThrough", "/press-through", async () => false, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ kettle: document.getElementById("s-kettle").textContent, inbox: document.getElementById("s-inbox").textContent }));
+        const log = String(r.log).replace(/\s+/g, " ");
+        if (at.kettle !== "Kettle: opened" || at.inbox !== "Inbox: opened") return `the page shows ${JSON.stringify(at)}: ${log.slice(0, 600)}`;
+        if (r.prompts.some((p) => /Every spot of \[\d+\] on screen is on a control of its own/.test(p))) return `the card was refused: ${log.slice(0, 600)}`;
+        if (!r.prompts.some((p) => /The press went on \[\d+\] itself, clear of \[\d+\] "Open inbox" inside it, and the page showed no answer to it/.test(p))) return `the press on the item was not said to have gone round its link: ${log.slice(0, 600)}`;
+        const clicks = r.actions.filter((a) => a.do === "click").length;
+        return clicks === 3 ? null : `the model pressed ${clicks} times, not 3`;
+      }],
+      // A button under a see-through layer is refused as covered with or
+      // without the debugger, naming the layer, and nothing is pressed:
+      // a press, a person's or the real pointer's, would reach the layer.
+      ["pressUnderLayer", "/press-under-layer", async () => false, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ state: document.getElementById("state").textContent, caught: window.caught }));
+        const log = String(r.log).replace(/\s+/g, " ");
+        if (at.state !== "Not saved" || at.caught) return `something was pressed under the layer: ${JSON.stringify(at)} ${log.slice(0, 600)}`;
+        return r.prompts.some((p) => /\[\d+\] is covered: a div with no words is drawn over it where it is on screen/.test(p)) ? null : `the result did not name the layer over the button: ${log.slice(0, 600)}`;
+      }],
       ["pressSilent", "/press-silent", async () => false, async (r) => {
         const at = await r.fixture.evaluate(() => ({ qty: document.getElementById("qty").value, steps: window.steps }));
         const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
