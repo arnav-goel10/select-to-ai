@@ -188,10 +188,55 @@ test("the quick box on a page Chrome keeps extensions off marks the icon for tha
   await bgSettle();
   bg.chrome.commands.onCommand.fire("open-palette", { id: 12, windowId: 1, url: "chrome://newtab/" });
   await bgSettle();
-  assert.deepEqual(bg.calls.tabBadges, [{ tabId: 12, text: "!" }]);
+  assert.equal(bg.calls.tabBadges.length, 1);
+  assert.equal(bg.calls.tabBadges[0].tabId, 12);
   assert.equal(bg.calls.titles.length, 1);
   assert.equal(bg.calls.titles[0].tabId, 12);
   assert.match(bg.calls.titles[0].title, /quick box cannot open on this page/);
+});
+
+test("the quick box mark is not the agent's 'needs you' mark, and the tab is recorded as marked", async () => {
+  const bg = loadBackground({ injectFails: true });
+  await bgSettle();
+  bg.chrome.commands.onCommand.fire("open-palette", { id: 12, windowId: 1, url: "chrome://newtab/" });
+  await bgSettle();
+  // engine.js attention marks a run that needs the user with an orange "!".
+  assert.notEqual(bg.calls.tabBadges[0].text, "!", "a different glyph");
+  assert.equal(bg.calls.colors.length, 1, "with its own color");
+  assert.equal(bg.calls.colors[0].tabId, 12);
+  assert.notEqual(bg.calls.colors[0].color.toLowerCase(), "#c2410c");
+  assert.deepEqual(bg.chrome.storage.session.data.iconTabMarks, { 12: "hint" });
+});
+
+/** A run saved by an earlier worker while it waits for an approval, with the quick box mark on tab 12. */
+function waitingForApproval() {
+  const RUN = require("../../extension/core/run.js");
+  const run = RUN.newRun({ id: "r1", task: "Buy the cheapest one", tabId: 9, startUrl: "https://shop.example/", marker: "PAGE-abcd1234", now: 1 });
+  run.status = "waiting";
+  run.waits = 1;
+  run.wait = { id: "r1-w1", kind: "approval", question: "Place the order for $12?", tabId: 9, since: 1 };
+  return { "agentSession:1": { turns: [], run: JSON.parse(JSON.stringify(RUN.toStored(run))), extras: {} }, iconTabMarks: { 12: "hint" } };
+}
+
+test("a run that needs the user is shown over the quick box mark on that tab, and put back after", async () => {
+  const tabs = {
+    9: { id: 9, url: "https://shop.example/", title: "Shop", windowId: 1, active: false },
+    12: { id: 12, url: "chrome://newtab/", title: "New Tab", windowId: 1, active: true },
+  };
+  const w = fakeWorker({ tabs, saved: waitingForApproval() });
+  const port = w.connect(1);
+  await port.hello();
+  await wSettle(60);
+  assert.ok(w.engine.sessions.get(1).attending.has("r1-w1"), "the wait is attended");
+  const onTab = (list) => list.filter((d) => d.tabId === 12);
+  assert.ok(w.calls.badges.some((b) => b.tabId === undefined && b.text === "!"), "window-wide mark");
+  assert.ok(onTab(w.calls.badges).some((b) => b.text === "!"), "set on the marked tab too");
+  assert.match(onTab(w.calls.titles).at(-1).title, /Select to AI needs you: Place the order/);
+  // The wait ends: the tab is put back, not left saying "needs you".
+  await port.post({ type: "stop" });
+  await wSettle(80);
+  assert.equal(onTab(w.calls.badges).at(-1).text, "");
+  assert.equal(onTab(w.calls.titles).at(-1).title, "Select to AI");
 });
 
 test("the quick box on a website opens with no mark", async () => {

@@ -75,7 +75,7 @@ function storageArea(name, onChanged, log) {
  */
 function loadBackground(opts = {}) {
   const log = [];
-  const calls = { sidePanelOpen: [], tabsCreate: [], sendMessage: [], menus: [], removeAll: 0, notify: [], sessionRules: [], badge: [], tabBadges: [], titles: [], executes: [] };
+  const calls = { sidePanelOpen: [], tabsCreate: [], sendMessage: [], menus: [], removeAll: 0, notify: [], sessionRules: [], badge: [], tabBadges: [], titles: [], colors: [], executes: [] };
   const storageChanged = event();
   const granted = new Set(opts.granted || []);
   let nextTabId = 100;
@@ -151,6 +151,7 @@ function loadBackground(opts = {}) {
     action: {
       setBadgeText(details, cb) { if (details.tabId !== undefined) calls.tabBadges.push({ ...details }); else calls.badge.push(details.text); setImmediate(() => cb && cb()); },
       setTitle(details, cb) { calls.titles.push({ ...details }); setImmediate(() => cb && cb()); },
+      setBadgeBackgroundColor(details, cb) { calls.colors.push({ ...details }); setImmediate(() => cb && cb()); },
     },
     scripting: {
       executeScript(o, cb) {

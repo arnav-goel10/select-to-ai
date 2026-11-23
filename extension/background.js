@@ -620,15 +620,22 @@ function openCommandPalette(tab, onResult) {
  * open here: a mark on the icon and the reason on hover, with a notification
  * as well when the user granted those. Chrome drops a tab's own mark and
  * title when that tab loads another page, so nothing has to clear them.
+ * The mark is a grey '×', not the engine's orange '!' (a run needs you),
+ * and the tab is recorded so that a later "needs you" is set over it
+ * (engine.js attention).
  */
 const PALETTE_BLOCKED_TEXT = 'The quick box cannot open on this page. Try it on a website tab.';
 function paletteBlockedOn(tabId) {
     const a = chrome.action;
     const quiet = (p) => { if (p && typeof p.catch === 'function') p.catch(() => {}); };
     try {
-        if (a && typeof a.setBadgeText === 'function') quiet(a.setBadgeText({ tabId, text: '!' }, () => void chrome.runtime.lastError));
+        if (a && typeof a.setBadgeText === 'function') quiet(a.setBadgeText({ tabId, text: '\u00d7' }, () => void chrome.runtime.lastError));
+        if (a && typeof a.setBadgeBackgroundColor === 'function') quiet(a.setBadgeBackgroundColor({ tabId, color: '#6b7280' }, () => void chrome.runtime.lastError));
         if (a && typeof a.setTitle === 'function') quiet(a.setTitle({ tabId, title: PALETTE_BLOCKED_TEXT }, () => void chrome.runtime.lastError));
     } catch (e) { /* the mark is a hint, never a reason to fail */ }
+    const area = chrome.storage && chrome.storage.session;
+    const key = CONFIG.STORAGE.ICON_TAB_MARKS;
+    if (area) quiet(area.get(key).then((got) => area.set({ [key]: { ...((got && got[key]) || {}), [tabId]: 'hint' } })));
     if (GRANTS) GRANTS.notify({ message: PALETTE_BLOCKED_TEXT });
 }
 
