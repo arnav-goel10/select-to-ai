@@ -93,8 +93,11 @@
     recordings.delete(runId);
   }
 
-  /** The agent's commit-like judgment of an action, as its own risk checks see it. */
-  function judgedCommit(a, page) {
+  /**
+   * The agent's commit-like judgment of an action, as its own risk checks
+   * see it, with the run's second opinions (run.opinions) where it asked one.
+   */
+  function judgedCommit(a, page, opinions) {
     const POLICY = need("SELECT_TO_AI_POLICY");
     const TOOLS = need("SELECT_TO_AI_TOOLS");
     if (!POLICY || !TOOLS || !page) return false;
@@ -104,8 +107,12 @@
     try {
       const risk = TOOLS.actionRisk(risky, page, null);
       if (risk && COMMIT_KINDS.has(risk.kind)) return true;
-      // A button whose effect its words do not make plain is held as a commit.
-      return !!TOOLS.pressCheckOf(risky, page);
+      // A button whose effect its words do not make plain is held as a
+      // commit, unless the run's second opinion on it said it does nothing.
+      const press = TOOLS.pressCheckOf(risky, page);
+      if (!press) return false;
+      const said = opinions && opinions[press.key];
+      return !(said && said.does === "none");
     } catch (_) { return false; }
   }
 
@@ -184,8 +191,8 @@
   }
 
   /** The recorder call for one agent action. */
-  function recorderCall(r, a, page) {
-    const commit = judgedCommit(a, page) ? { class: "commit" } : {};
+  function recorderCall(r, a, page, opinions) {
+    const commit = judgedCommit(a, page, opinions) ? { class: "commit" } : {};
     switch (a.do) {
       case "navigate": return r.rec.goto(a.url);
       case "back": return r.rec.back();
@@ -251,7 +258,7 @@
         }
       }
       r.pending = doIt;
-      await recorderCall(r, a, session.page);
+      await recorderCall(r, a, session.page, run.opinions);
       r.steps++;
       // No view of what the press sent: when the recording cannot tell, it is a commit.
       const taped = r.rec.tape[r.rec.tape.length - 1];

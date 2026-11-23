@@ -21,6 +21,7 @@ const CONTROLS = {
   3: { tag: "input", kind: "textbox", inputType: "text", name: "Quantity", form: { search: false, fields: 2 }, submits: false },
   // A message box no form holds: Enter in it sends, by a script.
   4: { ref: "e4", tag: "input", kind: "textbox", inputType: "text", name: "Message", value: "hello there", form: null, submits: false },
+  5: button({ name: "Leave team" }),
 };
 
 /** service.js over a stand-in recorder and driver; `sees` is whether requests are seen (the debugger build). */
@@ -177,6 +178,30 @@ test("a recorded press on a script-driven button is a commit step on a build tha
   const b = agentRun(seeing, fakeChrome());
   await b.act({ do: "click", ref: 1 });
   assert.deepEqual(classes(seeing, b.run.id), ["navigate:read", "click:read"]);
+});
+
+test("a press the run's second opinion judged is recorded as it judged it: a commit when it acts, a plain step when it does nothing", async () => {
+  globalThis.SELECT_TO_AI_TOOLS = require(`${EXT}/agentTools.js`);
+  globalThis.SELECT_TO_AI_POLICY = require(`${EXT}/core/policy.js`);
+  try {
+    const TOOLS = globalThis.SELECT_TO_AI_TOOLS;
+    const page = { url: PAGE, elements: [{ id: 5, tagName: "button", accName: "Leave team" }], forms: [] };
+    const key = TOOLS.pressCheckOf({ action: "click", id: 5 }, page).key;
+    const recorded = async (said) => {
+      const RECIPES = load({ sees: true });
+      const a = agentRun(RECIPES, fakeChrome());
+      a.session.page = page;
+      if (said) a.run.opinions = { [key]: said };
+      await a.act({ do: "click", ref: 5 });
+      return classes(RECIPES, a.run.id);
+    };
+    assert.deepEqual(await recorded({ does: "delete", why: "Leaves the team." }), ["navigate:read", "click:commit"]);
+    assert.deepEqual(await recorded(null), ["navigate:read", "click:commit"], "not asked: held as a commit");
+    assert.deepEqual(await recorded({ does: "none", why: "Opens a menu." }), ["navigate:read", "click:read"]);
+  } finally {
+    delete globalThis.SELECT_TO_AI_TOOLS;
+    delete globalThis.SELECT_TO_AI_POLICY;
+  }
 });
 
 test("a run that ended can be saved after the worker restarted, once", async () => {
