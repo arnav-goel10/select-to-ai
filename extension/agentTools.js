@@ -1865,6 +1865,24 @@
   }
 
   /**
+   * The editing commands a Mac runs for a Command shortcut, for a real key
+   * sent through the debugger connection. A Mac takes Command-A, Command-B,
+   * Command-Z and the like from its Edit menu, not from the key event, so a
+   * key sent that way selects, formats or undoes nothing unless the event
+   * names the command to run (Input.dispatchKeyEvent's commands). Elsewhere
+   * the page's own editor runs the shortcut from the key, and none is named.
+   */
+  const MAC_EDIT_COMMANDS = { a: "selectAll", b: "toggleBold", i: "toggleItalic", u: "toggleUnderline", c: "copy", x: "cut", v: "paste", z: "undo" };
+  function editCommands(key, mods, mac) {
+    const m = mods || {};
+    if (!mac || !m.metaKey || m.ctrlKey || m.altKey || !/^[a-z]$/i.test(String(key || ""))) return [];
+    const k = String(key).toLowerCase();
+    if (k === "z") return [m.shiftKey ? "redo" : "undo"];
+    if (m.shiftKey) return [];
+    return MAC_EDIT_COMMANDS[k] ? [MAC_EDIT_COMMANDS[k]] : [];
+  }
+
+  /**
    * What the browser itself does with a key in a text box when the page
    * leaves the key alone: a scripted key has no such default, so the
    * content script does it. Null for a key that does nothing there.
@@ -1954,6 +1972,7 @@
     colourName,
     parseKeyCombo,
     shortcutHere,
+    editCommands,
     keyDefault,
     findTextIn,
     taskKeywords,

@@ -635,7 +635,7 @@
     let realKeysQuietUntil = 0;
 
     /** Asks the engine to press a real key in this tab. False when it cannot. */
-    function pressRealKey(key, meta, modifiers, times) {
+    function pressRealKey(key, meta, modifiers, times, commands) {
         if (Date.now() < realKeysQuietUntil) return Promise.resolve(false);
         return new Promise((resolve) => {
             let settled = false;
@@ -643,7 +643,7 @@
             try {
                 const textOf = key === 'Enter' ? '\r' : key === 'Space' || key === ' ' ? ' ' : meta.printable && key.length === 1 ? key : '';
                 const bits = (modifiers.altKey ? 1 : 0) | (modifiers.ctrlKey ? 2 : 0) | (modifiers.metaKey ? 4 : 0) | (modifiers.shiftKey ? 8 : 0);
-                const sent = chrome.runtime.sendMessage({ action: 'agentRealKey', key: key === 'Space' ? ' ' : key, code: meta.code, keyCode: meta.keyCode, text: bits & 7 ? '' : textOf, modifiers: bits, times }, (r) => {
+                const sent = chrome.runtime.sendMessage({ action: 'agentRealKey', key: key === 'Space' ? ' ' : key, code: meta.code, keyCode: meta.keyCode, text: bits & 7 ? '' : textOf, modifiers: bits, times, ...(commands && commands.length ? { commands } : {}) }, (r) => {
                     void chrome.runtime.lastError;
                     done(!!(r && r.ok));
                 });
@@ -4585,9 +4585,33 @@
                 // the key does, such as scrolling, moving focus or typing.
                 // A key that presses what it lands on, and any approved press, is made once.
                 const count = activates || data.once ? 1 : Math.max(1, Math.min(50, Number(data.times) || 1));
-                if (window === window.top && await pressRealKey(key, meta, mods, count)) {
+                // A Mac runs a Command shortcut's editing command only when the key names it.
+                const commandsFor = (held) => (EDIT() && EDIT().editCommands ? EDIT().editCommands(key, held, ON_MAC) : []);
+                // What a shortcut changes in a box: its text, what is selected and the marks on it.
+                const boxState = (b) => {
+                    if (!b) return '';
+                    try {
+                        if (isField(b)) return `${b.value}\u0001${b.selectionStart}\u0001${b.selectionEnd}`;
+                        const s = selectedInEditor();
+                        return `${boxText(b)}\u0001${s ? `${s.text}\u0001${s.marks}` : ''}`;
+                    } catch (_) { return ''; }
+                };
+                const realBox = box && holds(box, targetEl) ? box : null;
+                const realBefore = realBox ? boxState(realBox) : '';
+                if (window === window.top && await pressRealKey(key, meta, mods, count, commandsFor(mods))) {
+                    // A shortcut written for another computer (ctrl+b on a
+                    // Mac) that changed nothing in the box is pressed once
+                    // more the way this computer holds it, as a scripted key is below.
+                    const here = realBox && EDIT() ? EDIT().shortcutHere(key, mods, ON_MAC) : null;
+                    let asHere = '';
+                    if (here) {
+                        await delay(40);
+                        if (boxState(realBox) === realBefore && await pressRealKey(key, meta, here, 1, commandsFor(here))) {
+                            asHere = ` Nothing changed, so it was pressed again as ${ON_MAC ? 'Command' : 'Control'}+${key}, the way this computer holds shortcuts.`;
+                        }
+                    }
                     const read = box && !isField(box) ? boxReport(box, id) : '';
-                    return { success: true, real: true, ...(read ? { reads: read, freeText: true } : {}), message: `Pressed ${keyName}${count > 1 ? ` ${count} times` : ''}${id ? ` in [${id}]` : ''}${where}.${read ? ` ${read}` : ''}` };
+                    return { success: true, real: true, ...(read ? { reads: read, freeText: true } : {}), message: `Pressed ${keyName}${count > 1 ? ` ${count} times` : ''}${id ? ` in [${id}]` : ''}${where}.${asHere}${read ? ` ${read}` : ''}` };
                 }
 
                 // One press: keydown and keypress to the page, then, when the

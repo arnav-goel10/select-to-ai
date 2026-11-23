@@ -1658,9 +1658,11 @@
     const target = { tabId };
     const base = { key: String(m.key || ""), code: String(m.code || ""), windowsVirtualKeyCode: Number(m.keyCode) || 0, nativeVirtualKeyCode: Number(m.keyCode) || 0, modifiers: Number(m.modifiers) || 0 };
     const times = Math.max(1, Math.min(50, Number(m.times) || 1));
+    // The editing command a Mac runs for a Command shortcut (agentTools.js editCommands).
+    const commands = (Array.isArray(m.commands) ? m.commands : []).map(String).filter((c) => /^[A-Za-z]{1,40}$/.test(c)).slice(0, 2);
     try {
       for (let i = 0; i < times; i++) {
-        await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: m.text ? "keyDown" : "rawKeyDown", ...base, ...(m.text ? { text: String(m.text) } : {}) });
+        await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: m.text ? "keyDown" : "rawKeyDown", ...base, ...(m.text ? { text: String(m.text) } : {}), ...(commands.length ? { commands } : {}) });
         await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "keyUp", ...base });
       }
     } catch (_) {

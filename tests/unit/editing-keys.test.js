@@ -34,6 +34,22 @@ test("a shortcut written for another computer is pressed the way this one holds 
   assert.equal(TOOLS.shortcutHere("b", { ctrlKey: true, altKey: true }, true), null);
 });
 
+test("a real Command shortcut on a Mac carries the editing command the Mac runs for it", () => {
+  assert.deepEqual(TOOLS.editCommands("a", { metaKey: true }, true), ["selectAll"]);
+  assert.deepEqual(TOOLS.editCommands("B", { metaKey: true }, true), ["toggleBold"]);
+  assert.deepEqual(TOOLS.editCommands("z", { metaKey: true }, true), ["undo"]);
+  assert.deepEqual(TOOLS.editCommands("Z", { metaKey: true, shiftKey: true }, true), ["redo"]);
+  // ctrl+b on a Mac is not Command-B: it is pressed again as Command-B when it changed nothing.
+  const asWritten = { ctrlKey: true };
+  assert.deepEqual(TOOLS.editCommands("b", asWritten, true), []);
+  assert.deepEqual(TOOLS.editCommands("b", TOOLS.shortcutHere("b", asWritten, true), true), ["toggleBold"]);
+  // Elsewhere the page's editor runs Control shortcuts from the key itself.
+  assert.deepEqual(TOOLS.editCommands("b", { ctrlKey: true }, false), []);
+  assert.deepEqual(TOOLS.editCommands("q", { metaKey: true }, true), [], "a shortcut the Edit menu does not hold");
+  assert.deepEqual(TOOLS.editCommands("b", { metaKey: true, shiftKey: true }, true), []);
+  assert.deepEqual(TOOLS.editCommands("Enter", { metaKey: true }, true), []);
+});
+
 test("what a key does in a text box when the page leaves it alone", () => {
   assert.deepEqual(TOOLS.keyDefault("P", {}, false), { kind: "text", text: "P" });
   assert.deepEqual(TOOLS.keyDefault(" ", {}, false), { kind: "text", text: " " });
