@@ -71,10 +71,11 @@ function storageArea(name, onChanged, log) {
  *   agentThrows     make the agent's importScripts throw
  *   tabs            tabs chrome.tabs.query returns
  *   gesture         whether sidePanel.open succeeds (default true)
+ *   injectFails     chrome.scripting.executeScript fails, as on Chrome's own pages
  */
 function loadBackground(opts = {}) {
   const log = [];
-  const calls = { sidePanelOpen: [], tabsCreate: [], sendMessage: [], menus: [], removeAll: 0, notify: [], sessionRules: [], badge: [] };
+  const calls = { sidePanelOpen: [], tabsCreate: [], sendMessage: [], menus: [], removeAll: 0, notify: [], sessionRules: [], badge: [], tabBadges: [], titles: [], executes: [] };
   const storageChanged = event();
   const granted = new Set(opts.granted || []);
   let nextTabId = 100;
@@ -147,9 +148,18 @@ function loadBackground(opts = {}) {
       updateSessionRules(rules, cb) { calls.sessionRules.push(rules); setImmediate(() => cb && cb()); },
     },
     commands: { onCommand: event() },
-    action: { setBadgeText(details, cb) { calls.badge.push(details.text); setImmediate(() => cb && cb()); } },
+    action: {
+      setBadgeText(details, cb) { if (details.tabId !== undefined) calls.tabBadges.push({ ...details }); else calls.badge.push(details.text); setImmediate(() => cb && cb()); },
+      setTitle(details, cb) { calls.titles.push({ ...details }); setImmediate(() => cb && cb()); },
+    },
     scripting: {
-      executeScript(o, cb) { setImmediate(() => cb && cb([])); },
+      executeScript(o, cb) {
+        calls.executes.push(o);
+        setImmediate(() => {
+          if (opts.injectFails) chrome.runtime.lastError = { message: "Cannot access a chrome:// URL" };
+          try { cb && cb(opts.injectFails ? undefined : []); } finally { chrome.runtime.lastError = undefined; }
+        });
+      },
       getRegisteredContentScripts(f, cb) { setImmediate(() => cb([])); },
       registerContentScripts(s, cb) { setImmediate(() => cb && cb()); },
       updateContentScripts(s, cb) { setImmediate(() => cb && cb()); },
