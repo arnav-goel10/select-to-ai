@@ -411,7 +411,8 @@ const check = (name, fn) => checks.push([name, fn]);
       const retry = named(deskScan, /^Retry$/)[0];
       assert.deepEqual(retry.dialog, { name: "Payment failed", alert: true, modal: false });
       const newsEntry = T.pressEntryOf(news, deskScan).entry;
-      assert.deepEqual(newsEntry.dialog, news.dialog);
+      assert.deepEqual(newsEntry.dialog, { name: "Newsletter" }, "the check is told the name, and only flags that are set");
+      assert.deepEqual(T.pressEntryOf(retry, deskScan).entry.dialog, { name: "Payment failed", alert: true });
       assert.doesNotMatch(JSON.stringify(newsEntry), /Delete your account|pay now/, "the body text never reaches the check");
       assert.notEqual(newsEntry.key, T.pressEntryOf(ticket, deskScan).entry.key, "the same name in two dialogs is two questions");
     });
@@ -446,7 +447,9 @@ const check = (name, fn) => checks.push([name, fn]);
       assert.equal(res.changed, true);
       assert.match(res.error, /Delete account/);
       assert.equal(await desk.page.evaluate(() => window.pressed), 0, "nothing was pressed");
-      const same = await desk.send({ action: "interact", data: { action: "click", id: named(deskScan, /^Overview$/)[0].id, names: { accName: "Overview", text: "Overview" } } });
+      // The names as the scan wrote them, which is what the engine sends.
+      const overview = named(deskScan, /^Overview$/)[0];
+      const same = await desk.send({ action: "interact", data: { action: "click", id: overview.id, names: { accName: overview.accName || "", text: overview.text || "" } } });
       assert.equal(same.success, true, JSON.stringify(same));
     });
 
