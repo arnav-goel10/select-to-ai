@@ -10,6 +10,8 @@ Select to AI is a Chrome extension. Highlight text, right-click, and send it to 
 
 The published extension has served approximately 1,000 users. The count is intentionally approximate because it changes over time.
 
+New to the code? [docs/walkthrough.md](docs/walkthrough.md) walks through one agent run, shows where the agent stops for your approval, and gives two real traces from the trial runs.
+
 ## Results
 
 A recipe replays a saved run without calling a model while the pages look as recorded. It tries to repair a step whose control only moved or was restyled, and it stops before a press whose meaning changed. The table below is the third held-out benchmark, run once on 7 Nov 2026: 42 mutations of fixture pages, 192 runs per system, success judged only by what the fixture server recorded. It is copied from [docs/results-heldout-v3.md](docs/results-heldout-v3.md).
@@ -67,13 +69,13 @@ The toolbar popup is a task box for the agent (with one-tap ideas: summarize, ch
 Open the **agent** (`Alt+A`, or `Control+Shift+G` on macOS, the popup button, the side panel dropdown or the quick box), say what you want, and watch it work. There is one agent and one way it runs, whatever you ask: it decides for itself whether the request is a question about the page, a site to open, or a task to carry out.
 
 1. **See the page:** every control on the page is listed for the model with what is new since the last step, inside a budget fitted by the page's structure.
-2. **Act like a person:** each step is one `step` tool call with the agent's notes, the goal of the step and the actions to take (press, fill, go to, read); the extension presses and types on the page, and the result says what the page did.
-3. **Stay safe:** a fixed policy in code decides whether each action runs, waits for your approval, is handed to you (a sign-in, a human check, a code, the button that pays) or is refused. Passwords, card numbers and codes are never typed by the agent.
-4. **Check the answer:** the answer's quotes are checked against what the agent was shown, and a multi-step answer gets a second look by a fresh model call. Its opinion is shown under the answer.
+2. **Act like a person:** each step is one `step` tool call with the agent's notes, the goal of the step and the actions to take: click, double click, right click, long press, hover, drag, fill, type at the cursor, select text, press a key, scroll, find, read, go to an address. The extension makes these on the page with page scripts, reads the page again, and the result says what the page did.
+3. **Stay safe:** a fixed policy in code (`extension/core/policy.js`) decides whether each action runs, waits for your approval, is handed to you (a sign-in, a human check, a code, the button that pays) or is refused. Before anything that sends, submits, deletes or spends money, the run stops and shows a card, and nothing happens until you allow it. An approved step runs once, and only if the control still says what you approved. Passwords, card numbers and codes are never typed by the agent.
+4. **Check the answer:** the answer's quotes are checked against what the agent was shown, and every finished answer gets a second look by a fresh model call. Its opinion is shown under the answer.
 
 The run lives in the service worker, so closing the side panel loses nothing; reopen it and the run is still there. It asks you when it needs you (a sign-in, a human check, a choice only you can make) and carries on once that is done, and it says plainly what it could not do instead of making a result up. While a run works you can send it a message that it reads before its next step, save the run's steps as Markdown, and stop it at any time.
 
-New installs open a short welcome page. Highlight-to-ask works straight away; to turn the agent on, click **Continue with OpenRouter (free)** (sign in, and a key is created for you) or paste any provider key, which is recognised from its prefix and tested before it is saved. The default model is OpenRouter's free router (`openrouter/free`), so the agent works without a card. The first time the agent needs a website, choose **Allow on all sites** (one prompt, ever) or **Only this site**. Before the first request to a provider, the agent shows once what it sends and to whom, and waits for your yes. Keep **Ask before purchases, payments and deletions** on.
+New installs open a short welcome page. Highlight-to-ask works straight away; to turn the agent on, click **Continue with OpenRouter (free)** (sign in, and a key is created for you) or paste any provider key, which is recognised from its prefix and tested before it is saved. The default model is OpenRouter's free router (`openrouter/free`), so the agent works without a card. The first time the agent needs a website, choose **Allow on all sites** (one prompt, ever) or **Only** followed by that site's name. Before the first request to a provider, the agent shows once what it sends and to whom, and waits for your yes. Keep **Ask before purchases, payments and deletions** on.
 
 ### Use the quick box
 

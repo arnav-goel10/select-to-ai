@@ -15,7 +15,7 @@ A full list of every request the extension makes and every item it stores, with 
 - Short excerpts (about 600 characters each) of pages it read earlier in the same task.
 - The titles and addresses of the tabs open in the same window, at every step.
 - Short excerpts (about 900 characters each, at most four) of other open tabs, only when the task is about them, judged from their titles and addresses.
-- A screenshot of the page, only when the agent asks to look at it and only if your model can read images.
+- A screenshot of the page, or a picture of one control on it such as a chart, only when the agent asks to look at it and only if your model can read images.
 - What the agent knows about you (see Memory below): your preferences and notes in your own words, and which of your saved details exist. A saved detail's value (for example your email) goes to the AI service only when the agent asks to read it, and the conversation shows that it did. Otherwise your details go straight from your browser into the form.
 - After a task that could teach it something, one more request with a summary of the task and your existing memory, to decide what to keep. Turn learning off under Settings > Memory to stop this.
 - When a saved recipe meets a page that has changed, a short description of that step and of the page's controls, to check or repair the step.

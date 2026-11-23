@@ -1,18 +1,21 @@
-# Demo capture
+# Screenshots and demo material
 
-1. Use only public product imagery from the canonical [Select to AI Chrome Web Store listing](https://chromewebstore.google.com/detail/select-to-ai/ifofkleafhmamganjnoaaipdmffifcgc?hl=en).
-2. Confirm the listing identifies the extension as **Select to AI**, extension ID `ifofkleafhmamganjnoaaipdmffifcgc`, offered by `arnavprak`.
-3. Download the listing's first full-size product screenshot, which shows selected public text and the extension's **Open ChatGPT with Selected Text** context-menu action.
-4. Confirm the image contains no API key, email, account data, browsing history, private prompt, or notification.
-5. Preserve the 1280×800 source pixels and pad the canvas with white to 1600×900; do not synthesize, redraw, or alter the product UI.
-6. Save the final PNG as `assets/select-to-ai-overview.png` and optimize it losslessly.
+This page says where the repository's images come from. It is not a demo. For a tour of what the agent does, with real traces, read [walkthrough.md](walkthrough.md).
 
-## Capture provenance
+## Current screenshots
 
-- Store listing: <https://chromewebstore.google.com/detail/select-to-ai/ifofkleafhmamganjnoaaipdmffifcgc?hl=en>
-- Accessed: 2026-08-11
-- Public asset: <https://lh3.googleusercontent.com/caxpvsCzz0zYKEJW7OMptaW5l1AhUYvxcuk9BcsLCKrJyEETmCJnVF1iCirkKs1ApWl-zc4jJT_GOnZ4i_5_YNNtKg=s1280-w1280-h800>
-- Source format and dimensions: PNG, 1280×800
-- Final transformation: centered on a white 1600×900 canvas without scaling or cropping
+The images in `assets/store/` (the README uses `3-agent-result.png`) come from the `screenshots` job in `.github/workflows/ci.yml`. The job loads the packed build, not the source tree, in Chromium under xvfb at 1280x800. It drives the agent with the scripted model server in `tests/e2e/server.js` and uploads the PNGs as the `store-screens` artifact on every CI run. It fails on a console error, the text "undefined", an em dash in page text, or a wrong image size. So the screenshots show the code as it was built, with a scripted model in place of a real one.
 
-At access time, the public listing was marked **Featured**, showed 977 users, and identified version 2.0 as offered by `arnavprak`. The public count supports describing the changing audience size as approximately 1,000 users.
+## The 2.0 overview image
+
+`assets/select-to-ai-overview.png` is older. It is the first screenshot from the 2.0 Chrome Web Store listing, which shows right-click sending ("Open ChatGPT with Selected Text"), and it shows nothing of the agent. Nothing in the repository links to it now. How it was made:
+
+1. Taken from the public [Select to AI listing](https://chromewebstore.google.com/detail/select-to-ai/ifofkleafhmamganjnoaaipdmffifcgc?hl=en) (extension ID `ifofkleafhmamganjnoaaipdmffifcgc`, offered by `arnavprak`), accessed 11 Aug 2026.
+2. Checked for any API key, email, account data, browsing history, private prompt or notification. There were none.
+3. The 1280x800 source pixels were kept as they were and centred on a white 1600x900 canvas, with no scaling, cropping or redrawing.
+
+When it was accessed, the listing showed version 2.0, the Featured badge and 977 users. That is the source of "approximately 1,000 users" in the README.
+
+## Video
+
+No video of the agent has been recorded yet. [demo-recording.md](demo-recording.md) is the script for one.
