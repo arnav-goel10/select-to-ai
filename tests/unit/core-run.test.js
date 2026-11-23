@@ -1226,6 +1226,20 @@ test("plain navigation costs no second opinion: links and plain buttons go strai
   assert.equal(run.usage.calls, 4, "one call per step, and none besides");
 });
 
+test("a button in everyday words that may act is put to the second opinion, and held when it says so", () => {
+  const page = shop({ url: "https://app.example/settings", elements: [{ id: 2, tagName: "button", accName: "Close my account" }, { id: 3, tagName: "button", accName: "Yes", group: 'dialog "Leave the team?"', groupKind: "dialog", groupKey: "d1" }], forms: [] });
+  for (const [ref, does] of [[2, "deletes"], [3, "deletes"]]) {
+    const { run } = begin("look at my account settings", page);
+    let fx = reply(run, page, [{ do: "click", ref }]);
+    assert.equal(fx[0].purpose, "opinion", `ref ${ref}`);
+    if (ref === 3) assert.match(fx[0].user, /Leave the team\?/, "the dialog it answers is named");
+    fx = opinion(run, page, { does, why: "It ends something for the user." });
+    assert.equal(fx[0].type, "attention");
+    assert.equal(run.wait.kind, "approval");
+    assert.equal(run.wait.risk, "delete");
+  }
+});
+
 test("a press verdict is kept per site and label; after two misses the run stops asking and holds what it cannot read", () => {
   const page = shop({ elements: [{ id: 2, tagName: "button", accName: "Weiter" }, { id: 3, tagName: "button", accName: "Zurück" }, { id: 4, tagName: "button", accName: "Öffnen" }], forms: [] });
   const { run } = begin("go on", page);
@@ -1297,7 +1311,7 @@ test("a click may be made with Enter or Space too only where those keys are allo
       { id: 1, tagName: "input", accName: "Name", formId: 0 },
       { id: 2, tagName: "button", accName: "Show more" },
       { id: 3, tagName: "div", accName: "Pick a date", formId: 0 },
-      { id: 4, tagName: "div", role: "button", accName: "Open the calendar", formId: 0 },
+      { id: 4, tagName: "div", role: "button", accName: "Show the calendar", formId: 0 },
       { id: 5, tagName: "div", accName: "Show the map" },
     ],
     forms: [{ id: 0, search: false, fields: 2 }],

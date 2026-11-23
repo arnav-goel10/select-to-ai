@@ -113,7 +113,29 @@ test("an unsure send on a page that hides text written to an AI is held as a sen
 
 test("which button words the rules read with confidence: other languages and acting words are asked about", () => {
   for (const label of ["Jetzt kaufen", "Bestellen", "購入する", "Supprimer", "Eliminar cuenta", "Sign in", "Join", "Vote", "Proceed"]) assert.equal(T.readsPlainly(label), false, label);
-  for (const label of ["Next month", "More options", "Reject all", "Show more", "Close", "15", "→", ""]) assert.equal(T.readsPlainly(label), true, label);
+  for (const label of ["Next month", "More options", "Show more", "Close", "Back to top", "Open", "Open menu", "Show the calendar", "View all reviews", "15", "→", ""]) assert.equal(T.readsPlainly(label), true, label);
+});
+
+test("everyday words are not plain on their own: a label led by a word that may act is asked about", () => {
+  // Each is everyday English and acts for the user, or answers a question it is not shown.
+  for (const label of ["Close my account", "Open an account", "Leave team", "Leave group", "End meeting", "Reject application", "Make public", "Change plan", "Close ticket", "Back this project", "Yes, I am sure", "I understand", "Finish", "Complete", "Accept", "Yes", "OK", "Continue", "Reject all", "Next, pay now"]) {
+    assert.equal(T.readsPlainly(label), false, label);
+    const check = T.pressCheckOf({ action: "click", id: 1 }, { url: "https://example.com/settings", elements: [btn(label)], forms: [] });
+    assert.ok(check && check.kind === "press", `${label}: put to the second opinion`);
+  }
+});
+
+test("an answer in a dialog is asked about with the dialog's own name, and the answer is kept per dialog", () => {
+  const at = (group) => ({ url: "https://example.com/settings", elements: [btn("Yes", group ? { group, groupKind: "dialog", groupKey: "g" } : {})], forms: [] });
+  const asked = T.pressCheckOf({ action: "click", id: 1 }, at('dialog "Close your account?"'));
+  assert.equal(asked.within, 'dialog "Close your account?"');
+  assert.match(T.opinionMessages({ ...asked, task: "tidy my settings" }).user, /sits in this, drawn on top of the page, as the site names it: "dialog \\"Close your account\?\\""/);
+  const other = T.pressCheckOf({ action: "click", id: 1 }, at('dialog "Cookies"'));
+  assert.notEqual(asked.key, other.key, "Yes in one dialog is not Yes in another");
+  // With no dialog, the label alone goes, and the check's default when it cannot tell is to hold.
+  assert.equal(T.pressCheckOf({ action: "click", id: 1 }, at("")).within, undefined);
+  // A card's name is page text, so only a dialog's name is passed.
+  assert.equal(T.pressCheckOf({ action: "click", id: 1 }, { url: "https://example.com/", elements: [btn("Yes", { group: 'item "Big sale today"', groupKind: "item" })], forms: [] }).within, undefined);
 });
 
 test("a press check is asked for an unreadable button or a form's send button, never for a link", () => {
@@ -150,6 +172,8 @@ test("a choice's words name the choice: a radio, box, option, tab or switch is n
   }
   // A choice with no such words is moving about: nothing to ask.
   assert.equal(T.pressCheckOf({ action: "click", id: 1 }, page({ id: 1, tagName: "input", inputType: "radio", accName: "256GB storage" })), null);
+  // A day in a date picker is a cell of its grid: picking it costs no call, whatever the day is called.
+  assert.equal(T.pressCheckOf({ action: "click", id: 1 }, page({ id: 1, tagName: "button", role: "gridcell", accName: "Thursday, 1 October 2026", text: "1" })), null);
   // A button, or a control that submits, is no choice: its words hold it as before.
   assert.equal(T.choiceOf(btn("Buy now")), null);
   assert.equal(T.actionRisk({ action: "click", id: 1 }, page(btn("Buy now"))).kind, "pay");
