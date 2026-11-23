@@ -627,7 +627,9 @@ const FIXTURES = {
   // A list that scrolls inside its own box, under a bar pinned to the top
   // of that box. The page opens with the message to press scrolled under
   // the bar, as a list is after scrolling: it is on screen, but the bar is
-  // drawn over all of it.
+  // drawn over all of it. The page notes whether the press arrived at a
+  // point where the message is drawn, or at one where the bar is, which a
+  // person could not press through.
   "/pinned-header": pageShell(
     "Inbox",
     `<h1>Mail</h1><p id="state">Nothing opened</p>
@@ -645,11 +647,53 @@ const FIXTURES = {
          row.setAttribute('aria-label', 'Message from ' + who + ': ' + subject);
          row.style.cssText = 'height:43px;border-bottom:1px solid #ddd;padding:0 12px;display:flex;align-items:center;cursor:pointer';
          row.textContent = who + ': ' + subject;
-         row.addEventListener('click', () => { document.getElementById('state').textContent = 'Opened: ' + subject; });
+         row.addEventListener('click', (e) => {
+           const first = document.elementsFromPoint(e.clientX, e.clientY).find((n) => list.contains(n));
+           window.pressedThroughBar = !first || !row.contains(first);
+           document.getElementById('state').textContent = 'Opened: ' + subject;
+         });
          list.appendChild(row);
          if (who === 'Grace') target = row;
        });
        list.scrollTop = target.offsetTop - 12;
+     </script>`,
+  ),
+  // A card whose title link is drawn out over the whole card (a layer of
+  // the link stretched over it), and a list item with no action of its own
+  // whose link sits at its middle. Each link does the work; the card and
+  // the item are listed apart from their links and pressed by their own
+  // refs.
+  "/press-through": pageShell(
+    "Shop",
+    `<h1>Shop</h1>
+     <p id="s-kettle">Kettle: closed</p><p id="s-inbox">Inbox: closed</p>
+     <style>.stretched::after { content: ""; position: absolute; inset: 0; }</style>
+     <div id="kettle" tabindex="0" aria-label="Red kettle, $30" style="position:relative;width:300px;height:180px;border:1px solid #888;cursor:pointer">
+       <div style="height:120px;background:#d99"></div>
+       <h3 style="margin:4px 8px;font-size:16px"><a class="stretched" id="kettle-link" href="/press-through?item=kettle">Red kettle</a></h3>
+       <div style="padding:0 8px">$30</div>
+     </div>
+     <ul style="list-style:none;padding:0;margin-top:16px;width:320px">
+       <li id="inbox" tabindex="0" aria-label="Inbox, 3 unread" style="position:relative;display:flex;justify-content:center;align-items:center;height:40px;border:1px solid #888;cursor:pointer"><a id="inbox-link" href="/press-through?box=inbox">Open inbox</a><span style="position:absolute;right:12px">3</span></li>
+     </ul>
+     <script>
+       const $ = (id) => document.getElementById(id);
+       $('kettle-link').addEventListener('click', (e) => { e.preventDefault(); $('s-kettle').textContent = 'Kettle: opened'; });
+       $('inbox-link').addEventListener('click', (e) => { e.preventDefault(); $('s-inbox').textContent = 'Inbox: opened'; });
+     </script>`,
+  ),
+  // A button under a see-through layer the page left over the whole window
+  // (a backdrop that was never taken away). Events made by script still
+  // reach the button; a real pointer would reach the layer.
+  "/press-under-layer": pageShell(
+    "Draft",
+    `<h1>Draft</h1><p id="state">Not saved</p>
+     <button type="button" id="save">Save draft</button>
+     <div id="catcher" style="position:fixed;left:0;top:0;width:100vw;height:100vh;opacity:0;z-index:10"></div>
+     <script>
+       window.caught = 0;
+       document.getElementById('save').addEventListener('click', () => { document.getElementById('state').textContent = 'Saved'; });
+       document.getElementById('catcher').addEventListener('click', () => { window.caught += 1; });
      </script>`,
   ),
   // Controls that take a scripted click and show it only out of sight of
@@ -1388,6 +1432,25 @@ function buildStepPolicies(baseUrl) {
       if (/Tax: hidden/.test(t)) return step("Show prices with tax", [{ do: "click", ref: named(ctx, /Show prices with tax/).id }]);
       return done("The invoice and the teapot are open, and prices show tax.", ["Tax: shown"]);
     },
+    // The card and the list item pressed by their own refs; an item the
+    // result says does its work through its link is then pressed by the
+    // ref the result names.
+    pressThrough(ctx) {
+      const t = ctx.userText;
+      if (/Kettle: closed/.test(t)) return step("Open the kettle", [{ do: "click", ref: named(ctx, /Red kettle, \$30/).id }]);
+      if (/Inbox: closed/.test(t)) {
+        const via = t.match(/does its work through \[(\d+)\]/);
+        if (via) return step("Open the inbox by its link", [{ do: "click", ref: Number(via[1]) }]);
+        return step("Open the inbox", [{ do: "click", ref: named(ctx, /Inbox, 3 unread/).id }]);
+      }
+      return done("The kettle and the inbox are open.", ["Inbox: opened"]);
+    },
+    // A button under a see-through layer, pressed by its ref.
+    pressUnderLayer(ctx) {
+      if (/Saved/.test(ctx.userText)) return done("The draft is saved.", ["Saved"]);
+      if (/is covered:/.test(ctx.userText)) return done("Something covers the button, so the draft was not saved.", [], false);
+      return step("Save the draft", [{ do: "click", ref: named(ctx, /Save draft/).id }]);
+    },
     // A message under a pinned bar, pressed by its ref.
     pinnedHeader(ctx) {
       if (/Opened: Lunch on Friday/.test(ctx.userText)) return done("Grace's message is open: Lunch on Friday.", ["Opened: Lunch on Friday"]);
@@ -1820,6 +1883,8 @@ function createE2EServer(port = 8907) {
   scenarios.pressKeyboard = { task: "Save my settings." };
   scenarios.pressInside = { task: "Open invoice 1042, open the blue teapot, and show prices with tax." };
   scenarios.pinnedHeader = { task: "Open the message from Grace." };
+  scenarios.pressThrough = { task: "Open the red kettle and then my inbox." };
+  scenarios.pressUnderLayer = { task: "Save my draft." };
   scenarios.pressSilent = { task: "Add one more apple to the basket." };
   scenarios.shadowSilent = { task: "Add this to my wishlist." };
   scenarios.pressOnce = { task: "Subscribe me to the newsletter." };

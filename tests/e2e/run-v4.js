@@ -790,11 +790,40 @@ async function main() {
         if (at.row !== "Row: opened invoice 1042" || at.card !== "Card: opened Blue teapot" || at.tax !== "Tax: shown") return `the page shows ${JSON.stringify(at)}: ${log.slice(0, 600)}`;
         return r.actions.filter((a) => a.do === "click").length === 3 ? null : `the model pressed ${r.actions.filter((a) => a.do === "click").length} times, not 3`;
       }],
+      // The press arrives where the message is drawn, not through the bar:
+      // events made by script reach the message wherever they are aimed,
+      // so only where they arrive tells a press a person could make.
       ["pinnedHeader", "/pinned-header", async () => false, async (r) => {
-        const state = await r.fixture.evaluate(() => document.getElementById("state").textContent);
+        const at = await r.fixture.evaluate(() => ({ state: document.getElementById("state").textContent, through: window.pressedThroughBar }));
         const log = String(r.log).replace(/\s+/g, " ");
-        if (/is covered/.test(log) || r.prompts.some((p) => /is covered:/.test(p))) return `the message under the bar was called covered: ${log.slice(0, 600)}`;
-        return state === "Opened: Lunch on Friday" ? null : `the page shows ${JSON.stringify(state)}: ${log.slice(0, 600)}`;
+        if (/is covered/.test(log) || r.prompts.some((p) => /is covered:|is drawn over \[\d+\]/.test(p))) return `the message under the bar was called covered: ${log.slice(0, 600)}`;
+        if (at.state !== "Opened: Lunch on Friday") return `the page shows ${JSON.stringify(at.state)}: ${log.slice(0, 600)}`;
+        return at.through === false ? null : `the press arrived where the bar is drawn, not the message (${JSON.stringify(at.through)})`;
+      }],
+      // A card whose link is drawn over all of it is pressed through that
+      // link at once; a list item whose only action is its link is pressed
+      // on itself, and the result names the link it went round, which the
+      // model then presses.
+      ["pressThrough", "/press-through", async () => false, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ kettle: document.getElementById("s-kettle").textContent, inbox: document.getElementById("s-inbox").textContent }));
+        const log = String(r.log).replace(/\s+/g, " ");
+        if (at.kettle !== "Kettle: opened" || at.inbox !== "Inbox: opened") return `the page shows ${JSON.stringify(at)}: ${log.slice(0, 600)}`;
+        if (r.prompts.some((p) => /Every spot of \[\d+\] on screen is on a control of its own/.test(p))) return `the card was refused: ${log.slice(0, 600)}`;
+        if (!r.prompts.some((p) => /The press went on \[\d+\] itself, clear of \[\d+\] "Open inbox" inside it, and the page showed no answer to it/.test(p))) return `the press on the item was not said to have gone round its link: ${log.slice(0, 600)}`;
+        const clicks = r.actions.filter((a) => a.do === "click").length;
+        return clicks === 3 ? null : `the model pressed ${clicks} times, not 3`;
+      }],
+      // With no real pointer the button under a see-through layer is
+      // pressed as before, and the result says the layer is over it. A
+      // real pointer would reach the layer, so with one it is refused.
+      ["pressUnderLayer", "/press-under-layer", async () => false, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ state: document.getElementById("state").textContent, caught: window.caught }));
+        const log = String(r.log).replace(/\s+/g, " ");
+        const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
+        if (DEBUGGER_ON && (!press || press.pointer !== "synthetic")) return r.prompts.some((p) => /is covered:/.test(p)) && at.state === "Not saved" ? null : `a real press under the layer: ${JSON.stringify(at)} ${log.slice(0, 600)}`;
+        if (at.state !== "Saved") return `the page shows ${JSON.stringify(at)}: ${log.slice(0, 600)}`;
+        if (at.caught) return `the layer got the press: ${JSON.stringify(at)}`;
+        return r.prompts.some((p) => /is drawn over \[\d+\] where it is on screen, so a person's press would reach that instead\. The events were made by script on \[\d+\] itself\./.test(p)) ? null : `the result did not say the layer is over the button: ${log.slice(0, 600)}`;
       }],
       ["pressSilent", "/press-silent", async () => false, async (r) => {
         const at = await r.fixture.evaluate(() => ({ qty: document.getElementById("qty").value, steps: window.steps }));
