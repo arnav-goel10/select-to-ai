@@ -6,7 +6,7 @@
 // - a run with no tab given, started from the agent's own tab, opens a
 //   fresh tab rather than taking over another tab of the user's;
 // - what was typed in the quick box while the agent was off is offered
-//   on the setup page once it is connected;
+//   whenever the agent is turned on, however that happens;
 // - the quick box says why when Chrome keeps it off a page;
 // - the popup never opens the side panel on a site the panel cannot show;
 // - a fresh install shows Perplexity, as the welcome page says, and an
@@ -19,7 +19,6 @@ const { loadPage, settle } = require("../helpers/page-harness.js");
 const { fakeWorker, settle: wSettle } = require("../helpers/fake-worker.js");
 
 globalThis.SELECT_TO_AI_DEFAULTS = require("../../extension/defaults.js");
-const S = require("../../extension/setup.js");
 const OMNI = require("../../extension/omnibox.js");
 
 const READY_AGENT = { sync: { showAgent: true, agentActiveProvider: "openrouter" }, local: { openrouterApiKey: "sk-or-v1-made-up" } };
@@ -134,51 +133,59 @@ test("a follow-up whose earlier tab was closed starts in a fresh tab, not one of
 
 // --------------------------------- what was typed while the agent was off
 
-async function connectedWelcome(extra = {}) {
-  const consent = { [S.CONSENT_KEY]: { [S.consentId("openrouter")]: 1 } };
-  const page = loadPage({
-    html: "welcome.html",
-    local: consent,
-    globals: { fetch: async () => ({ ok: true, status: 200, json: async () => ({ key: "sk-or-v1-made-up-for-the-test" }) }) },
-    ...extra,
-  });
-  await settle(6);
-  page.$("connectOR").click();
-  for (const until = Date.now() + 2000; !page.visible("done") && Date.now() < until;) await settle(10);
-  await settle(40);
-  assert.equal(page.visible("done"), true, "the page reached its first-task list");
-  page.calls.request.length = 0;
-  return page;
-}
-
-test("a request typed in the quick box with the agent off is offered first once the agent is connected", async () => {
-  // The worker keeps it as it hands the user to the setup page.
-  const bg = loadBackground({ sync: { showAgent: false } });
+/** The worker after the quick box kept a request with the agent off. */
+async function keptRequest(extraSync = {}) {
+  const bg = loadBackground({ sync: { showAgent: false, ...extraSync } });
   await bgSettle();
   bg.run("notifyAgentDisabled")("Summarise the reviews on this page", 42);
   await bgSettle();
   assert.match(bg.calls.tabsCreate.at(-1).url, /welcome\.html\?step=connect$/);
-  const kept = bg.chrome.storage.session.data.pendingAgentTask;
-  assert.equal(kept.text, "Summarise the reviews on this page");
+  assert.equal(bg.chrome.storage.session.data.pendingAgentTask.text, "Summarise the reviews on this page");
+  bg.calls.tabsCreate.length = 0;
+  return bg;
+}
 
-  const page = await connectedWelcome({ session: { pendingAgentTask: kept } });
-  const first = page.$("tries").children[0];
-  assert.equal(first.firstChild.textContent, "Summarise the reviews on this page");
-  first.click();
-  await settle(6);
-  assert.deepEqual(page.calls.request, [], "no site is asked for up front: the agent asks on its own card");
-  assert.equal(page.calls.tabsCreate.length, 1);
-  const url = new URL(page.calls.tabsCreate[0].url);
+function offered(bg) {
+  const opened = bg.calls.tabsCreate.filter((t) => /agent\.html/.test(t.url));
+  assert.equal(opened.length, 1, "the agent opened once");
+  return new URL(opened[0].url);
+}
+
+test("a request typed in the quick box with the agent off is offered once the welcome page connects", async () => {
+  const bg = await keptRequest();
+  // welcome.js connect writes the provider and turns the agent on.
+  bg.chrome.storage.sync.set({ agentActiveProvider: "openrouter", agentModel: "x", showAgent: true });
+  await bgSettle(20);
+  const url = offered(bg);
   assert.equal(url.searchParams.get("task"), "Summarise the reviews on this page");
-  assert.equal(url.searchParams.get("autostart"), "1");
+  assert.equal(url.searchParams.get("autostart"), null, "offered in the box, not started");
   assert.equal(url.searchParams.get("tabId"), "42", "on the tab it was typed on");
-  assert.equal(page.chrome.storage.session.data.pendingAgentTask, undefined, "taken once");
+  assert.equal(bg.chrome.storage.session.data.pendingAgentTask, undefined, "taken once");
 });
 
-test("a request typed long ago is not offered", async () => {
-  const page = await connectedWelcome({ session: { pendingAgentTask: { text: "Old request", tabId: 3, at: Date.now() - 2 * 3600000 } } });
-  const texts = page.$("tries").children.map((b) => b.firstChild.textContent);
-  assert.ok(!texts.includes("Old request"));
+test("the same request is offered when the agent is turned on in Settings with a key already saved", async () => {
+  const bg = await keptRequest({ agentActiveProvider: "openrouter" });
+  // options.js: the agent switch.
+  bg.chrome.storage.sync.set({ showAgent: true });
+  await bgSettle(20);
+  assert.equal(offered(bg).searchParams.get("task"), "Summarise the reviews on this page");
+  // Turning it off and on again offers nothing more.
+  bg.chrome.storage.sync.set({ showAgent: false });
+  await bgSettle(10);
+  bg.chrome.storage.sync.set({ showAgent: true });
+  await bgSettle(20);
+  assert.equal(bg.calls.tabsCreate.filter((t) => /agent\.html/.test(t.url)).length, 1);
+});
+
+test("a request typed long ago is not offered, and other settings changes offer nothing", async () => {
+  const bg = await keptRequest();
+  bg.chrome.storage.sync.set({ theme: "dark" });
+  await bgSettle(10);
+  assert.ok(bg.chrome.storage.session.data.pendingAgentTask, "still kept");
+  bg.chrome.storage.session.data.pendingAgentTask.at = Date.now() - 2 * 3600000;
+  bg.chrome.storage.sync.set({ showAgent: true });
+  await bgSettle(20);
+  assert.deepEqual(bg.calls.tabsCreate, []);
 });
 
 // ------------------------------------------- the quick box on a browser page

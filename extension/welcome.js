@@ -247,20 +247,9 @@
     ["Open Wikipedia and tell me today's featured article in two sentences", "wikipedia.org"],
     ["Go to GitHub Trending and tell me today's top repository and what it does", "github.com"],
   ];
-  // What was typed in the quick box while the agent was off (background.js
-  // notifyAgentDisabled keeps it). It is offered first, so nothing typed is lost.
-  const PENDING_TASK_KEY = "pendingAgentTask";
-  const PENDING_TASK_MS = 30 * 60000;
-  function pendingTask() {
-    const area = chrome.storage && chrome.storage.session;
-    if (!area) return Promise.resolve(null);
-    return area.get(PENDING_TASK_KEY).then((got) => {
-      const p = got && got[PENDING_TASK_KEY];
-      const text = p && String(p.text || "").trim();
-      if (!text || !(Date.now() - (p.at || 0) < PENDING_TASK_MS)) return null;
-      return { text, tabId: Number.isInteger(p.tabId) ? p.tabId : null };
-    }, () => null);
-  }
+  // A task typed in the quick box while the agent was off is not offered
+  // here: the worker offers it whenever the agent is turned on, from this
+  // page or anywhere else (background.js offerKeptTask).
   function tryButton(task, note, onclick) {
     const b = document.createElement("button");
     b.className = "try";
@@ -271,7 +260,7 @@
     return b;
   }
 
-  async function showDone(provider) {
+  function showDone(provider) {
     const free = provider === "openrouter";
     $("doneLede").textContent = (free
       ? `You're on OpenRouter's free models. ${D.freeCapNote("openrouter")}`
@@ -279,23 +268,11 @@
       " Try a first task. Chrome will ask to let the agent use that one site, and you can stop it at any time.";
     const list = $("tries");
     list.textContent = "";
-    const typed = await pendingTask();
-    if (typed) {
-      list.appendChild(tryButton(typed.text, "what you typed", () => {
-        // Taken once. It works on the tab it was typed on, which the agent
-        // asks about on its own card if it needs access there.
-        chrome.storage.session.remove(PENDING_TASK_KEY).catch(() => {});
-        openAgent(typed.text, null, typed.tabId);
-      }));
-    }
     for (const [task, site] of FIRST_TASKS) list.appendChild(tryButton(task, site, () => openAgent(task, site)));
     show("done");
   }
-  function openAgent(task, site, tabId) {
-    const params = new URLSearchParams();
-    if (task) { params.set("task", task); params.set("autostart", "1"); }
-    if (Number.isInteger(tabId)) params.set("tabId", String(tabId));
-    const url = chrome.runtime.getURL("agent.html") + (params.toString() ? `?${params}` : "");
+  function openAgent(task, site) {
+    const url = chrome.runtime.getURL("agent.html") + (task ? `?task=${encodeURIComponent(task)}&autostart=1` : "");
     const open = () => chrome.tabs.create({ url });
     // The click asks Chrome for what it needs and no more: the one site this
     // task works on. Any other site is asked for when the agent first gets

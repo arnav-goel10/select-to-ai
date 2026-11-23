@@ -803,9 +803,37 @@ function createTabAndSend(url, message) {
     });
 }
 
-// What was typed into the quick box while the agent was off, kept for the
-// setup page (session storage: only extension pages can read it).
+// What was typed into the quick box while the agent was off, kept until the
+// agent is turned on (session storage: only extension pages can read it).
 const PENDING_TASK_KEY = 'pendingAgentTask';
+const PENDING_TASK_MS = 30 * 60000;
+
+/**
+ * The one place a kept quick-box task is offered. Whenever the agent is
+ * turned on, from the setup page, Settings or anywhere else, the agent page
+ * opens on the tab the task was typed on with the task in its box, for the
+ * user to send or change. It is taken once, and not offered after 30 minutes.
+ */
+function offerKeptTask() {
+    const area = chrome.storage.session;
+    if (!area) return Promise.resolve();
+    return area.get(PENDING_TASK_KEY).then((got) => {
+        const kept = got && got[PENDING_TASK_KEY];
+        if (!kept) return undefined;
+        return area.remove(PENDING_TASK_KEY).then(() => {
+            const text = String(kept.text || '').trim();
+            if (!text || !(Date.now() - (kept.at || 0) < PENDING_TASK_MS)) return;
+            const params = new URLSearchParams();
+            if (Number.isInteger(kept.tabId)) params.set('tabId', String(kept.tabId));
+            params.set('task', text.slice(0, 2000));
+            chrome.tabs.create({ url: chrome.runtime.getURL(`agent.html?${params}`) }, () => void chrome.runtime.lastError);
+        });
+    }).catch(() => {});
+}
+chrome.storage.onChanged.addListener((changes, namespace) => {
+    const on = namespace === 'sync' && changes.showAgent;
+    if (on && on.newValue === true && on.oldValue !== true) offerKeptTask();
+});
 
 /** Shared "agent is disabled" handling for gated entry points. */
 function notifyAgentDisabled(task, tabId) {

@@ -79,7 +79,7 @@ New installs open a short welcome page. Highlight-to-ask works straight away; to
 
 ### Use the quick box
 
-The quick box (`Control+Shift+Q` on macOS, `Alt+K` elsewhere) works from any website (Chrome keeps extensions off its own pages and the Web Store, and the toolbar icon says so there): what you type, with any text you had selected, starts the agent on that tab. With the agent turned off, it opens the setup page and keeps what you typed. Agent tasks still stop at the risk-confirmation gate before any consequential action.
+The quick box (`Control+Shift+Q` on macOS, `Alt+K` elsewhere) works from any website (Chrome keeps extensions off its own pages and the Web Store, and the toolbar icon says so there): what you type, with any text you had selected, starts the agent on that tab. With the agent turned off, it opens the setup page and keeps what you typed. Once the agent is turned on, from that page or from Settings, it opens with your task in its box. Agent tasks still stop at the risk-confirmation gate before any consequential action.
 
 ### Use a custom gateway
 
