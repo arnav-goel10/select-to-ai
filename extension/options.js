@@ -662,12 +662,13 @@
   $("resetBtn").onclick = async () => {
     if (!confirm("Reset every setting and remove your saved API keys, memory, task history and recipes?")) return;
     if (chatgpt && chatgpt.signedIn && CG_UI) await CG_UI.signOut();
-    chrome.storage.sync.remove(STORAGE.SETTINGS, () =>
+    // Back to what a new install shows, not to every key unset.
+    chrome.storage.sync.remove(STORAGE.SETTINGS, () => chrome.storage.sync.set({ ...STORAGE.FRESH_SETTINGS }, () =>
       chrome.storage.local.get(null, (all) => {
         // Everything the extension keeps about the user, as the privacy policy lists it.
         const chats = Object.keys(all || {}).filter((k) => k.startsWith("sessionUrl_"));
         chrome.storage.local.remove([...STORAGE.API_KEYS, ...RESET_LOCAL_KEYS, ...chats], () => location.reload());
-      }),
+      })),
     );
   };
 

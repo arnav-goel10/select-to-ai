@@ -23,6 +23,8 @@
   const HANDOFF_KEY = "agentHandoff";
   // A handoff older than this is not started: the panel that should have taken it never came.
   const HANDOFF_MS = 2 * 60000;
+  // The longest request a handoff carries, the same as the agent page's box takes.
+  const TASK_LIMIT = 2000;
 
   function escape(text) {
     return String(text)
@@ -96,6 +98,20 @@
   const newId = () => `h${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
   /**
+   * Keeps a request once in session storage for the agent page to take, and
+   * returns the page address (relative to the extension) that takes it.
+   * Every entry point that writes the side panel's saved address goes
+   * through this, so that address never carries the request itself: the
+   * panel opened again later finds nothing to start.
+   */
+  async function handOff(storage, task, tabId) {
+    const id = newId();
+    const tab = Number.isInteger(tabId) ? tabId : null;
+    await storage.set({ [HANDOFF_KEY]: { id, task: String(task || ""), tabId: tab, at: Date.now() } });
+    return { id, path: handoffPath(id, tab) };
+  }
+
+  /**
    * Starts a run from the address bar.
    *
    * chrome.sidePanel.open needs a user gesture. Since Chrome 131 an
@@ -118,7 +134,6 @@
       try { opening = Promise.resolve(api.sidePanel.open({ windowId })); } catch (e) { opening = Promise.reject(e); }
     }
     if (opening) opening.catch(() => {});
-    const id = newId();
     return (async () => {
       // The tab the run works in: the one typed in, or a new one at the
       // new-tab page, which the run then uses as its start.
@@ -127,8 +142,8 @@
         const made = await api.tabs.create({ ...(windowId !== null ? { windowId } : {}), active: plan.workIn === "newForeground" }).catch(() => null);
         if (made && Number.isInteger(made.id)) tabId = made.id;
       }
-      await api.storage.session.set({ [HANDOFF_KEY]: { id, task: plan.task, tabId, at: Date.now() } });
-      const url = api.runtime.getURL(handoffPath(id, tabId));
+      const { id, path } = await handOff(api.storage.session, plan.task, tabId);
+      const url = api.runtime.getURL(path);
       const panel = opening ? await opening.then(() => true, () => false) : false;
       if (panel) {
         await api.storage.local.set({ sidePanelState: { url, selectedText: "", autoSend: false, timestamp: Date.now() } });
@@ -151,10 +166,12 @@
     if (!h || h.id !== id) return "";
     await storage.remove(HANDOFF_KEY);
     if (!((now || Date.now()) - (h.at || 0) <= HANDOFF_MS)) return "";
-    return tidy(h.task);
+    // Kept as it was written (the popup's box allows several lines); the
+    // address bar's text was already tidied when it was planned.
+    return String(h.task || "").trim().slice(0, TASK_LIMIT);
   }
 
-  const api = Object.freeze({ LIMIT, HANDOFF_KEY, HANDOFF_MS, escape, recentMatches, suggestionsFor, planEntry, handoffPath, startRun, takeHandoff });
+  const api = Object.freeze({ LIMIT, HANDOFF_KEY, HANDOFF_MS, escape, recentMatches, suggestionsFor, planEntry, handoffPath, handOff, startRun, takeHandoff });
   root.SELECT_TO_AI_OMNIBOX = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

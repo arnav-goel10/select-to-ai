@@ -56,12 +56,23 @@ function show(url) {
     if (!agent) syncSelector(url);
 }
 
-function syncSelector(url) {
-    if (url.includes(HOSTS.CHATGPT)) selector.value = URLS.CHATGPT;
-    else if (url.includes(HOSTS.GEMINI)) selector.value = URLS.GEMINI;
-    else if (url.includes(HOSTS.PERPLEXITY)) selector.value = URLS.PERPLEXITY;
-    else if (url.includes(HOSTS.CLAUDE)) selector.value = URLS.CLAUDE;
+/** The picker entry an assistant address belongs to, or '' for none. */
+function siteOf(url) {
+    const u = String(url || '');
+    if (u.includes(HOSTS.CHATGPT)) return URLS.CHATGPT;
+    if (u.includes(HOSTS.GEMINI)) return URLS.GEMINI;
+    if (u.includes(HOSTS.PERPLEXITY)) return URLS.PERPLEXITY;
+    if (u.includes(HOSTS.CLAUDE)) return URLS.CLAUDE;
+    return '';
 }
+
+function syncSelector(url) {
+    const site = siteOf(url);
+    if (site) selector.value = site;
+}
+
+/** Whether the picker lists the assistant this address is on. */
+const listed = (url) => Array.from(selector.options).some((o) => o.value === siteOf(url));
 
 /** Nothing to show: every assistant is off and so is the agent. */
 function showEmpty() {
@@ -187,7 +198,11 @@ Promise.all([
     const agentState = !!(state && isAgentUrl(state.url));
     // Every assistant off and the agent off: an old hand-off is not shown.
     if (!agentOn && selector.options.length === 0) { showEmpty(); return; }
-    if (state && state.url && (agentOn ? fresh || agentState : !agentState)) { updateState(state); return; }
+    // A saved assistant the picker no longer lists (turned off, or claude.ai
+    // not granted, so its frame would be refused) is not loaded; the first
+    // listed one is shown instead.
+    const usable = !!(state && state.url && (agentState || listed(state.url)));
+    if (usable && (agentOn ? fresh || agentState : !agentState)) { updateState(state); return; }
     if (agentOn) { show(agentUrl()); return; }
 
     // Default load (direct open): the first assistant, at its saved conversation.

@@ -342,7 +342,8 @@ async function main() {
       chrome.contextMenus.removeAll = realRemoveAll;
       return list;
     }, zero);
-    check("zero assistants: no menu item and no empty parent", made.length === 0, `created ${JSON.stringify(made)}`);
+    // Only the page item is left, which opens the side panel on its empty state.
+    check("zero assistants: no selection item and no empty parent", made.length === 1 && made[0] === "Open Select to AI side panel", `created ${JSON.stringify(made)}`);
     const side = await browser.newPage();
     await side.setViewport({ width: 400, height: 700 });
     await side.goto(`chrome-extension://${extId}/sidepanel.html`, { waitUntil: "load" });
