@@ -45,7 +45,7 @@ function loadReader(ref) {
     };
   }
   const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "s2a-old-"));
-  for (const f of ["agentTools.js", "agentContentScript.js", "commonWords.js"]) {
+  for (const f of ["agentTools.js", "agentContentScript.js"]) {
     try { fs.writeFileSync(path.join(dir, f), execFileSync("git", ["show", `${ref}:extension/${f}`], { cwd: ROOT })); } catch (_e) { /* not in that version */ }
   }
   return {

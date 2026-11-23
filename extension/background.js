@@ -4,7 +4,7 @@
  */
 
 // Import shared configuration
-importScripts('config.js', 'defaults.js', 'security.js', 'commonWords.js', 'omnibox.js');
+importScripts('config.js', 'defaults.js', 'security.js', 'omnibox.js');
 // Optional permissions (notifications, optional hosts) go through one helper.
 importScripts('core/grants.js');
 // The agent's runs live in this worker (engine.js), not in the side panel.

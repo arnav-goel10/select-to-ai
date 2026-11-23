@@ -8,41 +8,53 @@ const T = require("../../extension/agentTools.js");
 const RUN = require("../../extension/core/run.js");
 const POLICY = require("../../extension/core/policy.js");
 
+const JUDGE = require("../helpers/fake-judge.js");
+// The page-blind press check, answered at once by a stand-in for its model.
+const advance = JUDGE.judging(RUN);
+
 const chip = (label, extra) => ({ id: 1, tagName: "div", role: "button", accName: label, inField: true, ...extra });
 const page = (els, forms) => ({ url: "https://forms.example/edit", elements: els, forms: forms || [] });
 const click = (el, forms) => T.actionRisk({ action: "click", id: el.id }, page([el], forms));
-const decide = (el) => POLICY.decide({ do: "click", ref: el.id }, page([el]), { trust: {}, task: "edit the field" }, { riskConfirmation: true });
+const decide = (el, forms, opinions) => POLICY.decide({ do: "click", ref: el.id }, page([el], forms), { trust: {}, task: "edit the field", opinions: opinions || {} }, { riskConfirmation: true });
+// A form that sends nothing until its own submit control is pressed.
+const staged = [{ id: 0, method: "post", fields: 1, hasSubmit: true }];
 
-test("the x on a chosen value is not held as a delete, in any wording", () => {
-  for (const label of ["Remove Purple", "Remove item", "Delete tag teal", "Remove", "Clear", "Clear all", "Supprimer", "Entfernen Rot", "×", ""]) {
-    const el = chip(label);
-    assert.equal(click(el), null, label);
-    assert.equal(T.pressCheckOf({ action: "click", id: 1 }, page([el])), null, `${label}: no second opinion is needed`);
-    assert.equal(decide(el).verdict, "allow", label);
+test("the x on a chosen value, in a form with its own submit, passes with no check in any wording", () => {
+  for (const label of ["Remove Purple", "Remove item", "Delete tag teal", "Remove", "Clear", "Clear all", "Supprimer", "Entfernen Rot", "×"]) {
+    const el = chip(label, { formId: 0 });
+    assert.equal(click(el, staged), null, label);
+    assert.deepEqual(T.pressEntryOf(el, page([el], staged)), { pass: "staged" }, `${label}: nothing leaves until the form's submit`);
+    assert.deepEqual(decide(el, staged), { verdict: "allow" }, label);
   }
+  // The same x outside such a form may save at once: it is judged, told what kind of control it is.
+  const loose = chip("Remove Purple");
+  assert.equal(T.pressEntryOf(loose, page([loose])).entry.kind, "button");
+  assert.ok(decide(loose).check, "asked about");
 });
 
-test("the same words on a control outside a field are still held: a saved record, a cart line, a link", () => {
+test("the same words on a control outside a field are judged by the check, and held when it says they delete", () => {
   for (const label of ["Remove Purple", "Remove item", "Remove", "Delete"]) {
     const el = { id: 1, tagName: "button", accName: label };
-    assert.equal(click(el).kind, "delete", label);
-    assert.equal(decide(el).verdict, "confirm", label);
+    assert.equal(click(el), null, `${label}: nothing in the page's structure holds it`);
+    const p = page([el]);
+    assert.ok(decide(el).check, `${label}: put to the check`);
+    assert.equal(decide(el, [], JUDGE.judged(p)).verdict, "confirm", label);
   }
-  // A cart line's Remove, listed next to its quantity and price: the content
-  // script never marks it as part of a field, so it is a delete.
+  // A cart line's Remove, listed next to its quantity and price: never a field's x.
   const cartLine = { id: 1, tagName: "button", accName: "Remove Blue Widget from basket", group: "Blue Widget, $19, Qty 1" };
-  assert.equal(click(cartLine).kind, "delete");
-  // A link that says it removes is never a field's own button.
-  assert.equal(click({ id: 1, tagName: "a", accName: "Remove", href: "#", inField: true }).kind, "delete");
-  assert.ok(T.pressCheckOf({ action: "click", id: 1 }, page([{ id: 1, tagName: "a", accName: "Remove", url: "https://forms.example/remove?id=4", href: "/remove?id=4", inField: true }])), "a remove link inside a field is still asked about");
+  assert.equal(decide(cartLine, [], JUDGE.judged(page([cartLine]))).verdict, "confirm");
+  // A link that says it removes is never a field's own button: it is judged as a link.
+  const link = { id: 1, tagName: "a", accName: "Remove", url: "https://forms.example/remove?id=4", href: "/remove?id=4", inField: true };
+  assert.equal(T.pressEntryOf(link, page([link])).entry.kind, "link");
 });
 
 test("a field's button that submits, pays or sends is held whatever its place", () => {
   const forms = [{ id: 0, search: false, fields: 2 }];
-  assert.equal(click(chip("Remove", { tagName: "button", submits: true, formId: 0 }), forms).kind, "delete", "a submit button is never a value's x");
-  assert.equal(click(chip("Buy now")).kind, "pay");
-  assert.equal(click(chip("Send")).kind, "send");
-  assert.equal(decide(chip("Place order")).verdict, "confirm");
+  assert.equal(click(chip("Remove", { tagName: "button", submits: true, formId: 0 }), forms).kind, "send", "a submit button is never a value's x");
+  for (const label of ["Buy now", "Send", "Place order"]) {
+    const el = chip(label);
+    assert.equal(decide(el, [], JUDGE.judged(page([el]))).verdict, "confirm", label);
+  }
 });
 
 // ------------------------------------------------------------- declining
@@ -59,15 +71,15 @@ const shop = {
   forms: [],
 };
 const env = (page) => ({ now: 1000, page: page || shop, settings: { riskConfirmation: true, allowlist: "", verify: true }, extras: {} });
-const reply = (run, actions, page) => RUN.advance(run, { type: "model_replied", reply: { memory: "", goal: "g", actions }, usage: { prompt: 1, completion: 1, cost: 0, model: "m" } }, env(page));
-const look = (run, page) => RUN.advance(run, { type: "observed", page: page || shop }, env(page));
+const reply = (run, actions, page) => advance(run, { type: "model_replied", reply: { memory: "", goal: "g", actions }, usage: { prompt: 1, completion: 1, cost: 0, model: "m" } }, env(page));
+const look = (run, page) => advance(run, { type: "observed", page: page || shop }, env(page));
 const declinedRun = (first) => {
   const run = RUN.newRun({ id: "r1", task: "tidy my basket", tabId: 7, startUrl: shop.url, marker: "PAGE-abcd1234", now: 1 });
-  RUN.advance(run, { type: "start" }, env());
+  advance(run, { type: "start" }, env());
   look(run);
   reply(run, [first || { do: "click", ref: 1 }]);
   assert.equal(run.wait.kind, "approval");
-  const fx = RUN.advance(run, { type: "declined", id: run.wait.id }, env());
+  const fx = advance(run, { type: "declined", id: run.wait.id }, env());
   assert.deepEqual(fx, [{ type: "observe" }]);
   return run;
 };
@@ -136,17 +148,18 @@ test("after a decline, the same control renumbered on a redraw is still the decl
 });
 
 test("a declined address opened another way is asked about again, saying so", () => {
-  const run = declinedRun({ do: "navigate", url: "https://shop.example/checkout#pay" });
-  assert.equal(run.declined[0].urls[0], "https://shop.example/checkout");
+  // An address the agent wrote itself, on a site the request does not name, is held; the user says no.
+  const run = declinedRun({ do: "navigate", url: "https://pay.example/checkout#pay" });
+  assert.equal(run.declined[0].urls[0], "https://pay.example/checkout");
   look(run);
-  const v = POLICY.decide({ do: "tabs", op: "open", url: "https://shop.example/checkout" }, shop, run, { riskConfirmation: true });
+  const v = POLICY.decide({ do: "tabs", op: "open", url: "https://pay.example/checkout" }, shop, run, { riskConfirmation: true });
   assert.equal(v.verdict, "confirm");
-  assert.match(v.detail[0], /^You declined "https:\/\/shop\.example\/checkout" a moment ago\. This would do it again another way\./);
+  assert.match(v.detail[0], /^You declined "https:\/\/pay\.example\/checkout" a moment ago\. This would do it again another way\./);
 });
 
 test("once the user speaks, the rules alone decide again", () => {
   const run = declinedRun();
-  RUN.advance(run, { type: "steer", text: "actually, remove the mug" }, env());
+  advance(run, { type: "steer", text: "actually, remove the mug" }, env());
   look(run);
   reply(run, [{ do: "press", ref: 1, key: "Delete" }]);
   assert.ok(!run.wait, "the rules alone decide again");
@@ -156,7 +169,7 @@ test("once the user speaks, the rules alone decide again", () => {
 test("a sub-task handed out after a decline does not do the declined step either, and a step declined in a sub-task holds for the run", () => {
   const run = declinedRun();
   look(run);
-  RUN.advance(run, { type: "model_replied", reply: { note: "", goal: "split", do: "delegate", tasks: [{ task: "remove the mug" }] }, usage: { prompt: 1, completion: 1, cost: 0, model: "m" } }, env());
+  advance(run, { type: "model_replied", reply: { note: "", goal: "split", do: "delegate", tasks: [{ task: "remove the mug" }] }, usage: { prompt: 1, completion: 1, cost: 0, model: "m" } }, env());
   const child = run.children[0].run;
   assert.equal(POLICY.decide({ do: "press", ref: 1, key: "Delete" }, shop, child, { riskConfirmation: true }).verdict, "confirm");
 
@@ -165,10 +178,10 @@ test("a sub-task handed out after a decline does not do the declined step either
   const pages = {};
   const penv = () => ({ ...env(), childEnv: (id) => ({ page: pages[id] || null, extras: {} }) });
   const parent = RUN.newRun({ id: "p", task: "tidy my basket", tabId: 7, startUrl: shop.url, marker: "PAGE-abcd1234", now: 1 });
-  RUN.advance(parent, { type: "start" }, penv());
-  RUN.advance(parent, { type: "observed", page: shop }, penv());
-  RUN.advance(parent, { type: "model_replied", reply: { note: "", goal: "split", do: "delegate", tasks: [{ task: "remove the mug", url: shop.url }] }, usage: { prompt: 1, completion: 1, cost: 0, model: "m" } }, penv());
-  const c = (event) => RUN.advance(parent, { type: "child", child: "p-s1", event }, penv());
+  advance(parent, { type: "start" }, penv());
+  advance(parent, { type: "observed", page: shop }, penv());
+  advance(parent, { type: "model_replied", reply: { note: "", goal: "split", do: "delegate", tasks: [{ task: "remove the mug", url: shop.url }] }, usage: { prompt: 1, completion: 1, cost: 0, model: "m" } }, penv());
+  const c = (event) => advance(parent, { type: "child", child: "p-s1", event }, penv());
   c({ type: "spawned", tabId: 101 });
   pages["p-s1"] = blank;
   c({ type: "observed", page: blank });
@@ -213,7 +226,7 @@ test("a question about something else is asked at once, and an address's scheme 
   reply(other, [{ do: "ask_user", kind: "question", question: "Which colour of widget do you want?" }]);
   assert.equal(other.status, "waiting");
   assert.equal(other.wait.kind, "question");
-  const away = declinedRun({ do: "navigate", url: "https://www.shop.example/checkout" });
+  const away = declinedRun({ do: "navigate", url: "https://www.pay.example/checkout" });
   look(away);
   reply(away, [{ do: "ask_user", kind: "question", question: "Do you want the https link to the www help page?" }]);
   assert.equal(away.status, "waiting", "words every address has do not name the declined one");
@@ -221,7 +234,7 @@ test("a question about something else is asked at once, and an address's scheme 
 
 test("once the user says something, a question about the step is theirs to answer again", () => {
   const run = declinedRun();
-  RUN.advance(run, { type: "steer", text: "actually, remove the mug" }, env());
+  advance(run, { type: "steer", text: "actually, remove the mug" }, env());
   look(run);
   reply(run, [{ do: "ask_user", kind: "question", question: "Remove the Purple Mug now?" }]);
   assert.equal(run.status, "waiting");

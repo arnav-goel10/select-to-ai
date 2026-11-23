@@ -11,6 +11,9 @@ const LLM = require("../../extension/core/llm.js");
 const D = require("../../extension/defaults.js");
 const LIMITS = require("../../extension/usageLimits.js");
 const RUN = require("../../extension/core/run.js");
+// The page-blind press check, answered at once by a stand-in for its model.
+const JUDGE = require("../helpers/fake-judge.js");
+const advance = JUDGE.judging(RUN);
 const { fakeWorker, settle } = require("../helpers/fake-worker.js");
 
 const EXT = path.join(__dirname, "../../extension");
@@ -47,11 +50,11 @@ function oneStepIn(start) {
   const page = shop();
   const at = (ms) => ({ now: (now += ms || 0), page, settings: { riskConfirmation: true, allowlist: "", verify: true }, extras: {} });
   const run = RUN.newRun({ id: "r1", task: "find the blue widget's price", tabId: 7, startUrl: page.url, marker: "PAGE-abcd1234", now });
-  RUN.advance(run, { type: "start" }, at());
-  RUN.advance(run, { type: "observed", page }, at());
-  RUN.advance(run, { type: "model_replied", reply: { memory: "Blue Widget is $19.", goal: "g", actions: [{ do: "click", ref: 3 }] }, usage: {} }, at(1000));
-  RUN.advance(run, { type: "acted", result: { ok: true, message: "Done.", pageChanged: true } }, at(1000));
-  const fx = RUN.advance(run, { type: "observed", page }, at(1000));
+  advance(run, { type: "start" }, at());
+  advance(run, { type: "observed", page }, at());
+  advance(run, { type: "model_replied", reply: { memory: "Blue Widget is $19.", goal: "g", actions: [{ do: "click", ref: 3 }] }, usage: {} }, at(1000));
+  advance(run, { type: "acted", result: { ok: true, message: "Done.", pageChanged: true } }, at(1000));
+  const fx = advance(run, { type: "observed", page }, at(1000));
   assert.equal(fx[0].type, "model");
   assert.equal(run.step, 2);
   return { run, page, at, clock: () => now };
@@ -124,7 +127,7 @@ test("a played 429 for a spent free cap holds the run until the reset, and it ca
 
   const { run, page, at, clock } = oneStepIn();
   const journalBefore = run.journal.length;
-  let fx = RUN.advance(run, failed(err), at(2000));
+  let fx = advance(run, failed(err), at(2000));
   assert.equal(run.outcome, null, "the run is not ended");
   assert.equal(run.status, "waiting");
   assert.equal(fx.length, 1);
@@ -144,43 +147,43 @@ test("a played 429 for a spent free cap holds the run until the reset, and it ca
   assert.equal(RUN.trace(run).waitHold, "limit");
   // Through a worker restart it is still held.
   const saved = JSON.parse(JSON.stringify(RUN.toStored(run)));
-  const again = RUN.advance(saved, { type: "resume" }, at(0));
+  const again = advance(saved, { type: "resume" }, at(0));
   assert.equal(again[0].wait.hold, "limit");
   assert.equal(again[0].wait.until, resetAt);
 
   // The reset comes: the run looks at the page and asks for the same step again.
-  fx = RUN.advance(run, { type: "pause_over", id: run.wait.id }, at(resetAt - clock()));
+  fx = advance(run, { type: "pause_over", id: run.wait.id }, at(resetAt - clock()));
   assert.deepEqual(fx, [{ type: "observe" }]);
   assert.equal(run.status, "running");
-  fx = RUN.advance(run, { type: "observed", page }, at(1000));
+  fx = advance(run, { type: "observed", page }, at(1000));
   assert.equal(fx[0].type, "model");
   assert.equal(run.step, 2);
   assert.match(fx[0].user, /Blue Widget is \$19\./, "the model is asked with what the run had found");
   const out = await c.call({ system: fx[0].system, user: fx[0].user, tool, tier: "pro" }, free());
   assert.deepEqual(out.reply, { goal: "go" });
-  fx = RUN.advance(run, { type: "model_replied", purpose: "step", reply: { memory: "", goal: "g", actions: [{ do: "done", answer: "The Blue Widget is $19.", success: true }] }, usage: out.usage }, at(1000));
+  fx = advance(run, { type: "model_replied", purpose: "step", reply: { memory: "", goal: "g", actions: [{ do: "done", answer: "The Blue Widget is $19.", success: true }] }, usage: out.usage }, at(1000));
   assert.notEqual(run.status, "failed");
 });
 
 test("a spent cap with no time named waits for the user, who can try again or take what was found", () => {
   const { run, page, at } = oneStepIn();
   const noCredit = { kind: "limit", message: "**Your OpenAI account is out of credit.**", limit: { kind: "no-credit", resetAt: null, short: "Your OpenAI account is out of credit." } };
-  RUN.advance(run, failed(noCredit), at(0));
+  advance(run, failed(noCredit), at(0));
   assert.equal(run.wait.hold, "limit");
   assert.equal(run.wait.until, undefined, "nothing wakes it by the clock");
   assert.match(run.wait.question, /^Your OpenAI account is out of credit\. Nothing is lost\. I will carry on from here when you connect a backup or say to try again\.$/);
   // An answer typed while held is kept for the next step; the run stays held.
-  assert.deepEqual(RUN.advance(run, { type: "steer", text: "cheapest only" }, at(0)), []);
+  assert.deepEqual(advance(run, { type: "steer", text: "cheapest only" }, at(0)), []);
   assert.equal(run.status, "waiting");
   // Try again: on it goes, with the message.
-  let fx = RUN.advance(run, { type: "pause_over", id: run.wait.id, by: "user" }, at(60000));
+  let fx = advance(run, { type: "pause_over", id: run.wait.id, by: "user" }, at(60000));
   assert.deepEqual(fx, [{ type: "observe" }]);
-  fx = RUN.advance(run, { type: "observed", page }, at(0));
+  fx = advance(run, { type: "observed", page }, at(0));
   assert.match(fx[0].user, /cheapest only/);
   // Still out of credit: held again, and this time the user stops with what it has.
-  RUN.advance(run, failed(noCredit), at(0));
+  advance(run, failed(noCredit), at(0));
   assert.equal(run.wait.hold, "limit");
-  fx = RUN.advance(run, { type: "wrap_up", id: run.wait.id }, at(0));
+  fx = advance(run, { type: "wrap_up", id: run.wait.id }, at(0));
   assert.deepEqual(fx, [{ type: "end" }]);
   assert.equal(run.outcome.state, "limit");
   assert.match(run.outcome.text, /^\*\*Your OpenAI account is out of credit\.\*\*\n\nWhat I had found:\nStep 1: Blue Widget is \$19\./);
@@ -189,22 +192,22 @@ test("a spent cap with no time named waits for the user, who can try again or ta
 test("a reset time that has passed, or keeps being wrong, does not turn the hold into a loop", () => {
   const { run, page, at, clock } = oneStepIn();
   const limit = (resetAt) => ({ kind: "limit", message: "Out of requests.", limit: { kind: "daily", resetAt, short: "Out of requests." } });
-  RUN.advance(run, failed(limit(clock() - 5000)), at(0));
+  advance(run, failed(limit(clock() - 5000)), at(0));
   assert.equal(run.wait.until, clock() + 120000, "never sooner than two minutes");
   // The provider names a reset each time and refuses each time: after four, only the user carries it on.
   for (let i = 1; i < 4; i++) {
-    RUN.advance(run, { type: "pause_over", id: run.wait.id }, at(120000));
-    RUN.advance(run, { type: "observed", page }, at(0));
-    RUN.advance(run, failed(limit(clock() + 1000)), at(0));
+    advance(run, { type: "pause_over", id: run.wait.id }, at(120000));
+    advance(run, { type: "observed", page }, at(0));
+    advance(run, failed(limit(clock() + 1000)), at(0));
     assert.ok(run.wait.until > clock(), `hold ${i + 1} still has a time`);
   }
-  RUN.advance(run, { type: "pause_over", id: run.wait.id }, at(120000));
-  RUN.advance(run, { type: "observed", page }, at(0));
-  RUN.advance(run, failed(limit(clock() + 1000)), at(0));
+  advance(run, { type: "pause_over", id: run.wait.id }, at(120000));
+  advance(run, { type: "observed", page }, at(0));
+  advance(run, failed(limit(clock() + 1000)), at(0));
   assert.equal(run.wait.hold, "limit");
   assert.equal(run.wait.until, undefined);
   // Stop works on a held run as on any other, and gives what was found.
-  RUN.advance(run, { type: "stop" }, at(0));
+  advance(run, { type: "stop" }, at(0));
   assert.equal(run.status, "stopped");
   assert.match(run.outcome.text, /^Stopped\.\n\nWhat I had found:\nStep 1: Blue Widget is \$19\./);
 });
@@ -233,16 +236,16 @@ test("played 429s from a crowded model pause the run, then hold it with the choi
   // Four waits by itself, each longer than the last.
   const waits = [];
   for (let i = 0; i < 4; i++) {
-    RUN.advance(run, failed(err), at(0));
+    advance(run, failed(err), at(0));
     assert.equal(run.wait.kind, "pause");
     assert.equal(run.wait.hold, undefined, "an ordinary pause, with its countdown");
     waits.push(run.wait.until - run.wait.since);
-    RUN.advance(run, { type: "pause_over", id: run.wait.id }, at(waits[i]));
-    RUN.advance(run, { type: "observed", page }, at(0));
+    advance(run, { type: "pause_over", id: run.wait.id }, at(waits[i]));
+    advance(run, { type: "observed", page }, at(0));
   }
   assert.deepEqual(waits, [120000, 240000, 480000, 960000]);
   // Refused a fifth time: held, not ended.
-  let fx = RUN.advance(run, failed(err), at(0));
+  let fx = advance(run, failed(err), at(0));
   assert.equal(fx[0].type, "attention");
   assert.equal(run.outcome, null);
   assert.equal(run.wait.hold, "crowded");
@@ -250,30 +253,30 @@ test("played 429s from a crowded model pause the run, then hold it with the choi
   assert.match(run.wait.question, /kept turning requests away as too many.*Nothing is lost\. I will carry on from here when you connect a backup or say to try again\./);
   assert.equal(run.memory, "Step 1: Blue Widget is $19.");
   // Try again: the run goes on, and a new refusal starts from the shortest wait.
-  fx = RUN.advance(run, { type: "pause_over", id: run.wait.id, by: "user" }, at(5000));
+  fx = advance(run, { type: "pause_over", id: run.wait.id, by: "user" }, at(5000));
   assert.deepEqual(fx, [{ type: "observe" }]);
-  RUN.advance(run, { type: "observed", page }, at(0));
-  RUN.advance(run, failed(err), at(0));
+  advance(run, { type: "observed", page }, at(0));
+  advance(run, failed(err), at(0));
   assert.equal(run.wait.hold, undefined);
   assert.equal(run.wait.until - run.wait.since, 120000);
   // The provider answers: the run carries on from step 2 with everything it had.
-  RUN.advance(run, { type: "pause_over", id: run.wait.id }, at(120000));
-  fx = RUN.advance(run, { type: "observed", page }, at(0));
+  advance(run, { type: "pause_over", id: run.wait.id }, at(120000));
+  fx = advance(run, { type: "observed", page }, at(0));
   assert.equal(run.step, 2);
-  fx = RUN.advance(run, { type: "model_replied", purpose: "step", reply: { memory: "", goal: "g", actions: [{ do: "click", ref: 3 }] }, usage: {} }, at(0));
+  fx = advance(run, { type: "model_replied", purpose: "step", reply: { memory: "", goal: "g", actions: [{ do: "click", ref: 3 }] }, usage: {} }, at(0));
   assert.equal(fx[0].type, "act");
 });
 
 test("a wrap-up meant for a check-in or an ordinary pause does not end a run", () => {
   const { run, at } = oneStepIn();
-  RUN.advance(run, { type: "model_failed", purpose: "step", kind: "rate_limited", waitMs: 180000, message: "Wait three minutes." }, at(0));
+  advance(run, { type: "model_failed", purpose: "step", kind: "rate_limited", waitMs: 180000, message: "Wait three minutes." }, at(0));
   assert.equal(run.wait.hold, undefined);
-  assert.deepEqual(RUN.advance(run, { type: "wrap_up", id: run.wait.id }, at(0)), []);
+  assert.deepEqual(advance(run, { type: "wrap_up", id: run.wait.id }, at(0)), []);
   assert.equal(run.status, "waiting");
   // Nor does one for another wait's id end a hold.
   const held = oneStepIn();
-  RUN.advance(held.run, { type: "model_failed", purpose: "step", kind: "limit", message: "Out." }, held.at(0));
-  assert.deepEqual(RUN.advance(held.run, { type: "wrap_up", id: "someone-else" }, held.at(0)), []);
+  advance(held.run, { type: "model_failed", purpose: "step", kind: "limit", message: "Out." }, held.at(0));
+  assert.deepEqual(advance(held.run, { type: "wrap_up", id: "someone-else" }, held.at(0)), []);
   assert.equal(held.run.status, "waiting");
 });
 
@@ -283,7 +286,7 @@ test("a wrap-up meant for a check-in or an ordinary pause does not end a run", (
 function savedHeld(until) {
   // The worker goes by the real clock.
   const { run, at } = oneStepIn(Date.now());
-  RUN.advance(run, { type: "model_failed", purpose: "step", kind: "limit", message: "Out of requests.", limit: { kind: "free-daily", resetAt: until || 0, short: "Today's free requests are used up." } }, at(0));
+  advance(run, { type: "model_failed", purpose: "step", kind: "limit", message: "Out of requests.", limit: { kind: "free-daily", resetAt: until || 0, short: "Today's free requests are used up." } }, at(0));
   run.tabId = 9;
   run.wait.tabId = 9;
   return { "agentSession:1": { turns: [], run: JSON.parse(JSON.stringify(RUN.toStored(run))), extras: {} } };
@@ -528,7 +531,7 @@ test("a hold with nobody looking is told by a notice, once", async () => {
   const w = fakeWorker({ notifications: true });
   const { run, at } = oneStepIn();
   const s = { windowId: 1, ports: new Set(), attending: new Map(), run };
-  RUN.advance(run, { type: "model_failed", purpose: "step", kind: "limit", message: "Out.", limit: { kind: "free-daily", resetAt: 0, short: "Today's free requests are used up." } }, at(0));
+  advance(run, { type: "model_failed", purpose: "step", kind: "limit", message: "Out.", limit: { kind: "free-daily", resetAt: 0, short: "Today's free requests are used up." } }, at(0));
   assert.equal(typeof w.engine.attention, "function");
   await w.engine.attention(s, run.wait, false);
   await settle(20);

@@ -180,24 +180,27 @@ test("a recorded press on a script-driven button is a commit step on a build tha
   assert.deepEqual(classes(seeing, b.run.id), ["navigate:read", "click:read"]);
 });
 
-test("a press the run's second opinion judged is recorded as it judged it: a commit when it acts, a plain step when it does nothing", async () => {
+test("a press the check judges is recorded as a commit whatever it said, so a replay never presses it free; a link is a commit only when the check said so", async () => {
   globalThis.SELECT_TO_AI_TOOLS = require(`${EXT}/agentTools.js`);
   globalThis.SELECT_TO_AI_POLICY = require(`${EXT}/core/policy.js`);
   try {
     const TOOLS = globalThis.SELECT_TO_AI_TOOLS;
-    const page = { url: PAGE, elements: [{ id: 5, tagName: "button", accName: "Leave team" }], forms: [] };
-    const key = TOOLS.pressCheckOf({ action: "click", id: 5 }, page).key;
-    const recorded = async (said) => {
+    const page = { url: PAGE, elements: [{ id: 5, tagName: "button", accName: "Weiter" }, { id: 6, tagName: "a", accName: "Unsubscribe", url: `${PAGE}u?id=1` }], forms: [] };
+    const key = (ref) => TOOLS.pressEntryOf(page.elements.find((e) => e.id === ref), page).entry.key;
+    const recorded = async (ref, said) => {
       const RECIPES = load({ sees: true });
       const a = agentRun(RECIPES, fakeChrome());
       a.session.page = page;
-      if (said) a.run.opinions = { [key]: said };
-      await a.act({ do: "click", ref: 5 });
+      if (said) a.run.opinions = { [key(ref)]: said };
+      await a.act({ do: "click", ref });
       return classes(RECIPES, a.run.id);
     };
-    assert.deepEqual(await recorded({ does: "delete", why: "Leaves the team." }), ["navigate:read", "click:commit"]);
-    assert.deepEqual(await recorded(null), ["navigate:read", "click:commit"], "not asked: held as a commit");
-    assert.deepEqual(await recorded({ does: "none", why: "Opens a menu." }), ["navigate:read", "click:read"]);
+    assert.deepEqual(await recorded(5, { does: "delete" }), ["navigate:read", "click:commit"]);
+    assert.deepEqual(await recorded(5, null), ["navigate:read", "click:commit"], "not asked: held as a commit");
+    // "Weiter" judged harmless on one run may submit on a later one: it stays a commit.
+    assert.deepEqual(await recorded(5, { does: "none" }), ["navigate:read", "click:commit"]);
+    // A link: the recording sees where the browser went, and the check's word can only tighten it.
+    assert.deepEqual(await recorded(6, { does: "delete" }), ["navigate:read", "click:commit"]);
   } finally {
     delete globalThis.SELECT_TO_AI_TOOLS;
     delete globalThis.SELECT_TO_AI_POLICY;

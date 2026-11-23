@@ -48,12 +48,20 @@
   const SEEN_SEAM = "\n\u241e\n"; // between the kept parts of a long page, so a quote never spans two
   const DROPPED_KEPT = 50; // pages whose text was let go, named in the feedback on a quote
   const SEEN_URLS = 1500; // addresses seen on pages, for "did the agent make this address up"
-  const ACTING_LINKS = 200; // links that said they delete or send, for opening one by its address
+  const LINK_INDEX = 500; // links the check said commit, by address, for opening one by its address
+  // The page-blind check on presses (agentTools.js pressEntries): at most
+  // this many entries a call, in the order worth judging first; the rest
+  // are judged alone if pressed. A step that presses an entry still being
+  // judged waits for the call, which is given up this long after it was
+  // asked; a press asked about alone is given up after SINGLE_WAIT_MS.
+  const LABELS_CAP = 200;
+  const LABELS_WAIT_MS = 6000;
+  const SINGLE_WAIT_MS = 8000;
   const INVALID_LIMIT = 3; // unusable replies in a row before the run gives up on the model
   const EVIDENCE_ROUNDS = 2;
   const VERIFY_ROUNDS = 2;
   const TRAIL = 24; // recent actions kept, for finding a round of actions the run keeps going
-  const OPINION_MISSES = 2; // second opinions without a usable answer before the run stops asking
+  const OPINION_MISSES = 2; // checks in a row without a usable answer before the run stops asking
   // Pages that hide a sentence from people are asked about at most this
   // many times a run (each ask covers every new hidden sentence on the
   // page). Hidden text is left out of what the model reads, so the answer
@@ -269,7 +277,8 @@
       // second ask there goes to the user (detourToLeave).
       leftDetours: [],
       trust: { sites: [...new Set(sites.filter(Boolean))], urls: [] },
-      actingLinks: [],
+      // Links the press check said commit, by their whole address (policy.js linkOpened).
+      linkIndex: {},
       current: null,
       queue: [],
       wait: null,
@@ -308,6 +317,10 @@
       opinions: {},
       pendingOpinion: null,
       opinionMisses: 0,
+      // Press checks asked about a page's entries and not yet answered
+      // ({tag, keys, entries}), and the press waiting for one of them.
+      pressBatches: [],
+      awaitingPress: null,
       typed: {},
       startedAt: o.now || 0,
       endedAt: 0,
@@ -412,17 +425,6 @@
         if (u && !known.has(u) && known.size < SEEN_URLS) { known.add(u); run.trust.urls.push(u); }
       }
     }
-    // Links that say they delete or send, by address and name: opening one
-    // later by its address, from another page, is decided as pressing it
-    // (policy.js linkOpened).
-    run.actingLinks = run.actingLinks || [];
-    for (const el of page.elements || []) {
-      if (run.actingLinks.length >= ACTING_LINKS) break;
-      if (!TOOLS.linkActs(el)) continue;
-      let url = "";
-      try { url = new URL(String(el.url || el.href), page.url || undefined).href; } catch (_e) { continue; }
-      if (!run.actingLinks.some((l) => l.url === url)) run.actingLinks.push({ url, label: TOOLS.elementLabel(el), words: clip([el.accName, el.text, el.label, el.value, el.title].filter(Boolean).join(" "), 200) });
-    }
     // Kept apart too: only a search form's address takes other query values (agentTools.js addressOrigin).
     run.trust.searches = run.trust.searches || [];
     for (const u of searches) if (!run.trust.searches.includes(u) && run.trust.searches.length < SEEN_URLS) run.trust.searches.push(u);
@@ -463,9 +465,97 @@
       run.current = { step: run.step, goal: "Open the address it was given", actions: [], url: page.url || "" };
       run.queue = [first];
       log(run, "executor", `Step ${run.step}`, run.current.goal);
+      // What the page's controls do is asked before the first move is decided.
+      askPresses(run, page, env, fx);
       return next(run, page, env, fx);
     }
-    return askModel(run, page, env, fx);
+    // What the page's controls do is asked at the same time as the step:
+    // both calls go out together and run side by side.
+    const out = askModel(run, page, env, fx);
+    askPresses(run, page, env, out);
+    return out;
+  }
+
+  /**
+   * The press check for this page, asked beside the step's own call so
+   * the two run at the same time. Only entries no check has answered yet
+   * go: not those this run knows, those kept from earlier runs
+   * (env.pressCache, verdicts by key with the same judge), or those a call
+   * still in flight is judging. Nothing is asked when none are left, or
+   * once the check has failed too often in a row.
+   */
+  function askPresses(run, page, env, fx) {
+    if (!TOOLS.pressEntries) return;
+    const opinions = run.opinions || (run.opinions = {});
+    const cache = (env && env.pressCache) || {};
+    const flying = new Set((run.pressBatches || []).flatMap((b) => b.keys));
+    const fresh = [];
+    const used = [];
+    for (const e of TOOLS.pressEntries(page)) {
+      const had = opinions[e.key];
+      if (had && !had.unanswered) { if (e.url && had.does !== "none") indexLink(run, e); continue; }
+      if (Object.prototype.hasOwnProperty.call(cache, e.key)) {
+        opinions[e.key] = { does: cache[e.key], kept: true };
+        used.push(e.key);
+        if (e.url && cache[e.key] !== "none") indexLink(run, e);
+        continue;
+      }
+      if (!flying.has(e.key)) fresh.push(e);
+    }
+    if (used.length) fx.push({ type: "verdicts", used });
+    if (!fresh.length || (run.opinionMisses || 0) >= OPINION_MISSES) return;
+    const batch = fresh.slice(0, LABELS_CAP);
+    const tag = `presses-${run.step}-${(run.pressAsks = (run.pressAsks || 0) + 1)}`;
+    run.pressBatches = [...(run.pressBatches || []), { tag, keys: batch.map((e) => e.key), entries: batch }];
+    const m = TOOLS.labelsMessages(batch, page.url);
+    fx.push({ type: "model", system: m.system, user: m.user, tool: m.tool, tier: run.helper ? "helper" : "pro", purpose: "labels", tag, timeoutMs: LABELS_WAIT_MS, effort: "default" });
+  }
+
+  /** A link the check said commits, kept by its whole address for opening it by that address later. */
+  function indexLink(run, e) {
+    const index = run.linkIndex || (run.linkIndex = {});
+    if (!e.url || index[e.url] || Object.keys(index).length >= LINK_INDEX) return;
+    const { url: _url, ...entry } = e;
+    index[e.url] = entry;
+  }
+
+  /** The verdicts a check gave, kept for the run and, definite ones, for later runs (engine.js). */
+  function keepVerdicts(run, entries, said, fx) {
+    const keep = {};
+    entries.forEach((e, i) => {
+      const does = said[i];
+      run.opinions = { ...(run.opinions || {}), [e.key]: { does } };
+      if (does !== "unsure") keep[e.key] = does;
+      if (e.url && does !== "none") indexLink(run, e);
+    });
+    if (Object.keys(keep).length) fx.push({ type: "verdicts", set: keep });
+  }
+
+  /**
+   * The press check on a page's entries came back, or could not be had (an
+   * error or its time ran out). Its verdicts are kept. A press that was
+   * waiting for it is decided again: with its verdict, or, when the call
+   * failed, by asking about that press alone.
+   */
+  function onLabels(run, event, page, env) {
+    const fx = [];
+    const batch = (run.pressBatches || []).find((b) => b.tag === event.tag);
+    if (!batch) return fx;
+    run.pressBatches = run.pressBatches.filter((b) => b !== batch);
+    addUsage(run, event.usage);
+    const said = event.reply ? TOOLS.readLabels(batch.entries, event.reply) : null;
+    if (said) {
+      run.opinionMisses = 0;
+      keepVerdicts(run, batch.entries, said, fx);
+    } else {
+      run.opinionMisses = (run.opinionMisses || 0) + 1;
+      quietLog(run, "system", "Press Check", `The check on ${batch.entries.length} control${batch.entries.length === 1 ? "" : "s"} gave no usable answer${event.timedOut ? " in time" : ""}.`);
+    }
+    const waiting = run.awaitingPress;
+    if (!waiting || !batch.keys.includes(waiting.key)) return fx;
+    run.awaitingPress = null;
+    if (run.status !== "running" || !page) return fx;
+    return next(run, page, env, fx);
   }
 
   /**
@@ -1153,7 +1243,13 @@
     // too often to be worth asking, the press is decided as one it could
     // not give: held for the user.
     if (verdict.check) {
-      if ((run.opinionMisses || 0) < OPINION_MISSES) return askOpinion(run, verdict.check, fx);
+      // The page's press check is still judging this one: wait for it.
+      if (verdict.check.kind === "press" && (run.pressBatches || []).some((b) => b.keys.includes(verdict.check.key))) {
+        run.awaitingPress = { key: verdict.check.key };
+        status(run, "executor", "Checking what this button does…");
+        return fx;
+      }
+      if ((run.opinionMisses || 0) < OPINION_MISSES) return askOpinion(run, { ...verdict.check, url: page && page.url }, fx);
       run.opinions = { ...(run.opinions || {}), [verdict.check.key]: { unanswered: true } };
       verdict = POLICY.decide(act, page, run, env.settings, store, env.extras && env.extras.tabs);
     }
@@ -1218,10 +1314,12 @@
    * and its boxes, the text about to go, the request. No page text.
    */
   function askOpinion(run, check, fx) {
-    run.pendingOpinion = { key: check.key, kind: check.kind, label: check.label || check.button || check.box || "" };
+    const press = check.kind === "press" && check.entry;
+    run.pendingOpinion = { key: check.key, kind: check.kind, label: press ? check.entry.names[0] || "" : check.label || check.button || check.box || "", ...(press ? { entry: check.entry } : {}) };
     status(run, "executor", check.kind === "form" ? "Checking what this form does…" : "Checking what this button does…");
-    const m = TOOLS.opinionMessages(check);
-    fx.push({ type: "model", system: m.system, user: m.user, tool: m.tool, tier: run.helper ? "helper" : "pro", purpose: "opinion", effort: "default" });
+    // A press is asked about alone the same way as on a page: the same entry, question and tool.
+    const m = press ? TOOLS.labelsMessages([check.entry], check.url) : TOOLS.opinionMessages(check);
+    fx.push({ type: "model", system: m.system, user: m.user, tool: m.tool, tier: run.helper ? "helper" : "pro", purpose: "opinion", effort: "default", ...(press ? { timeoutMs: SINGLE_WAIT_MS } : {}) });
     return fx;
   }
 
@@ -1239,14 +1337,18 @@
     addUsage(run, event.usage);
     const asked = run.pendingOpinion;
     run.pendingOpinion = null;
-    const said = TOOLS.readOpinion(asked, event.reply);
+    const press = asked.kind === "press" && asked.entry;
+    const read = press ? TOOLS.readLabels([asked.entry], event.reply) : null;
+    const said = press ? (read ? { does: read[0] } : null) : TOOLS.readOpinion(asked, event.reply);
     if (!said) {
       run.opinionMisses = (run.opinionMisses || 0) + 1;
       log(run, "system", "Second Check", "The check gave no usable answer, so the user is asked.");
-    } else if (asked.kind === "press" && said.does !== "none") {
-      log(run, "system", "Second Check", `Pressing "${clip(asked.label, 60)}" looks like it would ${{ pay: "spend money", send: "send something", delete: "delete something" }[said.does]}${said.why ? `: ${said.why}` : "."}`);
+    } else {
+      run.opinionMisses = 0;
+      if (press && said.does !== "none") log(run, "system", "Second Check", `Pressing "${clip(asked.label, 60)}" looks like it would ${{ pay: "spend money", send: "send something", delete: "delete something", decide: "decide something for you", unsure: "do something the check could not tell" }[said.does]}.`);
     }
-    run.opinions = { ...(run.opinions || {}), [asked.key]: said || { unanswered: true } };
+    if (press && read) keepVerdicts(run, [asked.entry], read, fx);
+    else run.opinions = { ...(run.opinions || {}), [asked.key]: said || { unanswered: true } };
     if (!page) return closeStep(run, fx);
     return next(run, page, env, fx);
   }
@@ -1366,7 +1468,8 @@
     mirror(run, c);
     for (const f of out) {
       if (f.type === "end") { childEnded(run, c, env, fx); continue; }
-      if (f.type === "model" && f.purpose === "step" && !isOver(run) && (run.status === "waiting" || guarded(run))) { c.held.push(f); continue; }
+      // Its next step, and the press check that goes with it, wait while this run waits for the user.
+      if (f.type === "model" && (f.purpose === "step" || f.purpose === "labels") && !isOver(run) && (run.status === "waiting" || guarded(run))) { c.held.push(f); continue; }
       fx.push({ type: "child_fx", child: c.id, fx: f });
     }
     if (run.status !== "running") return fx;
@@ -1437,6 +1540,10 @@
     for (const u of c.run.trust.urls || []) if (!known.has(u) && run.trust.urls.length < SEEN_URLS) { known.add(u); run.trust.urls.push(u); }
     for (const site of c.run.trust.sites || []) if (!run.trust.sites.includes(site)) run.trust.sites.push(site);
     for (const u of c.run.trust.searches || []) if (!(run.trust.searches = run.trust.searches || []).includes(u) && run.trust.searches.length < SEEN_URLS) run.trust.searches.push(u);
+    // What its press checks said, and the links they said commit: opening
+    // such a link's address from this run is held as the sub-task's press was.
+    for (const [key, said] of Object.entries(c.run.opinions || {})) if (said && !said.unanswered && !(run.opinions = run.opinions || {})[key]) run.opinions[key] = said;
+    for (const [url, entry] of Object.entries(c.run.linkIndex || {})) indexLink(run, { ...entry, url });
     if (c.run.injectionSeen) run.injectionSeen = true;
     for (const offer of c.run.offers || []) if (!run.offers.some((x) => x.type === offer.type && x.key === offer.key && x.text === offer.text)) run.offers.push(offer);
     for (const k of c.run.used.details || []) if (!run.used.details.includes(k)) run.used.details.push(k);
@@ -2238,10 +2345,13 @@
         if (event.moved) startedOver(run, event.moved);
         return onObserved(run, event.page, e);
       case "model_replied":
+        if (event.purpose === "labels") return onLabels(run, event, page, e);
         if (event.purpose === "opinion") return onOpinion(run, event, page, e);
         if (event.purpose === "addressed") return onAddressed(run, event, page, e);
         return event.purpose === "verify" ? onVerified(run, event, page, e) : onModelReplied(run, event, page, e);
       case "model_failed": {
+        // The page's press check failed or ran out of time: a press waiting for it is asked about alone.
+        if (event.purpose === "labels") return onLabels(run, { ...event, reply: null, timedOut: event.kind === "timeout" }, page, e);
         if (run.status !== "running") return [];
         // The check could not be run: the answer stands, and says so.
         if (event.purpose === "verify" && run.pendingDone) return onVerified(run, { reply: null, usage: event.usage }, page, e);
@@ -2354,6 +2464,8 @@
         run.pendingDone = null;
         run.pendingOpinion = null;
         run.pendingAddressed = null;
+        run.pressBatches = [];
+        run.awaitingPress = null;
         run.typed = {};
         run.focusRef = null;
         run.step = Math.max(0, run.step - 1);

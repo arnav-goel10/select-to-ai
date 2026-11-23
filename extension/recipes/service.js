@@ -95,7 +95,12 @@
 
   /**
    * The agent's commit-like judgment of an action, as its own risk checks
-   * see it, with the run's second opinions (run.opinions) where it asked one.
+   * see it: a step the page's structure holds, or a press the page-blind
+   * check has to judge. A press the check called harmless in this run is
+   * still recorded as a commit, so a replay never presses it free on an
+   * old answer. A link is the one exception, since the recording sees
+   * whether the browser followed it (mayHaveWritten): it is a commit only
+   * when the run's check said it commits. That answer can only tighten.
    */
   function judgedCommit(a, page, opinions) {
     const POLICY = need("SELECT_TO_AI_POLICY");
@@ -107,12 +112,11 @@
     try {
       const risk = TOOLS.actionRisk(risky, page, null);
       if (risk && COMMIT_KINDS.has(risk.kind)) return true;
-      // A button whose effect its words do not make plain is held as a
-      // commit, unless the run's second opinion on it said it does nothing.
-      const press = TOOLS.pressCheckOf(risky, page);
-      if (!press) return false;
-      const said = opinions && opinions[press.key];
-      return !(said && said.does === "none");
+      const press = TOOLS.pressFor(risky, page);
+      if (!press || !press.entry) return false;
+      if (press.entry.kind !== "link") return true;
+      const said = opinions && opinions[press.entry.key];
+      return !!said && (said.unanswered || said.does !== "none");
     } catch (_) { return false; }
   }
 

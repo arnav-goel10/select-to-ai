@@ -9,7 +9,7 @@ const vm = require("node:vm");
 
 const EXT = path.join(__dirname, "../../extension");
 const FILES = [
-  "config.js", "defaults.js", "security.js", "commonWords.js", "core/grants.js", "publicSuffixes.js", "agentTools.js", "agentPrompt.js",
+  "config.js", "defaults.js", "security.js", "core/grants.js", "publicSuffixes.js", "agentTools.js", "agentPrompt.js",
   "usageLimits.js", "pageSearch.js", "core/step.js", "core/observe.js", "core/memory.js", "core/context.js", "core/policy.js", "core/run.js",
   "core/llm.js", "core/learn.js", "core/view.js", "core/inject.js", "pdfText.js", "setup.js", "engine.js",
 ];
