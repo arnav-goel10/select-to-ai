@@ -22,29 +22,29 @@ start -> observe -> model -> act -> observe -> ... -> done -> verify -> end
 1. **Read the page.** `engine.js` `observe` injects `agentContentScript.js`. It lists every control with a number (`[50] summary "What are the limitations of the Trial plan?"`), plus the page text, what is new since the last step, and any blocker it can see (a sign-in form, a human check, card fields). `run.js` `onObserved` fits all of this to a budget and writes the prompt.
 2. **Choose an action.** The model answers with one `step` tool call: its notes, the goal of the step, and one or more actions such as `click`, `fill`, `type`, `press`, `hover`, `drag`, `find`, `read` or `navigate` (the full list is in `core/step.js`). `run.js` `onModelReplied` validates the call, and `next` sends each action through the policy before anything touches the page (next section).
 3. **Act.** `engine.js` `act` runs the action in the page. A click goes through the pointer events a mouse sends. If the page shows no answer to them, the press is tried once more by keyboard where that is allowed, and the result says which way worked.
-4. **Read again to confirm.** `engine.js` `lookAgain` reads the page once the action has settled. The result the model gets says what the page did: `[9] now shows "4"`, `That brought up: [51] ...`, or that nothing changed. The next `observe` starts the following step from the page as it is now.
-5. **Check the answer.** When the model calls `done`, `run.js` `onDone` checks each evidence quote against everything the run was shown (`locateQuotes`). Text the agent typed into the page does not count as evidence. A multi-step answer also goes to a fresh model call (`purpose: "verify"`), and its verdict is shown under the answer.
+4. **Read again to confirm.** After each action the engine waits for the page to settle and compares it with before (`engine.js` `interactOnce` and the content script). The result the model gets says what the page did: `[9] now shows "4"`, `That brought up: [51] ...`, or that nothing changed. When more actions are left in the same step, `lookAgain` scans the page again so they are judged on the page as it is now. The next `observe` starts the following step from the fresh page.
+5. **Check the answer.** When the model calls `done`, `run.js` `onDone` checks each evidence quote against everything the run was shown (`locateQuotes`). Text the agent typed into the page does not count as evidence. Every finished answer also goes to a fresh model call (`purpose: "verify"`), unless that check is turned off, and its verdict is shown under the answer.
 
 ## Where the agent stops and asks
 
-Every action the model picks goes through `POLICY.decide` in `extension/core/policy.js` before it runs. It is called from `run.js` `next`. The policy is plain code on purpose. It reads the page's structure and where an address came from, never the model's reasons, so text on a page cannot argue its way past it. It returns one of four verdicts.
+Every action the model picks goes through `POLICY.decide` in `extension/core/policy.js` before it runs. It is called from `run.js` `next`. The policy is plain code on purpose. It reads the page's structure and where an address came from, never the model's reasons, so text on a page cannot argue its way past it. The one exception is a press the rules cannot read (next list), where a separate model call that is never shown the page text breaks the tie. It returns one of four verdicts.
 
 | Verdict | What happens | Examples |
 |---|---|---|
 | allow | the action runs | reading, scrolling, typing a search query, opening a menu |
 | confirm | the run waits, and the panel shows an approval card | a button that sends, submits, deletes or spends money, putting your saved details into a form, opening an address no page showed |
-| hand over | the run waits for you to act on the page | a sign-in, a human check, a one-time code, the final button that pays |
-| refuse | the model is told why, and nothing is done | typing into a password or card field, closing a tab the run did not open |
+| hand over | the run waits for you to act on the page | a sign-in, a human check, a one-time code, typing into a password or card field, the final button that pays |
+| refuse | the model is told why, and nothing is done | reading back the text of a password or card field, closing a tab the run did not open, an address outside your site allowlist |
 
 How it decides:
 
 - `TOOLS.actionRisk` in `extension/agentTools.js` reads what a press would do from the control's words, its form and the page. Where the words don't settle it (an unlabelled button, a one-box form), the run asks a second model call that is shown the control but never the page. If that call can't answer, the press is held for you.
-- `blockersOf` and `guardHumanCheck` find human checks, sign-in walls and card fields. `secretField` makes sure the agent never types a password, a card number or a code, whatever action it tries.
+- `blockersOf` (in `policy.js`) and `TOOLS.guardHumanCheck` find human checks, sign-in walls and card fields. `secretField` hands any typing into a password, card or code field to you, whatever action the model tries.
 - In `next`, a `confirm` verdict becomes `waitFor(... { kind: "approval" })`. `extension/agent.js` `drawWait` shows the card ("Allow this step? This deletes, cancels or removes something. On: ..."). Nothing runs until you choose.
 - If you allow it, `run.js` `onUser` tags the action with the control's words. `engine.js` `approvedChanged` reads the page again before acting. If that control is gone or now says something else, nothing is pressed. An approved press is made exactly once.
 - If you decline, the step is recorded as declined. `decide` then holds any other route to the same thing (another button with the same words, a key, a link) until you say something new.
 
-The approval step is on by default. It is the **Ask before purchases, payments and deletions** switch in Settings (`agentRiskConfirmation`, read in `engine.js`). It was in the 4.0 package built on 16 Nov and is still on main. Turning it off skips the approval cards only. Secret fields, sign-ins and human checks are still left to you. The end-to-end scenarios in `tests/e2e/run-v4.js` check it on every pull request. For example, `payPress` leaves the paying button to the user, `commentSends` shows the card for a comment box, `calcAsks` shows no card for a calculator form, and `pointerRisk` and `delegateDecline` have the user decline and check that nothing was done. Also, `tests/unit/new-actions-safety.test.js` and `tests/unit/declined-edits.test.js` check the newer actions.
+The approval step is on by default. It is the **Ask before purchases, payments and deletions** switch in Settings (`agentRiskConfirmation`, read in `engine.js`). Turning it off lets the agent press send, submit, delete and buy buttons without asking, including the final button that pays. Secret fields, sign-ins and human checks are still left to you, and putting your saved details into a form still asks. The end-to-end scenarios in `tests/e2e/run-v4.js` check it on every pull request. For example, `payPress` leaves the paying button to the user, `commentSends` shows the card for a comment box, `calcAsks` shows no card for a calculator form, and `pointerRisk` and `delegateDecline` have the user decline and check that nothing was done. Also, `tests/unit/new-actions-safety.test.js` and `tests/unit/declined-edits.test.js` check the newer actions.
 
 ## Two real runs
 
@@ -62,8 +62,7 @@ Result. "What are the limitations of the Trial plan?" is in 1 place in the text 
 Step 2. Open the Trial limitations question
 Action. click [50]
 Result. Clicked element [50]. That brought up: [51] a "Learn more" -> help.kagi.com/...;
-        [52] summary "Why should I pay for search?"; [53] summary "What are the
-        limitations of the Trial plan?"; ...
+        [52] summary "Why should I pay for search?"; ...
 Step 3. Answer with the Trial plan limits
 Checking Answer. Checking the answer against what was read.
 Check Passed. The assistant clicked the "What are the limitations of the Trial plan?"
@@ -81,7 +80,7 @@ What to notice:
 
 ### A failed action, handled: a 403, then a human check on another site
 
-Task: *"Type "serendip" into the dictionary search box and choose the suggestion "serendipity" from the list that drops down. Tell me which word's entry opens."* The start page was wordreference.com.
+Task: *"Type "serendip" into the dictionary search box and choose the suggestion "serendipity" from the list that drops down. Tell me which word's entry opens."* The run started on wordreference.com, which answered "403 Forbidden".
 
 ```
 Step 1. Retry opening the dictionary site in case the block was temporary
@@ -91,7 +90,7 @@ Result. Opened https://www.wordreference.com/
 Step 2. Open another dictionary site with a search box
 Action. navigate https://www.merriam-webster.com/
 Result. Opened https://www.merriam-webster.com/
-        (page text: "Performing security verification ... verifies you are not a bot")
+        (page title "Just a moment...", text "Performing security verification ...")
 Step 3. Report that the search could not be done
 ```
 
@@ -100,7 +99,7 @@ Answer (shortened): *"I could not complete this. I did not type "serendip" or ch
 The trial counted it as blocked (the site refused the browser), not as a pass. What to notice:
 
 - The run made no input at all on either page: 0 scripted presses, 0 typing steps, 0 held actions in the run's counters. It did not try to get past the bot check.
-- The page reader marks a check page like this as a human check (`blockersOf`, `TOOLS.isChallengePage`). `core/context.js` tells the model so as a fact of the page. On the task's own site, any action there is handed to the user (`guardHumanCheck`, verdict "hand over"). Here the check was on a second site the agent had opened itself and the task didn't need. So the fact told the model to go back and finish from what it had read, and the user wasn't asked to solve a check for a detour. The answer says why.
+- The policy marks a check page like this as a human check (`blockersOf`, which uses `TOOLS.isChallengePage`). On the task's own site, any press or typing there is handed to the user (`guardHumanCheck`, verdict `"handoff"`). Here the check was on a second site the agent had opened itself and the task didn't need. `core/context.js` tells the model the check is on a detour and to finish from what it has read, so the user isn't asked to pass a check the task never needed. The answer says why.
 - The answer says what was not done instead of making up a result.
 
 ## Where to go next
