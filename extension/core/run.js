@@ -1578,6 +1578,9 @@
       run.typed = { ...(run.typed || {}), [a.ref]: String(a.value || "") };
       // Every text the agent typed in this run, to tell it from text a page put in a box.
       run.typedTexts = [...(run.typedTexts || []).filter((t) => t !== String(a.value || "")), String(a.value || "")].slice(-20);
+      // And the pages it typed on, whose text now holds that typing.
+      const at = String((run.current && run.current.url) || (page && page.url) || "").split("#")[0];
+      if (at) run.typedAt = [...(run.typedAt || []).filter((u) => u !== at), at].slice(-20);
     }
     // Where the focus was left, for a key the step presses next with no ref.
     if (r.ok && ["click", "fill", "type", "select_text", "press"].includes(a.do) && a.ref !== undefined) run.focusRef = a.ref;
@@ -1787,35 +1790,87 @@
 
   // --------------------------------------------------------------- finishing
 
-  /** Every piece of text the run was shown, for checking quotes. */
-  /** Text with every text the run itself wrote, and each line of it, taken out. */
+  // A text the run wrote, as words: whole, and each line of it.
+  function typedWords(wrote) {
+    const out = [];
+    for (const t of wrote || []) for (const piece of [String(t), ...String(t).split(/\r\n|\r|\n/)]) {
+      const w = CONTEXT.wordsOf(piece);
+      if (w.length && w.join("").length >= 2) out.push(w);
+    }
+    return out;
+  }
+  const holds = (outer, inner, at) => inner.every((w, k) => outer[at + k] === w);
+  const insideOf = (q, pieces) => q.length > 0 && pieces.some((p) => p.length >= q.length && p.some((_w, i) => holds(p, q, i)));
+  const TYPED_RUN = 3; // words in a row shared with a typed text that are taken to be that typing, clipped or not
+
+  /**
+   * The parts of a text that are not text the run itself wrote, as a list
+   * of passages. A typed text is taken out wherever it is, whole or as a
+   * run of at least TYPED_RUN of its words in a row, so a read-back that
+   * clips the typing, collapses its spaces or starts partway into it still
+   * loses it. What is left on either side is a passage of its own, so no
+   * quote joins words the typing stood between.
+   */
   function withoutTyped(text, wrote) {
-    let out = String(text || "");
-    const pieces = [];
-    for (const t of wrote || []) for (const piece of [String(t), ...String(t).split(/\r\n|\r|\n/)]) if (piece.trim().length >= 2) pieces.push(piece.trim());
-    pieces.sort((a, b) => b.length - a.length);
-    for (const piece of pieces) out = out.split(piece).join(" \u2026 ");
+    const pieces = Array.isArray(wrote && wrote[0]) ? wrote : typedWords(wrote);
+    const words = CONTEXT.wordsOf(text);
+    if (!pieces.length) return words.length ? [String(text)] : [];
+    // Where each word stands in the typed texts, so a long text is gone through once.
+    const where = new Map();
+    pieces.forEach((p, k) => p.forEach((w, j) => { if (!where.has(w)) where.set(w, []); where.get(w).push([k, j]); }));
+    const out = [];
+    let kept = [];
+    for (let i = 0; i < words.length;) {
+      let gone = 0;
+      for (const [k, j] of where.get(words[i]) || []) {
+        const p = pieces[k];
+        let n = 0;
+        while (j + n < p.length && i + n < words.length && p[j + n] === words[i + n]) n++;
+        if ((n >= TYPED_RUN || n === p.length) && n > gone) gone = n;
+      }
+      if (gone) {
+        if (kept.length) out.push(kept.join(" "));
+        kept = [];
+        i += gone;
+      } else {
+        kept.push(words[i]);
+        i += 1;
+      }
+    }
+    if (kept.length) out.push(kept.join(" "));
     return out;
   }
 
+  /**
+   * Every piece of text the run was shown, for checking quotes. A text that
+   * holds what the agent typed (a field's value, what an action read back
+   * from a box, a page it typed on) is marked own: a quote that lies wholly
+   * in the agent's own typing is looked for only in the rest (onDone).
+   */
   function textsOf(run, page, env) {
-    const texts = run.seen.map((p) => ({ url: p.url, title: p.title, text: p.text }));
-    if (page && page.innerText) texts.push({ url: page.url, title: page.title, text: shownText(page) });
-    for (const r of run.reads) texts.push({ url: r.url, title: r.label, text: r.text });
+    const typedOn = new Set(run.typedAt || []);
+    const own = (url) => typedOn.has(String(url || "").split("#")[0]);
+    const texts = run.seen.map((p) => ({ url: p.url, title: p.title, text: p.text, ...(own(p.url) ? { own: true } : {}) }));
+    if (page && page.innerText) texts.push({ url: page.url, title: page.title, text: shownText(page), ...(own(page.url) ? { own: true } : {}) });
+    for (const r of run.reads) texts.push({ url: r.url, title: r.label, text: r.text, ...(own(r.url) ? { own: true } : {}) });
     const ex = (env && env.extras) || {};
     if (ex.selection) texts.push({ url: "", title: "the user's selection", text: ex.selection });
     // The passage around a captured selection was read from its page.
     const place = ex.selectionPlace;
     if (place && place.passage) texts.push({ url: place.url || "", title: place.title || "", text: place.passage });
-    for (const t of ex.openTabPages || []) texts.push({ url: t.url, title: t.title, text: t.digest });
+    for (const t of ex.openTabPages || []) texts.push({ url: t.url, title: t.title, text: t.digest, ...(own(t.url) ? { own: true } : {}) });
     // The user's own words are theirs to be quoted back.
     texts.push({ url: "", title: "the request", text: run.task });
     // So is what the browser stated as fact: the date, above all.
     const today = CONTEXT.todayLine(env && env.now);
     if (today) texts.push({ url: "", title: "what the browser stated", text: today });
-    for (const el of (page && page.elements) || []) if (el.value && !el.sensitive) texts.push({ url: page.url, title: "a field's value", text: String(el.value) });
-    // A read-back that repeats text the model wrote into the page only shows it was typed.
-    const wrote = [...(run.typedTexts || []), ...(run.selectedTexts || [])];
+    // A field's value or a read-back that repeats text the model wrote into the page only shows it was typed.
+    const typed = typedWords(run.typedTexts);
+    const wrote = typedWords([...(run.typedTexts || []), ...(run.selectedTexts || [])]);
+    for (const el of (page && page.elements) || []) {
+      if (!el.value || el.sensitive) continue;
+      for (const text of withoutTyped(String(el.value), typed)) texts.push({ url: page.url, title: "a field's value", text, own: true });
+    }
     // What the run's own actions read back from the page (a control's value
     // after it was set, the text of a box after typing) was shown too: only
     // what the page said back (engine.js interactOnce), never the result's
@@ -1823,11 +1878,29 @@
     for (const h of [...run.history, ...(run.current ? [run.current] : [])]) {
       for (const x of h.actions || []) {
         if (!x.ok || !x.reads) continue;
-        const text = x.freeText ? withoutTyped(x.reads, wrote) : String(x.reads);
-        if (text.trim()) texts.push({ url: "", title: "what an action read back from the page", text });
+        const parts = x.freeText ? withoutTyped(x.reads, wrote) : [String(x.reads)];
+        for (const text of parts) if (text.trim()) texts.push({ url: "", title: "what an action read back from the page", text, own: true });
       }
     }
     return texts;
+  }
+
+  /**
+   * Evidence quotes found in what the run was shown. A quote that lies
+   * wholly in a text the agent typed is found only in text the typing did
+   * not reach: a page the agent typed on, a field's value or a read-back
+   * holds it because the agent put it there, which is no evidence of it.
+   */
+  function locateQuotes(run, quotes, texts) {
+    const typed = typedWords(run.typedTexts);
+    const theirs = texts.filter((t) => !t.own);
+    return (quotes || []).map((q) => {
+      // A quote shortened with "..." is its pieces, as locateEvidence reads it.
+      const parts = String(q || "").split(/\.{3,}|\u2026/).map(CONTEXT.wordsOf).filter((w) => w.length);
+      const mine = typed.length > 0 && parts.length > 0 && parts.every((w) => insideOf(w, typed));
+      const [e] = CONTEXT.locateEvidence([q], mine ? theirs : texts);
+      return mine && !e.found ? { ...e, typed: true } : e;
+    });
   }
 
   /**
@@ -1882,7 +1955,7 @@
 
   function onDone(run, a, page, env, fx) {
     const texts = textsOf(run, page, env);
-    const located = CONTEXT.locateEvidence(a.evidence, texts);
+    const located = locateQuotes(run, a.evidence, texts);
     const missing = located.filter((e) => !e.found);
     // With some pages' text let go, a quote not in what is kept may be from one of them: it was not checked, not found wanting.
     const dropped = run.dropped || [];
@@ -1897,6 +1970,7 @@
         : `${which} in evidence ${are} not in anything you have been shown in this run: ${quotes}. Copy quotes exactly from the page text, read the page first, or leave the claim out.`);
       // What the shown text has nearest each quote, so the exact words can be copied.
       const near = missing.slice(0, 3).map((e) => {
+        if (e.typed) return `"${clip(e.quote, 100)}" is text you typed into the page yourself: the page holding it shows only that it was typed, not that it is so.`;
         const n = CONTEXT.nearestPassage(e.quote, texts, 240);
         return n
           ? `For "${clip(e.quote, 100)}", the nearest text you were shown${n.title ? ` (${clip(n.title, 60)})` : ""} reads: "${n.text}"`

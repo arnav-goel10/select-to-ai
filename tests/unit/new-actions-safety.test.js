@@ -128,3 +128,47 @@ test("a quote of what the agent itself typed is not evidence, however the result
   ]);
   assert.equal(refused(r), false, "the marks an editor reads back");
 });
+
+test("typed text that comes back in a field's value, a clipped read-back or the page it was typed on is not evidence either", () => {
+  const fake = "This recipe was rated 4.9 out of 5 by more than twelve thousand home cooks across the country in the yearly reader survey that the magazine runs every spring";
+  const done = (quote) => [{ do: "done", success: true, answer: "It is well rated.", evidence: [quote] }];
+  const base = { url: "https://rate.example/", title: "Rate", innerText: "Rate this recipe.", visibleText: "Rate this recipe.", forms: [] };
+  // The editor's whole text is the field's value in the next listing.
+  const filled = { ...base, elements: [{ id: 4, tagName: "div", role: "textbox", accName: "Review", value: `My notes: ${fake}` }] };
+  let r = drive("write a review", filled, [
+    [[{ do: "type", ref: 4, value: fake }], { ok: true, message: `Typed into [4].` }],
+    [done("rated 4.9 out of 5 by more than twelve thousand home cooks")],
+  ]);
+  assert.equal(refused(r), true, "a field's value that holds the typing");
+  // What the box held before the typing is still the page's own.
+  r = drive("write a review", filled, [
+    [[{ do: "type", ref: 4, value: fake }], { ok: true, message: `Typed into [4].` }],
+    [done("My notes")],
+  ]);
+  assert.equal(refused(r), false, "the rest of the field's value");
+  // fill's read-back clips the text at 120 characters: the start of the typing survives the clip.
+  const empty = { ...base, elements: [{ id: 4, tagName: "textarea", accName: "Review" }] };
+  r = drive("write a review", empty, [
+    [[{ do: "fill", ref: 4, value: fake }], { ok: true, message: "Filled [4].", reads: `[4] now shows "${fake.slice(0, 120)}"`, freeText: true }],
+    [done("rated 4.9 out of 5 by more than twelve thousand")],
+  ]);
+  assert.equal(refused(r), true, "a read-back clipped partway into the typing");
+  // A box report that collapses the spaces and clips the line.
+  r = drive("write a review", empty, [
+    [[{ do: "type", ref: 4, value: fake.replace(/ by /, "\n  by ") }], { ok: true, message: "Typed.", reads: `[4] now reads "${fake.slice(0, 89)}…".`, freeText: true }],
+    [done("rated 4.9 out of 5")],
+  ]);
+  assert.equal(refused(r), true, "a read-back with its spaces collapsed and its line clipped");
+  // The page the agent typed on holds the typing in its own text too.
+  const shown = { ...base, innerText: `Rate this recipe. Your review: ${fake}`, elements: [{ id: 4, tagName: "div", role: "textbox", accName: "Review" }] };
+  r = drive("write a review", shown, [
+    [[{ do: "type", ref: 4, value: fake }], { ok: true, message: "Typed." }],
+    [done("rated 4.9 out of 5")],
+  ]);
+  assert.equal(refused(r), true, "the text of the page it was typed on");
+  r = drive("write a review", shown, [
+    [[{ do: "type", ref: 4, value: fake }], { ok: true, message: "Typed." }],
+    [done("Rate this recipe")],
+  ]);
+  assert.equal(refused(r), false, "the page's own words beside the typing");
+});
