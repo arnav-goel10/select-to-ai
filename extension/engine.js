@@ -2363,6 +2363,14 @@
     const query = session.windowId > 0 ? { windowId: session.windowId } : { currentWindow: true };
     const [active] = (await quiet(chrome.tabs.query({ ...query, active: true }))) || [];
     if (active && active.url && !active.url.startsWith(own)) return active;
+    // A follow-up in the same conversation goes on where the last run worked:
+    // the tab it ended on, else the latest tab it worked in that is still open.
+    const earlier = [session.run && session.run.tabId, ...((session.view && session.view.tabs) || []).slice().reverse()];
+    for (const id of earlier) {
+      if (!Number.isInteger(id)) continue;
+      const t = await quiet(chrome.tabs.get(id));
+      if (t && !String(t.url || t.pendingUrl || "").startsWith(own)) return t;
+    }
     return null;
   }
 

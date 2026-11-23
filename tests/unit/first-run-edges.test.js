@@ -84,6 +84,54 @@ test("a run with no tab given, from the agent's own tab, starts in a fresh tab a
   assert.equal(tabs[9].url, "https://mail.example/inbox");
 });
 
+async function endedRunIn(tabs, text) {
+  const w = fakeWorker({ tabs });
+  const port = w.connect(1);
+  await port.hello();
+  await wSettle(40);
+  await port.post({ type: "send", text });
+  await wSettle(80);
+  const first = w.engine.sessions.get(1).run;
+  await port.post({ type: "stop" });
+  await wSettle(80);
+  return { w, port, first };
+}
+
+test("a follow-up from the agent's own tab goes on in the tab the last run worked in", async () => {
+  const tabs = {
+    1: { id: 1, url: "chrome-extension://x/agent.html", title: "Select to AI", windowId: 1, active: true },
+    9: { id: 9, url: "https://mail.example/inbox", title: "Inbox", windowId: 1, active: false },
+  };
+  const { w, port, first } = await endedRunIn(tabs, "Open Wikipedia and tell me today's featured article");
+  const worked = first.tabId;
+  assert.ok(tabs[worked], "the first run had a tab");
+  // The run went to a page there.
+  tabs[worked].url = "https://en.wikipedia.org/wiki/Main_Page";
+  const before = Object.keys(tabs).length;
+  await port.post({ type: "send", text: "Now open the first link in that article" });
+  await wSettle(80);
+  const next = w.engine.sessions.get(1).run;
+  assert.notEqual(next.id, first.id, "a new run started");
+  assert.equal(next.tabId, worked, "it works where the last run was");
+  assert.equal(Object.keys(tabs).length, before, "no new tab was opened");
+  assert.equal(tabs[9].url, "https://mail.example/inbox");
+});
+
+test("a follow-up whose earlier tab was closed starts in a fresh tab, not one of the user's", async () => {
+  const tabs = {
+    1: { id: 1, url: "chrome-extension://x/agent.html", title: "Select to AI", windowId: 1, active: true },
+    9: { id: 9, url: "https://mail.example/inbox", title: "Inbox", windowId: 1, active: false },
+  };
+  const { w, port, first } = await endedRunIn(tabs, "Open Wikipedia and tell me today's featured article");
+  delete tabs[first.tabId];
+  await port.post({ type: "send", text: "Now open the first link in that article" });
+  await wSettle(80);
+  const next = w.engine.sessions.get(1).run;
+  assert.notEqual(next.tabId, 9, "the user's mail tab is not taken over");
+  assert.ok(tabs[next.tabId], "it has a tab");
+  assert.equal(tabs[next.tabId].url, "about:blank", "a fresh tab was opened for it");
+});
+
 // --------------------------------- what was typed while the agent was off
 
 async function connectedWelcome(extra = {}) {
