@@ -29,7 +29,16 @@ class El {
     this.listeners = {};
     this.attributes = {};
     this.classList = { add() {}, remove() {}, toggle() {}, contains: () => false };
+    if (this.tagName === "SELECT") {
+      // A select's value is its chosen option's, or the first option's.
+      let chosen = "";
+      Object.defineProperty(this, "value", {
+        get: () => (this.options.some((o) => o.value === chosen) ? chosen : (this.options[0] || {}).value || ""),
+        set: (v) => { chosen = String(v); },
+      });
+    }
   }
+  get options() { return this.children.filter((c) => c.tagName === "OPTION"); }
   get firstChild() { if (!this.children.length) this.children.push(new El("span")); return this.children[0]; }
   get lastChild() { if (this.children.length < 2) { this.firstChild; this.children.push(new El("span")); } return this.children[this.children.length - 1]; }
   set innerHTML(_v) { this.children = []; }
@@ -79,6 +88,9 @@ function idsOf(html) {
  *   grantOnRequest  whether a permission request is allowed (default true)
  *   search     location.search
  *   globals    extra globals for the page (fetch, crypto, ...)
+ *   session    initial chrome.storage.session contents
+ *   onMessage  (message) => the worker's reply to chrome.runtime.sendMessage
+ *   tabs       what chrome.tabs.query gives (default: one website tab)
  */
 function loadPage(opts) {
   const html = fs.readFileSync(path.join(EXT, opts.html), "utf8");
@@ -120,7 +132,11 @@ function loadPage(opts) {
       getURL: (p) => `chrome-extension://testextensionid/${String(p).replace(/^\//, "")}`,
       getManifest: () => ({ version: "4.0.0" }),
       openOptionsPage: () => { calls.optionsOpened += 1; },
-      sendMessage: (m, cb) => { calls.messages.push(m); if (typeof cb === "function") setImmediate(() => cb()); },
+      sendMessage: (m, cb) => {
+        calls.messages.push(m);
+        const reply = opts.onMessage ? opts.onMessage(m) : undefined;
+        if (typeof cb === "function") setImmediate(() => cb(reply));
+      },
       onMessage: event(),
     },
     storage: { onChanged: storageChanged },
@@ -142,7 +158,7 @@ function loadPage(opts) {
     commands: { getAll: (cb) => setImmediate(() => cb([])) },
     tabs: {
       create(props, cb) { calls.tabsCreate.push({ ...props }); setImmediate(() => cb && cb({ id: 7, url: props.url })); },
-      query(q, cb) { setImmediate(() => cb([{ id: 5, windowId: 1, url: "https://example.com/" }])); },
+      query(q, cb) { setImmediate(() => cb(structuredClone(opts.tabs || [{ id: 5, windowId: 1, url: "https://example.com/" }]))); },
     },
     windows: { getCurrent: (cb) => setImmediate(() => cb({ id: 1 })) },
     sidePanel: { open: (o) => { calls.sidePanelOpen.push(o); } },
@@ -159,6 +175,8 @@ function loadPage(opts) {
   };
   chrome.storage.sync = storageArea("sync", storageChanged, log);
   chrome.storage.local = storageArea("local", storageChanged, log);
+  chrome.storage.session = storageArea("session", storageChanged, log);
+  Object.assign(chrome.storage.session.data, structuredClone(opts.session || {}));
   Object.assign(chrome.storage.sync.data, structuredClone(opts.sync || {}));
   Object.assign(chrome.storage.local.data, structuredClone(opts.local || {}));
 

@@ -233,6 +233,22 @@ function keepClaudeChoice() {
     });
 }
 
+/**
+ * A new install starts with CONFIG.STORAGE.FRESH_SETTINGS (Perplexity in
+ * the right-click menu: its host is a required permission, so nothing more
+ * is asked). A key already set is kept. Only a fresh install: an upgrade
+ * keeps what that user's version was showing (see v2SettingsFix and
+ * keepClaudeChoice). Reset in Settings writes the same settings.
+ */
+function writeFreshSettings() {
+    const fresh = CONFIG.STORAGE.FRESH_SETTINGS;
+    chrome.storage.sync.get(Object.keys(fresh), (items) => {
+        if (chrome.runtime.lastError || !items) return;
+        const unset = Object.fromEntries(Object.entries(fresh).filter(([k]) => items[k] === undefined));
+        if (Object.keys(unset).length) chrome.storage.sync.set(unset);
+    });
+}
+
 // The menu is built at every worker start from the stored settings (see
 // updateCache), so onInstalled only migrates. A fresh install also opens the
 // welcome page; an update opens nothing.
@@ -250,6 +266,7 @@ function onInstalledHandler(details) {
         migrateFrozenSettings();
     }
     if (reason === 'install') {
+        writeFreshSettings();
         chrome.tabs.create({ url: chrome.runtime.getURL('welcome.html') });
     }
 }
@@ -309,6 +326,9 @@ const MENU_SERVICES = {
     openAgent: () => CONFIG.URLS.AGENT,
 };
 const MODE_SUFFIX = { tab: 'tab', sidePanel: 'panel' };
+// The page item opens the side panel whatever the opening mode, so its id
+// needs no mode.
+const OPEN_PANEL_MENU_ID = 'openSidePanel';
 
 function menuId(name, mode) {
     return `${name}|${MODE_SUFFIX[mode] || MODE_SUFFIX.sidePanel}`;
@@ -351,7 +371,12 @@ async function buildContextMenus() {
             if (chrome.runtime.lastError) console.log("Menu creation ignored:", chrome.runtime.lastError.message);
         });
     };
-    // Nothing turned on: no menu at all, rather than an empty "Select to AI".
+    // Right-click on the page itself (2.0's "Open AI Sidebar"): opens the
+    // side panel as the open-sidebar shortcut does, on whatever it would
+    // show. It is there whatever is turned on, as in 2.0; with nothing on,
+    // the panel says where to turn something on.
+    create({ id: OPEN_PANEL_MENU_ID, title: 'Open Select to AI side panel', contexts: ["page"] });
+    // Nothing turned on: no selection menu, rather than an empty "Select to AI".
     if (!items.length) return;
     if (items.length === 1) {
         create({ id: menuId(items[0].name, mode), title: items[0].title, contexts: ["selection"] });
@@ -551,6 +576,7 @@ function deliverSelection(serviceBaseUrl, mode, info, tab, settings) {
  * one on a warm worker.
  */
 function onMenuClicked(info, tab) {
+    if (info && info.menuItemId === OPEN_PANEL_MENU_ID) { onOpenSidebarCommand(tab); return; }
     const parsed = parseMenuId(info && info.menuItemId);
     if (!parsed) return; // Unknown menu item
     let mode = parsed.mode || (settingsLoaded ? cachedSettings.openingMode : 'sidePanel');
@@ -573,22 +599,47 @@ chrome.contextMenus.onClicked.addListener(onMenuClicked);
  * nothing on pages where the shortcut is never pressed, and activeTab means
  * no broad host permission is added to the install prompt.
  */
-function openCommandPalette(tab) {
+function openCommandPalette(tab, onResult) {
     const tabId = tab && tab.id;
-    if (!tabId || tabId < 0 || !chrome.scripting) return;
+    const report = (opened) => { if (typeof onResult === 'function') onResult(opened); };
+    if (!tabId || tabId < 0 || !chrome.scripting) { report(false); return; }
     chrome.scripting.executeScript(
         { target: { tabId }, files: ['commandPalette.js'] },
         () => {
             if (chrome.runtime.lastError) {
                 void chrome.runtime.lastError;
                 // Chrome blocks injection on its own pages and the Web Store.
-                // Shown only if the user granted notifications.
-                if (GRANTS) GRANTS.notify({
-                    message: 'The quick box cannot open on this page. Try it on a normal website tab.',
-                });
+                paletteBlockedOn(tabId);
+                report(false);
+                return;
             }
+            report(true);
         },
     );
+}
+
+/**
+ * Says on the toolbar icon, for this tab only, that the quick box could not
+ * open here: a mark on the icon and the reason on hover, with a notification
+ * as well when the user granted those. Chrome drops a tab's own mark and
+ * title when that tab loads another page, so nothing has to clear them.
+ * The mark is a grey '×', not the engine's orange '!' (a run needs you),
+ * and the tab is recorded so that a later "needs you" is set over it
+ * (engine.js attention).
+ */
+const PALETTE_BLOCKED_TEXT = 'The quick box cannot open on this page. Try it on a website tab.';
+function paletteBlockedOn(tabId) {
+    const a = chrome.action;
+    const quiet = (p) => { if (p && typeof p.catch === 'function') p.catch(() => {}); };
+    try {
+        if (a && typeof a.setBadgeText === 'function') quiet(a.setBadgeText({ tabId, text: '\u00d7' }, () => void chrome.runtime.lastError));
+        if (a && typeof a.setBadgeBackgroundColor === 'function') quiet(a.setBadgeBackgroundColor({ tabId, color: '#6b7280' }, () => void chrome.runtime.lastError));
+        if (a && typeof a.setTitle === 'function') quiet(a.setTitle({ tabId, title: PALETTE_BLOCKED_TEXT }, () => void chrome.runtime.lastError));
+    } catch (e) { /* the mark is a hint, never a reason to fail */ }
+    const area = chrome.storage && chrome.storage.session;
+    const key = CONFIG.STORAGE.ICON_TAB_MARKS;
+    if (area) quiet(area.get(key).then((got) => area.set({ [key]: { ...((got && got[key]) || {}), [tabId]: 'hint' } })));
+    if (GRANTS) GRANTS.notify({ message: PALETTE_BLOCKED_TEXT });
 }
 
 /**
@@ -654,7 +705,8 @@ function onOpenSidebarCommand(tab) {
     Promise.all([
         whenSettings(),
         new Promise((resolve) => chrome.storage.local.get([CONFIG.STORAGE.SIDE_PANEL_STATE], (r) => resolve((r || {})[CONFIG.STORAGE.SIDE_PANEL_STATE]))),
-    ]).then(([settings, existing]) => {
+        GRANTS ? GRANTS.hasHost(CLAUDE_ORIGIN) : Promise.resolve(false),
+    ]).then(([settings, existing, claudeGranted]) => {
         let targetBaseUrl = CONFIG.URLS.CHATGPT; // Absolute fallback
         if (settings.showAgent) {
             // With the agent on, the side panel opens on the agent; the
@@ -665,7 +717,7 @@ function onOpenSidebarCommand(tab) {
         } else if (settings.showChatGPT) targetBaseUrl = CONFIG.URLS.CHATGPT;
         else if (settings.showGemini) targetBaseUrl = CONFIG.URLS.GEMINI;
         else if (settings.showPerplexity) targetBaseUrl = CONFIG.URLS.PERPLEXITY;
-        else if (settings.showClaude) targetBaseUrl = CONFIG.URLS.CLAUDE;
+        else if (settings.showClaude && claudeGranted) targetBaseUrl = CONFIG.URLS.CLAUDE;
         writePanelState(resolveSessionUrlSync(targetBaseUrl));
     });
 }
@@ -754,9 +806,37 @@ function createTabAndSend(url, message) {
     });
 }
 
-// What was typed into the quick box while the agent was off, kept for the
-// setup page (session storage: only extension pages can read it).
+// What was typed into the quick box while the agent was off, kept until the
+// agent is turned on (session storage: only extension pages can read it).
 const PENDING_TASK_KEY = 'pendingAgentTask';
+const PENDING_TASK_MS = 30 * 60000;
+
+/**
+ * The one place a kept quick-box task is offered. Whenever the agent is
+ * turned on, from the setup page, Settings or anywhere else, the agent page
+ * opens on the tab the task was typed on with the task in its box, for the
+ * user to send or change. It is taken once, and not offered after 30 minutes.
+ */
+function offerKeptTask() {
+    const area = chrome.storage.session;
+    if (!area) return Promise.resolve();
+    return area.get(PENDING_TASK_KEY).then((got) => {
+        const kept = got && got[PENDING_TASK_KEY];
+        if (!kept) return undefined;
+        return area.remove(PENDING_TASK_KEY).then(() => {
+            const text = String(kept.text || '').trim();
+            if (!text || !(Date.now() - (kept.at || 0) < PENDING_TASK_MS)) return;
+            const params = new URLSearchParams();
+            if (Number.isInteger(kept.tabId)) params.set('tabId', String(kept.tabId));
+            params.set('task', text.slice(0, 2000));
+            chrome.tabs.create({ url: chrome.runtime.getURL(`agent.html?${params}`) }, () => void chrome.runtime.lastError);
+        });
+    }).catch(() => {});
+}
+chrome.storage.onChanged.addListener((changes, namespace) => {
+    const on = namespace === 'sync' && changes.showAgent;
+    if (on && on.newValue === true && on.oldValue !== true) offerKeptTask();
+});
 
 /** Shared "agent is disabled" handling for gated entry points. */
 function notifyAgentDisabled(task, tabId) {
@@ -775,10 +855,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // The popup's "Quick box" row: open the palette on the tab behind it.
     if (message.action === 'openPaletteFromPopup') {
         if (!SELECT_TO_AI_SECURITY.isTrustedExtensionSender(sender, chrome.runtime.id)) return false;
+        // The popup waits for the answer: it stays open to say why when the
+        // quick box cannot open on the tab behind it.
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-            if (tabs && tabs[0]) openCommandPalette(tabs[0]);
+            openCommandPalette(tabs && tabs[0], (opened) => {
+                try { sendResponse({ opened }); } catch (e) { /* the popup closed */ }
+            });
         });
-        return false;
+        return true;
     }
 
     if (message.action === 'fetchProxy') {

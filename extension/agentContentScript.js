@@ -2648,12 +2648,14 @@
      * Where a pointer's events start: the innermost thing drawn at the
      * point, when that is inside the control. A page may listen on a part
      * inside the control (the link inside a tab), so the events start where
-     * a press at that point would and travel up from there.
+     * a press at that point would and travel up from there. Never a control
+     * of its own inside it (a button on a card): the events were meant for
+     * the control that was judged, so they start on it instead.
      */
     function pointerTargetIn(control, point) {
         try {
-            const hit = document.elementFromPoint(point.x, point.y);
-            if (hit && hit !== control && control.contains(hit)) return hit;
+            const hit = drawnAt(point.x, point.y);
+            if (hit && hit !== control && insideOf(hit, control) && !innerControlAt(control, hit)) return hit;
         } catch (_) { /* a detached control has no point */ }
         return control;
     }
@@ -2738,11 +2740,18 @@
     function aimAtSpot(el, data) {
         if (!data || data.fx === undefined || data.fx === null) return null;
         bringIntoView(el);
-        const point = spotIn(el, data.fx, data.fy);
-        const hit = drawnAt(point.x, point.y);
-        if (!pressesOn(el, hit)) return { point: null, cover: hit };
-        const inner = numberedOf(hit);
-        if (inner && inner !== el && insideOf(inner, el)) return { point: null, inner };
+        let point = spotIn(el, data.fx, data.fy);
+        let hit = drawnAt(point.x, point.y);
+        if (!pressesOn(el, hit)) {
+            // Covered where it is now: scrolled to the middle once, as a
+            // person would before pressing, and looked at again.
+            centreInView(el);
+            point = spotIn(el, data.fx, data.fy);
+            hit = drawnAt(point.x, point.y);
+            if (!pressesOn(el, hit)) return { point: null, cover: hit };
+        }
+        const inner = innerControlAt(el, hit);
+        if (inner) return { point: null, inner };
         return { point, hit };
     }
 
@@ -2752,14 +2761,92 @@
         return false;
     }
 
-    /** The result when a spot asked for cannot be used: covered, or on a listed control inside this one. */
-    function missedSpot(id, spot, hovering) {
+    /**
+     * The control of its own that a press on `hit` would reach instead of
+     * `el`, though the hit is inside `el` (or inside a label of it): a
+     * control drawn there (a button on a card, a link in a row), listed or
+     * not. What makes it a control of its own is what it is, not whether
+     * it made the listing: one left out (past the listing's limits, or not
+     * drawn for a person to see) is still a different control. Null when
+     * the press is a press on `el` itself: its own surface, the box a
+     * label stands for, a part that is no control, or a control that is
+     * the same one under another element (see sameControl).
+     */
+    function innerControlAt(el, hit) {
+        if (!el || !hit || hit === el) return null;
+        let surface = insideOf(hit, el) ? el : null;
+        if (!surface) {
+            try { surface = Array.from(el.labels || []).find((l) => l === hit || insideOf(hit, l)) || null; } catch (_) { surface = null; }
+        }
+        if (!surface || surface === hit) return null;
+        for (let x = hit; x && x !== surface && x !== el; x = upOf(x)) {
+            if (!idOf(x)) {
+                let control = false;
+                try { control = !!(x.matches && x.matches(CONTROL_SELECTOR)); } catch (_) { control = false; }
+                if (!control) continue;
+            }
+            if (x === el.control || x === surface.control) return null;
+            if (sameControl(x, el)) return null;
+            return x;
+        }
+        return null;
+    }
+
+    /**
+     * True when an inner control is `el` by another element: its box fills
+     * nearly all of el's, it has exactly el's words, or it is what is drawn
+     * at every spot of el on screen (a link drawn out over the whole of a
+     * card, whose own box is only its words). In the last case a person
+     * cannot press el anywhere but through it, so pressing it is pressing el.
+     */
+    function sameControl(inner, el) {
+        try {
+            const a = el.getBoundingClientRect();
+            const b = inner.getBoundingClientRect();
+            const w = Math.min(a.left + a.width, b.left + b.width) - Math.max(a.left, b.left);
+            const h = Math.min(a.top + a.height, b.top + b.height) - Math.max(a.top, b.top);
+            if (a.width > 0 && a.height > 0 && w > 0 && h > 0 && w * h >= 0.9 * a.width * a.height) return true;
+            const words = labelOf(el);
+            if (words && labelOf(inner) === words) return true;
+            return drawnAllOver(inner, el);
+        } catch (_) { return false; }
+    }
+
+    /** True when every spot of `el` on screen that a press would take to el is on `inner`. */
+    function drawnAllOver(inner, el) {
+        let on = 0;
+        for (const p of spotsOf(el).points) {
+            const hit = drawnAt(p.x, p.y);
+            if (!pressesOn(el, hit)) continue;
+            if (hit !== inner && !insideOf(hit, inner)) return false;
+            on += 1;
+        }
+        return on > 0;
+    }
+
+    /** Scrolls a control to the middle of the window and of any box it scrolls inside, at once. */
+    function centreInView(el) {
+        try { el.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'nearest' }); } catch (_) { /* a detached control stays where it is */ }
+    }
+
+    /**
+     * The result when a spot cannot be used: covered, or on a control of
+     * its own inside this one. `tried` is true when no spot was asked for
+     * and every spot of it on screen was tried.
+     */
+    function missedSpot(id, spot, hovering, tried) {
         if (!spot.inner) return coveredResult(id, nameOfDrawn(spot.cover), hovering);
         const who = /^\d+$/.test(String(id)) ? `[${id}]` : String(id);
         const inner = nameOfDrawn(spot.inner);
+        const listed = !!idOf(spot.inner);
+        const where = tried ? `Every spot of ${who} on screen is on a control of its own inside it, such as ${inner}` : `At that spot of ${who} is ${inner}, a control of its own inside it`;
+        let drawn = true;
+        try { drawn = !!isShown(spot.inner); } catch (_) { drawn = true; }
+        const unseen = listed ? '' : ` That control is not in the list of controls you were shown${drawn ? '' : ': the page does not draw it for a person to see'}.`;
+        const use = listed ? `To use ${inner}, give its own ref; to use ${who}, ` : `To use ${who}, `;
         return {
             success: false,
-            error: `At that spot of ${who} is ${inner}, a control of its own inside it, so the ${hovering ? 'pointer' : 'press'} would reach that instead. Nothing was ${hovering ? 'moved over it' : 'pressed'}. To use ${inner}, give its own ref; to use ${who}, pick a spot of it outside that control.`,
+            error: `${where}, so the ${hovering ? 'pointer' : 'press'} would reach that instead. Nothing was ${hovering ? 'moved over it' : 'pressed'}.${unseen} ${use}pick a spot of it outside that control (fx and fy).`,
         };
     }
 
@@ -3246,38 +3333,130 @@
      * Where a person would press a control: the middle of the part of it on
      * screen, or another spot of it that nothing covers. A control drawn too
      * small to press (a box the page hides to draw its own) is pressed by
-     * its label. Returns { point, hit }, or { point: null, cover } when
-     * something else covers every spot, or { point: null } when it is not on
-     * screen at all.
+     * its label. A spot on a control of its own inside it (a button on a
+     * card, a link in a row) is passed over, since the press would reach
+     * that control, which the checks before the action never judged;
+     * `throughInner` keeps such spots, for a place to drop on. Returns
+     * { point, hit, passed }, passed being the inner control a spot before
+     * it was on, if any; or { point: null, cover } when something else
+     * covers every spot, { point: null, inner } when every spot not covered
+     * is on such an inner control, or { point: null } when it is not on
+     * screen.
      */
-    function aimAt(el) {
-        const spots = [[0.5, 0.5], [0.25, 0.5], [0.75, 0.5], [0.5, 0.25], [0.5, 0.75], [0.15, 0.15], [0.85, 0.15], [0.15, 0.85], [0.85, 0.85]];
+    function aimAt(el, throughInner) {
         // Only the page itself there: nothing is drawn over the control, it
         // is just not drawn at that point. That is no evidence of a cover.
         const bare = (n) => !n || n === document.documentElement || n === document.body;
         const tryOn = (node) => {
-            // Aimed within the part that can be seen, not the whole box: a
-            // box that scrolls inside the page cuts off the rest.
-            const { left, top, right, bottom, full: r } = visibleRect(node);
-            if (right - left < 1 || bottom - top < 1) return { point: null, small: true };
-            let first;
-            for (const [fx, fy] of spots) {
-                // Whole pixels: what the page reads from the press is then the very point checked here.
-                const x = Math.min(right - 0.5, Math.max(left, Math.round(left + (right - left) * fx)));
-                const y = Math.min(bottom - 0.5, Math.max(top, Math.round(top + (bottom - top) * fy)));
+            const { points, full: r } = spotsOf(node);
+            if (!points.length) return { point: null, small: true };
+            let cover, inner;
+            for (const { x, y } of points) {
                 const hit = drawnAt(x, y);
-                if (first === undefined && !bare(hit)) first = hit;
-                if (pressesOn(el, hit)) return { point: { x, y }, hit };
+                if (!pressesOn(el, hit)) {
+                    if (cover === undefined && !bare(hit)) cover = hit;
+                    continue;
+                }
+                const other = throughInner ? null : innerControlAt(el, hit);
+                if (other) { inner = inner || other; continue; }
+                return { point: { x, y }, hit, ...(inner ? { passed: inner } : {}) };
             }
-            return { point: null, ...(first !== undefined ? { cover: first } : {}), small: (r.width < 5 || r.height < 5) };
+            return { point: null, ...(cover !== undefined ? { cover } : {}), ...(inner ? { inner } : {}), small: (r.width < 5 || r.height < 5) };
         };
         const own = tryOn(el);
         if (own.point || !own.small) return own;
+        let inner = own.inner;
         for (const label of Array.from(el.labels || [])) {
             const by = tryOn(label);
             if (by.point) return by;
+            inner = inner || by.inner;
         }
-        return { point: null };
+        return inner ? { point: null, inner } : { point: null };
+    }
+
+    /**
+     * The spots of a control a press is tried at, middle first, within the
+     * part of it that can be seen (a box that scrolls inside the page cuts
+     * off the rest), in whole pixels so that what the page reads from the
+     * press is the very point checked. { points, full }: none when no part
+     * of it is drawn; full is its whole box.
+     */
+    function spotsOf(node) {
+        const { left, top, right, bottom, full } = visibleRect(node);
+        if (right - left < 1 || bottom - top < 1) return { points: [], full };
+        const spots = [[0.5, 0.5], [0.25, 0.5], [0.75, 0.5], [0.5, 0.25], [0.5, 0.75], [0.15, 0.15], [0.85, 0.15], [0.15, 0.85], [0.85, 0.85]];
+        return {
+            full,
+            points: spots.map(([fx, fy]) => ({
+                x: Math.min(right - 0.5, Math.max(left, Math.round(left + (right - left) * fx))),
+                y: Math.min(bottom - 0.5, Math.max(top, Math.round(top + (bottom - top) * fy))),
+            })),
+        };
+    }
+
+    /**
+     * Where a press on a control goes, as aimAt says, with one more look
+     * when something is drawn over it where it is now: a bar pinned to the
+     * edge of the window or of a box that scrolls can sit over a control
+     * that is otherwise on screen, and a person scrolls it clear before
+     * pressing. It is scrolled to the middle once and aimed at again. What
+     * still covers it there (a dialog, a layer over the whole page) comes
+     * back as the cover.
+     */
+    function aimClear(el) {
+        bringIntoView(el);
+        const aim = aimAt(el);
+        if (aim.point || aim.cover === undefined) return aim;
+        centreInView(el);
+        return aimAt(el);
+    }
+
+    /** Where a point aimed at in a control is now, after the control may have been scrolled. */
+    function stillOn(el, aimed) {
+        if (!aimed) return null;
+        try {
+            const r = el.getBoundingClientRect();
+            return { x: aimed.x + r.left - aimed.left, y: aimed.y + r.top - aimed.top };
+        } catch (_) { return { x: aimed.x, y: aimed.y }; }
+    }
+
+    /** A point aimed at in a control, with where the control was then, so stillOn can follow it. */
+    function aimedAt(el, point) {
+        const r = el.getBoundingClientRect();
+        return { x: point.x, y: point.y, left: r.left, top: r.top };
+    }
+
+    /**
+     * For a gesture made only by script (a double click, a right click, a
+     * long press, a click with keys held): where to make it, aimed as a
+     * press is, or { fail } when every spot of it is on a control of its
+     * own inside it, or something else is drawn over every spot. Those are
+     * refused as a click is, so every gesture on a control follows the
+     * same rule. A control not drawn on screen at all is pressed at its
+     * middle, as before. `passed` is an inner control the aim went round.
+     */
+    function scriptedAim(el, id, hovering) {
+        const aim = aimClear(el);
+        if (!aim.point && aim.inner) return { fail: missedSpot(id, aim, hovering, true) };
+        if (!aim.point && aim.cover !== undefined) return { fail: coveredResult(id, nameOfDrawn(aim.cover), hovering) };
+        return { aimed: aim.point ? aimedAt(el, aim.point) : null, ...(aim.passed ? { passed: aim.passed } : {}) };
+    }
+
+    /**
+     * What a press says when its aim went round a control of its own inside
+     * the one pressed and the page showed no answer to it at all: the press
+     * went on the control's own surface, and the inner control may be what
+     * does its work (a list item whose only action is the link in it).
+     * Empty when the page answered in any way. `r` is the press's result,
+     * measured.
+     */
+    function passedOverNote(id, passed, r) {
+        if (!passed || !r) return '';
+        const o = r.outcome || {};
+        const s = r.settle || {};
+        const answered = !o.noEffect || r.cancelled || r.stateChanged || (r.taken || []).length || (r.ways && r.ways.by) || s.asked || s.loading;
+        if (answered) return '';
+        return ` The press went on [${id}] itself, clear of ${passed} inside it, and the page showed no answer to it. If [${id}] does its work through ${passed}, press that instead.`;
     }
 
     /**
@@ -3363,25 +3542,37 @@
     /**
      * A press (or a hover) on a control with the real pointer: brought on
      * screen, aimed where a person would press it, then move, a short rest,
-     * press and let go. { real: true, note } when it ran; { real: false }
-     * when the engine cannot move the pointer or the control is not drawn
-     * on screen (the caller makes the events by script, as before); { fail }
-     * when something else is drawn over it.
+     * press and let go. { real: true, note } when it ran; { real: false,
+     * aimed } when the engine cannot move the pointer (the caller makes the
+     * events by script at the same point) or the control is not drawn on
+     * screen (aimed is null: its middle, as before); { fail } when every
+     * spot of it is on a control of its own inside it, or something else
+     * is drawn over every spot. Which pointer will be used is known only
+     * once the engine answers the gesture, so the aim, and a refusal, come
+     * first and are the same for both: a press made by script lands where
+     * a real one would, and is refused where a real one would reach
+     * something else. `passed` is an inner control the aim went round.
      */
     async function pointerOnControl(el, id, label, hovering, spot) {
-        if (!POINTER_TOOLS || Date.now() < realPointerQuietUntil) return { real: false };
-        bringIntoView(el);
-        const aim = spot ? { point: spot } : aimAt(el);
-        if (!aim.point) return aim.cover !== undefined ? { fail: coveredResult(id, nameOfDrawn(aim.cover), hovering) } : { real: false };
+        const aim = spot ? { point: spot } : aimClear(el);
+        const passed = aim.passed ? { passed: aim.passed } : {};
+        if (!aim.point) {
+            if (aim.inner) return { fail: missedSpot(id, aim, hovering, true) };
+            return aim.cover !== undefined ? { fail: coveredResult(id, nameOfDrawn(aim.cover), hovering) } : { real: false, aimed: null };
+        }
+        const aimed = aimedAt(el, aim.point);
+        if (!POINTER_TOOLS || Date.now() < realPointerQuietUntil) return { real: false, aimed, ...passed };
         const steps = hovering ? [{ t: 'move', x: aim.point.x, y: aim.point.y, aim: true }] : POINTER_TOOLS.clickSteps(aim.point);
         if (!hovering) agentCursor && agentCursor.classList.remove('clicking');
         const g = await gesture(steps, { label, id, hovering });
-        if (!g.real) return g;
+        if (!g.real) return g.fail ? g : { ...g, aimed, ...passed };
         if (!hovering && agentCursor) { agentCursor.classList.add('clicking'); }
         let note = '';
+        const target = g.landed && g.landed.target;
         if (!hovering && !g.landed) note = ' The page did not see the press arrive.';
-        else if (!hovering && !pressesOn(el, g.landed.target)) note = ` The press landed on ${nameOfDrawn(g.landed.target)}, not on [${id}]: the page moved under it.`;
-        return { real: true, note, clicked: g.clicked };
+        else if (!hovering && !pressesOn(el, target)) note = ` The press landed on ${nameOfDrawn(target)}, not on [${id}]: the page moved under it.`;
+        else if (!hovering && innerControlAt(el, target)) note = ` The press landed on ${nameOfDrawn(innerControlAt(el, target))}, a control of its own inside [${id}], not on [${id}] itself: the page moved under it.`;
+        return { real: true, note, clicked: g.clicked, ...passed };
     }
 
     /** Where a node sits among its siblings, to say afterwards whether a drag moved it. */
@@ -4536,16 +4727,21 @@
                 // A spot inside it, when one was asked for (a point of a chart or a board).
                 const spot = aimAtSpot(el, data);
                 if (spot && !spot.point) return missedSpot(id, spot, false);
-                const pressed = plain && !picker ? await pointerOnControl(el, id, "Click", false, spot && spot.point) : { real: false };
+                // Either way it is aimed as a person would press it, clear of
+                // the controls of its own inside it.
+                const pressed = plain && !picker ? await pointerOnControl(el, id, "Click", false, spot && spot.point) : spot ? { real: false } : scriptedAim(el, id, false);
                 if (pressed.fail) return pressed.fail;
                 let went = true;
                 if (!pressed.real) {
                     await moveAgentCursorToElement(el, "Click");
                     await pulseAgentCursor("Click");
-                    went = dispatchClickEvents(el, modifiers, spot ? spotIn(el, data.fx, data.fy) : null);
+                    went = dispatchClickEvents(el, modifiers, spot ? spotIn(el, data.fx, data.fy) : stillOn(el, pressed.aimed));
                 }
                 const pointer = pressed.real ? 'real' : 'synthetic';
                 const note = pressed.note || '';
+                // An inner control the aim went round: said after the press
+                // is measured, if the page showed no answer to it at all.
+                const passedOver = pressed.passed ? { passedOver: nameOfDrawn(pressed.passed) } : {};
                 // A link that opens in a new tab. A real click opens it as for
                 // a person, and the engine follows the tab it finds; a scripted
                 // click is not allowed to open one, and a real one in a tab
@@ -4561,16 +4757,18 @@
                 const isTextField = el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && /^(text|search|email|url|tel|number|password)$/.test((el.type || 'text').toLowerCase()));
                 if (el.disabled) return { success: true, pointer, message: `Clicked element [${id}]. It is disabled, so the click does nothing to it.` };
                 // `cancelled`: the page took the click over, which is an answer to it.
-                return { success: true, pointer, ...(went ? {} : { cancelled: true }), message: `Clicked element [${id}]${spotWords(data)}.${isTextField ? ' It is a text field: the click only put the cursor in it.' : ''}${note}` };
+                return { success: true, pointer, ...(went ? {} : { cancelled: true }), ...passedOver, message: `Clicked element [${id}]${spotWords(data)}.${isTextField ? ' It is a text field: the click only put the cursor in it.' : ''}${note}` };
             }
 
             // ----- double_click -----
             if (action === 'double_click') {
                 const spot = aimAtSpot(el, data);
                 if (spot && !spot.point) return missedSpot(id, spot, false);
+                const aim = spot ? {} : scriptedAim(el, id, false);
+                if (aim.fail) return aim.fail;
                 await moveAgentCursorToElement(el, "Double click");
                 await pulseAgentCursor("Double click");
-                const went = await scriptedDoubleClick(el, modifiers, spot ? spotIn(el, data.fx, data.fy) : null);
+                const went = await scriptedDoubleClick(el, modifiers, spot ? spotIn(el, data.fx, data.fy) : stillOn(el, aim.aimed));
                 return { success: true, pointer: 'synthetic', ...(went ? {} : { cancelled: true }), message: `Double-clicked element [${id}]${spotWords(data)}.` };
             }
 
@@ -4578,9 +4776,11 @@
             if (action === 'right_click') {
                 const spot = aimAtSpot(el, data);
                 if (spot && !spot.point) return missedSpot(id, spot, false);
+                const aim = spot ? {} : scriptedAim(el, id, false);
+                if (aim.fail) return aim.fail;
                 await moveAgentCursorToElement(el, "Right click");
                 await pulseAgentCursor("Right click");
-                const { taken } = scriptedRightClick(el, modifiers, spot ? spotIn(el, data.fx, data.fy) : null);
+                const { taken } = scriptedRightClick(el, modifiers, spot ? spotIn(el, data.fx, data.fy) : stillOn(el, aim.aimed));
                 // A page that shows a menu of its own takes the browser's over.
                 const own = taken ? '' : ' The page did not take the right click over for a menu of its own: in a browser that opens the browser\'s own menu, which is not part of the page.';
                 return { success: true, pointer: 'synthetic', message: `Right-clicked element [${id}]${spotWords(data)}.${own}` };
@@ -4591,8 +4791,10 @@
                 const ms = Math.round(Math.min(10, Math.max(0.3, Number(data.seconds) || 1)) * 1000);
                 const spot = aimAtSpot(el, data);
                 if (spot && !spot.point) return missedSpot(id, spot, false);
+                const aim = spot ? {} : scriptedAim(el, id, false);
+                if (aim.fail) return aim.fail;
                 await moveAgentCursorToElement(el, "Press and hold");
-                const at = spot ? spotIn(el, data.fx, data.fy) : centreOf(el);
+                const at = spot ? spotIn(el, data.fx, data.fy) : stillOn(el, aim.aimed) || centreOf(el);
                 if (agentCursor) placeAgentCursor(at.x, at.y, "Press and hold: holding");
                 // The pointer arrives first: what leaving where it was sets off is not the press's doing.
                 movePointerTo(pointerTargetIn(el, at), at, modifiers);
@@ -4637,7 +4839,7 @@
                 if (moved.fail) return moved.fail;
                 if (!moved.real) {
                     await moveAgentCursorToElement(el, "Hover");
-                    await dwellHover(el, spot ? spotIn(el, data.fx, data.fy) : centreOf(el), modifiers);
+                    await dwellHover(el, spot ? spotIn(el, data.fx, data.fy) : stillOn(el, moved.aimed) || centreOf(el), modifiers);
                 }
                 return { success: true, pointer: moved.real ? 'real' : 'synthetic', message: `Moved the pointer over [${id}]${spotWords(data)} without pressing it, and left it there.` };
             }
@@ -4675,11 +4877,13 @@
                 // Where it is taken hold of: a spot asked for, or where a person would press it.
                 const grip = aimAtSpot(el, data);
                 if (grip && grip.inner) return missedSpot(id, grip, false);
-                const from = grip || aimAt(el);
+                // The whole of what is held is what moves, so a part of it is a place to grip.
+                const from = grip || aimAt(el, true);
                 if (!from.point) return from.cover !== undefined ? coveredResult(id, nameOfDrawn(from.cover), false) : { success: false, error: `[${id}] is not drawn on screen, so it cannot be dragged.` };
                 let end;
                 if (to) {
-                    const onto = aimAt(to);
+                    // Letting go on a part of the place is letting go on it.
+                    const onto = aimAt(to, true);
                     if (!onto.point) return onto.cover !== undefined ? coveredResult(named ? toName : data.to, nameOfDrawn(onto.cover), false) : { success: false, error: `${toName} is not drawn on screen, so nothing can be dropped on it.` };
                     // Before or after it in its list, or a spot of it, when that was asked.
                     end = dropAim(to, data) || onto.point;
@@ -6580,6 +6784,10 @@
                                 result.message += ` ${n ? `[${n}]` : 'The control with the cursor'} is now ${stateNow}.`;
                                 result.stateChanged = true;
                             }
+                        }
+                        if (result.passedOver !== undefined) {
+                            if (typeof result.message === 'string') result.message += passedOverNote(request.data.id, result.passedOver, result);
+                            delete result.passedOver;
                         }
                         // The words a gesture brought up on screen: a tooltip, a
                         // label, a count. What has a number is said below by it.

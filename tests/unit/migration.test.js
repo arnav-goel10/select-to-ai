@@ -2,7 +2,7 @@
 // What an update does to stored settings (extension/background.js
 // onInstalled). The previousVersion matrix: a 2.0 user gets the settings 2.0
 // was showing written out, 3.x users are left alone, a fresh install writes
-// nothing, and only an update from below 4.0.0 leaves the popup's one-time
+// only Perplexity on, and only an update from below 4.0.0 leaves the popup's one-time
 // notice. No update opens a tab.
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -32,7 +32,8 @@ test("2.0 seed: Perplexity on, page address off, popup window becomes the side p
   assert.ok(local.upgradeNotice && local.upgradeNotice.from === "2.0", "notice for the popup");
   assert.equal(tabs.length, 0, "no tab opened on update");
   const titles = bg.currentMenu().map((m) => m.title);
-  assert.deepEqual(titles, ["Select to AI", "Send to ChatGPT", "Send to Gemini", "Send to Perplexity"]);
+  // 2.0's page item ("Open AI Sidebar") is there too, opening the side panel.
+  assert.deepEqual(titles, ["Open Select to AI side panel", "Select to AI", "Send to ChatGPT", "Send to Gemini", "Send to Perplexity"]);
 });
 
 test("2.0 with choices made keeps them: Perplexity off, auto-context on, new tab", async () => {
@@ -63,7 +64,8 @@ test("4.0.0 to a later 4.x: no notice", async () => {
 
 test("fresh install: nothing migrated, no notice, the welcome page opens", async () => {
   const { sync, local, tabs } = await update(null, {});
-  assert.deepEqual({ ...sync }, {});
+  // Only Perplexity is written, so the menu matches what the welcome page says.
+  assert.deepEqual({ ...sync }, { showPerplexity: true });
   assert.ok(!("upgradeNotice" in local));
   assert.equal(tabs.length, 1);
   assert.match(tabs[0].url, /welcome\.html$/);

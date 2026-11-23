@@ -26,9 +26,12 @@ function page() {
     return n;
   };
   const focused = [];
-  const fns = build(["centreOf", "pointerInit", "movePointerTo", "pointerTargetIn", "dispatchClickEvents", "dispatchHoverEvents"], {
+  const fns = build(["centreOf", "pointerInit", "movePointerTo", "pointerTargetIn", "dispatchClickEvents", "dispatchHoverEvents", "insideOf", "innerControlAt"], {
     window: { screenX: 100, screenY: 50 },
     document: { elementFromPoint: () => null },
+    // Nothing is drawn under the pointer here: the events start on the control.
+    drawnAt: () => null,
+    idOf: () => null,
     PointerEvent: FakePointerEvent,
     MouseEvent: FakeMouseEvent,
     upOf: (n) => n.parentElement || null,

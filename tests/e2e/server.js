@@ -594,6 +594,109 @@ const FIXTURES = {
        save.addEventListener('keydown', (e) => { if (e.key === 'Enter' && document.activeElement === save) saved('with the keyboard'); });
      </script>`,
   ),
+  // Controls with a control of their own drawn at their middle: a row with
+  // a link in its middle column, a card with a button the page draws
+  // invisibly over its picture, and a label whose box the page draws, with
+  // a link in the middle of its words. Each inner control stops the click
+  // there, as many do, so a press that reached it never reaches the row,
+  // the card or the box. Each is pressed by the outer control's ref.
+  "/press-inside": pageShell(
+    "Orders",
+    `<h1>Orders</h1>
+     <p id="s-row">Row: closed</p><p id="s-card">Card: closed</p><p id="s-tax">Tax: hidden</p>
+     <div id="row" tabindex="0" aria-label="Invoice 1042 from Acme Ltd" style="display:flex;align-items:center;width:480px;height:44px;border:1px solid #888;cursor:pointer">
+       <span style="width:180px;padding-left:8px">Invoice 1042</span>
+       <a id="row-link" href="/press-inside?company=acme" style="display:inline-block;width:120px">Acme Ltd</a>
+       <span style="width:120px;text-align:right">$120.00</span>
+     </div>
+     <div id="card" tabindex="0" aria-label="Blue teapot" style="position:relative;width:300px;height:200px;margin-top:16px;border:1px solid #888;cursor:pointer">
+       <div style="height:150px;background:#9bd"></div><div style="padding:4px">Blue teapot $24</div>
+       <button type="button" id="quick" style="position:absolute;left:100px;top:80px;width:100px;height:40px;margin:0;padding:0;opacity:0">Add to cart</button>
+     </div>
+     <label id="tax" style="display:flex;align-items:center;width:560px;height:40px;margin-top:16px;font-weight:400;cursor:pointer"><input type="checkbox" id="tax-box" style="display:none"><span id="tax-mark" style="flex:0 0 20px;height:20px;border:2px solid #333;margin-right:6px"></span>Show prices with tax, see<a id="tax-notes" href="/press-inside?notes=1" style="flex:0 0 200px;text-align:center">the pricing notes</a>for how it is worked out</label>
+     <script>
+       window.pressedInside = { link: 0, quick: 0, notes: 0 };
+       const $ = (id) => document.getElementById(id);
+       $('row').addEventListener('click', () => { $('s-row').textContent = 'Row: opened invoice 1042'; });
+       $('row-link').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); window.pressedInside.link += 1; $('s-row').textContent = 'Row: the Acme Ltd link was pressed'; });
+       $('card').addEventListener('click', () => { $('s-card').textContent = 'Card: opened Blue teapot'; });
+       $('quick').addEventListener('click', (e) => { e.stopPropagation(); window.pressedInside.quick += 1; $('s-card').textContent = 'Card: Blue teapot added to cart'; });
+       $('tax-box').addEventListener('change', () => { $('s-tax').textContent = $('tax-box').checked ? 'Tax: shown' : 'Tax: hidden'; $('tax-mark').textContent = $('tax-box').checked ? 'x' : ''; });
+       $('tax-notes').addEventListener('click', (e) => { e.preventDefault(); window.pressedInside.notes += 1; $('s-tax').textContent = 'Tax: the pricing notes were opened'; });
+     </script>`,
+  ),
+  // A list that scrolls inside its own box, under a bar pinned to the top
+  // of that box. The page opens with the message to press scrolled under
+  // the bar, as a list is after scrolling: it is on screen, but the bar is
+  // drawn over all of it. The page notes whether the press arrived at a
+  // point where the message is drawn, or at one where the bar is, which a
+  // person could not press through.
+  "/pinned-header": pageShell(
+    "Inbox",
+    `<h1>Mail</h1><p id="state">Nothing opened</p>
+     <div id="list" style="position:relative;height:320px;width:480px;overflow:auto;border:1px solid #888">
+       <div id="bar" style="position:sticky;top:0;height:72px;background:#fff;border-bottom:1px solid #888;z-index:2;display:flex;align-items:center;padding:0 12px">Inbox: 30 messages</div>
+     </div>
+     <script>
+       const list = document.getElementById('list');
+       const people = ['Ada', 'Alan', 'Barbara', 'Charles', 'Donald', 'Edsger', 'Frances', 'Gordon', 'Hedy', 'Ivan', 'John', 'Karen', 'Grace', 'Leslie', 'Margaret', 'Niklaus', 'Ole', 'Peter', 'Radia', 'Shafi', 'Tim', 'Ursula', 'Vint', 'Whitfield', 'Xavier', 'Yukihiro', 'Zhores', 'Andrew', 'Brian', 'Carol'];
+       let target = null;
+       people.forEach((who, i) => {
+         const subject = who === 'Grace' ? 'Lunch on Friday' : 'Notes ' + (i + 1);
+         const row = document.createElement('div');
+         row.tabIndex = 0;
+         row.setAttribute('aria-label', 'Message from ' + who + ': ' + subject);
+         row.style.cssText = 'height:43px;border-bottom:1px solid #ddd;padding:0 12px;display:flex;align-items:center;cursor:pointer';
+         row.textContent = who + ': ' + subject;
+         row.addEventListener('click', (e) => {
+           const first = document.elementsFromPoint(e.clientX, e.clientY).find((n) => list.contains(n));
+           window.pressedThroughBar = !first || !row.contains(first);
+           document.getElementById('state').textContent = 'Opened: ' + subject;
+         });
+         list.appendChild(row);
+         if (who === 'Grace') target = row;
+       });
+       list.scrollTop = target.offsetTop - 12;
+     </script>`,
+  ),
+  // A card whose title link is drawn out over the whole card (a layer of
+  // the link stretched over it), and a list item with no action of its own
+  // whose link sits at its middle. Each link does the work; the card and
+  // the item are listed apart from their links and pressed by their own
+  // refs.
+  "/press-through": pageShell(
+    "Shop",
+    `<h1>Shop</h1>
+     <p id="s-kettle">Kettle: closed</p><p id="s-inbox">Inbox: closed</p>
+     <style>.stretched::after { content: ""; position: absolute; inset: 0; }</style>
+     <div id="kettle" tabindex="0" aria-label="Red kettle, $30" style="position:relative;width:300px;height:180px;border:1px solid #888;cursor:pointer">
+       <div style="height:120px;background:#d99"></div>
+       <h3 style="margin:4px 8px;font-size:16px"><a class="stretched" id="kettle-link" href="/press-through?item=kettle">Red kettle</a></h3>
+       <div style="padding:0 8px">$30</div>
+     </div>
+     <ul style="list-style:none;padding:0;margin-top:16px;width:320px">
+       <li id="inbox" tabindex="0" aria-label="Inbox, 3 unread" style="position:relative;display:flex;justify-content:center;align-items:center;height:40px;border:1px solid #888;cursor:pointer"><a id="inbox-link" href="/press-through?box=inbox">Open inbox</a><span style="position:absolute;right:12px">3</span></li>
+     </ul>
+     <script>
+       const $ = (id) => document.getElementById(id);
+       $('kettle-link').addEventListener('click', (e) => { e.preventDefault(); $('s-kettle').textContent = 'Kettle: opened'; });
+       $('inbox-link').addEventListener('click', (e) => { e.preventDefault(); $('s-inbox').textContent = 'Inbox: opened'; });
+     </script>`,
+  ),
+  // A button under a see-through layer the page left over the whole window
+  // (a backdrop that was never taken away). A press there reaches the
+  // layer, a person's or the real pointer's.
+  "/press-under-layer": pageShell(
+    "Draft",
+    `<h1>Draft</h1><p id="state">Not saved</p>
+     <button type="button" id="save">Save draft</button>
+     <div id="catcher" style="position:fixed;left:0;top:0;width:100vw;height:100vh;opacity:0;z-index:10"></div>
+     <script>
+       window.caught = 0;
+       document.getElementById('save').addEventListener('click', () => { document.getElementById('state').textContent = 'Saved'; });
+       document.getElementById('catcher').addEventListener('click', () => { window.caught += 1; });
+     </script>`,
+  ),
   // Controls that take a scripted click and show it only out of sight of
   // the page's elements. Each also takes Enter and Space, as a control
   // built for the keyboard does, so a press made a second way would count
@@ -1326,6 +1429,39 @@ function buildStepPolicies(baseUrl) {
       if (/Saved with/.test(ctx.userText)) return done("The settings are saved.", ["Saved with"]);
       return step("Save the settings", [{ do: "click", ref: named(ctx, /save settings/i).id }]);
     },
+    // Each outer control pressed by its own ref, with no spot asked for.
+    pressInside(ctx) {
+      const t = ctx.userText;
+      if (/Row: closed/.test(t)) return step("Open the invoice", [{ do: "click", ref: named(ctx, /Invoice 1042/).id }]);
+      if (/Card: closed/.test(t)) return step("Open the teapot", [{ do: "click", ref: named(ctx, /Blue teapot/).id }]);
+      if (/Tax: hidden/.test(t)) return step("Show prices with tax", [{ do: "click", ref: named(ctx, /Show prices with tax/).id }]);
+      return done("The invoice and the teapot are open, and prices show tax.", ["Tax: shown"]);
+    },
+    // The card and the list item pressed by their own refs; an item the
+    // result says does its work through its link is then pressed by the
+    // ref the result names.
+    pressThrough(ctx) {
+      const t = ctx.userText;
+      if (/Kettle: closed/.test(t)) return step("Open the kettle", [{ do: "click", ref: named(ctx, /Red kettle, \$30/).id }]);
+      if (/Inbox: closed/.test(t)) {
+        const via = t.match(/does its work through \[(\d+)\]/);
+        if (via) return step("Open the inbox by its link", [{ do: "click", ref: Number(via[1]) }]);
+        return step("Open the inbox", [{ do: "click", ref: named(ctx, /Inbox, 3 unread/).id }]);
+      }
+      return done("The kettle and the inbox are open.", ["Inbox: opened"]);
+    },
+    // A button under a see-through layer, pressed by its ref.
+    pressUnderLayer(ctx) {
+      if (/Saved/.test(ctx.userText)) return done("The draft is saved.", ["Saved"]);
+      if (/is covered:/.test(ctx.userText)) return done("Something covers the button, so the draft was not saved.", [], false);
+      return step("Save the draft", [{ do: "click", ref: named(ctx, /Save draft/).id }]);
+    },
+    // A message under a pinned bar, pressed by its ref.
+    pinnedHeader(ctx) {
+      if (/Opened: Lunch on Friday/.test(ctx.userText)) return done("Grace's message is open: Lunch on Friday.", ["Opened: Lunch on Friday"]);
+      if (/is covered:/.test(ctx.userText)) return done("The message is covered, so it was not opened.", [], false);
+      return step("Open Grace's message", [{ do: "click", ref: named(ctx, /Grace: Lunch on Friday/).id }]);
+    },
     // A press that worked out of sight: the result says what was seen, and it is not pressed again.
     pressSilent(ctx) {
       if (/A field on the page holds a different value after it/.test(ctx.userText)) return done("There is one more apple in the basket.", []);
@@ -1750,6 +1886,10 @@ function createE2EServer(port = 8907) {
   scenarios.fieldChips = { task: "Take Purple out of my favourite colours, and delete my old saved address." };
   scenarios.hoverScripted = { task: "Choose Pricing from the Products menu." };
   scenarios.pressKeyboard = { task: "Save my settings." };
+  scenarios.pressInside = { task: "Open invoice 1042, open the blue teapot, and show prices with tax." };
+  scenarios.pinnedHeader = { task: "Open the message from Grace." };
+  scenarios.pressThrough = { task: "Open the red kettle and then my inbox." };
+  scenarios.pressUnderLayer = { task: "Save my draft." };
   scenarios.pressSilent = { task: "Add one more apple to the basket." };
   scenarios.shadowSilent = { task: "Add this to my wishlist." };
   scenarios.pressOnce = { task: "Subscribe me to the newsletter." };

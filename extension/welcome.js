@@ -247,6 +247,19 @@
     ["Open Wikipedia and tell me today's featured article in two sentences", "wikipedia.org"],
     ["Go to GitHub Trending and tell me today's top repository and what it does", "github.com"],
   ];
+  // A task typed in the quick box while the agent was off is not offered
+  // here: the worker offers it whenever the agent is turned on, from this
+  // page or anywhere else (background.js offerKeptTask).
+  function tryButton(task, note, onclick) {
+    const b = document.createElement("button");
+    b.className = "try";
+    b.innerHTML = `<span></span><em></em>`;
+    b.firstChild.textContent = task;
+    b.lastChild.textContent = note;
+    b.onclick = onclick;
+    return b;
+  }
+
   function showDone(provider) {
     const free = provider === "openrouter";
     $("doneLede").textContent = (free
@@ -255,15 +268,7 @@
       " Try a first task. Chrome will ask to let the agent use that one site, and you can stop it at any time.";
     const list = $("tries");
     list.textContent = "";
-    for (const [task, site] of FIRST_TASKS) {
-      const b = document.createElement("button");
-      b.className = "try";
-      b.innerHTML = `<span></span><em></em>`;
-      b.firstChild.textContent = task;
-      b.lastChild.textContent = site;
-      b.onclick = () => openAgent(task, site);
-      list.appendChild(b);
-    }
+    for (const [task, site] of FIRST_TASKS) list.appendChild(tryButton(task, site, () => openAgent(task, site)));
     show("done");
   }
   function openAgent(task, site) {
