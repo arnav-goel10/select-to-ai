@@ -100,3 +100,22 @@ test("new key formats are accepted and never stored as memories", () => {
   }
   assert.equal(KNOWN.isStorable("I shop in SGD"), true);
 });
+
+test("the agent page reads its settings again only when a setting changed, and does not write sync on every read", () => {
+  const vm = require("node:vm");
+  const src = fs.readFileSync(path.join(__dirname, "../../extension/agent.js"), "utf8");
+  const start = src.indexOf("  const LOCAL_SETTINGS =");
+  const end = src.indexOf("  function loadSettings(");
+  assert.ok(start > 0 && end > start, "readsSettings sits before loadSettings");
+  const CONFIG = require("../../extension/config.js");
+  const ctx = { CONFIG };
+  vm.createContext(ctx);
+  vm.runInContext(`${src.slice(start, end)}\nthis.readsSettings = readsSettings;`, ctx);
+  // The engine's own stores change as a run works: a press verdict, memory, a recipe.
+  for (const k of ["agentPressVerdicts", "agentKnown", "recipesStore", "agentCrossSessionMemory"]) assert.equal(ctx.readsSettings({ [k]: {} }, "local"), false, k);
+  assert.equal(ctx.readsSettings({ agentModel: {} }, "sync"), true);
+  assert.equal(ctx.readsSettings({ agentAnthropicKey: {} }, "local"), true);
+  assert.equal(ctx.readsSettings({ agentDataConsent: {} }, "local"), true);
+  const body = src.slice(end, src.indexOf("config.agentActiveProvider", end));
+  assert.doesNotMatch(body, /chrome\.storage\.sync\.remove\(syncedKeys\)/, "sync is not written on every read");
+});
