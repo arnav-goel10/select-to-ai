@@ -2349,14 +2349,21 @@
 
   // ------------------------------------------------------------------- start
 
+  /**
+   * The tab a run starts in: the one it was given, else the tab the user is
+   * looking at. When that is the extension's own page (the agent opened in a
+   * tab of its own, from the welcome page or a link), there is no tab the
+   * user pointed at, so this gives null and startingPlace opens a fresh tab.
+   * Some other tab of the user's is never taken over just because it is in
+   * the window; if the task needs one, the model asks to switch to it.
+   */
   async function targetTab(session, tabId) {
     const own = chrome.runtime.getURL("");
     if (tabId) { const t = await quiet(chrome.tabs.get(tabId)); if (t) return t; }
     const query = session.windowId > 0 ? { windowId: session.windowId } : { currentWindow: true };
     const [active] = (await quiet(chrome.tabs.query({ ...query, active: true }))) || [];
     if (active && active.url && !active.url.startsWith(own)) return active;
-    const all = (await quiet(chrome.tabs.query(query))) || [];
-    return all.find((t) => t.url && !t.url.startsWith(own)) || null;
+    return null;
   }
 
   /**

@@ -114,8 +114,14 @@ async function main() {
         agent = await target.page();
       } else {
         agent = await browser.newPage();
-        // With the user going to a tab of their own, the run is told which tab is its page.
-        const at = opts && opts.aside ? await worker.evaluate(async (href) => { const t = (await chrome.tabs.query({})).find((x) => x.url === href); return t ? t.id : null; }, fixture.url()) : null;
+        // The run is told which tab is its page, as the popup and the side
+        // panel tell it. An agent tab given no tab starts in a fresh one.
+        // A page still loading may not show its address yet: the fixture is then the first web tab.
+        const at = await worker.evaluate(async (href) => {
+          const tabs = await chrome.tabs.query({});
+          const t = tabs.find((x) => x.url === href || x.pendingUrl === href) || tabs.find((x) => !String(x.url || x.pendingUrl || "").startsWith("chrome-extension://"));
+          return t ? t.id : null;
+        }, fixture.url());
         await agent.goto(`${agentUrl(task)}${at ? `&tabId=${at}` : ""}`, { waitUntil: "load" });
       }
       agent.on("pageerror", (err) => console.log(`  [agent pageerror] ${err.message}`));
