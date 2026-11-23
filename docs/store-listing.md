@@ -17,7 +17,7 @@ Send selected text to ChatGPT, Claude, Gemini or Perplexity, or ask an AI agent 
 ## Long description
 
 ```
-Highlight text on any page, right-click, and send it to ChatGPT, Gemini or Perplexity. The chat opens in Chrome's side panel or a new tab with your text already in it. This part needs no account with us and no API key. Right-click sending works exactly as before. Claude can be added in one click, when you allow claude.ai.
+Highlight text on any page, right-click, and send it to ChatGPT or Gemini. Perplexity and Claude are in Settings too (Claude once you allow claude.ai). The chat opens in Chrome's side panel or a new tab with your text already in it. This part needs no account with us and no API key. Right-click sending works exactly as before.
 
 The agent does tasks on websites for you. Type what you want, for example "what's the top story on Hacker News" or "find the cheapest of these three laptops", and it opens pages, clicks, types, drags, scrolls and reads in your tab, then gives you the answer with the pages it came from. Before it answers, it checks its quotes against the pages it read. You can follow each step as it happens, send it a message to change course, or stop it.
 
@@ -61,7 +61,7 @@ Using AI on the web page you are reading. Select to AI sends text you select to 
 
 Required permissions. All of them were in 2.0 or give Chrome no install warning, so the update installs without a new prompt.
 
-- contextMenus: the "Send to ChatGPT / Gemini / Perplexity" items on the right-click menu for selected text (and Claude once the user allows claude.ai).
+- contextMenus: the "Send to ChatGPT" and "Send to Gemini" items on the right-click menu for selected text, plus Perplexity and Claude when the user has them on in Settings (Claude once the user allows claude.ai).
 - storage: preferences, the user's API key, their memory (encrypted) and saved recipes, all on the device.
 - sidePanel: shows the chat sites and the agent in Chrome's side panel.
 - tabs: lets the agent read tab titles and addresses, and open and switch tabs, for a task the user asked for.
@@ -97,9 +97,9 @@ No account or key is needed for steps 1 to 3. Do not put a real API key in this 
 
 ```
 1. Install the extension. Open any article, for example https://en.wikipedia.org/wiki/Web_browser.
-2. Select a sentence, right-click, and choose Select to AI > Send to ChatGPT (or Gemini or Perplexity). The side panel opens that site with the text in its chat box. No account with Select to AI is needed.
+2. Select a sentence, right-click, and choose Select to AI > Send to ChatGPT (or Gemini). The side panel opens that site with the text in its chat box. No account with Select to AI is needed.
 3. In Settings, set "Open in" to New tab and send again. The site opens in a new tab instead.
-4. To try the agent, click the toolbar button, then Connect for free, then Continue with OpenRouter (free). Create a free OpenRouter account in the window that opens (no card needed) and approve. If Chrome asks to allow openrouter.ai, allow it.
+4. To try the agent, click the toolbar button, then Connect for free, then Continue with OpenRouter (free). A card titled "What the agent sends" appears below the key box. Press Agree and continue. When Chrome asks to allow openrouter.ai, allow it. Then create a free OpenRouter account in the window that opens (no card needed) and approve.
 5. In the toolbar popup, type a task such as "What is the top story on Hacker News?" and press Enter. When asked, allow the agent to use news.ycombinator.com. The agent opens the site, reads it and answers with the page it used.
 ```
 
