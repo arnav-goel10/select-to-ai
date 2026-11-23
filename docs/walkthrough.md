@@ -48,7 +48,7 @@ The approval step is on by default. It is the **Ask before purchases, payments a
 
 ## Two real runs
 
-Both traces come from one real-task trial in GitHub Actions: [run 44139261360](https://github.com/arnav-goel10/select-to-ai/actions/runs/44139261360), 17 Nov 2026. That run used the packed 4.0 build without the debugger (commit `71d40a7`, before the editor and gesture work merged on 23 Nov), Claude Haiku 5.5 as the agent and Claude Sonnet 5.5 as the judge. Each is the run's own `log.txt` from the trial-shard artifacts. Both sites are public and nothing was signed in, so there was no personal data to take out. I removed only the clock times and cut long result lines, marked with `...`.
+Both traces come from one real-task trial in GitHub Actions: [run 44139261360](https://github.com/arnav-goel10/select-to-ai/actions/runs/44139261360), 17 Nov 2026. That run used the packed 4.0 build without the debugger (commit `71d40a7`, before the editor and gesture work merged on 23 Nov), Claude Haiku 5.5 as the agent and Claude Sonnet 5.5 as the judge. Each is the run's own `log.txt` from the trial-shard artifacts. Lines in parentheses are the page text recorded for that step in the same run's `run.json`. Both sites are public and nothing was signed in, so there was no personal data to take out. I removed only the clock times and cut long result lines, marked with `...`.
 
 ### A successful action: open an FAQ answer on kagi.com/pricing
 
