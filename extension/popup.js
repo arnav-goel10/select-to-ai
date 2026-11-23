@@ -113,9 +113,15 @@ document.addEventListener('DOMContentLoaded', () => {
         G.requestHost(G.ASSISTANT_HOSTS.claude).then((held) => { if (held) addClaudeBtn.hidden = true; });
     });
     openAgentBtn.addEventListener('click', () => openAgent('', true));
+    // The worker says whether the quick box opened. Chrome keeps extensions
+    // off its own pages and the Web Store, so there the popup stays open and
+    // says why, rather than closing on nothing.
     $('openPaletteBtn').addEventListener('click', () => {
-        chrome.runtime.sendMessage({ action: 'openPaletteFromPopup' });
-        window.close();
+        chrome.runtime.sendMessage({ action: 'openPaletteFromPopup' }, (reply) => {
+            void chrome.runtime.lastError;
+            if (reply && reply.opened === false) { $('paletteNote').hidden = false; return; }
+            window.close();
+        });
     });
 
     function openAgent(task, inTab) {
@@ -126,97 +132,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
             const activeTab = tabs && tabs[0];
+            const tabId = activeTab && activeTab.id ? activeTab.id : null;
             const params = new URLSearchParams();
-            if (activeTab && activeTab.id) params.set('tabId', String(activeTab.id));
-            if (task) { params.set('task', task); params.set('autostart', '1'); }
-            const agentUrl = chrome.runtime.getURL('agent.html') + (params.toString() ? `?${params}` : '');
+            if (tabId) params.set('tabId', String(tabId));
 
             chrome.storage.sync.get(['openingMode'], (settings) => {
                 if (inTab || settings.openingMode === 'tab') {
-                    chrome.tabs.create({ url: agentUrl });
+                    // A tab is opened once from this address, and the agent
+                    // page drops the task from it as soon as it is read.
+                    if (task) { params.set('task', task); params.set('autostart', '1'); }
+                    chrome.tabs.create({ url: chrome.runtime.getURL('agent.html') + (params.toString() ? `?${params}` : '') });
                     return;
                 }
-                chrome.storage.local.set({
-                    sidePanelState: {
-                        url: agentUrl,
-                        selectedText: '',
-                        autoSend: false,
-                        timestamp: Date.now()
-                    }
-                }, () => {
-                    chrome.windows.getCurrent((win) => {
-                        chrome.sidePanel.open({ windowId: win.id });
-                    });
-                });
-            });
-        });
-    }
-
-    // openSidebarBtn: open the agent when it is on, else the last-used (or first enabled) assistant.
-    openSidebarBtn.addEventListener('click', () => {
-        chrome.storage.local.get([STORAGE.SIDE_PANEL_STATE], (localState) => {
-            chrome.storage.sync.get(STORAGE.SETTINGS, (settings) => {
-                let targetBaseUrl = URLS.CHATGPT; // Default fallback (ChatGPT)
-
-                const showChatGPT = settings.showChatGPT !== false;
-                const showGemini = settings.showGemini !== false;
-                const showPerplexity = settings.showPerplexity === true;
-                const showClaude = settings.showClaude !== false;
-                const showAgent = settings.showAgent === true;
-
-                // 1. With the agent on, the side panel opens on the agent; the
-                // assistant sites are a click away inside it.
-                if (showAgent) {
-                    targetBaseUrl = chrome.runtime.getURL('agent.html');
-                } else if (localState[STORAGE.SIDE_PANEL_STATE] && localState[STORAGE.SIDE_PANEL_STATE].url) {
-                    targetBaseUrl = localState[STORAGE.SIDE_PANEL_STATE].url;
-
-                    // Verify if that service is still enabled
-                    let isEnabled = true;
-                    if (targetBaseUrl.includes(HOSTS.CHATGPT) && !showChatGPT) isEnabled = false;
-                    else if (targetBaseUrl.includes(HOSTS.GEMINI) && !showGemini) isEnabled = false;
-                    else if (targetBaseUrl.includes(HOSTS.PERPLEXITY) && !showPerplexity) isEnabled = false;
-                    else if (targetBaseUrl.includes(HOSTS.CLAUDE) && !showClaude) isEnabled = false;
-                    else if (targetBaseUrl.includes(HOSTS.AGENT) && !showAgent) isEnabled = false;
-
-                    if (!isEnabled) {
-                        targetBaseUrl = getFallbackUrl(settings);
-                    }
-                } else {
-                    // 2. No history: Default Hierarchy
-                    targetBaseUrl = getFallbackUrl(settings);
-                }
-
-                // Helper to resolve session URL
-                const resolveSession = (baseUrl, callback) => {
-                    let hostname = "";
-                    if (baseUrl.includes(HOSTS.CHATGPT)) hostname = HOSTS.CHATGPT;
-                    else if (baseUrl.includes(HOSTS.GEMINI)) hostname = HOSTS.GEMINI;
-                    else if (baseUrl.includes(HOSTS.PERPLEXITY)) hostname = HOSTS.PERPLEXITY_WWW;
-                    else if (baseUrl.includes(HOSTS.CLAUDE)) hostname = HOSTS.CLAUDE;
-                    else if (baseUrl.includes(HOSTS.AGENT)) hostname = HOSTS.AGENT;
-
-                    if (!hostname) {
-                        callback(baseUrl);
-                        return;
-                    }
-
-                    const storageKey = `sessionUrl_${hostname}`;
-                    chrome.storage.local.get([storageKey], (result) => {
-                        const savedUrl = result[storageKey];
-                        if (savedUrl && savedUrl.includes(hostname)) {
-                            callback(savedUrl);
-                        } else {
-                            callback(baseUrl);
-                        }
-                    });
-                };
-
-                resolveSession(targetBaseUrl, (finalUrl) => {
-                    // Save state and open side panel
+                // The side panel reloads its saved address whenever it is
+                // opened again, so the task goes as a one-time handoff that
+                // the agent page takes and removes, never in that address.
+                const OMNI = globalThis.SELECT_TO_AI_OMNIBOX;
+                const addressFor = task
+                    ? OMNI.handOff(chrome.storage.session, task, tabId).then((h) => chrome.runtime.getURL(h.path))
+                    : Promise.resolve(chrome.runtime.getURL('agent.html') + (params.toString() ? `?${params}` : ''));
+                addressFor.then((agentUrl) => {
                     chrome.storage.local.set({
                         sidePanelState: {
-                            url: finalUrl,
+                            url: agentUrl,
                             selectedText: '',
                             autoSend: false,
                             timestamp: Date.now()
@@ -229,14 +167,107 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             });
         });
+    }
+
+    // claude.ai is optional in 4.0. The side panel cannot load it until
+    // Chrome holds the host, and its picker leaves Claude out until then.
+    const claudeHeld = () => (G ? G.hasHost(G.ASSISTANT_HOSTS.claude) : Promise.resolve(false));
+
+    // openSidebarBtn: open the agent when it is on, else the last-used (or first enabled) assistant.
+    openSidebarBtn.addEventListener('click', () => {
+        chrome.storage.local.get([STORAGE.SIDE_PANEL_STATE], (localState) => {
+            chrome.storage.sync.get(STORAGE.SETTINGS, (settings) => {
+                claudeHeld().then((claudeGranted) => openSidePanelOn(localState, settings, claudeGranted));
+            });
+        });
     });
 
-    function getFallbackUrl(settings) {
+    function openSidePanelOn(localState, settings, claudeGranted) {
+        const showChatGPT = settings.showChatGPT !== false;
+        const showGemini = settings.showGemini !== false;
+        const showPerplexity = settings.showPerplexity === true;
+        const showClaude = settings.showClaude !== false && claudeGranted;
+        const showAgent = settings.showAgent === true;
+        const last = localState[STORAGE.SIDE_PANEL_STATE];
+
+        let targetBaseUrl;
+        // 1. With the agent on, the side panel opens on the agent; the
+        // assistant sites are a click away inside it.
+        if (showAgent) {
+            targetBaseUrl = chrome.runtime.getURL('agent.html');
+        } else if (last && last.url) {
+            targetBaseUrl = last.url;
+
+            // Verify if that service is still enabled
+            let isEnabled = true;
+            if (targetBaseUrl.includes(HOSTS.CHATGPT) && !showChatGPT) isEnabled = false;
+            else if (targetBaseUrl.includes(HOSTS.GEMINI) && !showGemini) isEnabled = false;
+            else if (targetBaseUrl.includes(HOSTS.PERPLEXITY) && !showPerplexity) isEnabled = false;
+            else if (targetBaseUrl.includes(HOSTS.CLAUDE) && !showClaude) isEnabled = false;
+            else if (targetBaseUrl.includes(HOSTS.AGENT) && !showAgent) isEnabled = false;
+
+            if (!isEnabled) targetBaseUrl = getFallbackUrl(settings, claudeGranted);
+        } else {
+            // 2. No history: Default Hierarchy
+            targetBaseUrl = getFallbackUrl(settings, claudeGranted);
+        }
+
+        const openPanel = () => chrome.windows.getCurrent((win) => {
+            chrome.sidePanel.open({ windowId: win.id });
+        });
+        // Nothing the panel can show: it opens on its own empty state,
+        // which points to Settings, and the saved address is left alone.
+        if (!targetBaseUrl) { openPanel(); return; }
+
+        // Helper to resolve session URL
+        const resolveSession = (baseUrl, callback) => {
+            let hostname = "";
+            if (baseUrl.includes(HOSTS.CHATGPT)) hostname = HOSTS.CHATGPT;
+            else if (baseUrl.includes(HOSTS.GEMINI)) hostname = HOSTS.GEMINI;
+            else if (baseUrl.includes(HOSTS.PERPLEXITY)) hostname = HOSTS.PERPLEXITY_WWW;
+            else if (baseUrl.includes(HOSTS.CLAUDE)) hostname = HOSTS.CLAUDE;
+            else if (baseUrl.includes(HOSTS.AGENT)) hostname = HOSTS.AGENT;
+
+            if (!hostname) {
+                callback(baseUrl);
+                return;
+            }
+
+            const storageKey = `sessionUrl_${hostname}`;
+            chrome.storage.local.get([storageKey], (result) => {
+                const savedUrl = result[storageKey];
+                if (savedUrl && savedUrl.includes(hostname)) {
+                    callback(savedUrl);
+                } else {
+                    callback(baseUrl);
+                }
+            });
+        };
+
+        resolveSession(targetBaseUrl, (finalUrl) => {
+            // Save state and open side panel
+            chrome.storage.local.set({
+                sidePanelState: {
+                    url: finalUrl,
+                    selectedText: '',
+                    autoSend: false,
+                    timestamp: Date.now()
+                }
+            }, openPanel);
+        });
+    }
+
+    /**
+     * The first site the side panel can show, in the order its own picker
+     * and the worker use: ChatGPT, Gemini, Perplexity, then Claude once
+     * Chrome holds claude.ai, then the agent. null when there is none.
+     */
+    function getFallbackUrl(settings, claudeGranted) {
         if (settings.showChatGPT !== false) return URLS.CHATGPT;
         if (settings.showGemini !== false) return URLS.GEMINI;
-        if (settings.showClaude !== false) return URLS.CLAUDE;
         if (settings.showPerplexity === true) return URLS.PERPLEXITY;
+        if (settings.showClaude !== false && claudeGranted) return URLS.CLAUDE;
         if (settings.showAgent === true) return URLS.AGENT;
-        return URLS.CHATGPT;
+        return null;
     }
 });
