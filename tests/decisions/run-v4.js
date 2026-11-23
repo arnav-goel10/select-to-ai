@@ -55,6 +55,7 @@ const POLICY = require(path.join(EXT, "core/policy.js"));
 const KNOWN = require(path.join(EXT, "core/memory.js"));
 const LLM = require(path.join(EXT, "core/llm.js"));
 const { CASES } = require("./cases.js");
+const { PRESS_CASES } = require("./press-cases.js");
 const SNAPSHOTS = JSON.parse(fs.readFileSync(path.join(__dirname, "snapshots-v4.json"), "utf8"));
 
 const BASE = (process.env.DECISION_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/$/, "");
@@ -305,26 +306,59 @@ function judge(c, args, built) {
  * default on the second, since a reply that could not be used puts a run in
  * difficulty.
  */
+// What the engine holds a press as, from the check's answer for it
+// (core/policy.js entryVerdict): unanswered is held as a send, unsure as a
+// decision, none is not held.
+const PRESS_HOLD = { pay: "pay", send: "send", delete: "delete", decide: "decide", unsure: "decide", none: "" };
+
 /**
  * A case that says what the engine should hold (`hold`: "none", or the
  * kind, such as "pay"): the right move is held for the user's approval as
- * that kind, or not held at all. What the engine would first put to a
- * second opinion is put to the same model, with the engine's own question
- * (TOOLS.opinionMessages), and its answer read as the engine reads it; an
- * answer it cannot use holds the step, as in a run.
+ * that kind, or not held at all. A press is put to the same model the way
+ * the engine puts it: the page's controls in one page-blind batch
+ * (TOOLS.labelsMessages), and the one press alone when the batch's answer
+ * cannot be used. A one-box form is put with its own question
+ * (TOOLS.opinionMessages). Answers are read as the engine reads them, and
+ * one it cannot use holds the step, as in a run.
  */
-async function settleHolds(c, v, asker) {
+async function settleHolds(c, v, asker, built) {
   // Only a step that acts on the page is held; a question to the user or an answer is not.
   if (c.hold === undefined || !["pass", "slow"].includes(v.outcome) || !/^(click|press|fill|navigate|tabs)\b/.test(v.first || "")) return v;
   const held = [...(v.held || [])];
   let ms = 0;
+  const page = (built && built.page) || {};
+  const entries = TOOLS.pressEntries(page);
+  let batch = null;
   for (const { check, what } of v.checks || []) {
+    if (check.kind === "press") {
+      if (!batch) {
+        const m = TOOLS.labelsMessages(entries, page.url);
+        const got = await asker(m.system, m.user, m.tool, "default");
+        ms += got.ms || 0;
+        if (got.error) return { ...v, outcome: "lost", why: `the press check: ${got.error}` };
+        batch = { said: TOOLS.readLabels(entries, got.args) };
+      }
+      const i = entries.findIndex((e) => e.key === check.key);
+      let does = batch.said && i >= 0 ? batch.said[i] : null;
+      if (!does) {
+        const m = TOOLS.labelsMessages([check.entry], page.url);
+        const got = await asker(m.system, m.user, m.tool, "default");
+        ms += got.ms || 0;
+        if (got.error) return { ...v, outcome: "lost", why: `the press check: ${got.error}` };
+        const one = TOOLS.readLabels([check.entry], got.args);
+        does = one ? one[0] : null;
+      }
+      const kind = does ? PRESS_HOLD[does] : "send";
+      v.policy.push(`press check on ${what}: ${does || "no usable answer"}`);
+      if (kind) held.push({ kind, what });
+      continue;
+    }
     const m = TOOLS.opinionMessages(check);
     const got = await asker(m.system, m.user, m.tool, "low");
     ms += got.ms || 0;
     if (got.error) return { ...v, outcome: "lost", why: `the second opinion: ${got.error}` };
     const said = TOOLS.readOpinion(check, got.args);
-    const kind = !said ? "send" : check.kind === "form" ? (said.sends ? "send" : "") : (["pay", "send", "delete"].includes(said.does) ? said.does : "");
+    const kind = !said ? "send" : said.sends ? "send" : "";
     v.policy.push(`second opinion on ${what}: ${said ? JSON.stringify(said) : "no usable answer"}`);
     if (kind) held.push({ kind, what });
   }
@@ -336,7 +370,28 @@ async function settleHolds(c, v, asker) {
 
 async function decide(c, built, asker) {
   const v0 = await decideStep(c, built, asker);
-  return settleHolds(c, v0, asker);
+  return settleHolds(c, v0, asker, built);
+}
+
+/**
+ * One group of PRESS_CASES: its controls put to the model as one page's
+ * batch, each answer read as the engine reads it. A control is right when
+ * its answer is "none" and it should be free, or anything else and it
+ * should be held. An answer the engine cannot use holds every control.
+ */
+async function decidePresses(pc, asker) {
+  const m = TOOLS.labelsMessages(pc.entries, pc.url);
+  const got = await asker(m.system, m.user, m.tool, "default");
+  if (got.error) return { outcome: "lost", why: got.error, ms: got.ms || 0, rows: [] };
+  const said = TOOLS.readLabels(pc.entries, got.args);
+  const rows = pc.entries.map((e, i) => {
+    const does = said ? said[i] : "unanswered";
+    const right = e.held ? does !== "none" : does === "none";
+    const name = `${e.names[0]}${e.dialog ? ` in "${e.dialog.name}"` : ""}`;
+    return { name, does, right, why: `${name}: ${does}, wanted ${e.held ? "held" : "free"}` };
+  });
+  const wrong = rows.filter((r) => !r.right);
+  return { outcome: wrong.length ? "fail" : "pass", why: wrong.length ? wrong.map((r) => r.why).join("; ") : rows.map((r) => `${r.name}: ${r.does}`).join(", "), ms: got.ms || 0, tokens: got.tokens || 0, rows, promptChars: m.user.length };
 }
 
 async function decideStep(c, built, asker) {
@@ -393,6 +448,7 @@ async function main() {
     if (!process.env.DECISION_SKIP_MISSING) process.exit(1);
   }
   const cases = chosen.filter((c) => SNAPSHOTS[c.name]);
+  const presses = PRESS_CASES.filter((c) => !ONLY.length || ONLY.includes(c.name) || ONLY.includes("presses"));
   if (DRY) {
     let bad = 0;
     for (const c of cases) {
@@ -403,7 +459,13 @@ async function main() {
       const note = c.answerOnPage ? `  answer in prompt: ${covered ? "yes" : "NO"}` : c.answerHidden ? `  answer kept out: ${hidden ? "yes" : "NO"}` : "";
       console.log(`${c.name.padEnd(34)} prompt ${String(b.ctx.prompt.length).padStart(6)} chars, ${String((b.page.elements || []).length).padStart(3)} controls${b.offered.includes("read") ? ", read offered" : ""}${note}`);
     }
-    console.log(`\n${cases.length} prompts built`);
+    for (const pc of presses) {
+      const m = TOOLS.labelsMessages(pc.entries, pc.url);
+      const listed = m.user.split("\n").filter((l) => /^\d+\. \{/.test(l)).length;
+      if (listed !== pc.entries.length) bad++;
+      console.log(`${pc.name.padEnd(34)} prompt ${String(m.user.length).padStart(6)} chars, ${String(listed).padStart(3)} of ${pc.entries.length} controls listed`);
+    }
+    console.log(`\n${cases.length + presses.length} prompts built`);
     process.exit(bad ? 1 : 0);
   }
   if (!KEY) { console.error("Set DECISION_API_KEY (or DECISION_DRY=1 for a model-free check)."); process.exit(1); }
@@ -418,10 +480,19 @@ async function main() {
       await new Promise((res) => setTimeout(res, 300));
     }
   }
+  // The press check alone, in many languages (press-cases.js).
+  for (const pc of presses) {
+    for (let r = 0; r < REPEAT; r++) {
+      const v = await decidePresses(pc, ask);
+      rows.push({ name: pc.name, category: "presses", outcome: v.outcome, why: v.why || "", first: "", more: 0, answer: "", policy: v.rows.map((x) => x.why), reasked: false, firstError: "", ms: v.ms, tokens: v.tokens || 0, promptChars: v.promptChars || 0 });
+      console.log(`${v.outcome.toUpperCase().padEnd(8)} ${pc.name.padEnd(34)} ${String(Math.round(v.ms / 100) / 10).padStart(5)}s  ${v.why}`);
+      await new Promise((res) => setTimeout(res, 300));
+    }
+  }
   const summary = report(rows);
   if (process.env.DECISION_REPORT) fs.writeFileSync(process.env.DECISION_REPORT, JSON.stringify({ model: MODEL, repeat: REPEAT, ...summary, rows }, null, 2));
 }
 
 if (require.main === module) main().catch((e) => { console.error(e); process.exit(1); });
 
-module.exports = { buildCase, judge, decide, tally, plain, asCaseAction, OUTCOMES };
+module.exports = { buildCase, judge, decide, decidePresses, tally, plain, asCaseAction, OUTCOMES };
