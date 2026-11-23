@@ -13,6 +13,7 @@ A full list of every request the extension makes and every item it stores, with 
 - The task you typed, and any text you had selected when you asked.
 - The text of the page the agent is working on and a list of its buttons, links and fields, at every step. Password, card and one-time-code fields are never read: the agent is told such a field exists and whether it is filled, not what is in it.
 - Short excerpts (about 600 characters each) of pages it read earlier in the same task.
+- Your last few messages in the same conversation and the agent's replies to them (up to six, about 500 characters each), at every step, so it can follow up on what you said before. A reply can quote pages from an earlier task. The conversation is kept in `chrome.storage.session` until the browser closes.
 - The titles and addresses of the tabs open in the same window, at every step.
 - Short excerpts (about 900 characters each, at most four) of other open tabs, only when the task is about them, judged from their titles and addresses.
 - A screenshot of the page, or a picture of one control on it such as a chart, only when the agent asks to look at it and only if your model can read images.
@@ -41,6 +42,7 @@ Nothing below leaves your browser except as listed above.
 | Your last 20 tasks: the words you typed (including any text you selected for the quick box) and whether each worked | `chrome.storage.local` | Until Reset |
 | Recipes you saved: addresses, the names of the controls used and the words near them, the example values you typed, the last five results | `chrome.storage.local` | Until you delete the recipe, or Reset |
 | The task in progress: its steps, what it read and the excerpts of other tabs it used, so it can carry on if Chrome pauses the extension | `chrome.storage.session`, which Chrome keeps in memory and clears when the browser closes. The text of the pages it read is dropped as soon as the task ends. The excerpts of other tabs and your selection stay until the browser closes | Until the browser closes |
+| The last text you sent to a chat site in the side panel, so that site can receive it | `chrome.storage.local` | Until your next side-panel send or switch, or Reset |
 | The address of your last conversation on ChatGPT, Claude, Gemini or Perplexity, recorded only while that site is open inside the side panel (never from an ordinary tab), so opening the side panel takes you back to it | `chrome.storage.local` | Until Reset |
 
 Memory refuses anything that looks like a password, one-time code, card number (any run of 13 to 19 digits), social security number, passport or ID number, or API key. Recipes never keep passwords, codes or card numbers: a recipe asks for them each time it runs. A task that used your saved details cannot be saved as a recipe.
