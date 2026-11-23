@@ -2,6 +2,18 @@
 
 The new engine is the default since 3 Oct and the only engine since 5 Oct: the old loop and the address bar's command router are removed (old-loop figures below were measured before that). This page is the short version of two nights of measurement.
 
+## 23 Nov 2026: first-run and upgrade rough edges
+
+From the 4.0.0 audit (first-run and upgrade findings, each confirmed by a second reviewer). Each fix is in the mechanism, not a rule for one case. Tests in `tests/unit/first-run-edges.test.js`.
+
+- **A popup task ran again whenever the panel was reopened.** The popup wrote `task` and `autostart=1` into the side panel's saved address. The popup now hands the task over the way the address bar does, through `omnibox.js` `handOff` (one id in session storage, taken once by `agent.js`). A tab opened from the popup still carries the task in its own address, which the agent page drops at once.
+- **A welcome-page first task took over another tab.** `engine.js` `targetTab`, given no tab while the active tab is the extension's own page, searched the window for any web tab. It now returns null, so `startingPlace` opens a fresh tab. If the task needs one of the user's tabs, the model asks to switch. `tests/e2e/run-v4.js` now passes the fixture's tab id, as the popup and the side panel do.
+- **A task typed in the quick box with the agent off was lost.** `background.js` kept it, but no page read it. `welcome.js` now offers it first on the done screen (for 30 minutes), opens it on the tab it was typed on, and removes it.
+- **The quick box did nothing on browser pages.** Without the notifications grant the failure was silent. The toolbar icon is now marked for that tab with the reason as its title. The popup's row waits for the worker's answer and stays open with the reason. The welcome page says "on any website".
+- **The popup could open claude.ai before it was allowed.** Its fallback now uses the side panel's order (ChatGPT, Gemini, Perplexity, then Claude only when Chrome holds claude.ai, then the agent), and with nothing usable it opens the panel on its empty state. A saved claude.ai address without the grant is not reopened, and `sidepanel.js` does not load a saved site its picker does not list. The open-sidebar shortcut checks the grant too.
+- **Perplexity was promised but missing on a fresh install.** `onInstalled` with reason `install` writes `showPerplexity: true` when the key is unset. Upgraders keep what they had, and no default changed in the five files that read it.
+- **2.0's page right-click item was gone.** `buildContextMenus` again creates a page item, "Open Select to AI side panel", whatever is turned on. Its click goes through `onOpenSidebarCommand`, so the panel opens inside the click on a cold worker.
+
 ## 23 Nov 2026: nightly CI fixed, PRs 30 and 31 merged, store package rebuilt
 
 - **Why the nightly failed (every night since 17 Nov).** The `e2e debugger on (nightly)` job loaded `extension/` as it is. Commit `20e03ce` (16 Nov) took `debugger` out of the 4.0 manifest so the update adds no warning, so from then on the "debugger on" suite ran a build with no debugger. The six real-input scenarios (`listened`, `pointerHover`, `pointerFrame`, `pointerDrag`, `pointerCanvas`, `realKeys`) could never pass. They are the ones `tests/e2e/not-applicable-4.0.json` lists for the shipped build. This was not a flaky site or an expired secret.
