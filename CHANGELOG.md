@@ -20,6 +20,9 @@ A new engine, built and measured over 1 to 3 October 2026 (the measurements are 
 - A button is no longer pressed unasked just because its words are everyday English. "Close my account", "Leave team", "Make public" and the "Yes" of an "Are you sure?" dialog went through with no card and no second check. Now only a label made of words that move about a page ("Next month", "Show more", "Back to top", "Close") is pressed at once. Any other named button goes to the second check, which is told the name of the dialog it sits in, and is held when the check says it pays, sends or deletes. A day in a date picker, a tab and a search button stay free.
 - Opening a link's address with navigate or a new tab is judged as pressing that link. An "Unsubscribe" or "Delete my account" link, on this page or one read earlier, gets the same second check and hold either way, and declining the press also holds its address.
 - A finished run no longer keeps the text of the pages it read in session storage, and Reset now also removes saved recipes and chat addresses. The privacy policy is rewritten to match; every request and stored item is listed in `docs/privacy-disclosure.md`.
+- The privacy policy now also lists the earlier messages and replies of the same conversation that each step sends (up to six, about 500 characters each), and the last text sent to a chat site in the side panel, which stays in local storage until the next send or Reset.
+- The welcome page and store text name only ChatGPT and Gemini as right-click choices on a fresh install, and say Perplexity and Claude are in Settings. The reviewer steps now include the "What the agent sends" card before the OpenRouter sign-in.
+- CI: the core-flow-e2e and consent-gate jobs fail when their test file is missing, instead of passing after an echo.
 
 ### A run you can leave and come back to
 

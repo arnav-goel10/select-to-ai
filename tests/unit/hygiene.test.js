@@ -127,3 +127,47 @@ test("security doc states the full header-removal scope of the side-panel rule",
     );
   }
 });
+
+test("privacy policy lists the earlier conversation turns each step sends", () => {
+  const policy = read("PRIVACY_POLICY.md");
+  const context = read("extension/core/context.js");
+  const turns = context.match(/run\.earlierTurns \|\| \[\]\)\.slice\(-(\d+)\)/);
+  const clipAt = context.match(/Earlier in this conversation:[\s\S]{0,200}?clip\(t\.text, (\d+)\)/);
+  assert.ok(turns && clipAt, "stepMessages no longer sends earlier turns; update this test and the policy");
+  const words = { 6: "six" };
+  const count = words[turns[1]] || turns[1];
+  assert.match(policy, new RegExp(`messages in the same conversation and the agent's replies to them \\(up to ${count}, about ${clipAt[1]} characters each\\), at every step`));
+  const disclosure = read("docs/privacy-disclosure.md");
+  assert.match(disclosure, new RegExp(`the last ${turns[1]} conversation turns \\(${clipAt[1]} chars each`));
+});
+
+test("privacy policy lists the side-panel text kept in local storage", () => {
+  const writesText = ["background.js", "sidepanel.js", "popup.js"].some((file) =>
+    /sidePanelState:\s*\{[\s\S]{0,160}?selectedText:\s*(?!'')(?!"")\w/.test(read(`extension/${file}`)));
+  assert.ok(writesText, "nothing keeps the sent text in sidePanelState any more; update this test and the policy");
+  const policy = read("PRIVACY_POLICY.md");
+  assert.match(policy, /\| The last text you sent to a chat site in the side panel[^|]*\| `chrome\.storage\.local` \| Until your next side-panel send or switch, or Reset \|/);
+});
+
+test("right-click texts name only the chat sites a fresh install shows", () => {
+  // The menu a fresh install shows comes from the worker's defaults. Claude
+  // also needs claude.ai, which a fresh install does not hold.
+  const background = read("extension/background.js");
+  const defaults = background.match(/const DEFAULT_SETTINGS = Object\.freeze\(\{([\s\S]*?)\}\);/)[1];
+  const services = { ChatGPT: "showChatGPT", Gemini: "showGemini", Perplexity: "showPerplexity", Claude: "showClaude" };
+  const onAtInstall = Object.keys(services).filter((name) =>
+    name !== "Claude" && new RegExp(`${services[name]}:\\s*true`).test(defaults));
+  const named = (text) => Object.keys(services).filter((name) => text.includes(name));
+
+  const welcome = read("extension/welcome.html");
+  const promise = welcome.match(/<span>Send it to ([^<]*?) without copying and pasting\./);
+  assert.ok(promise, "the welcome page's right-click line changed; update this test");
+  for (const name of named(promise[1])) assert.ok(onAtInstall.includes(name), `welcome.html promises ${name} on right-click, which a fresh install does not show`);
+
+  const listing = read("docs/store-listing.md");
+  const step = listing.match(/choose Select to AI > (Send to [^.]*)\./);
+  assert.ok(step, "the reviewer's right-click step changed; update this test");
+  for (const name of named(step[1])) assert.ok(onAtInstall.includes(name), `the reviewer step names ${name}, which a fresh install does not show`);
+  const intro = listing.match(/right-click, and send it to ([^.]*)\./);
+  for (const name of named(intro[1])) assert.ok(onAtInstall.includes(name), `the long description says right-click sends to ${name} on a fresh install`);
+});
