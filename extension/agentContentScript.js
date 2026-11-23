@@ -635,7 +635,7 @@
     let realKeysQuietUntil = 0;
 
     /** Asks the engine to press a real key in this tab. False when it cannot. */
-    function pressRealKey(key, meta, modifiers, times) {
+    function pressRealKey(key, meta, modifiers, times, commands) {
         if (Date.now() < realKeysQuietUntil) return Promise.resolve(false);
         return new Promise((resolve) => {
             let settled = false;
@@ -643,7 +643,7 @@
             try {
                 const textOf = key === 'Enter' ? '\r' : key === 'Space' || key === ' ' ? ' ' : meta.printable && key.length === 1 ? key : '';
                 const bits = (modifiers.altKey ? 1 : 0) | (modifiers.ctrlKey ? 2 : 0) | (modifiers.metaKey ? 4 : 0) | (modifiers.shiftKey ? 8 : 0);
-                const sent = chrome.runtime.sendMessage({ action: 'agentRealKey', key: key === 'Space' ? ' ' : key, code: meta.code, keyCode: meta.keyCode, text: bits & 7 ? '' : textOf, modifiers: bits, times }, (r) => {
+                const sent = chrome.runtime.sendMessage({ action: 'agentRealKey', key: key === 'Space' ? ' ' : key, code: meta.code, keyCode: meta.keyCode, text: bits & 7 ? '' : textOf, modifiers: bits, times, ...(commands && commands.length ? { commands } : {}) }, (r) => {
                     void chrome.runtime.lastError;
                     done(!!(r && r.ok));
                 });
@@ -1702,6 +1702,9 @@
         // A thing the page lets be dragged is a thing to act on.
         if (el.getAttribute('draggable') === 'true') return true;
 
+        // A drawing (a chart, a board, a map) is acted on at spots inside it.
+        if (isDrawing(el)) return true;
+
         // Clickable via cursor style: the outermost node the pointer hand
         // starts on. When that node is only a row of short separate labels
         // ("Reply" beside "Forward"), each label is the thing to press.
@@ -1730,6 +1733,36 @@
         if (el.onclick || typeof el.onclick === 'function') return true;
 
         return false;
+    }
+
+    /**
+     * A picture the page draws itself and listens on, as a whole: a canvas,
+     * or an outermost SVG, big enough to hold things to point at (a chart, a
+     * board), and not part of a control already (an icon in a button).
+     */
+    function isDrawing(el) {
+        const tag = el.tagName.toLowerCase();
+        if (tag !== 'canvas' && !(tag === 'svg' && !el.ownerSVGElement)) return false;
+        if (el.closest && el.closest('a[href], button, [role="button"], [role="link"], label')) return false;
+        const r = el.getBoundingClientRect();
+        if (!(r.width >= 80 && r.height >= 50)) return false;
+        // What the page marks as only to be seen is not something to point at:
+        // hidden from assistive technology, or one the pointer goes through.
+        if (el.closest && el.closest('[aria-hidden="true"], [role="presentation"], [role="none"]')) return false;
+        try {
+            if (window.getComputedStyle(el).pointerEvents === 'none') return false;
+        } catch (_) { /* judged by its size alone */ }
+        // A backdrop drawn under the page: something else is on top of it at
+        // its middle and at each quarter of it. A label over the middle of a
+        // chart covers only the middle.
+        try {
+            const spots = [[0.5, 0.5], [0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]]
+                .map(([fx, fy]) => [r.left + r.width * fx, r.top + r.height * fy])
+                .filter(([x, y]) => x >= 0 && y >= 0 && x < (window.innerWidth || 0) && y < (window.innerHeight || 0));
+            const under = (x, y) => { const top = document.elementFromPoint(x, y); return !!top && top !== el && !el.contains(top) && !agentDrawn(top); };
+            if (spots.length === 5 && spots.every(([x, y]) => under(x, y))) return false;
+        } catch (_) { /* judged without it */ }
+        return true;
     }
 
     /** A box with no words of its own that holds a few short labels side by side. */
@@ -1797,6 +1830,7 @@
                     (role && INTERACTIVE_ROLES.has(role)) ||
                     hasTabindex ||
                     el.getAttribute('draggable') === 'true' ||
+                    tagName === 'canvas' || (tagName === 'svg' && !el.ownerSVGElement) ||
                     el.isContentEditable ||
                     offeredRows.has(el) ||
                     hoverPointers().has(el)
@@ -2250,6 +2284,8 @@
                 position,
             };
             if (pinnedElements.has(el)) entry.pinned = true;
+            // A drawing's size, for choosing a spot in it by fractions.
+            if ((tag === 'canvas' || tag === 'svg') && isDrawing(el)) entry.size = { w: Math.round(rect.width), h: Math.round(rect.height) };
             if (el.readOnly && (tag === 'input' || tag === 'textarea')) entry.readOnly = true;
             // A control with no words at all (an icon) is still called
             // something by its page: its class and id, the icon inside it,
@@ -2335,6 +2371,27 @@
 
             const ariaChecked = el.getAttribute('aria-checked');
             if (ariaChecked !== null) entry.ariaChecked = ariaChecked;
+            // A control the page builds as its own element keeps its state
+            // as a property, as a native box does (a checkbox element whose
+            // real box is in its shadow root).
+            else if (tag !== 'input' && tag.includes('-') && typeof el.checked === 'boolean') entry.ariaChecked = String(el.checked);
+            const ariaPressed = el.getAttribute('aria-pressed');
+            if (ariaPressed !== null) entry.ariaPressed = ariaPressed;
+            // The value a slider, a stepper, a rating or a meter shows, as
+            // the page states it for a screen reader: what was set can be
+            // read back from the listing.
+            if (!entry.value && !secret && /^(slider|spinbutton|progressbar|meter|scrollbar)$/.test(entry.role)) {
+                const shows = el.getAttribute('aria-valuetext') || el.getAttribute('aria-valuenow');
+                if (shows !== null && shows !== '') entry.value = String(shows).slice(0, 80);
+                if (entry.min === undefined && el.getAttribute('aria-valuemin') !== null) entry.min = el.getAttribute('aria-valuemin');
+                if (entry.max === undefined && el.getAttribute('aria-valuemax') !== null) entry.max = el.getAttribute('aria-valuemax');
+            }
+            // An editable region's text, so what was typed into it can be
+            // read back: the listing shows its start and its end.
+            if (el.isContentEditable && !entry.value && !secret) {
+                const all = boxText(el).replace(/[ \t]+\n/g, '\n').trim();
+                entry.value = all.length > 20000 ? `${all.slice(0, 10000)}\n…\n${all.slice(-10000)}` : all;
+            }
 
             const ariaHaspopup = el.getAttribute('aria-haspopup');
             if (ariaHaspopup !== null) entry.ariaHaspopup = ariaHaspopup;
@@ -2537,13 +2594,427 @@
      * Moves the scripted pointer over a control without pressing: the
      * events start at what is drawn at the control's middle, as for a click.
      */
-    function dispatchHoverEvents(control, modifiers = {}) {
-        const at = centreOf(control);
+    function dispatchHoverEvents(control, modifiers = {}, point = null) {
+        const at = point || centreOf(control);
         const targetEl = pointerTargetIn(control, at);
         movePointerTo(targetEl, at, modifiers, true);
         const idle = pointerInit(at, { modifiers });
         targetEl.dispatchEvent(new PointerEvent('pointermove', idle));
         targetEl.dispatchEvent(new MouseEvent('mousemove', idle));
+    }
+
+
+    // =========================================================================
+    // Whole gestures made by script
+    // =========================================================================
+    //
+    // Each gesture is the run of events a hand makes, spread over time as a
+    // hand spreads it: a page that opens a tooltip once the pointer has
+    // stayed, starts a drag only after a press has lasted a moment or the
+    // pointer has moved a few pixels, or counts two presses as a double
+    // click only when they come close together, sees what it waits for.
+
+    const GESTURE = Object.freeze({ HOVER_MOVES: 6, HOVER_STEP_MS: 40, CLICK_GAP_MS: 80, DRAG_HOLD_MS: 160, DRAG_MOVES: 16, DRAG_STEP_MS: 35, DROP_REST_MS: 150, DRAG_START_PX: 4 });
+
+    /** How a result names a spot asked for inside a control: "" for its middle. */
+    const spotWords = (data) => (data && data.fx !== undefined && data.fx !== null ? ` at ${data.fx},${data.fy} of its box` : '');
+
+    /** Waits, except in a tab nobody can see, where the browser holds timers back. */
+    const gestureDelay = (ms) => (document.visibilityState === 'hidden' ? Promise.resolve() : delay(ms || 0));
+
+    /** The point at fractions of a control's box (fx across, fy down), in this frame's viewport, kept just inside its edges. */
+    function spotIn(el, fx, fy) {
+        const r = el.getBoundingClientRect();
+        const f = (v, d) => Math.max(0.01, Math.min(0.99, Number.isFinite(Number(v)) ? Number(v) : d));
+        return { x: Math.round(r.left + r.width * f(fx, 0.5)), y: Math.round(r.top + r.height * f(fy, 0.5)) };
+    }
+
+    /**
+     * A spot of a control asked for by fractions, on screen: { point } when
+     * the control is what is drawn there, { point: null, cover } when
+     * something else is drawn over it, { point: null, inner } when a listed
+     * control of its own sits inside it there (a button on a card), null
+     * when no spot was asked for. The events would reach that inner control,
+     * which the checks before the action never judged, so it is not aimed at.
+     */
+    function aimAtSpot(el, data) {
+        if (!data || data.fx === undefined || data.fx === null) return null;
+        bringIntoView(el);
+        const point = spotIn(el, data.fx, data.fy);
+        const hit = drawnAt(point.x, point.y);
+        if (!pressesOn(el, hit)) return { point: null, cover: hit };
+        const inner = numberedOf(hit);
+        if (inner && inner !== el && insideOf(inner, el)) return { point: null, inner };
+        return { point, hit };
+    }
+
+    /** True when `n` sits inside `el`, through shadow roots. */
+    function insideOf(n, el) {
+        for (let x = upOf(n); x; x = upOf(x)) if (x === el) return true;
+        return false;
+    }
+
+    /** The result when a spot asked for cannot be used: covered, or on a listed control inside this one. */
+    function missedSpot(id, spot, hovering) {
+        if (!spot.inner) return coveredResult(id, nameOfDrawn(spot.cover), hovering);
+        const who = /^\d+$/.test(String(id)) ? `[${id}]` : String(id);
+        const inner = nameOfDrawn(spot.inner);
+        return {
+            success: false,
+            error: `At that spot of ${who} is ${inner}, a control of its own inside it, so the ${hovering ? 'pointer' : 'press'} would reach that instead. Nothing was ${hovering ? 'moved over it' : 'pressed'}. To use ${inner}, give its own ref; to use ${who}, pick a spot of it outside that control.`,
+        };
+    }
+
+    /**
+     * A hover that stays: the pointer comes in from a little way off, moves
+     * a few times as it settles, and is left there, so what opens while it
+     * is over a thing (a tooltip, a menu) stays open until the next action.
+     */
+    async function dwellHover(control, at, modifiers = {}) {
+        const r = control.getBoundingClientRect();
+        const inside = (p) => ({ x: Math.max(r.left + 1, Math.min(r.right - 1, p.x)), y: Math.max(r.top + 1, Math.min(r.bottom - 1, p.y)) });
+        const from = inside({ x: at.x - 10, y: at.y - 6 });
+        for (let i = 0; i <= GESTURE.HOVER_MOVES; i++) {
+            const f = i / GESTURE.HOVER_MOVES;
+            const p = i === GESTURE.HOVER_MOVES ? at : { x: from.x + (at.x - from.x) * f, y: from.y + (at.y - from.y) * f };
+            if (i === 0) dispatchHoverEvents(control, modifiers, p);
+            else {
+                const t = pointerTargetIn(control, p);
+                movePointerTo(t, p, modifiers);
+                const idle = pointerInit(p, { modifiers });
+                t.dispatchEvent(new PointerEvent('pointermove', idle));
+                t.dispatchEvent(new MouseEvent('mousemove', idle));
+            }
+            if (i < GESTURE.HOVER_MOVES) await gestureDelay(GESTURE.HOVER_STEP_MS);
+        }
+    }
+
+    /** A double click: two clicks close together, the second counted as the second, then the double click. Returns false when the page cancelled it. */
+    async function scriptedDoubleClick(el, modifiers, at) {
+        const point = at || centreOf(el);
+        dispatchClickEvents(el, modifiers, point, 1);
+        await gestureDelay(GESTURE.CLICK_GAP_MS);
+        // The first click can redraw what was pressed: the second goes to what is there now.
+        const live = el.isConnected ? el : (drawnAt(point.x, point.y) || el);
+        dispatchClickEvents(live, modifiers, point, 2);
+        return pointerTargetIn(live, point).dispatchEvent(new MouseEvent('dblclick', pointerInit(point, { modifiers, detail: 2 })));
+    }
+
+    /**
+     * A press of the right button, as Chrome makes one: the context menu is
+     * asked for while the button is down. `taken` is true when the page
+     * took it over (it shows a menu of its own); otherwise the browser's own
+     * menu would have opened, which is not part of the page.
+     */
+    function scriptedRightClick(el, modifiers, at) {
+        const point = at || centreOf(el);
+        const target = pointerTargetIn(el, point);
+        movePointerTo(target, point, modifiers);
+        const idle = pointerInit(point, { modifiers });
+        target.dispatchEvent(new PointerEvent('pointermove', idle));
+        target.dispatchEvent(new MouseEvent('mousemove', idle));
+        const down = pointerInit(point, { modifiers, held: true, button: 2, detail: 1 });
+        target.dispatchEvent(new PointerEvent('pointerdown', { ...down, detail: 0 }));
+        target.dispatchEvent(new MouseEvent('mousedown', down));
+        const taken = !target.dispatchEvent(new PointerEvent('contextmenu', down));
+        const up = pointerInit(point, { modifiers, button: 2, detail: 1 });
+        target.dispatchEvent(new PointerEvent('pointerup', { ...up, detail: 0 }));
+        target.dispatchEvent(new MouseEvent('mouseup', up));
+        target.dispatchEvent(new PointerEvent('auxclick', up));
+        return { taken, target };
+    }
+
+    /** One finger at a point, as a touch screen reports it. Null where touches cannot be made. */
+    function touchAt(target, point) {
+        try {
+            // The same position as every pointer event, from the one factory.
+            const { clientX, clientY, screenX, screenY } = pointerInit(point);
+            return new Touch({ identifier: 1, target, clientX, clientY, screenX, screenY, pageX: clientX + window.scrollX, pageY: clientY + window.scrollY, radiusX: 10, radiusY: 10, force: 0.5 });
+        } catch (_) { return null; }
+    }
+
+    /**
+     * A touch event at a point. Every event of one touch goes to what it
+     * started on, as a touch screen sends them. False when touch events
+     * cannot be made in this browser.
+     */
+    function sendTouch(type, target, point) {
+        const touch = touchAt(target, point);
+        if (!touch || typeof TouchEvent !== 'function') return false;
+        const now = type === 'touchend' || type === 'touchcancel' ? [] : [touch];
+        try {
+            target.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, composed: true, view: window, touches: now, targetTouches: now, changedTouches: [touch] }));
+        } catch (_) { return false; }
+        return true;
+    }
+
+    /**
+     * The same gesture again as a finger makes it, for a page that listens
+     * only for touches: down where it began, the same moves, and up where it
+     * ended. `steps` as for a drag; a press held in place is a down, a wait
+     * and an up. False when touches cannot be made here.
+     */
+    async function touchGesture(steps) {
+        let target = null;
+        for (const s of steps) {
+            if (s.t === 'wait') { await (s.hold ? delay(s.ms || 0) : gestureDelay(s.ms)); continue; }
+            if (s.t === 'down') {
+                target = drawnAt(s.x, s.y) || document.body;
+                if (!sendTouch('touchstart', target, s)) return false;
+            } else if (s.t === 'move' && target) sendTouch('touchmove', target, s);
+            else if (s.t === 'up' && target) { sendTouch('touchend', target, s); target = null; }
+        }
+        return true;
+    }
+
+    /**
+     * Whether a gesture that changed none of the page's elements may be made
+     * again by touch, for a page that listens only for a finger. Never one
+     * the user approved (`data.once`): an approved press is made once. Never
+     * when the page may have answered where its elements do not show it:
+     * the gesture was made on a drawing it repaints (`drawn`), or it sent a
+     * request to its site or gave a field a new value (`unseen`, from
+     * watchUnseen). Then the result says so, rather than that the page did
+     * not answer. Returns { again, why }.
+     */
+    function touchAgain(data, unseen, what, drawn) {
+        const it = what === 'drag' ? 'drag' : 'press';
+        if (data && data.once) return { again: false, why: ` No change showed in the page's elements. The user approved this ${it}, so it was made once and not again another way. Look at the page before doing anything more.` };
+        const out = (unseen || []).filter((u) => u === 'request' || u === 'value');
+        if (!drawn && !out.length) return { again: true, why: '' };
+        const where = drawn ? `the ${it} was made on a drawing, and what changes in a drawing cannot be seen from here`
+            : out.includes('request') ? `the page sent a request to its site, and may be answering the ${it}`
+            : 'a field on the page was given a new value';
+        return { again: false, why: ` No change showed in the page's elements, but ${where}. It was not made again; look at the page before trying again.` };
+    }
+
+    /** True when a point of the window is on a canvas the page draws (what a gesture there changes is not in its elements). */
+    function onCanvas(points) {
+        try {
+            const canvases = Array.from(document.querySelectorAll('canvas')).map((c) => c.getBoundingClientRect()).filter((r) => r.width * r.height >= 2500);
+            return points.some((p) => p && canvases.some((r) => p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom));
+        } catch (_) { return false; }
+    }
+
+    /** What is said when neither way of a gesture changed anything the agent can see. */
+    function noAnswerSeen(what) {
+        return what === 'drag'
+            ? 'No change showed in the page\'s elements after the drag made with the mouse and pointer, nor after the same drag made as a touch. A change the page makes only in a drawing or later, after its site answers, cannot be seen from here: look at the page before trying again.'
+            : 'No change showed in the page\'s elements after the press made with the mouse, nor after the same press made as a touch. A change the page makes only in a drawing or later, after its site answers, cannot be seen from here: look at the page before trying again.';
+    }
+
+    /**
+     * A press held in place for `ms`, then let go, as a mouse makes a long
+     * press: the release still clicks. Returns the steps, for the same press
+     * to be made by touch when the page did not answer this one.
+     */
+    async function scriptedHold(el, modifiers, at, ms) {
+        const point = at || centreOf(el);
+        const target = pointerTargetIn(el, point);
+        movePointerTo(target, point, modifiers);
+        const idle = pointerInit(point, { modifiers });
+        target.dispatchEvent(new PointerEvent('pointermove', idle));
+        target.dispatchEvent(new MouseEvent('mousemove', idle));
+        const down = pointerInit(point, { modifiers, held: true, detail: 1 });
+        target.dispatchEvent(new PointerEvent('pointerdown', { ...down, detail: 0 }));
+        if (target.dispatchEvent(new MouseEvent('mousedown', down))) focusField(el);
+        // Held for the time asked, however the tab is shown: the hold is the point.
+        for (const end = Date.now() + ms; Date.now() < end && !cancelRequested;) await delay(Math.min(100, end - Date.now()));
+        const live = target.isConnected ? target : (drawnAt(point.x, point.y) || target);
+        const up = pointerInit(point, { modifiers, detail: 1 });
+        live.dispatchEvent(new PointerEvent('pointerup', { ...up, detail: 0 }));
+        live.dispatchEvent(new MouseEvent('mouseup', up));
+        live.dispatchEvent(new PointerEvent('click', up));
+        return [{ t: 'down', ...point }, { t: 'wait', ms, hold: true }, { t: 'up', ...point }];
+    }
+
+    /** True when the items of the list `item` is in run side by side rather than one under another. */
+    function listRunsAcross(item) {
+        const next = item.previousElementSibling || item.nextElementSibling;
+        if (!next) return false;
+        const a = item.getBoundingClientRect();
+        const b = next.getBoundingClientRect();
+        return Math.abs(b.left - a.left) > Math.abs(b.top - a.top);
+    }
+
+    /**
+     * Where on a target a drag lets go, when the model said: a spot of its
+     * box (toFx, toFy), or just before or after it as an item of a list,
+     * in the first or last fifth of it along the way the list runs, which is
+     * where a person aims to put a thing before or after another. Null for
+     * its middle.
+     */
+    function dropAim(target, data) {
+        if (data.toFx !== undefined && data.toFx !== null) return spotIn(target, data.toFx, data.toFy);
+        if (data.place !== 'before' && data.place !== 'after') return null;
+        const r = target.getBoundingClientRect();
+        const f = data.place === 'before' ? 0.2 : 0.8;
+        return listRunsAcross(target)
+            ? { x: Math.round(r.left + r.width * f), y: Math.round(r.top + r.height / 2) }
+            : { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height * f) };
+    }
+
+    /** True when `text` holds the words `want` as whole words: "food" is in "Food bin", not in "Seafood". */
+    function holdsWords(text, want) {
+        const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        const w = norm(want);
+        if (!w) return false;
+        const t = norm(text);
+        const quoted = w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        try {
+            return new RegExp(`(^|[^\\p{L}\\p{N}])${quoted}($|[^\\p{L}\\p{N}])`, 'u').test(t);
+        } catch (_) {
+            return t.indexOf(w) >= 0;
+        }
+    }
+
+    /** All the words written on a place, as a person reads it: its own label and the text inside it, at most 200 characters. */
+    function wordsOfPlace(el) {
+        const said = [el.getAttribute && el.getAttribute('aria-label'), el.textContent].filter(Boolean).join(' ');
+        return String(said).replace(/\s+/g, ' ').trim().slice(0, 200);
+    }
+
+    /**
+     * The place on the page that has these words written on it: the
+     * innermost shown element whose text holds them as whole words, not the
+     * thing being dragged or inside it, on screen first. Null when none has.
+     */
+    function placeNamed(words, dragged) {
+        const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        const want = norm(words);
+        if (!want) return null;
+        const first = want.split(' ')[0];
+        const found = [];
+        const seen = new Set();
+        for (const root of [document.body, ...openRoots()]) {
+            if (!root) continue;
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            let visited = 0;
+            for (let n = walker.nextNode(); n && visited < 50000 && found.length < 20; n = walker.nextNode()) {
+                visited++;
+                if (!holdsWords(n.data, first)) continue;
+                // Up from the words, to the first element that holds all of
+                // them. None within a few steps up: these words are not the place.
+                let up = n.parentElement;
+                let depth = 0;
+                while (up && depth < 5 && !holdsWords(up.textContent, want)) { up = up.parentElement; depth++; }
+                if (!up || !holdsWords(up.textContent, want)) continue;
+                if (seen.has(up) || agentDrawn(up) || (dragged && (dragged === up || dragged.contains(up) || up.contains(dragged)))) continue;
+                seen.add(up);
+                if (isRendered(up)) found.push(up);
+            }
+        }
+        if (!found.length) return null;
+        const vh = window.innerHeight || 0;
+        const onScreen = (n) => { const r = n.getBoundingClientRect(); return r.bottom > 0 && r.top < vh; };
+        const area = (n) => { const r = n.getBoundingClientRect(); return r.width * r.height; };
+        found.sort((a, b) => (onScreen(b) - onScreen(a)) || (area(a) - area(b)));
+        return found[0];
+    }
+
+    /** The runs of words drawn on screen now, in the order they are drawn, past what the agent draws. */
+    function wordsOnScreen() {
+        const out = [];
+        const vw = window.innerWidth || 0;
+        const vh = window.innerHeight || 0;
+        const shown = new Map();
+        const visible = (p) => {
+            if (shown.has(p)) return shown.get(p);
+            let ok = false;
+            try {
+                const r = p.getBoundingClientRect();
+                ok = r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < vh && r.left < vw && !agentDrawn(p)
+                    && (typeof p.checkVisibility !== 'function' || p.checkVisibility({ opacityProperty: true, visibilityProperty: true }));
+            } catch (_) { ok = false; }
+            shown.set(p, ok);
+            return ok;
+        };
+        for (const root of [document.body, ...openRoots()]) {
+            if (!root) continue;
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            for (let n = walker.nextNode(); n && out.length < 4000; n = walker.nextNode()) {
+                const t = n.data.replace(/\s+/g, ' ').trim();
+                if (!t) continue;
+                const p = n.parentElement;
+                if (!p || /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|TEXTAREA)$/.test(p.tagName) || !visible(p)) continue;
+                out.push(t);
+            }
+        }
+        return out;
+    }
+
+    /** What is written on screen after that was not before, in the order it is drawn. */
+    function newWords(before, after) {
+        const left = new Map();
+        for (const t of before) left.set(t, (left.get(t) || 0) + 1);
+        const fresh = [];
+        for (const t of after) {
+            const n = left.get(t) || 0;
+            if (n) left.set(t, n - 1); else fresh.push(t);
+        }
+        return fresh;
+    }
+
+    /**
+     * A control's own picture, as the page draws it, for a model that
+     * cannot have a picture of the tab: a canvas as it is painted, an SVG
+     * drawn again from its parts with the styles they show, an image. A
+     * box that holds one drawing is pictured by it. The picture is the
+     * size the control is drawn on screen, so a spot in it is the spot of
+     * the control at the same fractions. Returns { image, message } or
+     * { error }.
+     */
+    async function pictureOf(el, id) {
+        let box = el;
+        const tag = (n) => n.tagName.toLowerCase();
+        if (!/^(canvas|svg|img)$/.test(tag(el))) {
+            const inner = Array.from(el.querySelectorAll('canvas, svg, img')).filter((n) => !(n.ownerSVGElement) && isRendered(n))
+                .sort((a, b) => { const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect(); return rb.width * rb.height - ra.width * ra.height; })[0];
+            if (!inner) return { error: `[${id}] draws nothing of its own to picture (no canvas, drawing or image in it).` };
+            box = inner;
+        }
+        // What it draws, without its border: a canvas's pixels fill the inside of its box.
+        const outer = box.getBoundingClientRect();
+        const r = { width: box.clientWidth || outer.width, height: box.clientHeight || outer.height };
+        const scale = Math.min(1, 1024 / Math.max(1, r.width), 1024 / Math.max(1, r.height));
+        const w = Math.max(1, Math.round(r.width * scale));
+        const h = Math.max(1, Math.round(r.height * scale));
+        const out = document.createElement('canvas');
+        out.width = w;
+        out.height = h;
+        const g = out.getContext('2d');
+        g.fillStyle = '#ffffff';
+        g.fillRect(0, 0, w, h);
+        try {
+            if (tag(box) === 'svg') {
+                const copy = box.cloneNode(true);
+                const from = [box, ...box.querySelectorAll('*')];
+                const to = [copy, ...copy.querySelectorAll('*')];
+                const PROPS = ['fill', 'fill-opacity', 'stroke', 'stroke-width', 'stroke-opacity', 'stroke-dasharray', 'opacity', 'display', 'visibility', 'font-family', 'font-size', 'font-weight', 'color', 'text-anchor', 'dominant-baseline'];
+                for (let i = 0; i < from.length && i < 4000; i++) {
+                    const cs = getComputedStyle(from[i]);
+                    to[i].setAttribute('style', PROPS.map((p) => `${p}:${cs.getPropertyValue(p)}`).join(';'));
+                }
+                copy.setAttribute('width', String(r.width));
+                copy.setAttribute('height', String(r.height));
+                if (!copy.getAttribute('xmlns')) copy.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+                const img = new Image();
+                await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = () => reject(new Error('the drawing could not be drawn again')); img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(copy))}`; });
+                g.drawImage(img, 0, 0, w, h);
+            } else {
+                g.drawImage(box, 0, 0, w, h);
+            }
+            const image = out.toDataURL('image/jpeg', 0.85);
+            const what = tag(box) === 'canvas' ? 'a canvas' : tag(box) === 'svg' ? 'a drawing' : 'an image';
+            const inside = box === el ? '' : `, the one inside [${id}]`;
+            return {
+                success: true, image,
+                message: `A picture of [${id}] (${what}${inside}, drawn ${Math.round(r.width)} by ${Math.round(r.height)} pixels) is attached to your next step. A spot in it is fx (across) and fy (down) as fractions of the picture: its top left corner is 0,0, its middle 0.5,0.5 and its bottom right corner 1,1.`,
+            };
+        } catch (e) {
+            // A drawing made from another site's pictures cannot be read back.
+            return { error: `The page does not let [${id}] be pictured${/secur|taint/i.test(String(e && e.message)) ? ': it is drawn from another site\'s pictures' : ''}.` };
+        }
     }
 
     // =========================================================================
@@ -2799,10 +3270,10 @@
      * on screen (the caller makes the events by script, as before); { fail }
      * when something else is drawn over it.
      */
-    async function pointerOnControl(el, id, label, hovering) {
+    async function pointerOnControl(el, id, label, hovering, spot) {
         if (!POINTER_TOOLS || Date.now() < realPointerQuietUntil) return { real: false };
         bringIntoView(el);
-        const aim = aimAt(el);
+        const aim = spot ? { point: spot } : aimAt(el);
         if (!aim.point) return aim.cover !== undefined ? { fail: coveredResult(id, nameOfDrawn(aim.cover), hovering) } : { real: false };
         const steps = hovering ? [{ t: 'move', x: aim.point.x, y: aim.point.y, aim: true }] : POINTER_TOOLS.clickSteps(aim.point);
         if (!hovering) agentCursor && agentCursor.classList.remove('clicking');
@@ -2888,48 +3359,146 @@
     }
 
     /**
-     * A drag made by script, for when the real pointer cannot be had: the
-     * pointer and mouse events at each point of the same gesture, and the
-     * drag and drop events when what is dragged is draggable. A page that
-     * captures the pointer or checks for a real one will not follow it.
+     * The steps of a drag made by script, from `a` to `b`: the pointer
+     * arrives and presses, the press is held a moment (pages that start a
+     * drag only after a delay see one), two small moves past the few pixels
+     * a page waits for, even moves the rest of the way spread over about
+     * half a second, a rest over the place, one more move there, and the
+     * release.
+     */
+    function scriptedDragSteps(a, b) {
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const length = Math.hypot(dx, dy) || 1;
+        const along = (px) => ({ x: a.x + (dx / length) * Math.min(px, length), y: a.y + (dy / length) * Math.min(px, length) });
+        // The held press is waited for even in a tab nobody can see: a page that needs it would not start the drag otherwise.
+        const steps = [{ t: 'move', ...a }, { t: 'down', ...a }, { t: 'wait', ms: GESTURE.DRAG_HOLD_MS, hold: true }];
+        steps.push({ t: 'move', ...along(3) }, { t: 'wait', ms: GESTURE.DRAG_STEP_MS }, { t: 'move', ...along(10) }, { t: 'wait', ms: GESTURE.DRAG_STEP_MS });
+        for (let i = 1; i <= GESTURE.DRAG_MOVES; i++) {
+            const f = i / GESTURE.DRAG_MOVES;
+            steps.push({ t: 'move', x: a.x + dx * f, y: a.y + dy * f }, { t: 'wait', ms: GESTURE.DRAG_STEP_MS });
+        }
+        steps.push({ t: 'wait', ms: GESTURE.DROP_REST_MS }, { t: 'move', ...b }, { t: 'up', ...b });
+        return steps;
+    }
+
+    /**
+     * A drag made by script, for when the real pointer cannot be had, as
+     * the browser makes one. Pointer events go to what was pressed while
+     * the button is held (as when a page holds on to the pointer, and they
+     * reach the document from there); mouse events go to what is under the
+     * pointer. When what was pressed can be dragged (the page can make it
+     * draggable as it is pressed), the browser's own drag and drop takes
+     * over once it has moved a few pixels: dragstart, then drag on it and
+     * dragenter, dragover and dragleave on what it passes, one DataTransfer
+     * shared by them all, drop only where the last dragover was taken, and
+     * dragend. Returns what happened: { dnd, dropped, refused, target }.
      */
     async function syntheticDrag(el, steps) {
+        const report = { dnd: false, dropped: false, refused: false, target: null };
         let held = false;
+        let pressed = null;
+        let start = null;
+        let tried = false;
+        // A page that cancels mousedown keeps the browser from starting its own drag and drop.
+        let kept = false;
         let source = null;
         let data = null;
         let over = null;
+        let taken = false;
         const at = (s, buttons) => pointerInit(s, { held: buttons === 1 });
-        const draggable = el.closest('[draggable="true"]') || (el.closest('a[href], img') && el.closest('[draggable="false"]') === null ? el.closest('a[href], img') : null);
+        const dnd = (type, target, s, extra) => target.dispatchEvent(new DragEvent(type, { ...at(s, /^(drop|dragend)$/.test(type) ? 0 : 1), dataTransfer: data, ...(extra || {}) }));
+        // What the browser offers a place before it says whether it takes the
+        // drop, from what the dragged thing allows; the place may change it.
+        // A DataTransfer made by script is not one of the browser's own drags:
+        // Chrome reads "none" for both its effects and ignores setting them.
+        // Then what the dragged thing allows cannot be read, and a place is
+        // offered what the browser offers when nothing was said (copy); the
+        // place takes the drop by cancelling dragover. Where the effects can
+        // be set, they are read as the browser reads them.
+        let offered = 'none';
+        let settable = false;
+        const offer = () => {
+            if (!data) return;
+            const allowed = settable ? String(data.effectAllowed || 'uninitialized') : 'uninitialized';
+            offered = /^(move|linkMove)$/.test(allowed) ? 'move' : allowed === 'link' ? 'link' : allowed === 'none' ? 'none' : 'copy';
+            if (settable) { try { data.dropEffect = offered; } catch (_) { /* kept as it is */ } }
+        };
+        // The drop effect the place chose, by the last dragover.
+        let chosen = 'none';
+        const draggableOf = (n) => {
+            if (!n || !n.closest) return null;
+            const marked = n.closest('[draggable]');
+            if (marked) return marked.getAttribute('draggable') === 'true' ? marked : null;
+            return n.closest('a[href], img');
+        };
         for (const s of steps) {
-            if (s.t === 'wait') { await (document.visibilityState === 'hidden' ? Promise.resolve() : delay(s.ms || 0)); continue; }
+            if (s.t === 'wait') { await (s.hold ? delay(s.ms || 0) : gestureDelay(s.ms)); continue; }
             const target = drawnAt(s.x, s.y) || document.body;
             if (s.t === 'down') {
-                target.dispatchEvent(new PointerEvent('pointerdown', at(s, 1)));
-                target.dispatchEvent(new MouseEvent('mousedown', at(s, 1)));
+                pressed = target;
+                start = s;
+                movePointerTo(target, s, {});
+                target.dispatchEvent(new PointerEvent('pointerdown', { ...at(s, 1), detail: 0 }));
+                kept = !target.dispatchEvent(new MouseEvent('mousedown', { ...at(s, 1), detail: 1 }));
                 held = true;
             } else if (s.t === 'move') {
-                if (held && draggable && !source) {
-                    data = typeof DataTransfer === 'function' ? new DataTransfer() : null;
-                    if (draggable.dispatchEvent(new DragEvent('dragstart', { ...at(s, 1), dataTransfer: data }))) source = draggable;
+                if (held && !tried && start && Math.hypot(s.x - start.x, s.y - start.y) >= GESTURE.DRAG_START_PX) {
+                    tried = true;
+                    const drag = kept ? null : draggableOf(pressed);
+                    if (drag) {
+                        data = typeof DataTransfer === 'function' ? new DataTransfer() : null;
+                        // As the browser starts one: nothing allowed or refused until the page says.
+                        if (data) { try { data.effectAllowed = 'uninitialized'; } catch (_) { /* kept as it is */ } }
+                        // Whether this DataTransfer keeps what is set on it.
+                        settable = !!data && data.effectAllowed === 'uninitialized';
+                        if (dnd('dragstart', drag, s)) {
+                            source = drag;
+                            report.dnd = true;
+                            // The browser takes the pointer from here: the page hears it cancelled, and no more mouse events come.
+                            pressed.dispatchEvent(new PointerEvent('pointercancel', { ...at(s, 0), cancelable: false }));
+                        }
+                    }
                 }
                 if (source) {
-                    if (over !== target) { target.dispatchEvent(new DragEvent('dragenter', { ...at(s, 1), dataTransfer: data })); over = target; }
-                    target.dispatchEvent(new DragEvent('dragover', { ...at(s, 1), dataTransfer: data }));
+                    dnd('drag', source, s);
+                    if (over !== target) {
+                        offer();
+                        dnd('dragenter', target, s, { relatedTarget: over });
+                        if (over) dnd('dragleave', over, s, { relatedTarget: target });
+                        over = target;
+                    }
+                    // A place takes the drop by cancelling dragover.
+                    offer();
+                    taken = !dnd('dragover', target, s);
+                    chosen = !data ? 'copy' : settable ? String(data.dropEffect) : offered;
                 } else {
-                    target.dispatchEvent(new PointerEvent('pointermove', at(s, held ? 1 : 0)));
-                    target.dispatchEvent(new MouseEvent('mousemove', at(s, held ? 1 : 0)));
+                    movePointerTo(target, s, {});
+                    const init = at(s, held ? 1 : 0);
+                    (held && pressed ? pressed : target).dispatchEvent(new PointerEvent('pointermove', init));
+                    target.dispatchEvent(new MouseEvent('mousemove', init));
                 }
             } else if (s.t === 'up') {
+                report.target = target;
                 if (source) {
-                    target.dispatchEvent(new DragEvent('drop', { ...at(s, 0), dataTransfer: data }));
-                    source.dispatchEvent(new DragEvent('dragend', { ...at(s, 0), dataTransfer: data }));
+                    if (taken && chosen !== 'none') {
+                        dnd('drop', target, s);
+                        report.dropped = true;
+                    } else {
+                        if (over) dnd('dragleave', over, s);
+                        if (data) { try { data.dropEffect = 'none'; } catch (_) { /* read-only in some builds */ } }
+                        report.refused = true;
+                    }
+                    dnd('dragend', source, s);
                 } else {
-                    target.dispatchEvent(new PointerEvent('pointerup', at(s, 0)));
-                    target.dispatchEvent(new MouseEvent('mouseup', at(s, 0)));
+                    const init = at(s, 0);
+                    (pressed || target).dispatchEvent(new PointerEvent('pointerup', { ...init, detail: 0 }));
+                    target.dispatchEvent(new MouseEvent('mouseup', { ...init, detail: 1 }));
                 }
                 held = false;
             }
         }
+        return report;
     }
 
     // =========================================================================
@@ -3053,6 +3622,396 @@
         return null;
     }
 
+    // =========================================================================
+    // Editing text where the cursor is
+    // =========================================================================
+    //
+    // A text editor built on an editable region (a rich text editor, a code
+    // editor, a chat box) keeps its own model of the text and reads changes
+    // from the events the browser sends: beforeinput, then the change to the
+    // page, then input. A scripted key has no default action, so nothing is
+    // typed by keydown alone, and setting the region's text wholesale is
+    // undone by the editor at once. So text goes in the way the browser puts
+    // it in: beforeinput first (an editor that inserts the text itself
+    // cancels it, and then nothing more is done), else the browser's own
+    // insertion at the cursor (execCommand), which the editor sees as typing.
+
+    const ON_MAC = /Mac|iPhone|iPad/i.test(String((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent || ''));
+    const EDIT = () => (typeof SELECT_TO_AI_TOOLS !== 'undefined' ? SELECT_TO_AI_TOOLS : null);
+    const clipped = (t, n) => { const s = String(t || '').replace(/\s+/g, ' ').trim(); return s.length > n ? `${s.slice(0, n - 1)}…` : s; };
+
+    /** The control with the keyboard focus, through any shadow roots. */
+    function deepActive() {
+        let a = document.activeElement;
+        while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement;
+        return a;
+    }
+
+    /** Whether `inner` is `outer` or inside it, through shadow roots. */
+    function holds(outer, inner) {
+        for (let n = inner; n; n = n.parentNode || n.host) if (n === outer) return true;
+        return false;
+    }
+
+    /**
+     * The text box a control is or holds: a field, a text area, or the
+     * outermost element of an editable region. A control listed for an
+     * editor (the box drawn around it) leads to the region inside.
+     */
+    function textBoxOf(el) {
+        if (!el || el.nodeType !== 1) return null;
+        if (el.tagName === 'TEXTAREA') return el;
+        if (el.tagName === 'INPUT') return /^(button|submit|reset|image|file|hidden|checkbox|radio|range|color)$/.test((el.type || 'text').toLowerCase()) ? null : el;
+        if (el.isContentEditable) {
+            let r = el;
+            while (r.parentElement && r.parentElement.isContentEditable) r = r.parentElement;
+            return r;
+        }
+        let inner = null;
+        try { inner = el.querySelector('[contenteditable]:not([contenteditable="false"]), textarea'); } catch (_) { inner = null; }
+        return inner && isRendered(inner) && (inner.isContentEditable || inner.tagName === 'TEXTAREA') ? textBoxOf(inner) : null;
+    }
+
+    const isField = (box) => box.tagName === 'INPUT' || box.tagName === 'TEXTAREA';
+    const selectionOf = (box) => {
+        const root = box.getRootNode ? box.getRootNode() : document;
+        return (root && root !== document && typeof root.getSelection === 'function' ? root.getSelection() : null) || window.getSelection();
+    };
+    /** The selection when it is inside the box, else null. */
+    function rangeIn(box) {
+        const sel = selectionOf(box);
+        if (!sel || !sel.rangeCount) return null;
+        const r = sel.getRangeAt(0);
+        return holds(box, r.startContainer) && holds(box, r.endContainer) ? r : null;
+    }
+    function setRange(box, r) {
+        const sel = selectionOf(box);
+        if (!sel) return;
+        sel.removeAllRanges();
+        sel.addRange(r);
+    }
+
+    /** Where the end of a region's text is: after its last letter, before a closing line break. */
+    function endOfText(box) {
+        let n = box;
+        for (let guard = 0; guard < 200; guard++) {
+            let c = n.lastChild;
+            while (c && ((c.nodeType === 3 && !c.data.trim() && (c.previousSibling || c.nextSibling)) || (c.nodeType === 8) || (c.nodeType === 1 && !isRendered(c) && c.tagName !== 'BR'))) c = c.previousSibling;
+            if (!c) return { node: n, offset: n.childNodes.length };
+            if (c.nodeType === 3) return { node: c, offset: c.data.length };
+            if (c.tagName === 'BR') return { node: n, offset: Array.prototype.indexOf.call(n.childNodes, c) };
+            if (c.isContentEditable === false || /^(IMG|INPUT|HR|SVG|VIDEO|CANVAS|IFRAME)$/i.test(c.tagName)) return { node: n, offset: n.childNodes.length };
+            n = c;
+        }
+        return { node: box, offset: box.childNodes.length };
+    }
+
+    /**
+     * Puts the keyboard in a text box and keeps the cursor or the selection
+     * where it was in it. With none in it yet (or atEnd), the cursor goes
+     * after its last letter, where a person clicking below the text puts
+     * it. Says whether it was placed.
+     */
+    async function caretInto(box, atEnd) {
+        if (isField(box)) {
+            const had = deepActive() === box;
+            focusField(box);
+            if (!had || atEnd) { try { const n = String(box.value || '').length; box.setSelectionRange(n, n); } catch (_) { /* a box with no cursor */ } }
+            return !had || !!atEnd;
+        }
+        const kept = rangeIn(box);
+        const saved = kept ? kept.cloneRange() : null;
+        if (!holds(box, deepActive())) focusField(box);
+        let placed = false;
+        let r = saved && !atEnd ? saved : null;
+        if (!r) {
+            const end = endOfText(box);
+            r = document.createRange();
+            r.setStart(end.node, end.offset);
+            r.collapse(true);
+            placed = true;
+        }
+        const now = rangeIn(box);
+        if (!now || now.compareBoundaryPoints(Range.START_TO_START, r) !== 0 || now.compareBoundaryPoints(Range.END_TO_END, r) !== 0) setRange(box, r);
+        // Editors read where the cursor is from selectionchange, which comes a moment later.
+        await delay(30);
+        return placed;
+    }
+
+    const keyInit = (key, mods) => {
+        const meta = resolveKeyMeta(key === ' ' ? ' ' : key);
+        const m = mods || {};
+        return { key, code: meta.code, keyCode: meta.keyCode, which: meta.keyCode, bubbles: true, cancelable: true, composed: true, view: window, ctrlKey: !!m.ctrlKey, shiftKey: !!m.shiftKey, altKey: !!m.altKey, metaKey: !!m.metaKey };
+    };
+    /** Where a key in this box lands: what in it has the focus, else the box. */
+    const keyTarget = (box) => { const a = deepActive(); return a && holds(box, a) ? a : box; };
+
+    /**
+     * One change to a box's text, made as the browser makes it: beforeinput
+     * (which the page may cancel to make the change itself), then the
+     * browser's own edit at the cursor, which sends input. 'page' when the
+     * page took it over, 'browser' or 'script' when it was made here.
+     */
+    function editOnce(box, target, inputType, data) {
+        const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true, composed: true, inputType, ...(data !== undefined ? { data } : {}) });
+        if (!target.dispatchEvent(before)) return 'page';
+        const command = { insertText: 'insertText', insertParagraph: 'insertParagraph', insertLineBreak: 'insertLineBreak', deleteContentBackward: 'delete', deleteContentForward: 'forwardDelete' }[inputType];
+        // A text area's line break is a "\n" in its text.
+        const asText = isField(box) && /^insert(Paragraph|LineBreak)$/.test(inputType);
+        let ok = false;
+        try { ok = asText ? document.execCommand('insertText', false, '\n') : document.execCommand(command, false, data); } catch (_) { ok = false; }
+        if (ok) return 'browser';
+        // The browser would not edit here (an editable region in a page
+        // that blocks it): the change is made directly, and said to the page.
+        if (isField(box)) {
+            const s = box.selectionStart == null ? String(box.value || '').length : box.selectionStart;
+            const e = box.selectionEnd == null ? s : box.selectionEnd;
+            const text = inputType === 'insertText' ? data : asText ? '\n' : '';
+            const from = inputType === 'deleteContentBackward' && s === e ? Math.max(0, s - 1) : s;
+            const to = inputType === 'deleteContentForward' && s === e ? e + 1 : e;
+            try { box.setRangeText(text, from, to, 'end'); } catch (_) { return 'none'; }
+        } else {
+            const r = rangeIn(box);
+            if (!r || inputType !== 'insertText') return 'none';
+            r.deleteContents();
+            const t = document.createTextNode(data);
+            r.insertNode(t);
+            r.setStartAfter(t);
+            r.collapse(true);
+            setRange(box, r);
+        }
+        target.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType, ...(data !== undefined ? { data } : {}) }));
+        return 'script';
+    }
+
+    /** Types text with no line breaks at the cursor, one key at a time. */
+    async function typeAtCursor(box, text) {
+        for (const ch of text) {
+            if (cancelRequested) return;
+            const target = keyTarget(box);
+            const ko = keyInit(ch);
+            const down = target.dispatchEvent(new KeyboardEvent('keydown', ko));
+            const press = down && target.dispatchEvent(new KeyboardEvent('keypress', { ...ko, charCode: ch.charCodeAt(0) }));
+            if (down && press) editOnce(box, target, 'insertText', ch);
+            target.dispatchEvent(new KeyboardEvent('keyup', ko));
+            // The editor's own record of the change runs between keys, as it does for a person.
+            await null;
+        }
+    }
+
+    /**
+     * A line break in text being typed: a new paragraph (a new line in a
+     * text area), made as an edit, with no Enter key. Many chat and comment
+     * boxes send what is in them on an Enter key, so a key here would send
+     * a message the user asked only to be written. Enter itself is press,
+     * which is judged as Enter (core/policy.js).
+     */
+    function breakLine(box) {
+        return editOnce(box, keyTarget(box), box.tagName === 'TEXTAREA' ? 'insertLineBreak' : 'insertParagraph');
+    }
+
+    /** A password, payment, one-time-code or identity field: its text is the user's, never typed, selected or read here. */
+    const secretBox = (box) => !!box && isField(box) && !!sensitiveKind(box);
+
+    /**
+     * What the browser does with a key in a text box that the page left
+     * alone (agentTools.js keyDefault): types the character, starts a new
+     * paragraph, deletes, moves the cursor or selects all. Says what it
+     * did, or '' when there was nothing to do.
+     */
+    function keyDefaultIn(box, target, def) {
+        if (def.kind === 'text') return editOnce(box, target, 'insertText', def.text) === 'none' ? '' : 'typed';
+        if (def.kind === 'paragraph') {
+            if (box.tagName === 'INPUT') return '';
+            return editOnce(box, target, box.tagName === 'TEXTAREA' ? 'insertLineBreak' : 'insertParagraph') === 'none' ? '' : 'paragraph';
+        }
+        if (def.kind === 'delete') return editOnce(box, target, def.back ? 'deleteContentBackward' : 'deleteContentForward') === 'none' ? '' : 'deleted';
+        if (def.kind === 'format') {
+            if (isField(box)) return '';
+            try { return document.execCommand(def.command) ? 'formatted' : ''; } catch (_) { return ''; }
+        }
+        if (def.kind === 'all') {
+            if (isField(box)) box.select();
+            else { const r = document.createRange(); r.selectNodeContents(box); setRange(box, r); }
+            return 'selected';
+        }
+        if (def.kind === 'caret') {
+            if (!isField(box)) {
+                const sel = selectionOf(box);
+                if (!sel || typeof sel.modify !== 'function') return '';
+                sel.modify(def.extend ? 'extend' : 'move', def.dir, def.unit);
+                return 'moved';
+            }
+            const v = String(box.value || '');
+            let s = box.selectionStart == null ? v.length : box.selectionStart;
+            let e = box.selectionEnd == null ? s : box.selectionEnd;
+            const back = def.dir === 'backward';
+            let at = back ? s : e;
+            if (def.unit === 'character') at = def.extend || s === e ? at + (back ? -1 : 1) : at;
+            else if (def.unit === 'word') { const m = back ? /\S*\s*$/.exec(v.slice(0, at)) : /^\s*\S*/.exec(v.slice(at)); at += back ? -m[0].length : m[0].length; }
+            else if (def.unit === 'lineboundary' && box.tagName === 'TEXTAREA') at = back ? v.lastIndexOf('\n', at - 1) + 1 : (v.indexOf('\n', at) < 0 ? v.length : v.indexOf('\n', at));
+            else if (def.unit === 'line') return '';
+            else at = back ? 0 : v.length;
+            at = Math.max(0, Math.min(v.length, at));
+            try {
+                if (def.extend) box.setSelectionRange(back ? Math.min(at, e) : s, back ? e : Math.max(at, s), back ? 'backward' : 'forward');
+                else box.setSelectionRange(at, at);
+            } catch (_) { return ''; }
+            return 'moved';
+        }
+        return '';
+    }
+
+    /** A box's text as a person reads it. */
+    const boxText = (box) => String(isField(box) ? box.value || '' : box.innerText || box.textContent || '').replace(/ /g, ' ');
+
+    // Marks a run of text can carry, by the element that carries them.
+    const MARK_TAGS = { B: 'bold', STRONG: 'bold', I: 'italic', EM: 'italic', U: 'underlined', INS: 'underlined', S: 'struck through', STRIKE: 'struck through', DEL: 'struck through', CODE: 'code', KBD: 'code', MARK: 'highlighted', SUB: 'subscript', SUP: 'superscript', A: 'a link' };
+    /** The marks on one piece of text inside a box: by its elements, and by how it is drawn. */
+    function marksOf(node, box) {
+        const out = new Set();
+        const el = node.nodeType === 1 ? node : node.parentElement;
+        let heading = false;
+        for (let n = el; n && n !== box && holds(box, n); n = n.parentElement) {
+            if (MARK_TAGS[n.tagName]) out.add(MARK_TAGS[n.tagName]);
+            if (/^H[1-6]$/.test(n.tagName) || n.getAttribute('role') === 'heading') heading = true;
+        }
+        if (el) {
+            try {
+                const cs = getComputedStyle(el);
+                if (!heading && (Number(cs.fontWeight) >= 600 || cs.fontWeight === 'bold')) out.add('bold');
+                if (cs.fontStyle === 'italic') out.add('italic');
+                const deco = `${cs.textDecorationLine || ''} ${cs.textDecoration || ''}`;
+                if (/underline/.test(deco)) out.add('underlined');
+                if (/line-through/.test(deco)) out.add('struck through');
+            } catch (_) { /* not drawn */ }
+        }
+        return out;
+    }
+    /** The marks every piece of a selection has, and those only some have. */
+    function marksOfRange(r, box) {
+        const nodes = [];
+        const root = r.commonAncestorContainer.nodeType === 3 ? r.commonAncestorContainer.parentNode : r.commonAncestorContainer;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+            if (!r.intersectsNode(t) || !t.data.trim()) continue;
+            if (t === r.endContainer && r.endOffset === 0) continue;
+            if (t === r.startContainer && r.startOffset >= t.data.length) continue;
+            nodes.push(t);
+        }
+        if (r.startContainer.nodeType === 3 && !nodes.length) nodes.push(r.startContainer);
+        const sets = nodes.map((t) => marksOf(t, box));
+        const union = new Set(sets.flatMap((s) => [...s]));
+        const all = [...union].filter((m) => sets.every((s) => s.has(m)));
+        return { all, some: [...union].filter((m) => !all.includes(m)) };
+    }
+    const listOf = (xs) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+
+    /** The selection in an editable region of the page, with its marks; null when there is none. */
+    function selectedInEditor() {
+        try {
+            // The editor with the focus, or the one the page's selection is in
+            // (a toolbar button may have taken the focus and left the selection).
+            const a = deepActive();
+            let box = a ? textBoxOf(a) : null;
+            if (!box || isField(box) || !rangeIn(box)) {
+                const sel = window.getSelection();
+                const n = sel && sel.rangeCount ? sel.getRangeAt(0).startContainer : null;
+                const e = n ? (n.nodeType === 1 ? n : n.parentElement) : null;
+                box = e && e.isContentEditable ? textBoxOf(e) : null;
+            }
+            if (!box || isField(box)) return null;
+            const r = rangeIn(box);
+            if (!r || r.collapsed) return null;
+            return { box, text: r.toString(), marks: marksOfRange(r, box).all.sort().join(',') };
+        } catch (_) { return null; }
+    }
+
+    /**
+     * A box's text as it is now, read back after typing in it: its last
+     * lines (what was typed last is nearly always there), what is
+     * selected and the marks it carries, or the line the cursor is on.
+     */
+    function boxReport(box, id) {
+        const said = [];
+        const name = id ? `[${id}]` : 'The box';
+        // What is in a secret field never leaves the page.
+        if (secretBox(box)) return `${name} is a field only the user fills in; what it holds is not read.`;
+        const lines = boxText(box).split(/\n+/).map((l) => l.trim()).filter(Boolean);
+        if (!lines.length) said.push(`${name} is empty now.`);
+        else if (lines.length === 1) said.push(`${name} now reads "${clipped(lines[0], 200)}".`);
+        else said.push(`${name} now has ${lines.length} lines; the last ${lines.length > 3 ? 3 : lines.length} read ${lines.slice(-3).map((l) => `"${clipped(l, 90)}"`).join(', ')}.`);
+        if (isField(box)) {
+            const s = box.selectionStart, e = box.selectionEnd;
+            if (s != null && e != null && e > s) said.push(`"${clipped(String(box.value).slice(s, e), 80)}" is selected.`);
+            return said.join(' ');
+        }
+        const r = rangeIn(box);
+        if (r && !r.collapsed) {
+            const m = marksOfRange(r, box);
+            said.push(`"${clipped(r.toString(), 80)}" is selected, and ${m.all.length ? `is ${listOf(m.all)}` : 'has no bold, italic or other marks'}${m.some.length ? ` (part of it is ${listOf(m.some)})` : ''}.`);
+        } else if (r && lines.length > 1) {
+            let b = r.startContainer.nodeType === 1 ? r.startContainer : r.startContainer.parentElement;
+            while (b && b !== box && /^inline/.test(getComputedStyle(b).display)) b = b.parentElement;
+            const line = b && b !== box ? clipped(b.innerText || b.textContent, 90) : '';
+            if (line) said.push(`The cursor is in "${line}".`);
+            else if (b && b !== box) said.push('The cursor is on an empty line.');
+        }
+        return said.join(' ');
+    }
+
+    /**
+     * Selects words inside a box by their text: in a region, across the
+     * pieces its text is split into. The match nearest the cursor is taken
+     * when the words are there more than once.
+     */
+    async function selectWords(box, want) {
+        const tools = EDIT();
+        if (isField(box)) {
+            const value = String(box.value || '');
+            const hit = tools ? tools.findTextIn(value, want, box.selectionEnd) : { at: value.indexOf(want), count: value.includes(want) ? 1 : 0 };
+            if (hit.at < 0) return { found: false, text: value };
+            focusField(box);
+            box.setSelectionRange(hit.at, hit.at + want.length);
+            box.dispatchEvent(new Event('select', { bubbles: true }));
+            return { found: true, count: hit.count, text: value.slice(hit.at, hit.at + want.length) };
+        }
+        const pieces = [];
+        let flat = '';
+        const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+        for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+            if (t.parentElement && !isRendered(t.parentElement)) continue;
+            pieces.push({ node: t, from: flat.length });
+            flat += t.data;
+        }
+        const plain = flat.replace(/ /g, ' ');
+        // Where the cursor is, in that text.
+        let near = -1;
+        const cur = rangeIn(box);
+        if (cur) { const p = pieces.find((x) => x.node === cur.endContainer); if (p) near = p.from + cur.endOffset; }
+        const hit = tools ? tools.findTextIn(plain, want, near) : { at: plain.indexOf(want), count: plain.includes(want) ? 1 : 0 };
+        if (hit.at < 0) return { found: false, text: plain };
+        const point = (i, end) => {
+            for (let k = 0; k < pieces.length; k++) {
+                const p = pieces[k];
+                const len = p.node.data.length;
+                if (i < p.from + len || (end && i === p.from + len)) return { node: p.node, offset: i - p.from };
+            }
+            const last = pieces[pieces.length - 1];
+            return { node: last.node, offset: last.node.data.length };
+        };
+        const a = point(hit.at, false), b = point(hit.at + want.length, true);
+        if (!holds(box, deepActive())) focusField(box);
+        const r = document.createRange();
+        r.setStart(a.node, a.offset);
+        r.setEnd(b.node, b.offset);
+        setRange(box, r);
+        // Some editors follow the selection on the release of the mouse or a key, as well as on selectionchange.
+        keyTarget(box).dispatchEvent(new MouseEvent('mouseup', { bubbles: true, composed: true, view: window }));
+        await delay(40);
+        return { found: true, count: hit.count, text: plain.slice(hit.at, hit.at + want.length) };
+    }
+
     /**
      * Simulates natural typing character-by-character.
      * Replaces any existing value by default (prefilled fields would
@@ -3068,6 +4027,23 @@
         focusField(el);
 
         const isContentEditable = el.isContentEditable;
+        // An editable region is replaced the way an editor hears it: all of
+        // it selected and deleted, then typed into (see typeAtCursor), so
+        // an editor that keeps its own model of the text takes the change.
+        if (isContentEditable) {
+            const all = document.createRange();
+            all.selectNodeContents(el);
+            setRange(el, all);
+            await delay(20);
+            if (boxText(el).trim()) editOnce(el, keyTarget(el), 'deleteContentBackward');
+            const lines = String(text).split(/\r\n|\r|\n/);
+            for (let i = 0; i < lines.length && !cancelRequested; i++) {
+                if (i > 0) { breakLine(el); await delay(30); }
+                if (lines[i]) await typeAtCursor(el, lines[i]);
+            }
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            return;
+        }
         const nativeSetter = isContentEditable ? null : getNativeValueSetter(el);
 
         const eventBase = { bubbles: true, cancelable: true, view: window };
@@ -3102,6 +4078,9 @@
             if (cancelRequested) break;
             const char = text[i];
             const meta = resolveKeyMeta(char);
+            // A line break goes in as text, with no key: "\r" would be sent
+            // as key code 13, which a chat box takes for Enter and sends.
+            const lineBreak = char === '\n' || char === '\r';
 
             const keyOpts = {
                 ...eventBase,
@@ -3113,7 +4092,7 @@
             };
 
             // keydown
-            el.dispatchEvent(new KeyboardEvent('keydown', keyOpts));
+            if (!lineBreak) el.dispatchEvent(new KeyboardEvent('keydown', keyOpts));
 
             // beforeinput
             el.dispatchEvent(new InputEvent('beforeinput', {
@@ -3145,7 +4124,7 @@
             }));
 
             // keyup
-            el.dispatchEvent(new KeyboardEvent('keyup', { ...keyOpts, charCode: 0 }));
+            if (!lineBreak) el.dispatchEvent(new KeyboardEvent('keyup', { ...keyOpts, charCode: 0 }));
 
             // No pause between characters: every per-key event above still
             // fires in order, which is what frameworks listen for, and a
@@ -3452,13 +4431,16 @@
                 // read nor close by its listing; those are given values by fill.
                 const opensPicker = (n) => !!n && n.tagName === 'INPUT' && /^(file|color|date|datetime-local|month|week|time)$/i.test(n.type || '');
                 const picker = opensPicker(el) || (el.tagName === 'LABEL' && opensPicker(el.control));
-                const pressed = plain && !picker ? await pointerOnControl(el, id, "Click", false) : { real: false };
+                // A spot inside it, when one was asked for (a point of a chart or a board).
+                const spot = aimAtSpot(el, data);
+                if (spot && !spot.point) return missedSpot(id, spot, false);
+                const pressed = plain && !picker ? await pointerOnControl(el, id, "Click", false, spot && spot.point) : { real: false };
                 if (pressed.fail) return pressed.fail;
                 let went = true;
                 if (!pressed.real) {
                     await moveAgentCursorToElement(el, "Click");
                     await pulseAgentCursor("Click");
-                    went = dispatchClickEvents(el, modifiers);
+                    went = dispatchClickEvents(el, modifiers, spot ? spotIn(el, data.fx, data.fy) : null);
                 }
                 const pointer = pressed.real ? 'real' : 'synthetic';
                 const note = pressed.note || '';
@@ -3477,53 +4459,98 @@
                 const isTextField = el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && /^(text|search|email|url|tel|number|password)$/.test((el.type || 'text').toLowerCase()));
                 if (el.disabled) return { success: true, pointer, message: `Clicked element [${id}]. It is disabled, so the click does nothing to it.` };
                 // `cancelled`: the page took the click over, which is an answer to it.
-                return { success: true, pointer, ...(went ? {} : { cancelled: true }), message: `Clicked element [${id}].${isTextField ? ' It is a text field: the click only put the cursor in it.' : ''}${note}` };
+                return { success: true, pointer, ...(went ? {} : { cancelled: true }), message: `Clicked element [${id}]${spotWords(data)}.${isTextField ? ' It is a text field: the click only put the cursor in it.' : ''}${note}` };
             }
 
             // ----- double_click -----
             if (action === 'double_click') {
+                const spot = aimAtSpot(el, data);
+                if (spot && !spot.point) return missedSpot(id, spot, false);
                 await moveAgentCursorToElement(el, "Double click");
                 await pulseAgentCursor("Double click");
-                // Two clicks, the second counted as the second, then the double click.
-                dispatchClickEvents(el, modifiers);
-                dispatchClickEvents(el, modifiers, null, 2);
-                el.dispatchEvent(new MouseEvent('dblclick', pointerInit(centreOf(el), { modifiers, detail: 2 })));
-                return { success: true, message: `Double-clicked element [${id}].` };
+                const went = await scriptedDoubleClick(el, modifiers, spot ? spotIn(el, data.fx, data.fy) : null);
+                return { success: true, pointer: 'synthetic', ...(went ? {} : { cancelled: true }), message: `Double-clicked element [${id}]${spotWords(data)}.` };
             }
 
             // ----- right_click -----
             if (action === 'right_click') {
+                const spot = aimAtSpot(el, data);
+                if (spot && !spot.point) return missedSpot(id, spot, false);
                 await moveAgentCursorToElement(el, "Right click");
                 await pulseAgentCursor("Right click");
-                const at = centreOf(el);
-                const down = pointerInit(at, { modifiers, held: true, button: 2 });
-                const up = pointerInit(at, { modifiers, button: 2 });
-                el.dispatchEvent(new PointerEvent('pointerdown', down));
-                el.dispatchEvent(new MouseEvent('mousedown', down));
-                el.dispatchEvent(new PointerEvent('pointerup', up));
-                el.dispatchEvent(new MouseEvent('mouseup', up));
-                el.dispatchEvent(new MouseEvent('contextmenu', up));
-                return { success: true, message: `Right-clicked element [${id}].` };
+                const { taken } = scriptedRightClick(el, modifiers, spot ? spotIn(el, data.fx, data.fy) : null);
+                // A page that shows a menu of its own takes the browser's over.
+                const own = taken ? '' : ' The page did not take the right click over for a menu of its own: in a browser that opens the browser\'s own menu, which is not part of the page.';
+                return { success: true, pointer: 'synthetic', message: `Right-clicked element [${id}]${spotWords(data)}.${own}` };
+            }
+
+            // ----- hold: a long press -----
+            if (action === 'hold') {
+                const ms = Math.round(Math.min(10, Math.max(0.3, Number(data.seconds) || 1)) * 1000);
+                const spot = aimAtSpot(el, data);
+                if (spot && !spot.point) return missedSpot(id, spot, false);
+                await moveAgentCursorToElement(el, "Press and hold");
+                const at = spot ? spotIn(el, data.fx, data.fy) : centreOf(el);
+                if (agentCursor) placeAgentCursor(at.x, at.y, "Press and hold: holding");
+                // The pointer arrives first: what leaving where it was sets off is not the press's doing.
+                movePointerTo(pointerTargetIn(el, at), at, modifiers);
+                const changes = createMutationCounter();
+                const unseen = watchUnseen();
+                const stateBefore = stateOf(el);
+                let steps;
+                let outOfSight = [];
+                let moved = 0;
+                // The watchers stop even when the press fails partway.
+                try {
+                    try { steps = await scriptedHold(el, modifiers, at, ms); } finally { await delay(150); }
+                } finally {
+                    outOfSight = unseen.stop();
+                    moved = changes.stop();
+                }
+                let how = '';
+                // A page that answers only a finger: the same press, by touch,
+                // unless it may have answered where it cannot be seen.
+                if (!moved && el.isConnected && stateOf(el) === stateBefore && !cancelRequested) {
+                    const gate = touchAgain(data, outOfSight, 'press', onCanvas([at]));
+                    if (!gate.again) how = gate.why;
+                    else {
+                        const again = createMutationCounter();
+                        let touched;
+                        let seen = 0;
+                        try { touched = await touchGesture(steps); await delay(150); } finally { seen = again.stop(); }
+                        if (touched) how = seen ? ' The page did not answer the press made with the mouse; it was made again as a touch, and the page answered that.' : ` ${noAnswerSeen('press')}`;
+                    }
+                }
+                return { success: true, pointer: 'synthetic', message: `Pressed [${id}]${spotWords(data)} and held it for ${ms / 1000} seconds before letting go.${how}` };
             }
 
             // ----- hover -----
             if (action === 'hover') {
-                // The real pointer is moved there and stays, so a menu that
-                // opens while the pointer is over it (CSS :hover) stays open.
-                const moved = await pointerOnControl(el, id, "Hover", true);
+                // The pointer is moved there and stays, so a menu that opens
+                // while the pointer is over it (CSS :hover), or a tooltip,
+                // stays open.
+                const spot = aimAtSpot(el, data);
+                if (spot && !spot.point) return missedSpot(id, spot, true);
+                const moved = await pointerOnControl(el, id, "Hover", true, spot && spot.point);
                 if (moved.fail) return moved.fail;
                 if (!moved.real) {
                     await moveAgentCursorToElement(el, "Hover");
-                    dispatchHoverEvents(el, modifiers);
+                    await dwellHover(el, spot ? spotIn(el, data.fx, data.fy) : centreOf(el), modifiers);
                 }
-                return { success: true, pointer: moved.real ? 'real' : 'synthetic', message: `Moved the pointer over [${id}] without pressing it${moved.real ? ', and left it there' : ''}.` };
+                return { success: true, pointer: moved.real ? 'real' : 'synthetic', message: `Moved the pointer over [${id}]${spotWords(data)} without pressing it, and left it there.` };
             }
 
             // ----- drag -----
             // Press on a control, move while holding, let go: on another
             // control (to), or a distance in a direction.
             if (action === 'drag') {
-                const to = data.to !== undefined && data.to !== null ? elementMap[data.to] : null;
+                // The place to let go on: a listed control, or the place with the words given.
+                const named = data.toText ? placeNamed(data.toText, el) : null;
+                if (data.toText && !named) return { success: false, error: `Nothing shown on the page has the words "${String(data.toText).slice(0, 80)}" written on it, so there is no place to let go. Nothing was dragged.` };
+                // The place was judged by all of its words just before (engine.js): it is let go on only while it still says them.
+                if (named && data.toWords !== undefined && wordsOfPlace(named) !== data.toWords) return { success: false, error: `The place with "${String(data.toText).slice(0, 60)}" on it changed before the drag, so nothing was dragged. Look at the page again.` };
+                const to = named || (data.to !== undefined && data.to !== null ? elementMap[data.to] : null);
+                const toName = named ? `the place with "${String(data.toText).slice(0, 60)}" on it` : `[${data.to}]`;
                 if (data.to !== undefined && data.to !== null && !to) return { success: false, error: `Element [${data.to}] not found. Re-scanning recommended.` };
                 if (to && !to.isConnected) return { success: false, error: `[${data.to}] is no longer on the page.` };
                 const vector = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] }[data.direction] || null;
@@ -3543,13 +4570,17 @@
                 if (mid.x < 0 || mid.y < 0 || mid.x > window.innerWidth || mid.y > window.innerHeight || Math.min(a0.x, b0.x, a0.y, b0.y) < 0 || Math.max(a0.x, b0.x) > window.innerWidth || Math.max(a0.y, b0.y) > window.innerHeight) {
                     window.scrollBy({ left: mid.x - window.innerWidth / 2, top: mid.y - window.innerHeight / 2, behavior: 'instant' });
                 }
-                const from = aimAt(el);
+                // Where it is taken hold of: a spot asked for, or where a person would press it.
+                const grip = aimAtSpot(el, data);
+                if (grip && grip.inner) return missedSpot(id, grip, false);
+                const from = grip || aimAt(el);
                 if (!from.point) return from.cover !== undefined ? coveredResult(id, nameOfDrawn(from.cover), false) : { success: false, error: `[${id}] is not drawn on screen, so it cannot be dragged.` };
                 let end;
                 if (to) {
                     const onto = aimAt(to);
-                    if (!onto.point) return onto.cover !== undefined ? coveredResult(data.to, nameOfDrawn(onto.cover), false) : { success: false, error: `[${data.to}] is not drawn on screen, so nothing can be dropped on it.` };
-                    end = onto.point;
+                    if (!onto.point) return onto.cover !== undefined ? coveredResult(named ? toName : data.to, nameOfDrawn(onto.cover), false) : { success: false, error: `${toName} is not drawn on screen, so nothing can be dropped on it.` };
+                    // Before or after it in its list, or a spot of it, when that was asked.
+                    end = dropAim(to, data) || onto.point;
                 } else {
                     end = { x: from.point.x + vector[0] * distance, y: from.point.y + vector[1] * distance };
                 }
@@ -3570,11 +4601,46 @@
                 const numbersBefore = numbersOnPage();
                 const boxBefore = el.getBoundingClientRect();
                 const scrollBefore = { x: window.scrollX, y: window.scrollY };
-                const steps = POINTER_TOOLS ? POINTER_TOOLS.dragSteps(from.point, end) : [{ t: 'move', ...from.point }, { t: 'down', ...from.point }, { t: 'move', ...end }, { t: 'up', ...end }];
+                const steps = POINTER_TOOLS ? POINTER_TOOLS.dragSteps(from.point, end) : [];
                 const g = await gesture(steps, { drag: true, label: 'Drag', id });
                 if (g.fail) return g.fail;
-                if (!g.real) await syntheticDrag(el, steps);
-                const said = [`Dragged [${id}] ${to ? `onto [${data.to}]` : `${data.direction} ${distance} px${edge ? ', stopping at the edge of the window' : ''}`}.`];
+                const how = [];
+                if (!g.real) {
+                    const scripted = scriptedDragSteps(from.point, end);
+                    // The pointer arrives first: what leaving where it was sets off is not the drag's doing.
+                    movePointerTo(drawnAt(from.point.x, from.point.y) || el, from.point, {});
+                    const changes = createMutationCounter();
+                    const unseen = watchUnseen();
+                    followGesture(scripted, 'Drag').catch(() => {});
+                    let r;
+                    let outOfSight = [];
+                    let seen = 0;
+                    // The watchers stop even when the drag fails partway.
+                    try {
+                        try { r = await syntheticDrag(el, scripted); } finally { await delay(100); }
+                    } finally {
+                        outOfSight = unseen.stop();
+                        seen = changes.stop();
+                    }
+                    const landed = r.target ? nameOfDrawn(r.target) : '';
+                    if (r.dropped) how.push(`The page took it as a drag and drop, and it was dropped on ${landed}.`);
+                    else if (r.refused) how.push(`The page took it as a drag and drop, but ${landed} did not take the drop.`);
+                    const stayed = () => { const p = el.isConnected ? placeOfNode(el) : null; const b = el.getBoundingClientRect(); return !!p && !!placeBefore && p.parent === placeBefore.parent && p.index === placeBefore.index && Math.abs(b.left - boxBefore.left) < 1 && Math.abs(b.top - boxBefore.top) < 1; };
+                    // A page that answers only a finger: the same drag, by touch,
+                    // unless it may have answered where it cannot be seen.
+                    if (!seen && !r.dnd && stayed() && !cancelRequested) {
+                        const gate = touchAgain(data, outOfSight, 'drag', onCanvas([from.point, end]));
+                        if (!gate.again) how.push(gate.why.trim());
+                        else {
+                            const again = createMutationCounter();
+                            let touched;
+                            let answered = 0;
+                            try { touched = await touchGesture(scripted); await delay(100); } finally { answered = again.stop(); }
+                            if (touched) how.push(answered ? 'The page did not answer the drag made with the mouse; it was made again as a touch, and the page answered that.' : noAnswerSeen('drag'));
+                        }
+                    }
+                }
+                const said = [`Dragged [${id}]${spotWords(data)} ${to ? `${data.place && !data.toFx ? `to just ${data.place} ` : 'onto '}${toName}${data.toFx !== undefined && data.toFx !== null ? ` at ${data.toFx},${data.toFy} of its box` : ''}` : `${data.direction} ${distance} px${edge ? ', stopping at the edge of the window' : ''}`}.`, ...how];
                 if (g.real && !g.landed) said.push('The page did not see the press arrive.');
                 else if (g.real && !pressesOn(el, g.landed.target)) said.push(`The press landed on ${nameOfDrawn(g.landed.target)}, not on [${id}].`);
                 // Where it is now, when the drag moved it in the page.
@@ -3790,9 +4856,9 @@
                             dispatchClickEvents(all[i], {});
                             await delay(120);
                             const now = (el.isConnected ? valueOf(el) : '') || shown();
-                            return { success: true, shows: now, message: `Typed "${value}" into [${id}] and chose "${(all[i].innerText || all[i].textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80)}" from its list.${now ? ` It now shows "${now.slice(0, 80)}".` : ''}` };
+                            return { success: true, freeText: true, shows: now, message: `Typed "${value}" into [${id}] and chose "${(all[i].innerText || all[i].textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80)}" from its list.${now ? ` It now shows "${now.slice(0, 80)}".` : ''}` };
                         }
-                        return { success: true, shows: shown(), choices: labels, message: `Typed "${value}" into [${id}]. It opened a list of choices and none is exactly that: ${namedChoices(all, 6)}. Nothing is chosen yet: click the one you want.` };
+                        return { success: true, freeText: true, shows: shown(), choices: labels, message: `Typed "${value}" into [${id}]. It opened a list of choices and none is exactly that: ${namedChoices(all, 6)}. Nothing is chosen yet: click the one you want.` };
                     };
                     let chosen = value && !shown() ? null : await choose();
                     if (!chosen && value && !shown()) {
@@ -3825,7 +4891,9 @@
                     const noList = value && offersChoices(box) && !isSearchField(box) ? ` It takes its value from a list of choices, and none came up for "${value.slice(0, 60)}": nothing is chosen. Shorter or different words may bring the list up.` : '';
                     // A search box holds the words; nothing has been searched yet.
                     const notRun = value && isSearchField(box) ? ' It is a search box: nothing has been searched yet.' : '';
-                    return { success: true, shows: shown(), message: (box !== el
+                    // What a secret field holds is never said back.
+                    if (secretBox(box) || secretBox(el)) return { success: true, message: `[${id}] is filled in. What it holds is not read back: it is a field only the user should see.` };
+                    return { success: true, shows: shown(), freeText: true, message: (box !== el
                         ? `Typed "${value.slice(0, 80)}". The page moved the cursor to another box${labelOf(box) ? ` ("${labelOf(box).slice(0, 40)}")` : ''}, and the text is there now.`
                         : `[${id}] now shows "${shown().slice(0, 120)}".`) + noList + notRun };
                 }
@@ -3949,6 +5017,38 @@
                 return { success: true, message: `Typed "${text}" into element [${id}] (replacing any existing value).` };
             }
 
+            // ----- insertText: type at the cursor, keeping what is there -----
+            if (action === 'insertText' || action === 'selectText') {
+                const box = textBoxOf(el);
+                if (!box) return { success: false, error: `[${id}] is not a text box or an editor: there is no text in it to ${action === 'insertText' ? 'type into' : 'select'}.` };
+                if (box.readOnly || box.disabled || box.getAttribute('aria-readonly') === 'true') return { success: false, error: `[${id}] is read-only: it takes no typing.` };
+                if (secretBox(box)) return { success: false, error: `[${id}] is a field only the user fills in (a password, card number or code): its text is not typed, selected or read by the agent.` };
+                const value = String(data.value == null ? '' : data.value);
+                if (action === 'selectText') {
+                    if (!value.trim()) return { success: false, error: 'select_text needs value: the words to select, as the box writes them.' };
+                    await moveAgentCursorToElement(box, 'Select');
+                    const got = await selectWords(box, value);
+                    if (!got.found) return { success: false, error: `"${clipped(value, 60)}" is not in [${id}]. ${boxReport(box, id)}` };
+                    const read = boxReport(box, id);
+                    return { success: true, reads: read, freeText: true, message: `Selected "${clipped(got.text, 80)}" in [${id}]${got.count > 1 ? ` (it is there ${got.count} times: this is the one nearest the cursor)` : ''}. ${read}` };
+                }
+                if (box.tagName === 'INPUT' && /[\r\n]/.test(value)) return { success: false, error: `[${id}] is a one-line box: it takes no line breaks. Type the line alone, and press Enter if the box is to be sent.` };
+                await moveAgentCursorToElement(box, 'Type');
+                const before = boxText(box);
+                const placed = await caretInto(box, false);
+                const lines = value.split(/\r\n|\r|\n/);
+                for (let i = 0; i < lines.length && !cancelRequested; i++) {
+                    if (i > 0) { breakLine(box); await delay(30); }
+                    if (lines[i]) await typeAtCursor(box, lines[i]);
+                }
+                if (cancelRequested) return { success: false, error: 'Typing cancelled before completion.' };
+                await delay(60);
+                const where = placed ? ' at the end of its text (the cursor was not in it)' : ' where the cursor was';
+                if (boxText(box) === before) return { success: false, error: `Typed "${clipped(value, 80)}" into [${id}]${where}, but its text did not change: the page did not take the typing. ${boxReport(box, id)}` };
+                const read = boxReport(box, id);
+                return { success: true, reads: read, freeText: true, message: `Typed "${clipped(value, 80)}" into [${id}]${where}, keeping what was there. ${read}` };
+            }
+
             // ----- clear -----
             if (action === 'clear') {
                 await moveAgentCursorToElement(el, "Clear");
@@ -4029,15 +5129,18 @@
 
             // ----- keypress -----
             if (action === 'keypress') {
-                const targetEl = pageLevelKey ? (document.activeElement || document.body) : el;
                 // A key that presses what it lands on goes only where it was
                 // judged to land: one of the controls named in landsOn, or
                 // nothing in particular. Focus that moved elsewhere since is
                 // said, and the key is not pressed.
                 const keyName = String(text || data.key || 'Enter');
-                if (pageLevelKey && Array.isArray(data.landsOn) && /(^|\+)\s*(enter|return|numpadenter|space|spacebar| )$/i.test(keyName)) {
-                    let focus = document.activeElement;
-                    while (focus && focus.shadowRoot && focus.shadowRoot.activeElement) focus = focus.shadowRoot.activeElement;
+                // "ctrl+b", "Shift+ArrowLeft", "Mod-z": the key and the keys held with it.
+                const combo = EDIT() ? EDIT().parseKeyCombo(keyName, ON_MAC) : { key: keyName, mods: {} };
+                const key = combo.key;
+                // Enter and Space press what they land on, however they are written ("Ctrl-Enter" too).
+                const activates = /^(enter|return|numpadenter| |space|spacebar)$/i.test(key);
+                if (pageLevelKey && Array.isArray(data.landsOn) && activates) {
+                    const focus = deepActive();
                     const nowhere = !focus || focus === document.body || focus === document.documentElement;
                     const judged = data.landsOn.some((n) => elementMap[n] === focus);
                     if (!nowhere && !judged) {
@@ -4045,95 +5148,181 @@
                         return { success: false, error: `The focus is on ${known ? `[${known}]` : 'a control that is not listed'}, not where this key was judged to land, so ${keyName} was not pressed. Press it with the ref of the control it is meant for.` };
                     }
                 }
-                if (!targetEl) {
-                    return { success: false, error: "No focused or targeted element found to press key." };
-                }
+                const mods = { ctrlKey: !!(combo.mods.ctrlKey || modifiers.ctrlKey), shiftKey: !!(combo.mods.shiftKey || modifiers.shiftKey), altKey: !!(combo.mods.altKey || modifiers.altKey), metaKey: !!(combo.mods.metaKey || modifiers.metaKey) };
+                const meta = resolveKeyMeta(key);
 
+                // A key goes where the keyboard focus is, as it does for a
+                // person. Named a control, the focus is put there first; a
+                // text box keeps its cursor and selection, so a shortcut
+                // acts on the words selected in it. A control that cannot
+                // hold the focus never gets a key: the key would go to the
+                // page as a whole, where it can scroll, change pages or
+                // set off the page's own shortcuts.
+                let targetEl = pageLevelKey ? (deepActive() || document.body) : el;
+                if (!targetEl) return { success: false, error: "No focused or targeted element found to press key." };
                 const connKey = requireConnected(targetEl);
                 if (!connKey.ok) return connKey.error;
                 // Keys do not reach a control that is switched off.
                 if (!pageLevelKey && targetEl.disabled) return { success: false, error: `[${id}] is disabled: it takes no keys. scroll with its ref moves what is inside it.` };
-
-                targetEl.focus();
-                await moveAgentCursorToElement(targetEl, `Press ${text || data.key || "Enter"}`);
-
-                const key = text || data.key || "Enter";
-                const meta = resolveKeyMeta(key);
+                const box = textBoxOf(pageLevelKey ? targetEl : el);
+                let where = '';
+                if (!pageLevelKey) {
+                    if (box) {
+                        await caretInto(box, false);
+                        targetEl = keyTarget(box);
+                    } else {
+                        // The focus events are sent by hand only to a control that took the focus.
+                        try { el.focus({ preventScroll: true }); } catch (_) { /* it takes none */ }
+                        if (holds(el, deepActive())) focusField(el);
+                        const holder = deepActive();
+                        const page = !holder || holder === document.body || holder === document.documentElement;
+                        // A list whose options the focused box moves through
+                        // (aria-activedescendant, or the list it names in
+                        // aria-controls or aria-owns): its keys go to that box.
+                        const steers = !page && holder && holder !== el && !holds(el, holder) && (() => {
+                            const active = holder.getAttribute('aria-activedescendant');
+                            if (active && el.id === active) return true;
+                            const named = `${holder.getAttribute('aria-controls') || ''} ${holder.getAttribute('aria-owns') || ''}`.split(/\s+/).filter(Boolean);
+                            for (let n = el; n && n.nodeType === 1; n = n.parentElement) if (n.id && named.includes(n.id)) return true;
+                            return false;
+                        })();
+                        if (holder && !page && holds(holder, el) && holder !== el) {
+                            const n = idOf(holder);
+                            where = ` (the keyboard focus is on ${n ? `[${n}]` : nameOfDrawn(holder)}, around it)`;
+                        } else if (steers) {
+                            targetEl = holder;
+                            const n = idOf(holder);
+                            where = ` (it went to ${n ? `[${n}]` : nameOfDrawn(holder)}, which has the keyboard focus and moves through [${id}]'s list)`;
+                        } else if (!holder || page || !holds(el, holder)) {
+                            if (key !== 'Escape') return { success: false, error: `[${id}] cannot take the keyboard focus, so ${keyName} would go to the page as a whole, not to it, and was not pressed. Press it with no ref to send it to the page as a whole, or press it on a control that takes keys${el.tagName === 'IFRAME' ? ' (the controls inside a frame are listed by their own numbers)' : ''}.` };
+                            // Escape closes what is open wherever it is pressed.
+                            targetEl = page ? document.body : holder;
+                            const n = page ? null : idOf(holder);
+                            where = ` ([${id}] cannot take the keyboard focus, so it went to ${page ? 'the page as a whole' : n ? `[${n}], which has the focus` : nameOfDrawn(holder)})`;
+                        }
+                    }
+                } else {
+                    const n = idOf(targetEl);
+                    where = targetEl === document.body || targetEl === document.documentElement ? ' on the page as a whole (nothing had the keyboard focus)' : n ? ` in [${n}], which has the keyboard focus` : ` in ${nameOfDrawn(targetEl)}, which has the keyboard focus`;
+                }
+                // A key that would type, delete, paste or cut in a field
+                // only the user fills in is not pressed, wherever it came from.
+                const typingBox = textBoxOf(targetEl) || box;
+                if (secretBox(typingBox)) {
+                    const def = EDIT() ? EDIT().keyDefault(key, mods, ON_MAC) : null;
+                    const edits = (def && (def.kind === 'text' || def.kind === 'delete')) || ((mods.ctrlKey || mods.metaKey) && /^[vx]$/i.test(key)) || (mods.shiftKey && key === 'Insert');
+                    if (edits) return { success: false, error: `The keyboard focus is in a field only the user fills in (a password, card number or code), so ${keyName} was not pressed: the user types there themselves.` };
+                }
+                await moveAgentCursorToElement(targetEl === document.body ? (el || targetEl) : targetEl, `Press ${keyName}`);
 
                 // A real key where one can be sent (the engine's debugger
                 // connection, top page only): the browser then does what
                 // the key does, such as scrolling, moving focus or typing.
-                const count = key === 'Enter' ? 1 : Math.max(1, Math.min(50, Number(data.times) || 1));
-                if (window === window.top && await pressRealKey(key, meta, modifiers, count)) {
-                    return { success: true, real: true, message: `Pressed ${key}${count > 1 ? ` ${count} times` : ''}${id ? ` in [${id}]` : ''}.` };
+                // A key that presses what it lands on, and any approved press, is made once.
+                const count = activates || data.once ? 1 : Math.max(1, Math.min(50, Number(data.times) || 1));
+                // A Mac runs a Command shortcut's editing command only when the key names it.
+                const commandsFor = (held) => (EDIT() && EDIT().editCommands ? EDIT().editCommands(key, held, ON_MAC) : []);
+                // What a shortcut changes in a box: its text, what is selected and the marks on it.
+                const boxState = (b) => {
+                    if (!b) return '';
+                    try {
+                        if (isField(b)) return `${b.value}\u0001${b.selectionStart}\u0001${b.selectionEnd}`;
+                        const s = selectedInEditor();
+                        return `${boxText(b)}\u0001${s ? `${s.text}\u0001${s.marks}` : ''}`;
+                    } catch (_) { return ''; }
+                };
+                const realBox = box && holds(box, targetEl) ? box : null;
+                const realBefore = realBox ? boxState(realBox) : '';
+                if (window === window.top && await pressRealKey(key, meta, mods, count, commandsFor(mods))) {
+                    // A shortcut written for another computer (ctrl+b on a
+                    // Mac) that changed nothing in the box is pressed once
+                    // more the way this computer holds it, as a scripted key is below.
+                    const here = realBox && EDIT() ? EDIT().shortcutHere(key, mods, ON_MAC) : null;
+                    let asHere = '';
+                    if (here) {
+                        await delay(40);
+                        if (boxState(realBox) === realBefore && await pressRealKey(key, meta, here, 1, commandsFor(here))) {
+                            asHere = ` Nothing changed, so it was pressed again as ${ON_MAC ? 'Command' : 'Control'}+${key}, the way this computer holds shortcuts.`;
+                        }
+                    }
+                    const read = box && !isField(box) ? boxReport(box, id) : '';
+                    return { success: true, real: true, ...(read ? { reads: read, freeText: true } : {}), message: `Pressed ${keyName}${count > 1 ? ` ${count} times` : ''}${id ? ` in [${id}]` : ''}${where}.${asHere}${read ? ` ${read}` : ''}` };
                 }
 
-                const keyOpts = {
-                    key,
-                    code: meta.code,
-                    keyCode: meta.keyCode,
-                    which: meta.keyCode,
-                    bubbles: true,
-                    cancelable: true,
-                    composed: true,
-                    view: window,
-                    ctrlKey: !!modifiers.ctrlKey,
-                    shiftKey: !!modifiers.shiftKey,
-                    altKey: !!modifiers.altKey,
-                    metaKey: !!modifiers.metaKey,
+                // One press: keydown and keypress to the page, then, when the
+                // page left the key alone, what the browser does with it.
+                const editBox = box && holds(box, targetEl) ? box : null;
+                const pressOnce = (held) => {
+                    const keyOpts = keyInit(key, held);
+                    // dispatchEvent returns false when a listener called
+                    // preventDefault, i.e. the page handled the key itself.
+                    const down = targetEl.dispatchEvent(new KeyboardEvent('keydown', keyOpts));
+                    // Dispatch keypress for printable keys and Enter (browsers
+                    // fire keypress for Enter with charCode 13).
+                    let press = true;
+                    if (down && (meta.printable || key === 'Enter') && !held.ctrlKey && !held.metaKey) {
+                        press = targetEl.dispatchEvent(new KeyboardEvent('keypress', { ...keyOpts, charCode: key === 'Enter' ? 13 : key.charCodeAt(0) }));
+                    }
+                    let did = '';
+                    if (down && press) {
+                        const def = editBox && EDIT() ? EDIT().keyDefault(key, held, ON_MAC) : null;
+                        if (def) did = keyDefaultIn(editBox, targetEl, def);
+                        // Enter fallback: only submit/click when the page did NOT
+                        // handle the key events itself, otherwise the action fires
+                        // twice (e.g. a form submitted by the page AND requestSubmit).
+                        if (key === 'Enter' && !did && !held.ctrlKey && !held.metaKey) {
+                            if (targetEl.tagName === 'INPUT' && targetEl.form) {
+                                targetEl.form.requestSubmit ? targetEl.form.requestSubmit() : targetEl.form.submit();
+                                did = 'submit';
+                            } else if (
+                                typeof targetEl.click === 'function' &&
+                                targetEl.matches('button, a[href], summary, input[type="button"], input[type="submit"], input[type="reset"], input[type="checkbox"], input[type="radio"], [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"]')
+                            ) {
+                                // What Enter does by itself in a browser: it presses
+                                // the button or follows the link it is on. In a text
+                                // box with no form around it, it does nothing.
+                                targetEl.click();
+                                did = 'click';
+                            }
+                        }
+                    }
+                    targetEl.dispatchEvent(new KeyboardEvent('keyup', keyOpts));
+                    return { heard: !down || !press, did };
                 };
 
-                // dispatchEvent returns false when a listener called
-                // preventDefault, i.e. the page handled the key itself.
-                const keydownUnhandled = targetEl.dispatchEvent(
-                    new KeyboardEvent('keydown', keyOpts),
-                );
-
-                // Dispatch keypress for printable keys and Enter (browsers
-                // fire keypress for Enter with charCode 13).
-                let keypressUnhandled = true;
-                if (meta.printable || key === 'Enter') {
-                    keypressUnhandled = targetEl.dispatchEvent(new KeyboardEvent('keypress', {
-                        ...keyOpts,
-                        charCode: key === 'Enter' ? 13 : key.charCodeAt(0),
-                    }));
+                const marksBefore = editBox ? selectedInEditor() : null;
+                let held = mods;
+                let first = pressOnce(held);
+                // A shortcut written for another computer (ctrl+b where this
+                // one holds shortcuts with Command): when nothing heard it, it
+                // is pressed once more the way this computer holds it.
+                const here = !first.heard && !first.did && EDIT() ? EDIT().shortcutHere(key, mods, ON_MAC) : null;
+                let asHere = '';
+                if (here) {
+                    const again = pressOnce(here);
+                    if (again.heard || again.did) { held = here; first = again; asHere = ` It was pressed as ${ON_MAC ? 'Command' : 'Control'}+${key}, the way this computer holds shortcuts.`; }
                 }
-
-                // Enter fallback: only submit/click when the page did NOT
-                // handle the key events itself, otherwise the action fires
-                // twice (e.g. a form submitted by the page AND requestSubmit).
-                let enterFallbackUsed = false;
-                if (key === 'Enter' && keydownUnhandled && keypressUnhandled) {
-                    const targetTag = targetEl.tagName.toLowerCase();
-                    if (targetTag === 'input' && targetEl.form) {
-                        targetEl.form.requestSubmit ? targetEl.form.requestSubmit() : targetEl.form.submit();
-                        enterFallbackUsed = true;
-                    } else if (
-                        typeof targetEl.click === 'function' &&
-                        targetEl.matches('button, a[href], summary, input[type="button"], input[type="submit"], input[type="reset"], input[type="checkbox"], input[type="radio"], [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"]')
-                    ) {
-                        // What Enter does by itself in a browser: it presses
-                        // the button or follows the link it is on. In a text
-                        // box with no form around it, it does nothing.
-                        targetEl.click();
-                        enterFallbackUsed = true;
-                    }
-                }
-
-                targetEl.dispatchEvent(new KeyboardEvent('keyup', keyOpts));
 
                 // The same key again, as a person taps it several times.
-                const times = key === 'Enter' ? 1 : Math.max(1, Math.min(50, Number(data.times) || 1));
+                const times = count;
                 for (let i = 1; i < times && targetEl.isConnected && !cancelRequested; i++) {
                     await delay(25);
-                    targetEl.dispatchEvent(new KeyboardEvent('keydown', keyOpts));
-                    if (meta.printable) targetEl.dispatchEvent(new KeyboardEvent('keypress', { ...keyOpts, charCode: key.charCodeAt(0) }));
-                    targetEl.dispatchEvent(new KeyboardEvent('keyup', keyOpts));
+                    pressOnce(held);
                 }
 
+                let after = '';
+                let read = '';
+                if (editBox) {
+                    await delay(40);
+                    const marksNow = selectedInEditor();
+                    read = boxReport(editBox, id || idOf(editBox));
+                    after = ` ${read}`;
+                    if (marksBefore && marksNow && marksBefore.marks === marksNow.marks && (held.ctrlKey || held.metaKey) && !first.heard && !first.did) after += ' Nothing in it heard the key: the selected words are as they were.';
+                }
                 return {
                     success: true,
-                    message: `Pressed ${key}${times > 1 ? ` ${times} times` : ''}${id ? ` in [${id}]` : ''}.`,
+                    ...(read ? { reads: read, freeText: true } : {}),
+                    message: `Pressed ${keyName}${times > 1 ? ` ${times} times` : ''}${id ? ` in [${id}]` : ''}${where}.${asHere}${after}`,
                 };
             }
 
@@ -4960,10 +6149,14 @@
         return { changed, cancelled, taken: watch.stop(), unseen: unseen ? unseen.stop() : [], outcome, settle, ms: Date.now() - since, network: !!settle.network, asked: !!settle.asked, loading: !!settle.loading };
     }
 
+    /** The gestures whose result says what words they brought up on screen. */
+    const GESTURE_ACTIONS = new Set(['hover', 'double_click', 'right_click', 'hold', 'drag', 'click_at']);
+
     /** Actions whose real page effect should be measured. */
     const MEASURED_ACTIONS = new Set([
-        'click', 'double_click', 'right_click', 'hover', 'type', 'fill_form', 'clear',
+        'click', 'double_click', 'right_click', 'hold', 'hover', 'type', 'fill_form', 'clear',
         'select_option', 'checkbox_toggle', 'keypress', 'scroll', 'fill', 'drag', 'click_at',
+        'insertText', 'selectText',
     ]);
 
     // =========================================================================
@@ -4971,30 +6164,44 @@
     // =========================================================================
 
     /**
-     * The frames worth reading as part of this page: one that is drawn on
-     * top of it (a consent notice served by another site is the common
-     * case), or one that fills a good part of the window. A frame that is a
-     * human check is never one of them.
+     * The frames worth reading as part of this page, in the order they are
+     * read: one drawn on top of it (a consent notice served by another
+     * site is the common case), then frames from this page's own site (a
+     * form or a widget the page put in a frame), then those that fill a
+     * good part of the window, then any other drawn on the page. A frame
+     * too small to hold a control, and a frame that is a human check, are
+     * never among them. Each says where it is from, so one the agent has
+     * no access to is said to be there and not waited for.
      */
     let frameCandidates = [];
+    const FRAMES_READ = 6;
     function findFrames() {
         const vw = window.innerWidth || 1;
         const vh = window.innerHeight || 1;
         const out = [];
-        const add = (frame, onTop) => {
+        const add = (frame, onTop, rank) => {
             if (!frame || out.some((f) => f.el === frame) || !frame.contentWindow) return;
             try { if (frame.matches(HUMAN_CHECK_WIDGETS) || frame.closest('.cf-turnstile, .h-captcha, #px-captcha')) return; } catch (_) { return; }
             const r = frame.getBoundingClientRect();
-            if (r.width < 120 || r.height < 60) return;
-            const label = (frame.getAttribute('title') || frame.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim().slice(0, 50);
-            out.push({ el: frame, onTop, label, ref: idOf(frame), position: r.bottom < 0 ? 'above-fold' : r.top > vh ? 'below-fold' : 'in-viewport' });
+            if (r.width < 40 || r.height < 24 || !isRendered(frame)) return;
+            const label = (frame.getAttribute('title') || frame.getAttribute('aria-label') || frame.getAttribute('name') || '').replace(/\s+/g, ' ').trim().slice(0, 50);
+            // A frame with no address of its own (about:blank, srcdoc) is of this page's site.
+            let origin = location.origin;
+            try { const src = frame.getAttribute('src'); if (src && !/^(about|javascript):/i.test(src)) origin = new URL(src, location.href).origin; } catch (_) { /* keep the page's */ }
+            let own = false;
+            try { own = !!frame.contentDocument; } catch (_) { own = false; }
+            out.push({ el: frame, onTop, rank, label, ref: idOf(frame), origin: origin === 'null' ? location.origin : origin, own, big: r.width >= 120 && r.height >= 60, at: { x: Math.round(r.left + window.scrollX), y: Math.round(r.top + window.scrollY), w: Math.round(r.width), h: Math.round(r.height) }, position: r.bottom < 0 ? 'above-fold' : r.top > vh ? 'below-fold' : 'in-viewport' });
         };
-        for (const l of overlayLayers) add(l.node.tagName === 'IFRAME' ? l.node : l.node.querySelector('iframe'), true);
-        for (const frame of document.querySelectorAll('iframe')) {
+        for (const l of overlayLayers) add(l.node.tagName === 'IFRAME' ? l.node : l.node.querySelector('iframe'), true, 0);
+        const all = Array.from(document.querySelectorAll('iframe, frame'));
+        const ownSite = (frame) => { try { return !!frame.contentDocument; } catch (_) { return false; } };
+        for (const frame of all) if (ownSite(frame)) add(frame, !!overlayOf(frame), 1);
+        for (const frame of all) {
             const r = frame.getBoundingClientRect();
-            if (r.width * r.height >= vw * vh * 0.2 && isRendered(frame)) add(frame, !!overlayOf(frame));
+            if (r.width * r.height >= vw * vh * 0.2) add(frame, !!overlayOf(frame), 2);
         }
-        return out.slice(0, 3);
+        for (const frame of all) add(frame, !!overlayOf(frame), 3);
+        return out.slice(0, FRAMES_READ);
     }
 
     /**
@@ -5081,7 +6288,7 @@
                     const token = `f${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
                     f.token = token;
                     try { f.el.contentWindow.postMessage({ selectToAiFrame: token }, '*'); } catch (_) { /* a frame that went away */ }
-                    return { token, label: f.label, onTop: f.onTop, ref: f.ref, position: f.position };
+                    return { token, label: f.label, onTop: f.onTop, ref: f.ref, position: f.position, origin: f.origin, own: f.own, big: f.big, at: f.at };
                 });
                 sendResponse({ success: true, frames });
             } catch (err) {
@@ -5192,9 +6399,11 @@
                     // The control the action is on (for a key with no
                     // control named, the one holding the cursor), and the
                     // state it shows, to say afterwards what it shows now.
-                    const told = /^(click|press|double_click|hover|drag)$/.test(request.data.action);
+                    const told = /^(click|press|double_click|right_click|hold|hover|drag)$/.test(request.data.action);
                     const acted = told ? (elementMap[request.data.id] || (request.data.id === undefined ? document.activeElement : null)) : null;
                     const stateBefore = acted ? stateOf(acted) : '';
+                    // Words selected in an editor, and their marks: a toolbar button acts on them.
+                    const marksBefore = request.data.action === 'click' ? selectedInEditor() : null;
                     // What was already busy is the page's own; only what the action brings up is waited for.
                     const busyBefore = SETTLE_TOOLS ? busyMarks() : null;
                     const since = Date.now();
@@ -5208,6 +6417,8 @@
                     // A press the page does not answer is made another way (see
                     // otherPressWays), unless the user approved this one press.
                     const kind = request.data.action;
+                    // The words on screen before a gesture, to say what it brought up that has no number (a tooltip, a label).
+                    const wordsBefore = GESTURE_ACTIONS.has(kind) ? wordsOnScreen() : null;
                     const again = !!SETTLE_TOOLS && !request.data.once && (kind === 'click' || kind === 'hover');
                     const watch = again && kind === 'click' ? watchTaken() : null;
                     // What a press does out of sight is watched for every click, so the result can say it.
@@ -5268,6 +6479,18 @@
                                 result.stateChanged = true;
                             }
                         }
+                        // The words a gesture brought up on screen: a tooltip, a
+                        // label, a count. What has a number is said below by it.
+                        if (wordsBefore && !result.outcome.urlChanged && typeof result.message === 'string') {
+                            const fresh = newWords(wordsBefore, wordsOnScreen()).join(' ').replace(/\s+/g, ' ').trim();
+                            if (fresh) result.message += ` Text that appeared on screen: "${fresh.length > 280 ? `${fresh.slice(0, 279)}…` : fresh}".`;
+                        }
+                        if (marksBefore && typeof result.message === 'string') {
+                            const marksNow = selectedInEditor();
+                            if (marksNow && marksNow.box === marksBefore.box && marksNow.marks !== marksBefore.marks) {
+                                result.message += ` The selected "${clipped(marksNow.text, 60)}" is now ${marksNow.marks ? listOf(marksNow.marks.split(',')) : 'without bold, italic or other marks'}.`;
+                            }
+                        }
                         // What the action brought up, by the numbers the listing
                         // will give it: a menu's entries, a popover's fields. On
                         // the same page only; a new page is listed whole anyway.
@@ -5293,6 +6516,22 @@
                 }
             })();
             return true; // keep channel open for async sendResponse
+        } else if (request.action === 'placeNamed') {
+            // The place a drag would let go on, by its words, and all the words
+            // written on it, for the engine to judge before the drag (core/policy.js).
+            try {
+                const dragged = elementMap[request.id] || null;
+                const place = placeNamed(request.toText, dragged);
+                sendResponse(place ? { success: true, words: wordsOfPlace(place) } : { success: false, error: `Nothing shown on the page has the words "${String(request.toText || '').slice(0, 80)}" written on it, so there is no place to let go. Nothing was dragged.` });
+            } catch (err) {
+                sendResponse({ success: false, error: err.message || String(err) });
+            }
+        } else if (request.action === 'picture') {
+            // One control's own picture, for a look at it (engine.js).
+            const el = elementMap[request.id];
+            if (!el || !el.isConnected) { sendResponse({ success: false, error: `[${request.id}] is not on the page any more.` }); return false; }
+            pictureOf(el, request.id).then(sendResponse, (e) => sendResponse({ success: false, error: String((e && e.message) || e) }));
+            return true;
         } else if (request.action === 'readText') {
             // The page's text alone, for a tab the user pointed at: no
             // element scan and nothing drawn on the page.

@@ -735,6 +735,25 @@ async function main() {
         if (at.counted !== "Count: 1" || /Order: Apples/.test(at.order)) return `by script: ${JSON.stringify(at)}`;
         return pointers(r, ["synthetic", "synthetic"]);
       }, "pointerNoDebugger", { before: () => refuseDebugger(true) }],
+      // Every whole gesture made by script, as a build without the debugger makes them.
+      ["gestures", "/gestures", async () => false, async (r) => {
+        await refuseDebugger(false);
+        await mainModel("e2e-scripted-model");
+        const at = await r.fixture.evaluate(() => Object.fromEntries(["s-cell", "s-menu", "s-press", "s-legend", "s-order", "s-bin", "s-token"].map((id) => [id, document.getElementById(id).textContent])));
+        const want = { "s-cell": "Cell: editing", "s-menu": "Menu: open", "s-press": "Button: activated by a long press", "s-legend": "North: hidden", "s-order": "Order: Gamma, Alpha, Beta", "s-bin": "Dropped: Teacup in china", "s-token": "Token: moved by touch" };
+        const wrong = Object.keys(want).filter((k) => at[k] !== want[k]);
+        // The steps of the gestures that did not land, not the run's opening.
+        const log = String(r.log).replace(/\s+/g, " ");
+        const marks = { "s-order": "Put Gamma first", "s-bin": "Put the teacup", "s-token": "Slide the token" };
+        const starts = wrong.map((k) => (marks[k] ? log.indexOf(marks[k]) : -1)).filter((i) => i >= 0);
+        const from = starts.length ? Math.min(...starts) : 0;
+        if (wrong.length) return `the page shows ${JSON.stringify(at)}: ${log.slice(from, from + 1400)}`;
+        const told = (re, what) => (r.prompts.some((p) => re.test(p)) ? null : `the model was not told ${what}`);
+        return told(/Text that appeared on screen: "[^"]*08:00 to 09:00 Visits 1204/, "the tooltip the hover brought up")
+          || told(/A picture of \[\d+\] \(a canvas, drawn 300 by 150 pixels\) is attached/, "that the drawing's own picture was attached")
+          || told(/The page took it as a drag and drop, and it was dropped on /, "that the teacup was dropped")
+          || told(/it was made again as a touch, and the page answered that/, "that the token answered only a touch");
+      }, "gestures", { before: async () => { await refuseDebugger(true); await mainModel("e2e-vision-model"); } }],
       ["pointerCanvas", "/pointer-canvas", async () => false, async (r) => {
         const at = await r.fixture.evaluate(() => ({ spot: window.spot || null, under: !!window.underPressed }));
         if (!at.spot || Math.abs(at.spot[0] - 190) > 1 || Math.abs(at.spot[1] - 55) > 1 || at.spot[2] !== true) return `the drawing was not pressed at 190,55 by a real press: ${JSON.stringify(at.spot)} ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
@@ -867,6 +886,42 @@ async function main() {
       ["toolbar", "/toolbar", async () => false, async (r) => {
         const at = await r.fixture.evaluate(() => ({ state: document.getElementById("state").textContent, title: document.getElementById("title").value }));
         return at.state === "Title in upper case" && at.title === "SHOPPING LIST" ? null : `${JSON.stringify(at)}: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+      }],
+      // An editor with its own model of the text takes typing at its end, a
+      // word selected by its text, and its bold shortcut, and says it is bold.
+      ["editorBold", "/editor", async () => false, async (r) => {
+        const text = await r.fixture.evaluate(() => window.editorModel.map((p) => p.map((x, i) => `${x.b && !(p[i - 1] && p[i - 1].b) ? "**" : ""}${x.c}${x.b && !(p[i + 1] && p[i + 1].b) ? "**" : ""}`).join("")));
+        if (JSON.stringify(text) !== JSON.stringify(["Original text here.", "**Practice** line"])) return `the editor holds ${JSON.stringify(text)}: ${String(r.log).replace(/\s+/g, " ").slice(0, 900)}`;
+        return /Practice line/.test(r.answer) && /bold/.test(r.answer) ? null : `answer: ${JSON.stringify(r.answer)}`;
+      }],
+      // A button in a frame within a frame is listed under the frames' path
+      // and pressed by its number; a frame from a site with no access is said.
+      ["nestedFrame", "/frames", async () => false, async (r) => {
+        const inner = r.fixture.frames().find((f) => /\/frames\/inner$/.test(f.url()) && f.parentFrame() && f.parentFrame() !== r.fixture.mainFrame());
+        const at = inner ? await inner.evaluate(() => ({ text: document.getElementById("nested").textContent, clicked: window.clicked || 0 })) : null;
+        if (!at || at.text !== "Clicked, thank you" || at.clicked !== 1) return `the inner button: ${JSON.stringify(at)}: ${String(r.log).replace(/\s+/g, " ").slice(0, 900)}`;
+        const listed = r.prompts.find((p) => /frame "Outer box" > frame "Inner"/.test(p));
+        if (!listed) return `the inner frame's controls were not listed under the frames' path: ${String(r.prompts[0] || "").slice(-2500)}`;
+        if (!/could not be read: it comes from 127\.0\.0\.2, which the agent has no access to/.test(listed)) return "the frame from a site with no access was not said to be unreadable";
+        if (!/click \[2000\d\d\]/.test(r.log)) return `the inner button was not pressed by its own number: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        return /Clicked, thank you/.test(r.answer) ? null : `answer: ${JSON.stringify(r.answer)}`;
+      }],
+      // A rating set in a shadow root is read back: its value is in the
+      // listing, and what the action read back counts as evidence.
+      ["shadowRating", "/rating", async () => false, async (r) => {
+        const value = await r.fixture.evaluate(() => document.getElementById("stars").value);
+        if (value !== 4) return `the rating holds ${value}: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (!r.prompts.some((p) => /\[\d+\] div "Rating" role=slider value="4" min=0 max=5/.test(p))) return "the rating's value was not in the listing";
+        if (/not in anything you have been shown/.test(r.log)) return "a quote of what the action read back was refused as evidence";
+        return /4 of 5/.test(r.answer) ? null : `answer: ${JSON.stringify(r.answer)}`;
+      }],
+      // A key named for a control that cannot hold the focus is not sent to
+      // the page as a whole, where it changed pages; a control that takes keys gets it.
+      ["keysWhere", "/chart-keys", async () => false, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ path: location.pathname, zoom: document.getElementById("zoom") && document.getElementById("zoom").getAttribute("aria-valuenow") }));
+        if (at.path !== "/chart-keys") return `the key went to the page and it changed to ${at.path}`;
+        if (at.zoom !== "2") return `the zoom shows ${at.zoom}: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        return /cannot take the keyboard focus, so ArrowRight would go to the page as a whole/.test(r.log) ? null : `the refused key was not explained: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
       }],
       // A menu only the real mouse opens: said once, as a fact, and the hover is not repeated.
       ["hoverScripted", "/pointer-menu", async () => false, async (r) => {

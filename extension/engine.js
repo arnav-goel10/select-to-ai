@@ -450,7 +450,10 @@
   // Controls inside a frame are numbered after the page's own: frame 1's
   // control 12 is [100012].
   const FRAME_BASE = 100000;
-  const MAX_FRAMES = 3;
+  const MAX_FRAMES = 6;
+  const FRAME_DEPTH = 3;
+  // The most a page read waits, over all levels, for its frames to answer.
+  const FRAME_WAIT_MS = 900;
   const hellos = new Map(); // "tabId:token" -> frameId
   const inFrame = (session, id) => {
     const k = Math.floor(Number(id) / FRAME_BASE);
@@ -471,44 +474,108 @@
   }
 
   /**
-   * Reads the frames that are part of what the user sees: a notice another
-   * site draws on top of the page, or a frame that fills much of the
-   * window. Their controls join the page's listing under the frame's name,
-   * and can be acted on like any other. A frame the extension has no access
-   * to, or that does not answer, is left as it was: said to be there, and
-   * not readable.
+   * Reads the frames of a page, and the frames inside those (a frame
+   * within a frame), up to FRAME_DEPTH deep and MAX_FRAMES in all: the
+   * ones drawn on top first, then the page's own, then the large ones
+   * (agentContentScript.js findFrames). Their controls join the page's
+   * listing under the frame's name, its path from the page ("frame "Shop"
+   * > frame "Pay""), and are acted on like any other by their numbers. A
+   * frame the extension has no access to, or that does not answer, is
+   * said to be there and unreadable, in the page's text, so the model
+   * knows why it sees nothing of it.
    */
   async function readFrames(session, tab, page) {
     // Every frame gets a few lines that say which frame it is when the page
     // hands it a token; nothing else goes into a frame that is not read.
     await quiet(inject({ tabId: tab.id, allFrames: true }, { func: announceFrame }));
-    const offered = (await send(tab.id, { action: "frameTokens" })) || {};
-    const list = (offered.frames || []).slice(0, MAX_FRAMES);
     const key = (f) => `${tab.id}:${f.token}`;
-    for (let waited = 0; waited < 600 && list.some((f) => !hellos.has(key(f))); waited += 50) await sleep(50);
+    const unread = [];
+    const access = new Map();
+    // Whether the extension may run in a frame from this site; only those are waited on.
+    const reachable = async (f) => {
+      if (f.own || !f.origin || f.origin === "null") return true;
+      if (!access.has(f.origin)) {
+        let pattern = "";
+        try { const u = new URL(f.origin); pattern = /^https?:$/.test(u.protocol) ? `${u.protocol}//${u.hostname}/*` : ""; } catch (_e) { pattern = ""; }
+        access.set(f.origin, pattern ? !!(await quiet(chrome.permissions.contains({ origins: [pattern] }))) : false);
+      }
+      return access.get(f.origin);
+    };
     let k = 0;
-    for (const f of list) {
-      const frameId = hellos.get(key(f));
-      hellos.delete(key(f));
-      if (frameId === undefined || !frameId) continue;
-      await quiet(inject({ tabId: tab.id, frameIds: [frameId] }, { files: ["agentTools.js", "agentContentScript.js"] }));
-      const got = await send(tab.id, { action: "scan", limit: 120, task: session.run.task, whole: true }, frameId);
-      if (!got || !Array.isArray(got.elements) || !got.elements.length) continue;
-      k += 1;
-      session.frames[k] = { frameId, label: f.label, token: f.token };
-      const name = `frame${f.label ? ` "${f.label}"` : ""}`;
-      // Where the frame is drawn, so its controls' places are given in the
-      // page's own pixels, as the page's own controls' are.
-      const box = await send(tab.id, { action: "frameBox", token: f.token });
-      const placed = framePlaces(box, got);
-      if (box && box.found) for (const area of page.frameAreas || []) if (area.x === box.area.x && area.y === box.area.y && area.w === box.area.w && area.h === box.area.h) area.read = true;
-      joinFrame(page, got, k, f, name, placed);
-      const text = String(got.innerText || "").trim();
-      if (text) page.innerText = `${page.innerText || ""}\n\n[In the ${name} on this page]\n${text.slice(0, 3000)}`;
-      if ((got.unseen || []).length) page.unseen = [...(page.unseen || []), ...got.unseen].slice(0, 8);
-      for (const b of got.blockers || []) (page.blockers = page.blockers || []).push({ ...b, whole: false });
-      if (f.onTop) for (const o of page.overlays || []) if (o.framed && !o.controls) { o.framed = false; o.controls = got.elements.length; break; }
+    // Every frame read counts, a frame that only holds others too.
+    let reads = 0;
+    let waitLeft = FRAME_WAIT_MS;
+    const parents = [{ frameId: 0, name: "", depth: 1 }];
+    while (parents.length && reads < MAX_FRAMES) {
+      const parent = parents.shift();
+      const offered = (await send(tab.id, { action: "frameTokens" }, parent.frameId)) || {};
+      const list = offered.frames || [];
+      // Only a frame the extension can run in is waited for: one from a
+      // site it has no access to never answers.
+      const open = new Set();
+      for (const f of list) if (await reachable(f)) open.add(f);
+      // Up to 600 ms for a level's frames to answer, and FRAME_WAIT_MS for all levels together.
+      const ceiling = Math.min(600, waitLeft);
+      let waited = 0;
+      for (; waited < ceiling && [...open].some((f) => !hellos.has(key(f))); waited += 50) await sleep(50);
+      waitLeft -= waited;
+      for (const f of list) {
+        const frameId = hellos.get(key(f));
+        hellos.delete(key(f));
+        if (frameId === undefined || !frameId) { unread.push({ f, parent, why: open.has(f) ? "quiet" : "access" }); continue; }
+        if (reads >= MAX_FRAMES) { unread.push({ f, parent, why: "many" }); continue; }
+        reads += 1;
+        await quiet(inject({ tabId: tab.id, frameIds: [frameId] }, { files: ["agentTools.js", "agentContentScript.js"] }));
+        const got = await send(tab.id, { action: "scan", limit: 120, task: session.run.task, whole: true }, frameId);
+        if (!got) { unread.push({ f, parent, why: "quiet" }); continue; }
+        const label = f.label || String(got.title || "").replace(/\s+/g, " ").trim().slice(0, 50);
+        const name = `${parent.name ? `${parent.name} > ` : ""}frame${label ? ` "${label}"` : ""}`;
+        // Where the frame is drawn in the main window: asked of the page or
+        // of the frame it is in, and placed through that frame in turn.
+        const inParent = await send(tab.id, { action: "frameBox", token: f.token }, parent.frameId);
+        const box = parent.frameId ? throughFrame(parent.box, parent.got, inParent) : inParent;
+        const position = parent.frameId ? parent.position : f.position;
+        // A frame inside this one is looked for even when this one has no controls of its own.
+        if (parent.depth < FRAME_DEPTH) parents.push({ frameId, name, depth: parent.depth + 1, box, got, position });
+        const text = String(got.innerText || "").trim();
+        if (text) page.innerText = `${page.innerText || ""}\n\n[In the ${name} on this page]\n${text.slice(0, 3000)}`;
+        if (!Array.isArray(got.elements) || !got.elements.length) continue;
+        k += 1;
+        session.frames[k] = { frameId, label, token: f.token, ...(parent.frameId ? { parent: parent.frameId } : {}) };
+        if (!parent.frameId && box && box.found) for (const area of page.frameAreas || []) if (area.x === box.area.x && area.y === box.area.y && area.w === box.area.w && area.h === box.area.h) area.read = true;
+        joinFrame(page, got, k, { ...f, position }, name, framePlaces(box, got));
+        if ((got.unseen || []).length) page.unseen = [...(page.unseen || []), ...got.unseen].slice(0, 8);
+        for (const b of got.blockers || []) (page.blockers = page.blockers || []).push({ ...b, whole: false });
+        if (f.onTop && !parent.frameId) for (const o of page.overlays || []) if (o.framed && !o.controls) { o.framed = false; o.controls = got.elements.length; break; }
+      }
     }
+    // What could not be read is said, so the model knows why it sees nothing of it.
+    const said = unread.filter((u) => u.f.big).slice(0, 3).map((u) => {
+      let site = "";
+      try { site = new URL(u.f.origin).hostname; } catch (_e) { site = ""; }
+      const what = `${u.parent.name ? `${u.parent.name} > ` : ""}frame${u.f.label ? ` "${u.f.label}"` : ""}${u.f.at ? ` (${u.f.at.w}x${u.f.at.h} at ${u.f.at.x},${u.f.at.y}${u.parent.name ? ` in ${u.parent.name}` : ""})` : ""}`;
+      const why = u.why === "access" ? `it comes from ${site || "another site"}, which the agent has no access to` : u.why === "many" ? `only the first ${MAX_FRAMES} frames of a page are read` : "it did not answer when it was read";
+      return `[The ${what} on this page could not be read: ${why}. Nothing inside it is listed, and nothing inside it can be acted on.]`;
+    });
+    if (said.length) page.innerText = `${page.innerText || ""}\n\n${said.join("\n")}`;
+  }
+
+  /**
+   * A frame's box inside the frame it is in (`inner`, in that frame's
+   * window), placed in the main window through that frame's own box
+   * (`outer`) and how wide its page lays out (`outerGot`).
+   */
+  function throughFrame(outer, outerGot, inner) {
+    if (!outer || !outer.found || !inner || !inner.found) return { found: false };
+    const scale = outerGot && outerGot.viewportWidth > 0 && outer.width > 0 ? outer.width / outerGot.viewportWidth : 1;
+    const round = (v) => Math.round(v);
+    const left = outer.left + inner.left * scale;
+    const top = outer.top + inner.top * scale;
+    return {
+      found: true, left, top, width: inner.width * scale,
+      area: { x: round(left + outer.scrollX), y: round(top + outer.scrollY), w: round(inner.area.w * scale), h: round(inner.area.h * scale) },
+      scrollX: outer.scrollX, scrollY: outer.scrollY,
+    };
   }
 
   /**
@@ -765,13 +832,18 @@
     const tab = await quiet(chrome.tabs.get(session.run.tabId));
     const page = tab && isWeb(tab.url) ? await scan(session, tab, () => {}) : null;
     if (!page || !Array.isArray(page.elements)) return null;
-    const el = page.elements.find((e) => e.id === a.ref);
-    const now = el ? TOOLS.elementLabel(el) : null;
-    if (now === a.approved) return null;
-    await loadMemory();
-    KNOWN.annotate(page.elements, memory);
-    session.page = page;
-    return { ok: false, changed: true, message: `[${a.ref}] ${el ? `now says "${String(now).slice(0, 80)}", not "${String(a.approved).slice(0, 80)}"` : "is no longer on the page"}, so the approved step was not run.` };
+    // The control pressed, and for a drag the control it is let go on.
+    const ends = [[a.ref, a.approved], ...(a.approvedTo !== undefined && a.to_ref !== undefined ? [[a.to_ref, a.approvedTo]] : [])];
+    for (const [ref, was] of ends) {
+      const el = page.elements.find((e) => e.id === ref);
+      const now = el ? TOOLS.elementLabel(el) : null;
+      if (now === was) continue;
+      await loadMemory();
+      KNOWN.annotate(page.elements, memory);
+      session.page = page;
+      return { ok: false, changed: true, message: `[${ref}] ${el ? `now says "${String(now).slice(0, 80)}", not "${String(was).slice(0, 80)}"` : "is no longer on the page"}, so the approved step was not run.` };
+    }
+    return null;
   }
 
   async function lookAgain(session, result, back) {
@@ -1034,7 +1106,15 @@
     const pageChanged = moved || !!o.urlChanged || !!o.titleChanged || (o.newElementCount || 0) !== 0 || (navigates && (o.domMutationCount || 0) > 0) || !!(res.choices && res.choices.length);
     // Changed where it stands: same address, same title, nothing left to choose.
     const soft = pageChanged && !moved && !o.urlChanged && !o.titleChanged && !(res.choices && res.choices.length);
-    return { ok: true, message, pageChanged, soft, noEffect: !!o.noEffect && !moved && !valued, ...pointer };
+    // What the page itself said back after the action (a control's value
+    // once set, a box's text after typing), apart from the words of the
+    // result, which repeat what the model wrote. Only this is evidence an
+    // answer may quote (core/run.js textsOf). Free text is the box's text,
+    // which holds what the agent typed.
+    const readBack = typeof res.reads === "string" && res.reads ? res.reads
+      : res.shows !== undefined && res.shows !== null && String(res.shows) && local.id !== undefined ? `[${local.id}] now shows "${String(res.shows).slice(0, 120)}"` : "";
+    const reads = readBack ? { reads: numbers(readBack), ...(res.freeText ? { freeText: true } : {}) } : {};
+    return { ok: true, message, pageChanged, soft, noEffect: !!o.noEffect && !moved && !valued, ...pointer, ...reads };
   }
 
   /**
@@ -1062,6 +1142,13 @@
     return got && got.data ? { image: `data:image/jpeg;base64,${got.data}` } : { why: "" };
   }
 
+  /** Where inside a control a gesture is aimed, as the page is told it: fractions of its box. */
+  const spotOf = (a) => (a.fx !== undefined ? { fx: a.fx, fy: a.fy } : {});
+  /** Where on the target a drag lets go: before or after it, or a spot of its box. */
+  const dropSpot = (a) => ({ ...(a.place ? { place: a.place } : {}), ...(a.to_fx !== undefined ? { toFx: a.to_fx, toFy: a.to_fy } : {}) });
+  /** A press the user approved is made once, whatever the gesture: the page does not make it again another way. */
+  const onceIf = (a) => (a.once || a.approved !== undefined ? { once: true } : {});
+
   async function act(session, a, keys) {
     const run = session.run;
     const tabId = run.tabId;
@@ -1071,8 +1158,12 @@
     switch (a.do) {
       // A press the user approved is made once: the page is not pressed another way when it shows no answer.
       // Any other is made with Enter or Space too only where those keys were allowed on it (keys).
-      case "click": return interact(session, a, { action: "click", id: a.ref, ...(a.approved !== undefined ? { once: true } : keys ? { keys: true } : {}) }, true);
-      case "hover": return interact(session, a, { action: "hover", id: a.ref }, false);
+      case "click": return interact(session, a, { action: "click", id: a.ref, ...spotOf(a), ...(onceIf(a).once ? { once: true } : keys ? { keys: true } : {}) }, true);
+      case "hover": return interact(session, a, { action: "hover", id: a.ref, ...spotOf(a) }, false);
+      // The other whole gestures on a control: each is the page's own sequence of events (agentContentScript.js).
+      case "double_click": return interact(session, a, { action: "double_click", id: a.ref, ...spotOf(a), ...onceIf(a) }, true);
+      case "right_click": return interact(session, a, { action: "right_click", id: a.ref, ...spotOf(a), ...onceIf(a) }, false);
+      case "hold": return interact(session, a, { action: "hold", id: a.ref, seconds: a.seconds, ...spotOf(a), ...onceIf(a) }, true);
       case "click_at": {
         // What is at the point, as the decision on it saw it: the page
         // checks it is still that before it presses.
@@ -1087,6 +1178,17 @@
         const from = inFrame(session, a.ref);
         const apart = `[${a.ref}] is in ${from.k ? "a frame" : "the page itself"} and where it would be let go is not, and a drag cannot go from one to the other.`;
         let expect;
+        // Words on the place to let go: found on the page, and checked there as a press on it is (core/policy.js).
+        // The place is found first, and its own words judged as the words given
+        // were: a drop is never let through on part of what the place says.
+        if (a.to_text !== undefined) {
+          const place = await quiet(send(tabId, { action: "placeNamed", id: from.id, toText: a.to_text }, from.frameId));
+          if (!place || !place.success) return { ok: false, message: (place && place.error) || `Nothing shown on the page has the words "${String(a.to_text).slice(0, 80)}" written on it. Nothing was dragged.` };
+          await loadMemory();
+          const held = POLICY.placeRiskier(a, place.words, page, run, session.settings, memory);
+          if (held) return { ok: false, message: held.message };
+          return interact(session, a, { action: "drag", id: a.ref, toText: a.to_text, toWords: place.words, ...spotOf(a), ...dropSpot(a), ...onceIf(a) }, true);
+        }
         if (a.to_ref !== undefined) {
           const to = inFrame(session, a.to_ref);
           if (to.k !== from.k) return { ok: false, message: apart };
@@ -1097,7 +1199,7 @@
           if (hit.el && (hit.el.frame || 0) !== from.k) return { ok: false, message: apart };
           expect = { ref: hit.el ? inFrame(session, hit.el.id).id : null, frame: false };
         }
-        return interact(session, a, { action: "drag", id: a.ref, ...(a.to_ref !== undefined ? { to: a.to_ref } : { direction: a.direction, distance: a.distance }), expect }, true);
+        return interact(session, a, { action: "drag", id: a.ref, ...(a.to_ref !== undefined ? { to: a.to_ref, ...dropSpot(a) } : { direction: a.direction, distance: a.distance }), ...spotOf(a), expect, ...onceIf(a) }, true);
       }
       case "fill": {
         if (!a.from) return interact(session, a, { action: "fill", id: a.ref, value: a.value }, false);
@@ -1107,6 +1209,9 @@
         const label = (KNOWN.FIELD_LABEL[a.from] || a.from).toLowerCase();
         return r.ok ? { ...r, used: [a.from], message: `Filled [${a.ref}] with the user's ${label}.` } : { ...r, message: `[${a.ref}] did not take the user's ${label}.` };
       }
+      // Text typed where a box's cursor is, and words selected in a box by their text.
+      case "type": return interact(session, a, { action: "insertText", id: a.ref, value: a.value }, false);
+      case "select_text": return interact(session, a, { action: "selectText", id: a.ref, value: a.value }, false);
       case "fill_details": {
         const done = [];
         const failed = [];
@@ -1141,7 +1246,8 @@
         });
         return { ok: true, message: lines.join("; "), used: keys.filter((k) => KNOWN.fieldValue(memory, k)) };
       }
-      case "press": return interact(session, a, { action: "keypress", id: a.ref, text: a.key, ...(a.times ? { times: a.times } : {}), ...(a.ref === undefined && Array.isArray(a.landsOn) ? { landsOn: a.landsOn } : {}) }, true);
+      // A press the user approved, or one marked once, is made once, whatever times says.
+      case "press": return interact(session, a, { action: "keypress", id: a.ref, text: a.key, ...(onceIf(a).once ? { once: true } : a.times ? { times: a.times } : {}), ...(a.ref === undefined && Array.isArray(a.landsOn) ? { landsOn: a.landsOn } : {}) }, true);
       case "scroll": {
         if (a.ref === undefined) return interact(session, a, { action: "scroll", scrollDirection: a.direction || "down" }, false);
         if (a.direction) return interact(session, a, { action: "scroll", id: a.ref, scrollTarget: inFrame(session, a.ref).id, scrollDirection: a.direction }, false);
@@ -1205,6 +1311,15 @@
         return now ? { ok: true, pageChanged: true, closedTab: a.tab, tabId: now.id, message: `Closed tab ${a.tab}. Now on tab ${now.id}: ${now.title || now.url}` } : { ok: false, message: "Closed the tab, and no other tab is open to work in." };
       }
       case "look": {
+        // One control's own picture, drawn by the page itself: it needs no
+        // picture of the tab, which the browser may refuse.
+        let own = "";
+        if (a.ref !== undefined) {
+          const at = inFrame(session, a.ref);
+          const got = await quiet(send(tabId, { action: "picture", id: at.id }, at.frameId));
+          if (got && got.success && got.image) return { ok: true, pageChanged: true, image: got.image, message: String(got.message || "").replace(/\[(\d+)\]/g, (_m, n) => `[${at.k ? at.k * FRAME_BASE + Number(n) : n}]`) };
+          own = got && got.error ? String(got.error) : "";
+        }
         const shot = await capture(tabId);
         if (shot.image) {
           // A picture was taken after all (the user opened the extension on this tab): the refusal is no longer a fact here.
@@ -1221,7 +1336,7 @@
           session.noPictures = { run: run.id, tabId, why: shot.why };
           if (!noted) run.journal.push({ k: "note", text: "Chrome did not let the agent take a picture of this page, so it is working from the page's text and controls only. Maps, charts and images may be read less well." });
         }
-        return { ok: false, message: `A picture of this tab could not be taken.${shot.why ? ` ${shot.why}` : ""}` };
+        return { ok: false, message: `${own ? `${own} ` : ""}A picture of this tab could not be taken.${shot.why ? ` ${shot.why}` : ""}` };
       }
       case "read": {
         const page = session.page || {};
@@ -1579,9 +1694,11 @@
     const target = { tabId };
     const base = { key: String(m.key || ""), code: String(m.code || ""), windowsVirtualKeyCode: Number(m.keyCode) || 0, nativeVirtualKeyCode: Number(m.keyCode) || 0, modifiers: Number(m.modifiers) || 0 };
     const times = Math.max(1, Math.min(50, Number(m.times) || 1));
+    // The editing command a Mac runs for a Command shortcut (agentTools.js editCommands).
+    const commands = (Array.isArray(m.commands) ? m.commands : []).map(String).filter((c) => /^[A-Za-z]{1,40}$/.test(c)).slice(0, 2);
     try {
       for (let i = 0; i < times; i++) {
-        await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: m.text ? "keyDown" : "rawKeyDown", ...base, ...(m.text ? { text: String(m.text) } : {}) });
+        await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: m.text ? "keyDown" : "rawKeyDown", ...base, ...(m.text ? { text: String(m.text) } : {}), ...(commands.length ? { commands } : {}) });
         await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "keyUp", ...base });
       }
     } catch (_) {

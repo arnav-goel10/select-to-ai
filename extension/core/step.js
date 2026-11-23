@@ -21,11 +21,16 @@
   /** What each action needs. `page` marks the ones that act on the page. */
   const ACTIONS = Object.freeze({
     click: { needs: ["ref"], page: true },
+    double_click: { needs: ["ref"], page: true },
+    right_click: { needs: ["ref"], page: true },
+    hold: { needs: ["ref"], page: true },
     hover: { needs: ["ref"], page: true },
     // Its result is needed before anything else is done: never in `then`.
     drag: { needs: ["ref"], page: true, alone: true },
     click_at: { needs: ["x", "y"], page: true, alone: true },
     fill: { needs: ["ref", "value"], page: true },
+    type: { needs: ["ref", "value"], page: true },
+    select_text: { needs: ["ref", "value"], page: true },
     fill_details: { needs: [], page: true },
     recall: { needs: ["from"], page: false },
     remember: { needs: ["value"], page: false },
@@ -69,6 +74,13 @@
   // four, a request is better split again once the first answers are in.
   const DELEGATE_MAX = 4;
 
+  // The actions that press or point at a control, and so can be aimed at a
+  // spot inside its box (fx, fy) instead of its middle.
+  const AIMED = Object.freeze(["click", "double_click", "right_click", "hold", "hover", "drag"]);
+  // How long hold keeps a control pressed, in seconds: a long press is
+  // about a second, and nothing a person does holds one past ten.
+  const HOLD_SECONDS = Object.freeze({ least: 0.3, usual: 1, most: 10 });
+
   /**
    * The `step` tool. The action is the tool's own fields, one level deep:
    * small models fill a flat form far more reliably than a list of nested
@@ -102,21 +114,26 @@
     };
     const names = ACTION_NAMES.filter(on);
     const about = {
-      click: "click: press a control or follow a link (ref).",
-      hover: "hover: move the pointer over a control without pressing it (ref), for a menu or tooltip that opens when the pointer is over it. Its result says what that brought up, or that nothing came up.",
-      drag: "drag: press on a control, move it while holding, and let go (ref; to_ref, or direction and distance): an item to move in a list, a thing to drop on a box, a knob that fill cannot set. To set a slider to a number, use fill. Nothing else runs in the same step: its result says what changed, and a drag that changed nothing was not followed by the page.",
+      click: "click: press a control or follow a link (ref). With fx and fy it presses that spot inside the control's box instead of its middle: a point on a chart, a drawing, a board or a map.",
+      double_click: "double_click: press a control twice in quick succession (ref; fx, fy as for click), for what a double click opens, such as a table cell to edit or an item to open.",
+      right_click: "right_click: press a control with the right mouse button (ref; fx, fy as for click), to open its context menu. Its result says what came up.",
+      hold: "hold: press a control and keep it pressed before letting go (ref; seconds, 1 if left out; fx, fy as for click): a long press, or a button that acts only while held.",
+      hover: "hover: move the pointer over a control without pressing it (ref; fx, fy to point at one spot of it, such as a point of a chart), for a menu or tooltip that opens when the pointer is over it. The pointer stays there until your next action. Its result says what that brought up, or that nothing came up. Text that appeared with it is quoted.",
+      drag: "drag: press on a control, move it while holding, and let go (ref; fx, fy for where to take hold of it). Where to let go: to_ref, a control; or to_text, words written on the place, for a place with no number (a box, a column, a bin); or direction and distance. With place \"before\" or \"after\", it lands just before or after the to_ref or to_text item in its list, as a person aims; with to_fx and to_fy, at that spot of the target's box (a square of a board). An item to move in a list, a thing to drop on a box, a knob that fill cannot set. To set a slider to a number, use fill. Nothing else runs in the same step: its result says what changed, and a drag that changed nothing was not followed by the page.",
       click_at: "click_at: press a point on the page that has no number in the listing, such as a spot on a map or a drawing (x, y: page pixels from its top left corner, as the listing gives them after \"at\").",
       fill: `fill: give a control a value (ref, value). It works on text boxes, dropdowns, checkboxes (value "on" or "off"), radio buttons, date fields and sliders, and replaces what was there.${opts.hasDetails ? " With from in place of value it puts in one of the user's details on file." : ""}`,
+      type: "type: type text into a text box or an editor where its cursor is, keeping what is there (ref, value). A line break (\\n) in value starts a new line or paragraph, as Enter does. With no cursor in the box yet, it types at the end of its text. Use fill to replace what a box holds.",
+      select_text: "select_text: select words inside a text box or an editor by their text (ref, value: the words as the box writes them), to format them with a key such as ctrl+b or a toolbar button, or to type over them. Its result says what is selected and how it is formatted.",
       fill_details: "fill_details: fill every field of a form that the user's details on file cover, in one go (ref: any control in that form). It says what it filled and what is left.",
       recall: "recall: read details on file when you have to write with them yourself (from). The user is shown what you read.",
       remember: "remember: keep something the user told you about themselves or how they want things done, for later tasks (value, scope).",
-      press: "press: a key such as Enter, Escape or ArrowDown (key; ref of the field to press it in).",
+      press: "press: a key such as Enter, Escape or ArrowDown, or a key held with others such as ctrl+b (key; ref of the field to press it in). It goes to that control, or with no ref to whatever has the keyboard focus, and its result says where it went.",
       scroll: "scroll: move down or up the page (direction), for a list that loads more as it is scrolled, or to bring later items of a long list into the listing. With a ref as well, it scrolls inside the box that control is in (a long text box, a panel with its own scroll bar). It is not needed to reach a control: every control can be acted on by its ref wherever it is.",
       navigate: "navigate: open an address (url).",
       back: "back: go back one page.",
       tabs: 'tabs: op "open" (url), "switch" (tab) or "close" (tab).',
       wait: "wait: pause while a page loads (seconds).",
-      look: "look: get a picture of the page as it is on screen, for what the text does not show: an image, a chart, a map, a layout.",
+      look: "look: get a picture of the page as it is on screen, for what the text does not show: an image, a chart, a map, a layout. With a ref, a picture of that one control as the page draws it (a chart, a drawing, a board), with its size, to choose a spot in it for fx and fy.",
       read: "read: the next part of a long page's text (part).",
       find: "find: search the whole page for words (query), in its text and on its controls, on screen or not. It matches words as the page writes them, so give words the page would use (a name, a label, a number written the page's way), not a description of what you want. It returns the passages and the controls that have them, or says nothing matched. Use it to look for something instead of scrolling.",
       delegate: `delegate: hand out up to ${DELEGATE_MAX} independent sub-tasks that run at the same time, each in a background tab of its own (tasks: for each, a short instruction that stands by itself, and the address to start at when you know it). You get every sub-task's answer back as this action's result. Nothing else runs in the same step.`,
@@ -126,9 +143,15 @@
     const action = {
       do: { type: "string", enum: names, description: names.map((n) => about[n]).join(" ") },
       ref: { type: "integer", description: "The number in [brackets] before a control in the page listing." },
-      value: { type: "string", description: "fill: the text to put in, the option to choose, \"on\"/\"off\" for a checkbox, or a date as the field shows it. remember: what to keep, in one short sentence." },
+      value: { type: "string", description: "fill: the text to put in, the option to choose, \"on\"/\"off\" for a checkbox, or a date as the field shows it. type: the text to type at the cursor. select_text: the words to select. remember: what to keep, in one short sentence." },
       ...(opts.hasDetails ? { from: { type: "string", description: "fill, recall: a detail on file, such as \"profile.email\". recall takes several, separated by commas." } } : {}),
+      fx: { type: "number", description: "click, double_click, right_click, hold, hover, drag: where inside the control's box, as a fraction across it: 0 its left edge, 0.5 its middle, 1 its right edge. Leave fx and fy out for its middle." },
+      fy: { type: "number", description: "As fx, a fraction down the control's box: 0 its top edge, 1 its bottom edge." },
       to_ref: { type: "integer", description: "drag: the number of the control to drop it on." },
+      to_text: { type: "string", description: "drag: words written on the place to drop it on, as the page writes them, when that place has no number in the listing." },
+      place: { type: "string", enum: ["onto", "before", "after"], description: "drag: let go onto the target (the default), or just before or after it in its list." },
+      to_fx: { type: "number", description: "drag: where in the target's box to let go, a fraction across it (0 to 1)." },
+      to_fy: { type: "number", description: "drag: where in the target's box to let go, a fraction down it (0 to 1)." },
       distance: { type: "integer", description: "drag: how far to move it, in page pixels, in direction." },
       ...(on("click_at") ? {
         x: { type: "integer", description: "click_at: pixels from the left edge of the page." },
@@ -178,7 +201,7 @@
           ...(on("read") ? { part: { type: "integer", description: "read: which part of a long page, counting from 1." } } : {}),
           op: { type: "string", enum: ["open", "switch", "close"], description: "tabs: what to do." },
           tab: { type: "integer", description: "tabs switch, close: the tab number from the tab list." },
-          seconds: { type: "number", description: "wait: how long, up to 10." },
+          seconds: { type: "number", description: "wait: how long, up to 10. hold: how long to keep it pressed, up to 10." },
           scope: { type: "string", enum: ["everywhere", "this_site"], description: "remember: whether it holds everywhere or only on this site." },
           kind: { type: "string", enum: ASK_KINDS, description: "ask_user: sign_in, human_check, code or payment when the page needs that from the user; press, with ref, for one control that only the user's own press works on; question for anything else." },
           question: { type: "string", description: "ask_user: what you need from the user, in one or two plain sentences." },
@@ -194,13 +217,33 @@
               type: "array",
               maxItems: Math.max(1, opts.maxActions - 1),
               description: `Up to ${Math.max(1, opts.maxActions - 1)} more actions to run straight after this one, in order, when they do not depend on seeing its result: the other fields of a form, several boxes to tick, or Enter after typing a search. Leave it out otherwise. Example: [{"do":"press","key":"Enter","ref":4}]`,
-              items: { type: "object", properties: { ...strip(action, ["to_ref", "distance", "x", "y"]), do: { type: "string", enum: names.filter((n) => ["click", "fill", "press", "scroll"].includes(n)), description: "click, fill or press, as above." } }, required: ["do"] },
+              items: { type: "object", properties: { ...strip(action, ["to_ref", "distance", "x", "y", "to_text", "place", "to_fx", "to_fy"]), do: { type: "string", enum: names.filter((n) => ["click", "fill", "type", "select_text", "press", "scroll"].includes(n)), description: "click, fill, type, select_text or press, as above." } }, required: ["do"] },
             },
           }),
         },
         required: ["note", "goal", "do"],
       },
     };
+  }
+
+  /**
+   * A spot inside a box from the fractions given for it: {at: {x, y}},
+   * {} when none was given, or {error}. A number past 1 and up to 100 is
+   * a percentage; one fraction alone keeps the middle on the other axis.
+   */
+  function spotOf(fx, fy) {
+    const given = (v) => v !== undefined && v !== null && v !== "";
+    if (!given(fx) && !given(fy)) return {};
+    const part = (v) => {
+      if (!given(v)) return 0.5;
+      const n = Number(String(v).trim().replace(/%$/, ""));
+      if (!Number.isFinite(n) || n < 0 || n > 100) return null;
+      return Math.round((n > 1 ? n / 100 : n) * 1000) / 1000;
+    };
+    const x = part(fx);
+    const y = part(fy);
+    if (x === null || y === null) return { error: "are fractions of the box from 0 to 1 (0.5 is the middle)." };
+    return { at: { x, y } };
   }
 
   /** The object without the named fields. */
@@ -214,14 +257,17 @@
   // that is clear in what it means is used, not sent back.
   const ALIASES = Object.freeze({
     mouseover: "hover", hover_over: "hover",
-    type: "fill", input: "fill", select: "fill", select_option: "fill", set: "fill", check: "fill", checkbox_toggle: "fill",
+    dblclick: "double_click", doubleclick: "double_click", double_tap: "double_click",
+    rightclick: "right_click", contextmenu: "right_click", context_menu: "right_click",
+    long_press: "hold", longpress: "hold", press_and_hold: "hold", press_hold: "hold",
+    type_text: "type", insert_text: "type", input: "fill", select: "fill", select_option: "fill", select_words: "select_text", set: "fill", check: "fill", checkbox_toggle: "fill",
     keypress: "press", key: "press", goto: "navigate", go_to: "navigate", open: "navigate", go_back: "back",
     finish: "done", answer: "done", complete: "done", ask: "ask_user", search_page: "find", search: "find", scroll_to: "scroll",
     drag_and_drop: "drag", drag_to: "drag", click_point: "click_at", click_xy: "click_at",
   });
 
   // The one piece of text each action takes, and the fields text can turn up in.
-  const TEXT_OF = Object.freeze({ fill: "value", remember: "value", press: "key", find: "query", ask_user: "question", done: "answer" });
+  const TEXT_OF = Object.freeze({ fill: "value", type: "value", select_text: "value", remember: "value", press: "key", find: "query", ask_user: "question", done: "answer" });
   const TEXT_FIELDS = Object.freeze(["value", "text", "answer", "question", "query", "key"]);
 
   const asInt = (v) => {
@@ -241,7 +287,7 @@
   }
 
   // Every field the step tool has, at the top level or in an action.
-  const FIELDS = Object.freeze(["note", "rewrite_notes", "memory", "goal", "do", "ref", "to_ref", "distance", "x", "y", "value", "from", "key", "times", "url", "direction", "query", "part", "op", "tab", "seconds", "scope", "kind", "question", "success", "answer", "evidence", "tasks", "then"]);
+  const FIELDS = Object.freeze(["note", "rewrite_notes", "memory", "goal", "do", "ref", "fx", "fy", "to_ref", "to_text", "place", "to_fx", "to_fy", "distance", "x", "y", "value", "from", "key", "times", "url", "direction", "query", "part", "op", "tab", "seconds", "scope", "kind", "question", "success", "answer", "evidence", "tasks", "then"]);
   const PARAM_TAG = /<parameter=\s*["']?([A-Za-z_]+)["']?\s*>/g;
 
   /**
@@ -298,18 +344,18 @@
 
     const out = { do: name };
     const els = (ctx.page && ctx.page.elements) || [];
-    const needsRef = name === "click" || name === "fill" || name === "hover" || name === "drag";
+    const needsRef = name === "fill" || name === "type" || name === "select_text" || AIMED.includes(name);
     if (name === "fill_details" && (a.ref === undefined || a.ref === null || a.ref === "")) delete a.ref;
     // A ref of 0, or one given to an action that takes none, means "no control".
     // Asking the user to press a control names it by its ref; no other ask takes one.
     const asksPress = name === "ask_user" && String(a.kind || "").trim().toLowerCase() === "press";
-    if (!needsRef && !asksPress && (asInt(a.ref) === 0 || ["navigate", "back", "wait", "look", "read", "find", "done", "ask_user", "tabs", "remember", "recall", "click_at", "delegate"].includes(name))) delete a.ref;
+    if (!needsRef && !asksPress && (asInt(a.ref) === 0 || ["navigate", "back", "wait", "read", "find", "done", "ask_user", "tabs", "remember", "recall", "click_at", "delegate"].includes(name))) delete a.ref;
     if (a.ref !== undefined && a.ref !== null && a.ref !== "") {
       const ref = asInt(a.ref);
       if (ref === null) return { error: `ref must be the number in [brackets] before a control, not "${clip(a.ref, 30)}".` };
       const el = els.find((e) => e.id === ref);
       if (!el && asksPress) return { error: `There is no control [${ref}] on this page for the user to press. Use a number from the current page listing.` };
-      if (!el && (needsRef || name === "press" || name === "scroll")) {
+      if (!el && (needsRef || name === "press" || name === "scroll" || name === "look")) {
         // The same control under a new number, when the page was redrawn.
         const was = ctx.labels && ctx.labels[ref];
         const again = was ? els.filter((e) => ctx.labelOf(e) === was) : [];
@@ -324,9 +370,28 @@
       return { error: `${name} needs ref: the number in [brackets] before the control.` };
     }
 
+    // A spot inside the control's box, as fractions of it.
+    if (AIMED.includes(name)) {
+      const spot = spotOf(a.fx, a.fy);
+      if (spot.error) return { error: `${name}: fx and fy ${spot.error}` };
+      if (spot.at) { out.fx = spot.at.x; out.fy = spot.at.y; }
+    }
+    if (name === "hold") {
+      const secs = Number(a.seconds);
+      out.seconds = Number.isFinite(secs) && secs > 0 ? Math.min(HOLD_SECONDS.most, Math.max(HOLD_SECONDS.least, secs)) : HOLD_SECONDS.usual;
+    }
     if (name === "drag") {
       const to = a.to_ref !== undefined && a.to_ref !== null && a.to_ref !== "" ? asInt(a.to_ref) : null;
-      if (to !== null) {
+      const words = typeof a.to_text === "string" ? a.to_text.replace(/\s+/g, " ").trim() : "";
+      const place = String(a.place || "").trim().toLowerCase();
+      if (place && !["onto", "on", "into", "before", "after"].includes(place)) return { error: "drag: place is \"onto\", \"before\" or \"after\"." };
+      if (place === "before" || place === "after") out.place = place;
+      const toSpot = spotOf(a.to_fx, a.to_fy);
+      if (toSpot.error) return { error: `drag: to_fx and to_fy ${toSpot.error}` };
+      if ((to !== null || words) && toSpot.at) { out.to_fx = toSpot.at.x; out.to_fy = toSpot.at.y; }
+      if (to === null && words && (a.to_ref === undefined || a.to_ref === null || a.to_ref === "")) {
+        out.to_text = clip(words, 120);
+      } else if (to !== null) {
         if (!els.some((e) => e.id === to)) return { action: { do: name, ref: out.ref, to_ref: to, gone: `There is no control [${to}] on this page to drop it on. Use a number from the current page listing.` } };
         if (to === out.ref) return { error: "drag needs to_ref to be a different control from ref." };
         out.to_ref = to;
@@ -335,7 +400,7 @@
       } else {
         const way = String(a.direction || "").toLowerCase();
         const distance = Math.round(Number(a.distance));
-        if (!["left", "right", "up", "down"].includes(way) || !(distance > 0)) return { error: "drag needs to_ref (the control to drop it on), or direction (left, right, up or down) and distance (page pixels)." };
+        if (!["left", "right", "up", "down"].includes(way) || !(distance > 0)) return { error: "drag needs where to let go: to_ref (the control to drop it on), to_text (words written on the place), or direction (left, right, up or down) and distance (page pixels)." };
         out.direction = way;
         out.distance = Math.min(4000, distance);
       }
@@ -354,6 +419,10 @@
       if (keys.length && (a.value === undefined || a.value === null || a.value === "")) out.from = keys[0];
       else if (a.value === undefined || a.value === null) return { error: "fill needs value: the text, the option to choose, or \"on\"/\"off\"; or from: a detail on file such as \"profile.email\"." };
       else out.value = typeof a.value === "boolean" ? (a.value ? "on" : "off") : String(a.value);
+    }
+    if (name === "type" || name === "select_text") {
+      if (a.value === undefined || a.value === null || String(a.value) === "") return { error: `${name} needs value: ${name === "type" ? "the text to type" : "the words to select, as the box writes them"}.` };
+      out.value = String(a.value);
     }
     if (name === "recall") {
       const q = String(a.query || "").trim();
@@ -513,7 +582,7 @@
     delete rest[keys[0]];
     if (v && typeof v === "object" && !Array.isArray(v)) return { ...rest, ...v, do: name };
     if (v === true || v === null || v === "") return { ...rest, do: name };
-    if (name === "click" || name === "hover" || name === "scroll" || name === "drag") return asInt(v) !== null ? { ...rest, do: name, ref: v } : name === "scroll" ? { ...rest, do: name, direction: v } : null;
+    if (name === "scroll" || AIMED.includes(name)) return asInt(v) !== null ? { ...rest, do: name, ref: v } : name === "scroll" ? { ...rest, do: name, direction: v } : null;
     const field = name === "navigate" ? "url" : TEXT_OF[name];
     return field && (typeof v === "string" || typeof v === "number") ? { ...rest, do: name, [field]: String(v) } : null;
   }
@@ -575,6 +644,7 @@
     if (a.op) s += ` ${a.op}`;
     if (a.ref !== undefined) s += ` [${a.ref}]`;
     if (a.do === "click_at") s += ` ${a.x},${a.y}`;
+    if (a.fx !== undefined) s += ` at ${a.fx},${a.fy}`;
     // The control's own words, when known: `fill [4] "Search": "blue widget"`.
     if (label) s += ` "${clip(label, 60)}"${a.value !== undefined || a.from !== undefined ? ":" : ""}`;
     if (a.tab !== undefined) s += ` tab ${a.tab}`;
@@ -582,7 +652,8 @@
     if (a.value !== undefined) s += ` "${clip(a.value, 40)}"`;
     if (a.key) s += ` ${a.key}${a.times ? ` x${a.times}` : ""}`;
     if (a.url) s += ` ${clip(a.url, 70)}`;
-    if (a.to_ref !== undefined) s += ` onto [${a.to_ref}]`;
+    if (a.do === "hold") s += ` for ${a.seconds}s`;
+    if (a.to_ref !== undefined || a.to_text !== undefined) s += ` ${a.place || "onto"} ${a.to_ref !== undefined ? `[${a.to_ref}]` : `"${clip(a.to_text, 40)}"`}${a.to_fx !== undefined ? ` at ${a.to_fx},${a.to_fy}` : ""}`;
     if (a.direction) s += ` ${a.direction}${a.distance ? ` ${a.distance}px` : ""}`;
     if (a.query) s += ` "${clip(a.query, 40)}"`;
     if (a.part) s += ` part ${a.part}`;
@@ -592,9 +663,9 @@
   }
 
   /** What makes two actions the same action: everything but the wording around it. */
-  const signature = (a) => JSON.stringify([a.do, a.op, a.ref, a.tab, a.value, a.from, a.key, a.url, a.direction, a.query, a.part, a.to_ref, a.distance, a.x, a.y, a.tasks]);
+  const signature = (a) => JSON.stringify([a.do, a.op, a.ref, a.tab, a.value, a.from, a.key, a.url, a.direction, a.query, a.part, a.to_ref, a.distance, a.x, a.y, a.tasks, a.fx, a.fy, a.to_text, a.place, a.to_fx, a.to_fy, a.do === "hold" ? a.seconds : undefined]);
 
-  const api = Object.freeze({ ACTIONS, ACTION_NAMES, ENDING_ACTIONS, ASK_KINDS, DELEGATE_MAX, NOTES_ROOM, NOTES_LIMIT, stepTool, notesOf, mergeNotes, checkStep, checkAction, unfoldParameters, describe, signature, normaliseUrl });
+  const api = Object.freeze({ ACTIONS, ACTION_NAMES, AIMED, HOLD_SECONDS, spotOf, ENDING_ACTIONS, ASK_KINDS, DELEGATE_MAX, NOTES_ROOM, NOTES_LIMIT, stepTool, notesOf, mergeNotes, checkStep, checkAction, unfoldParameters, describe, signature, normaliseUrl });
   root.SELECT_TO_AI_STEP = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

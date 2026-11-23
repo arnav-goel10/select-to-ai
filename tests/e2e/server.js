@@ -494,6 +494,89 @@ const FIXTURES = {
        zone.addEventListener('drop', (e) => { e.preventDefault(); zone.appendChild(chip); document.getElementById('dropped').textContent = 'Dropped: ' + e.dataTransfer.getData('text/plain'); });
      </script>`,
   ),
+  // Whole gestures made by script, each on plain HTML that listens the way
+  // pages do: a cell that edits on a double click, a node with a menu of its
+  // own, a button that acts on a long press, a drawn chart whose tooltip
+  // follows the pointer, a drawn legend pressed at a spot, a list that
+  // starts a drag only after a held press and moves its items by where the
+  // pointer is, bins that take the browser's drag and drop and have no
+  // number of their own, and a token that answers only a finger.
+  "/gestures": pageShell(
+    "Gestures",
+    `<style>.bin{display:inline-block;width:150px;height:70px;border:2px dashed #888;margin-right:10px} #sortable{list-style:none;padding:0;width:220px} #sortable li{padding:6px;margin:4px 0;background:#eef;user-select:none}</style>
+     <h1>Gestures</h1>
+     <p id="s-cell">Cell: not editing</p>
+     <table><tr><td id="cell" tabindex="0" aria-label="Order SO-1" style="padding:6px;border:1px solid #999">SO-1</td></tr></table>
+     <p id="s-menu">Menu: closed</p>
+     <span id="node" tabindex="0" aria-label="Folder A" style="padding:4px;border:1px solid #999">Folder A</span>
+     <div id="menu" role="menu" hidden><button type="button" role="menuitem">New item</button></div>
+     <p id="s-press">Button: Activate</p>
+     <button type="button" id="press">Activate</button>
+     <svg id="chart" aria-label="Visits chart" width="400" height="200" style="display:block;border:1px solid #ccc;margin-top:12px">
+       <polyline points="20,180 120,150 220,40 320,120" fill="none" stroke="#36c" stroke-width="2"></polyline>
+       <g id="tip" visibility="hidden"><rect x="240" y="10" width="150" height="24" fill="#fff" stroke="#333"></rect><text id="tip-text" x="246" y="27" font-size="12"></text></g>
+     </svg>
+     <p id="s-legend">North: shown</p>
+     <canvas id="pie" aria-label="Pie chart" width="300" height="150" style="display:block;border:1px solid #000"></canvas>
+     <p id="s-order">Order: Alpha, Beta, Gamma</p>
+     <ul id="sortable"><li tabindex="0" aria-label="Alpha">Alpha</li><li tabindex="0" aria-label="Beta">Beta</li><li tabindex="0" aria-label="Gamma">Gamma</li></ul>
+     <p id="s-bin">Dropped: nothing</p>
+     <div><div class="bin" data-accepts="paper">This tray takes: paper</div><div class="bin" data-accepts="china">This tray takes: china</div></div>
+     <div id="teacup" draggable="true" style="display:inline-block;padding:6px;margin-top:8px;background:#fd5">Teacup</div>
+     <p id="s-token">Token: at start</p>
+     <div style="position:relative;width:320px;height:40px;background:#eee"><div id="token" tabindex="0" aria-label="Token" style="position:absolute;left:0;top:0;width:40px;height:40px;background:#c63;touch-action:none"></div></div>
+     <script>
+       const $ = (id) => document.getElementById(id);
+       $('cell').addEventListener('dblclick', () => { $('s-cell').textContent = 'Cell: editing'; });
+       $('node').addEventListener('contextmenu', (e) => { if (e.button !== 2) return; e.preventDefault(); $('menu').hidden = false; $('s-menu').textContent = 'Menu: open'; });
+       let timer = null;
+       $('press').addEventListener('pointerdown', (e) => { if (e.button !== 0) return; timer = setTimeout(() => { timer = null; $('s-press').textContent = 'Button: activated by a long press'; }, 600); });
+       $('press').addEventListener('pointerup', () => { if (timer) { clearTimeout(timer); timer = null; $('s-press').textContent = 'Button: too short a press'; } });
+       const points = [[20, 180, '06:00 to 07:00', 310], [120, 150, '07:00 to 08:00', 512], [220, 40, '08:00 to 09:00', 1204], [320, 120, '09:00 to 10:00', 640]];
+       $('chart').addEventListener('mousemove', (e) => {
+         const r = $('chart').getBoundingClientRect();
+         const x = e.clientX - r.left, y = e.clientY - r.top;
+         let best = null;
+         for (const p of points) { const d = Math.hypot(p[0] - x, p[1] - y); if (d < 30 && (!best || d < best.d)) best = { p, d }; }
+         if (!best) return;
+         $('tip-text').textContent = best.p[2] + ' Visits ' + best.p[3];
+         $('tip').setAttribute('visibility', 'visible');
+       });
+       $('chart').addEventListener('mouseleave', () => $('tip').setAttribute('visibility', 'hidden'));
+       const g = $('pie').getContext('2d');
+       g.fillStyle = '#c33'; g.fillRect(20, 10, 16, 16); g.fillStyle = '#000'; g.fillText('North', 42, 22);
+       g.fillStyle = '#36c'; g.fillRect(100, 10, 16, 16); g.fillStyle = '#000'; g.fillText('South', 122, 22);
+       g.fillStyle = '#c33'; g.beginPath(); g.moveTo(150, 95); g.arc(150, 95, 45, 0, 4); g.fill();
+       $('pie').addEventListener('click', (e) => { if (e.offsetX >= 18 && e.offsetX <= 70 && e.offsetY >= 6 && e.offsetY <= 32) $('s-legend').textContent = 'North: hidden'; });
+       let press = null, lifted = null;
+       const list = $('sortable');
+       list.addEventListener('pointerdown', (e) => { const li = e.target.closest('li'); if (li && e.button === 0) press = { li, x: e.clientX, y: e.clientY, at: performance.now(), id: e.pointerId }; });
+       document.addEventListener('pointermove', (e) => {
+         if (!press || e.pointerId !== press.id) return;
+         if (!lifted) {
+           const far = Math.hypot(e.clientX - press.x, e.clientY - press.y);
+           // A drag starts only after a held press: moving first is a scroll, and ends it.
+           if (performance.now() - press.at < 120) { if (far >= 5) press = null; return; }
+           if (far < 5) return;
+           lifted = press.li;
+         }
+         const over = [...list.children].find((li) => { const r = li.getBoundingClientRect(); return e.clientY >= r.top && e.clientY < r.bottom; });
+         if (!over || over === lifted) return;
+         const r = over.getBoundingClientRect();
+         list.insertBefore(lifted, e.clientY < r.top + r.height / 2 ? over : over.nextSibling);
+       });
+       document.addEventListener('pointerup', () => { if (lifted) $('s-order').textContent = 'Order: ' + [...list.children].map((li) => li.textContent).join(', '); press = null; lifted = null; });
+       $('teacup').addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', 'china:Teacup'); e.dataTransfer.effectAllowed = 'move'; });
+       for (const bin of document.querySelectorAll('.bin')) {
+         bin.addEventListener('dragover', (e) => { if (bin.dataset.accepts === 'china') e.preventDefault(); });
+         bin.addEventListener('drop', (e) => { e.preventDefault(); const [, name] = e.dataTransfer.getData('text/plain').split(':'); $('s-bin').textContent = 'Dropped: ' + name + ' in ' + bin.dataset.accepts; });
+       }
+       let touch = null;
+       $('token').addEventListener('touchstart', (e) => { touch = { x: e.touches[0].clientX, left: $('token').offsetLeft }; e.preventDefault(); }, { passive: false });
+       $('token').addEventListener('touchmove', (e) => { if (touch) $('token').style.left = Math.max(0, Math.min(280, touch.left + e.touches[0].clientX - touch.x)) + 'px'; });
+       $('token').addEventListener('touchend', () => { if (touch && $('token').offsetLeft > 100) $('s-token').textContent = 'Token: moved by touch'; touch = null; });
+     </script>`,
+  ),
   // Controls that do not answer a click made by script, each in its own
   // way: the run has no debugger, so its pointer and keys are scripted.
   // This one takes a real mouse press, or Enter with the focus on it.
@@ -658,6 +741,130 @@ const FIXTURES = {
          title.value = title.value.toUpperCase();
          document.getElementById('state').textContent = 'Title in upper case';
        });
+     </script>`,
+  ),
+  // A text editor that keeps its own model of the text, as rich text
+  // editors do: it takes typing only from beforeinput (and cancels it, to
+  // make the change itself), puts back any other change to its text, and
+  // makes the selected words bold on this computer's shortcut key or its
+  // toolbar button. No library: the events are the ones editors use.
+  "/editor": pageShell(
+    "Notes",
+    `<h1>Notes</h1>
+     <div id="toolbar"><button type="button" id="bold-btn" aria-label="Bold">B</button></div>
+     <div id="editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Note" style="border:1px solid #888;min-height:60px;padding:6px"></div>
+     <p id="state">Not changed</p>
+     <script>
+       const ed = document.getElementById('editor');
+       const model = [[...'Original text here.'].map((c) => ({ c, b: false }))];
+       window.editorModel = model;
+       window.editorEdits = 0;
+       let rendering = false;
+       const at = (node, off) => {
+         let p = node.nodeType === 1 ? node : node.parentElement;
+         while (p && p.parentElement !== ed) p = p.parentElement;
+         if (!p) { const last = model.length - 1; return node === ed && off === 0 ? { p: 0, o: 0 } : { p: last, o: model[last].length }; }
+         const r = document.createRange(); r.setStart(p, 0); r.setEnd(node, off);
+         return { p: Array.prototype.indexOf.call(ed.children, p), o: r.toString().length };
+       };
+       const getSel = () => { const s = getSelection(); if (!s.rangeCount) return null; const r = s.getRangeAt(0); if (!ed.contains(r.startContainer)) return null; return { a: at(r.startContainer, r.startOffset), b: at(r.endContainer, r.endOffset) }; };
+       const point = (q) => { const p = ed.children[q.p]; let left = q.o; const w = document.createTreeWalker(p, NodeFilter.SHOW_TEXT); for (let t = w.nextNode(); t; t = w.nextNode()) { if (left <= t.data.length) return [t, left]; left -= t.data.length; } return [p, 0]; };
+       const setSel = (s) => { const r = document.createRange(); r.setStart(...point(s.a)); r.setEnd(...point(s.b)); const x = getSelection(); x.removeAllRanges(); x.addRange(r); };
+       const render = (s) => {
+         rendering = true;
+         ed.innerHTML = '';
+         for (const par of model) {
+           const p = document.createElement('p'); p.style.margin = '0';
+           for (let i = 0; i < par.length;) { let j = i; while (j < par.length && par[j].b === par[i].b) j++; const t = document.createTextNode(par.slice(i, j).map((x) => x.c).join('')); if (par[i].b) { const b = document.createElement('strong'); b.appendChild(t); p.appendChild(b); } else p.appendChild(t); i = j; }
+           if (!par.length) p.appendChild(document.createElement('br'));
+           ed.appendChild(p);
+         }
+         if (s) setSel(s);
+         watch.takeRecords();
+         rendering = false;
+       };
+       const cut = (s) => {
+         if (s.a.p === s.b.p) model[s.a.p].splice(s.a.o, s.b.o - s.a.o);
+         else { const tail = model[s.b.p].slice(s.b.o); model[s.a.p].splice(s.a.o); model[s.a.p].push(...tail); model.splice(s.a.p + 1, s.b.p - s.a.p); }
+         return s.a;
+       };
+       ed.addEventListener('beforeinput', (e) => {
+         e.preventDefault();
+         const s = getSel(); if (!s) return;
+         window.editorEdits += 1;
+         if (e.inputType === 'insertText') { const q = cut(s); const add = [...e.data].map((c) => ({ c, b: false })); model[q.p].splice(q.o, 0, ...add); const n = { p: q.p, o: q.o + add.length }; render({ a: n, b: n }); }
+         else if (e.inputType === 'insertParagraph') { const q = cut(s); model.splice(q.p + 1, 0, model[q.p].splice(q.o)); const n = { p: q.p + 1, o: 0 }; render({ a: n, b: n }); }
+         else if (e.inputType === 'deleteContentBackward') { let q = s.a; if (s.a.p === s.b.p && s.a.o === s.b.o) { if (q.o > 0) { model[q.p].splice(q.o - 1, 1); q = { p: q.p, o: q.o - 1 }; } } else q = cut(s); render({ a: q, b: q }); }
+         document.getElementById('state').textContent = 'Changed';
+       });
+       const bold = () => {
+         const s = getSel(); if (!s || (s.a.p === s.b.p && s.a.o === s.b.o)) return;
+         const chars = []; for (let p = s.a.p; p <= s.b.p; p++) model[p].slice(p === s.a.p ? s.a.o : 0, p === s.b.p ? s.b.o : undefined).forEach((x) => chars.push(x));
+         const on = !chars.every((x) => x.b); chars.forEach((x) => { x.b = on; }); render(s);
+       };
+       ed.addEventListener('keydown', (e) => { const mod = /Mac/.test(navigator.platform) ? e.metaKey : e.ctrlKey; if (mod && e.key.toLowerCase() === 'b') { e.preventDefault(); bold(); } });
+       document.getElementById('bold-btn').addEventListener('mousedown', (e) => e.preventDefault());
+       document.getElementById('bold-btn').addEventListener('click', bold);
+       // A change to the text the editor did not make is put back.
+       const watch = new MutationObserver(() => { if (!rendering) render(getSel()); });
+       render(null);
+       watch.observe(ed, { childList: true, characterData: true, subtree: true });
+     </script>`,
+  ),
+  // A button in a frame within a frame, both of this site and too small to
+  // fill the window, beside a frame from a site the agent has no access to.
+  "/frames": (base) => pageShell(
+    "Frames",
+    `<h1>Frames</h1>
+     <p>The button is in a frame within a frame.</p>
+     <iframe id="outer" src="/frames/outer" style="width:360px;height:220px;border:1px solid #888"></iframe>
+     <iframe id="away" title="Partner offers" src="${base.replace("127.0.0.1", "127.0.0.2")}/frames/inner" style="width:300px;height:120px;border:1px solid #888"></iframe>`,
+  ),
+  "/frames/outer": pageShell(
+    "Outer box",
+    `<h2>Outer frame</h2><button type="button" id="b1">Open the outer panel</button>
+     <iframe id="inner" title="Inner" src="/frames/inner" style="width:300px;height:110px;border:1px solid #888"></iframe>`,
+  ),
+  "/frames/inner": pageShell(
+    "Inner box",
+    `<button type="button" id="nested" onclick="this.textContent = 'Clicked, thank you'; window.clicked = (window.clicked || 0) + 1">Show details</button>`,
+  ),
+  // A rating drawn by its own element, its slider inside a shadow root:
+  // its value is stated for a screen reader and nowhere in the text.
+  "/rating": pageShell(
+    "Rate it",
+    `<h1>Rate this recipe</h1>
+     <star-rating id="stars"></star-rating>
+     <script>
+       customElements.define('star-rating', class extends HTMLElement {
+         constructor() {
+           super();
+           this.value = 0;
+           const root = this.attachShadow({ mode: 'open' });
+           root.innerHTML = '<div role="slider" tabindex="0" aria-label="Rating" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0" style="display:inline-block;font-size:24px;letter-spacing:4px">☆☆☆☆☆</div>';
+           const s = root.firstElementChild;
+           const show = () => { s.setAttribute('aria-valuenow', String(this.value)); s.textContent = '★'.repeat(this.value) + '☆'.repeat(5 - this.value); };
+           s.addEventListener('keydown', (e) => {
+             if (e.key === 'ArrowRight' || e.key === 'ArrowUp') this.value = Math.min(5, this.value + 1);
+             else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') this.value = Math.max(0, this.value - 1);
+             else return;
+             e.preventDefault(); show();
+           });
+         }
+       });
+     </script>`,
+  ),
+  // A chart whose points cannot take the keyboard, on a page that goes to
+  // another page on ArrowRight, and a zoom control that takes keys.
+  "/chart-keys": pageShell(
+    "Visitors chart",
+    `<h1>Visitors</h1>
+     <svg width="300" height="120" style="border:1px solid #888"><circle id="point" role="button" aria-label="Peak point" cx="150" cy="30" r="8" fill="#36c"></circle></svg>
+     <div id="zoom" role="slider" tabindex="0" aria-label="Zoom" aria-valuemin="1" aria-valuemax="5" aria-valuenow="1">Zoom 1</div>
+     <script>
+       const zoom = document.getElementById('zoom');
+       zoom.addEventListener('keydown', (e) => { if (e.key !== 'ArrowRight') return; e.preventDefault(); e.stopPropagation(); const v = Math.min(5, Number(zoom.getAttribute('aria-valuenow')) + 1); zoom.setAttribute('aria-valuenow', String(v)); zoom.textContent = 'Zoom ' + v; });
+       document.addEventListener('keydown', (e) => { if (e.key === 'ArrowRight' && !e.defaultPrevented) location.href = '/home'; });
      </script>`,
   ),
   // A chart only a picture shows, and a button that puts its legend in words.
@@ -1165,6 +1372,37 @@ function buildStepPolicies(baseUrl) {
       if (/The title lost the cursor/.test(ctx.userText)) return done("The button did nothing: the title lost the cursor.", [], false);
       return step("Put the cursor in the title and press Upper case", [{ do: "click", ref: named(ctx, /^title$/i).id }, { do: "click", ref: named(ctx, /upper case/i).id }]);
     },
+    // An editor that keeps its own model: a new paragraph typed at the end,
+    // a word in it selected by its text, and the shortcut that makes it bold.
+    editorBold(ctx) {
+      const note = named(ctx, /^note$/i);
+      if (/"Practice" is selected, and is bold/.test(ctx.userText)) return done("The note ends with **Practice line**, and *Practice* is bold.", ["Practice line"]);
+      if (/select_text \[/.test(ctx.userText)) return done("policy error: the word was selected and pressed, but it was not said to be bold", [], false);
+      if (/Practice line/.test(note.attrs.value || "")) return step("Make Practice bold", [{ do: "select_text", ref: note.id, value: "Practice" }, { do: "press", key: "ctrl+b", ref: note.id }]);
+      if (/type \[/.test(ctx.userText)) return done("policy error: the typing did not reach the editor", [], false);
+      return step("Add the line at the end", [{ do: "type", ref: note.id, value: "\nPractice line" }]);
+    },
+    // A button in a frame within a frame.
+    nestedFrame(ctx) {
+      if (/Clicked, thank you/.test(ctx.userText)) return done("The button now says \"Clicked, thank you\".", ["Clicked, thank you"]);
+      const button = findElement(ctx.elements, (e) => e.text === "Show details" && e.id >= 100000);
+      if (!button) return done("policy error: the button in the inner frame is not listed", [], false);
+      return step("Press the button in the inner frame", [{ do: "click", ref: button.id }]);
+    },
+    // A rating in a shadow root: set, then read back from the listing.
+    shadowRating(ctx) {
+      const rating = named(ctx, /^rating$/i);
+      if ((rating.attrs.value || "") === "4") return done("The rating holds 4 of 5 stars.", [`[${rating.id}] now shows "4"`]);
+      if (/fill \[/.test(ctx.userText)) return done("policy error: the rating's value was not in the listing after it was set", [], false);
+      return step("Give it 4 stars", [{ do: "fill", ref: rating.id, value: "4" }]);
+    },
+    // A key named for a control that cannot hold the focus is not sent to the page as a whole.
+    keysWhere(ctx) {
+      const zoom = named(ctx, /^zoom$/i);
+      if (zoom && (zoom.attrs.value || "") === "2") return done("Zoomed in once; the peak point takes no keys.", []);
+      if (/cannot take the keyboard focus/.test(ctx.userText)) return step("Zoom in instead", [{ do: "press", key: "ArrowRight", ref: zoom.id }]);
+      return step("Step from the peak point", [{ do: "press", key: "ArrowRight", ref: named(ctx, /^peak point$/i).id }]);
+    },
     // A page with a chart: the model asks for a picture once its tab is in front.
     lookPerSite(ctx) {
       if (/A picture of the page as it is on screen is attached/.test(ctx.userText)) return done("I looked at the chart: sales by month.", ["Legend: sales by month"]);
@@ -1184,6 +1422,20 @@ function buildStepPolicies(baseUrl) {
       if (/Order: Apples/.test(ctx.userText)) return step("Move Apples down the list", [{ do: "drag", ref: named(ctx, /^apples$/i).id, to_ref: named(ctx, /^cherries$/i).id }]);
       if (!/Dropped: invoice/.test(ctx.userText)) return step("Attach the invoice", [{ do: "drag", ref: named(ctx, /^invoice\.pdf$/i).id, to_ref: named(ctx, /^attachments$/i).id }]);
       return done("Done: volume up, Apples moved last, invoice attached.", ["Dropped: invoice"]);
+    },
+    // Every whole gesture by script, one a step, each told apart by its line in the history.
+    gestures(ctx) {
+      const did = (re) => re.test(ctx.userText);
+      if (!did(/double_click \[\d+\]/)) return step("Open the cell for editing", [{ do: "double_click", ref: named(ctx, /^order so-1$/i).id }]);
+      if (!did(/right_click \[\d+\]/)) return step("Open the node's own menu", [{ do: "right_click", ref: named(ctx, /^folder a$/i).id }]);
+      if (!did(/hold \[\d+\]/)) return step("Long-press the button", [{ do: "hold", ref: named(ctx, /^activate$/i).id, seconds: 2 }]);
+      if (!did(/hover \[\d+\] at /)) return step("Point at the highest point of the line", [{ do: "hover", ref: named(ctx, /^visits chart$/i).id, fx: 0.55, fy: 0.2 }]);
+      if (!did(/look \[\d+\]/)) return step("See the pie chart", [{ do: "look", ref: named(ctx, /^pie chart$/i).id }]);
+      if (!did(/click \[\d+\] at 0\.167/)) return step("Hide North in the legend", [{ do: "click", ref: named(ctx, /^pie chart$/i).id, fx: 0.167, fy: 0.133 }]);
+      if (!did(/drag \[\d+\][^\n]* before \[/)) return step("Put Gamma first", [{ do: "drag", ref: named(ctx, /^gamma$/i).id, to_ref: named(ctx, /^alpha$/i).id, place: "before" }]);
+      if (!did(/drag \[\d+\][^\n]* onto "/)) return step("Put the teacup on the china tray", [{ do: "drag", ref: named(ctx, /^teacup$/i).id, to_text: "This tray takes: china" }]);
+      if (!did(/drag \[\d+\][^\n]* right 200px/)) return step("Slide the token", [{ do: "drag", ref: named(ctx, /^token$/i).id, direction: "right", distance: 200 }]);
+      return done("Each gesture was made.", ["Dropped: Teacup in china"]);
     },
     // The same page with the debugger refused: a click and a drag by script.
     pointerNoDebugger(ctx) {
@@ -1487,6 +1739,7 @@ function createE2EServer(port = 8907) {
   scenarios.pointerFrame = { task: "Pick seat 12A.", stepDelayMs: 1200 };
   scenarios.pointerDrag = { task: "Turn the volume up, move Apples to the end of the list, and attach the invoice." };
   scenarios.pointerNoDebugger = { task: "Count once and move Apples to the end of the list." };
+  scenarios.gestures = { task: "Edit the cell, open the node's menu, long-press the button, read the chart's highest point, hide North, put Gamma first, put the teacup on the china tray and slide the token." };
   scenarios.pointerCanvas = { task: "Press the drawing a little right of its middle, then press the hidden button." };
   scenarios.pointerRisk = { task: "Tidy up my account." };
   scenarios.fieldChips = { task: "Take Purple out of my favourite colours, and delete my old saved address." };
@@ -1502,6 +1755,10 @@ function createE2EServer(port = 8907) {
   scenarios.pressKept = { task: "Refresh the feed." };
   scenarios.shadowClick = { task: "Add this to my basket." };
   scenarios.toolbar = { task: "Make the title upper case." };
+  scenarios.editorBold = { task: "Add a new paragraph at the end of the note that reads \"Practice line\", and make the word Practice bold." };
+  scenarios.nestedFrame = { task: "Click the button in the frame inside the frame and tell me what it says then." };
+  scenarios.shadowRating = { task: "Give this recipe 4 stars and tell me its rating." };
+  scenarios.keysWhere = { task: "Press the right arrow key on the chart's peak point." };
   scenarios.lookPerSite = { task: "What does the sales chart show?" };
   scenarios.framed = { task: "How much is Item B?" };
   scenarios.findQuote = { task: "How much is the garden hose?" };

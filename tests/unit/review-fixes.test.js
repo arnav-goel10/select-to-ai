@@ -160,7 +160,7 @@ const path = require("node:path");
 /** engine.js in a worker made of stand-ins: listeners are kept, the debugger counts what it is asked. */
 function fakeWorker(attachRefused, saved) {
   const listeners = {};
-  const debug = { attached: new Set(), attaches: 0, detaches: [], created: 0 };
+  const debug = { attached: new Set(), attaches: 0, detaches: [], created: 0, sent: [] };
   const event = (name) => ({ addListener: (fn) => { (listeners[name] = listeners[name] || []).push(fn); }, removeListener: () => {} });
   const anything = () => new Proxy(function stub() { return Promise.resolve(undefined); }, {
     get: (t, k) => (k === "then" ? undefined : k.startsWith && k.startsWith("on") ? event(k) : anything()),
@@ -170,7 +170,7 @@ function fakeWorker(attachRefused, saved) {
     debugger: {
       attach: async ({ tabId }) => { debug.attaches += 1; if (attachRefused.has(tabId)) throw new Error("refused"); debug.attached.add(tabId); },
       detach: async ({ tabId }) => { debug.detaches.push(tabId); debug.attached.delete(tabId); },
-      sendCommand: async () => ({}),
+      sendCommand: async (_t, method, params) => { debug.sent.push({ method, params }); return {}; },
       onDetach: event("debugger.onDetach"), onEvent: event("debugger.onEvent"),
     },
     runtime: { id: "x", getURL: (p) => `chrome-extension://x/${p || ""}`, onMessage: event("runtime.onMessage"), onConnect: event("runtime.onConnect"), sendMessage: () => Promise.resolve() },
@@ -187,8 +187,8 @@ function fakeWorker(attachRefused, saved) {
   for (const f of ["config.js", "defaults.js", "security.js", "commonWords.js", "publicSuffixes.js", "agentTools.js", "agentPrompt.js", "usageLimits.js", "pageSearch.js", "core/step.js", "core/observe.js", "core/memory.js", "core/context.js", "core/policy.js", "core/run.js", "core/llm.js", "core/learn.js", "core/view.js", "core/inject.js", "engine.js"]) {
     vm.runInContext(fs.readFileSync(path.join(EXT, f), "utf8"), root, { filename: f });
   }
-  const pressKey = (tabId) => new Promise((resolve) => {
-    for (const fn of listeners["runtime.onMessage"] || []) fn({ action: "agentRealKey", key: "a", code: "KeyA", keyCode: 65 }, { tab: { id: tabId }, frameId: 0 }, resolve);
+  const pressKey = (tabId, extra) => new Promise((resolve) => {
+    for (const fn of listeners["runtime.onMessage"] || []) fn({ action: "agentRealKey", key: "a", code: "KeyA", keyCode: 65, ...(extra || {}) }, { tab: { id: tabId }, frameId: 0 }, resolve);
   });
   return { engine: root.SELECT_TO_AI_ENGINE, debug, pressKey, listeners };
 }
@@ -219,6 +219,20 @@ test("two runs on one tab hold it together: it is let go when the last of them e
   c.touched.add(6);
   await w.pressKey(6);
   assert.equal(w.debug.attaches, 3, "tried again after the run that marked it ended");
+});
+
+test("a real Command shortcut on a Mac names its editing command, so the key does what it does for a person", async () => {
+  const w = fakeWorker(new Set());
+  w.engine.sessions.set(1, { windowId: 1, run: { status: "running", tabId: 5, children: [] }, runners: new Map(), touched: new Set([5]) });
+  assert.equal((await w.pressKey(5, { modifiers: 4, commands: ["selectAll", "not a command!"] })).ok, true);
+  const keys = w.debug.sent.filter((c) => c.method === "Input.dispatchKeyEvent");
+  assert.deepEqual(keys[0].params.commands, ["selectAll"], "only a command's name goes to the browser");
+  assert.equal(keys[0].params.modifiers, 4);
+  assert.equal("commands" in keys[1].params, false, "the key's release runs nothing");
+  // A key with no command is sent as before.
+  w.debug.sent.length = 0;
+  await w.pressKey(5);
+  assert.equal(w.debug.sent.filter((c) => c.method === "Input.dispatchKeyEvent").some((c) => "commands" in c.params), false);
 });
 
 test("a tab closed while the worker is waking ends the run that worked in it", async () => {

@@ -164,12 +164,12 @@
 
   // The icon for each kind of action the model can take.
   const ACTION_ICON = {
-    click: "pointer", click_at: "pointer", hover: "hover", drag: "move", fill: "pencil", fill_details: "idcard",
+    click: "pointer", click_at: "pointer", double_click: "pointer", right_click: "pointer", hold: "pointer", hover: "hover", drag: "move", fill: "pencil", fill_details: "idcard",
     recall: "bookmark", remember: "bookmark", press: "keyboard", scroll: "scroll", navigate: "globe", back: "back",
     tabs: "tabs", wait: "clock", look: "eye", read: "doc", find: "search", ask_user: "message", done: "check", delegate: "split",
   };
   const ACTION_VERB = {
-    click: "Click", click_at: "Click a point on the page", hover: "Point at", drag: "Drag", fill: "Fill in", fill_details: "Fill in your details",
+    click: "Click", click_at: "Click a point on the page", double_click: "Double-click", right_click: "Right-click", hold: "Press and hold", hover: "Point at", drag: "Drag", fill: "Fill in", fill_details: "Fill in your details",
     recall: "Look up your details", remember: "Remember", press: "Press", scroll: "Scroll", navigate: "Open", back: "Go back",
     tabs: "Switch tabs", wait: "Wait for the page", look: "Look at the screen", read: "Read further", find: "Search the page", ask_user: "Ask you", done: "Answer",
     delegate: "Hand out sub-tasks",
