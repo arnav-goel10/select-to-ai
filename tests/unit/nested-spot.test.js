@@ -11,7 +11,8 @@ const assert = require("node:assert/strict");
 const { CONTENT, build } = require("../helpers/content-source.js");
 
 const NAMES = ["spotIn", "aimAtSpot", "insideOf", "missedSpot", "numberedOf", "pressesOn", "innerControlAt", "sameControl",
-  "aimAt", "aimClear", "aimedAt", "stillOn", "scriptedAim", "pointerOnControl", "pointerTargetIn"];
+  "aimAt", "aimClear", "aimedAt", "stillOn", "scriptedAim", "pointerOnControl", "pointerTargetIn", "spotsOf", "drawnAllOver",
+  "coverNote", "passedOverNote"];
 
 /**
  * A page of boxes. Each is [name, parent, [left, top, width, height], opts]
@@ -170,16 +171,71 @@ test("a button the page draws invisibly over a card is passed over too, and said
   assert.doesNotMatch(r.error, /give its own ref/);
 });
 
-test("a part of the control the listing does not show apart from it is pressed as the control", () => {
+test("a part of the control that is no control is pressed as the control", () => {
   const p = world([
     ["card", null, [0, 0, 300, 200], { id: 5 }],
     ["price", "card", [100, 80, 100, 40], { tag: "span" }],
-    ["shownButton", "card", [0, 160, 300, 40], { tag: "button" }],
   ]);
   assert.equal(p.innerControlAt(p.card, p.price), null);
-  // Drawn and not listed: merged into the card by the listing, so a part of it.
-  assert.equal(p.innerControlAt(p.card, p.shownButton), null);
   assert.equal(p.aimAt(p.card).hit, p.price);
+});
+
+test("a control drawn inside the one pressed that the listing left out is still a control of its own", () => {
+  // A row listed, its Delete link dropped from the listing (past its
+  // limits), drawn where the row's middle is.
+  const p = world([
+    ["row", null, [0, 0, 400, 40], { id: 5, label: "Invoice 1042 Acme Ltd $120.00" }],
+    ["words", "row", [0, 0, 400, 40], { tag: "span" }],
+    ["del", "row", [150, 0, 100, 40], { tag: "a", label: "Delete" }],
+  ]);
+  assert.equal(p.innerControlAt(p.row, p.del), p.del);
+  const aim = p.aimAt(p.row);
+  assert.ok(aim.point);
+  assert.equal(aim.hit, p.words);
+  assert.equal(aim.passed, p.del, "the aim says what it went round");
+  assert.equal(p.pointerTargetIn(p.row, { x: 200, y: 20 }), p.row);
+  const r = p.missedSpot(5, { point: null, inner: p.del }, false, true);
+  assert.match(r.error, /such as a a "Delete", so the press would reach that instead\. Nothing was pressed\. That control is not in the list of controls you were shown\. To use \[5\], pick a spot/);
+  assert.doesNotMatch(r.error, /does not draw it/);
+});
+
+test("a link drawn out over the whole of a card is the card, though its own box is only its words", async () => {
+  // A card whose title link has a layer of its own (a ::after) stretched
+  // over the card: every spot of the card is the link.
+  const p = world([
+    ["card", null, [0, 0, 300, 200], { id: 5, label: "Red kettle $30" }],
+    ["title", "card", [10, 10, 120, 24]],
+    ["link", "title", [10, 10, 120, 24], { id: 6, tag: "a", label: "Red kettle" }],
+    ["stretch", "link", [0, 0, 300, 200]],
+  ]);
+  assert.equal(p.innerControlAt(p.card, p.stretch), null);
+  const r = await p.pointerOnControl(p.card, 5, "Click", false, null);
+  assert.equal(r.fail, undefined, "the press is not refused");
+  const at = p.stillOn(p.card, r.aimed);
+  // The events start where a person's press would, on the link's layer.
+  assert.equal(p.pointerTargetIn(p.card, at), p.stretch);
+  // One link over only part of the card is still a control of its own.
+  const q = world([
+    ["card", null, [0, 0, 300, 200], { id: 5, label: "Red kettle $30" }],
+    ["link", "card", [100, 80, 100, 40], { id: 6, tag: "a", label: "Red kettle" }],
+  ]);
+  assert.equal(q.innerControlAt(q.card, q.link), q.link);
+});
+
+test("a press that went round an inner control and got no answer says so and names it", () => {
+  const p = world([]);
+  const none = { outcome: { noEffect: true }, settle: { network: true } };
+  const note = p.passedOverNote(7, '[8] "Open inbox"', none);
+  assert.match(note, /The press went on \[7\] itself, clear of \[8\] "Open inbox" inside it, and the page showed no answer to it\. If \[7\] does its work through \[8\] "Open inbox", press that instead\./);
+  // Any answer from the page, and nothing is said.
+  assert.equal(p.passedOverNote(7, '[8] "Open inbox"', { outcome: { noEffect: false } }), "");
+  assert.equal(p.passedOverNote(7, '[8] "Open inbox"', { ...none, stateChanged: true }), "");
+  assert.equal(p.passedOverNote(7, '[8] "Open inbox"', { ...none, ways: { by: "Enter" } }), "");
+  assert.equal(p.passedOverNote(7, '[8] "Open inbox"', { ...none, settle: { asked: true } }), "");
+  assert.equal(p.passedOverNote(7, null, none), "");
+  // The click hands what it went round to the measured result, which adds the note.
+  assert.match(CONTENT, /const passedOver = pressed\.passed \? \{ passedOver: nameOfDrawn\(pressed\.passed\) \} : \{\};/);
+  assert.match(CONTENT, /result\.message \+= passedOverNote\(request\.data\.id, result\.passedOver, result\);/);
 });
 
 test("a tab whose whole surface is its link, or a control with exactly the same words, is the same control", () => {
@@ -239,14 +295,42 @@ test("a row under a bar pinned over it is scrolled clear once and pressed, not c
   assert.equal(p.scope.drawnAt(at.x, at.y), p.row);
 });
 
-test("what still covers a control after it is scrolled to the middle is reported as covering it", async () => {
+test("with the real pointer, what still covers a control after it is scrolled to the middle is refused as covering it", async () => {
   const p = world([
     ["row", null, [0, 20, 400, 44], { id: 30 }],
     ["dialog", null, [0, 0, 800, 600], { fixed: true, label: "Accept cookies" }],
-  ]);
+  ], { POINTER_TOOLS: { clickSteps: (pt) => [{ t: "move", ...pt }] }, gesture: async () => { throw new Error("a covered control was pressed"); } });
   const r = await p.pointerOnControl(p.row, 30, "Click", false, null);
   assert.deepEqual(p.scrolled, ["row"], "scrolled once, not again and again");
   assert.match(r.fail.error, /\[30\] is covered: a div "Accept cookies"/);
+});
+
+test("with no real pointer, a covered control is still pressed by script, and the result says what covers it", async () => {
+  // Events made by script go to the control whatever is drawn over it (a
+  // leftover see-through backdrop, a notice), as they always did.
+  const p = world([
+    ["row", null, [0, 20, 400, 44], { id: 30 }],
+    ["layer", null, [0, 0, 800, 600], { fixed: true }],
+  ]);
+  const r = await p.pointerOnControl(p.row, 30, "Click", false, null);
+  assert.equal(r.fail, undefined, "not refused");
+  assert.equal(r.real, false);
+  assert.equal(r.cover, p.layer);
+  // The events start on the control itself, not on the layer.
+  assert.equal(p.pointerTargetIn(p.row, { x: 200, y: 42 }), p.row);
+  assert.match(p.coverNote(30, r.cover, false), /^ a div "layer" is drawn over \[30\] where it is on screen, so a person's press would reach that instead\. The events were made by script on \[30\] itself\.$/);
+  assert.match(p.coverNote(30, r.cover, true), /a person's pointer would reach/);
+  assert.equal(p.coverNote(30, undefined, false), "");
+  // A hover, and the gestures made only by script, the same way.
+  const h = await p.pointerOnControl(p.row, 30, "Hover", true, null);
+  assert.equal(h.cover, p.layer);
+  const g = p.scriptedAim(p.row, 30, false);
+  assert.equal(g.fail, undefined);
+  assert.equal(g.cover, p.layer);
+  for (const said of ["Clicked element", "Double-clicked element", "Right-clicked element", "before letting go", "without pressing it, and left it there"]) {
+    const at = CONTENT.indexOf(said);
+    assert.ok(at > 0 && /coverNote\(id, (pressed|aim|moved)\.cover, (true|false)\)/.test(CONTENT.slice(at - 1200, at + 300)), `${said} says what covers the control`);
+  }
 });
 
 test("a spot asked for under a pinned bar is scrolled clear too", () => {
