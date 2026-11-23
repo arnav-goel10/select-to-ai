@@ -354,6 +354,9 @@
    */
   function decide(a, page, run, settings, store, tabs) {
     let v = judge(a, page, run, settings, store, tabs);
+    // With confirmations off nothing is held for approval, so no press is
+    // looked up or waited on either.
+    if ((settings || {}).riskConfirmation === false) return v;
     // Opening a link's own address is pressing that link another way: it
     // is decided as a press on it too, and the stronger answer holds. A
     // link the check said commits is held however it is opened.
@@ -362,7 +365,7 @@
       const asPress = link.ref !== undefined ? decide({ do: "click", ref: link.ref }, page, run, settings, store, tabs) : entryVerdict(link.entry, run, link.entry.names[0] || a.url);
       if (STRENGTH(asPress) > STRENGTH(v)) v = asPress;
     }
-    if ((settings || {}).riskConfirmation === false || STRENGTH(v) > 2) return v;
+    if (STRENGTH(v) > 2) return v;
     // The step said this press commits the user to something: it is held,
     // whatever the check said. Saying it does not commits grants nothing.
     if (a.commits === true && v.verdict === "allow" && pressing(a)) {
@@ -408,23 +411,29 @@
   /**
    * What the run's checks said of a press entry, as a press risk: null for
    * one that commits nothing, the risk for one that does, and {check} for
-   * one not yet judged. A check that could not be had holds the press.
+   * one not yet judged. A check that could not be had holds a button. A
+   * link it could not judge is decided as links were before the check:
+   * by its address (actionRisk), the user's declines, and the step's own
+   * word that it commits ({unchecked}), so a check that is down does not
+   * put a card on every link the run follows.
    */
   function entryRisk(entry, run, target) {
     const said = ((run && run.opinions) || {})[entry.key];
     if (!said) return { check: true };
+    if (said.unanswered && entry.kind === "link") return { unchecked: true };
     if (said.unanswered) return { risk: { kind: "send", why: "What this button does could not be checked, so pressing it is yours to allow.", target } };
     if (said.does === "unsure") return { risk: { kind: "decide", why: TOOLS.RISK_TEXT.unsure, target } };
     if (["pay", "send", "delete", "decide"].includes(said.does)) return { risk: { kind: said.does, why: TOOLS.RISK_TEXT[said.does], target }, opinion: VERB[said.does] };
     return {};
   }
+  const UNCHECKED_LINK = Object.freeze({ verdict: "allow", note: "The press check could not be had for this link, so it was decided by its address and by the step's own word that it commits nothing." });
   const VERB = Object.freeze({ pay: "it spends money", send: "it sends something", delete: "it deletes something", decide: "it decides something for you" });
 
   /** A verdict on pressing an entry alone, for a link opened by its address. */
   function entryVerdict(entry, run, target) {
     const r = entryRisk(entry, run, String(target || "").slice(0, 80));
     if (r.check) return { verdict: "allow", check: { kind: "press", key: entry.key, entry } };
-    if (!r.risk) return ALLOW;
+    if (!r.risk) return r.unchecked ? UNCHECKED_LINK : ALLOW;
     return { verdict: "confirm", kind: r.risk.kind, why: r.risk.why, detail: [`On: ${r.risk.target}`, ...(r.opinion ? [`Second check, from the link's names alone: ${r.opinion}.`] : [])] };
   }
 
@@ -516,7 +525,7 @@
       const entry = press.entry;
       const r = entryRisk(entry, run, (el && TOOLS.elementLabel(el)) || entry.names[0] || "");
       if (r.check) return { verdict: "allow", check: { kind: "press", key: entry.key, entry } };
-      if (!r.risk) return ALLOW;
+      if (!r.risk) return r.unchecked ? UNCHECKED_LINK : ALLOW;
       risk = r.risk;
       opinion = r.opinion ? `from the control's names alone, ${r.opinion}` : "";
     } else if (risk.unsure && !(page && page.injection)) {

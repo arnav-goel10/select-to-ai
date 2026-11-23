@@ -61,7 +61,12 @@
   const EVIDENCE_ROUNDS = 2;
   const VERIFY_ROUNDS = 2;
   const TRAIL = 24; // recent actions kept, for finding a round of actions the run keeps going
-  const OPINION_MISSES = 2; // checks in a row without a usable answer before the run stops asking
+  // Questions in a row the check gave no usable answer to before the run
+  // stops asking about single presses (the page's batch is still asked,
+  // beside the step, so the run picks up again once the check answers).
+  // Asking the same question again, as the press alone after its page's
+  // batch failed, is not a new miss.
+  const OPINION_MISSES = 2;
   // Pages that hide a sentence from people are asked about at most this
   // many times a run (each ask covers every new hidden sentence on the
   // page). Hidden text is left out of what the model reads, so the answer
@@ -317,6 +322,8 @@
       opinions: {},
       pendingOpinion: null,
       opinionMisses: 0,
+      // The keys of the questions counted as misses since the check last answered.
+      missedKeys: [],
       // Press checks asked about a page's entries and not yet answered
       // ({tag, keys, entries}), and the press waiting for one of them.
       pressBatches: [],
@@ -482,10 +489,13 @@
    * go: not those this run knows, those kept from earlier runs
    * (env.pressCache, verdicts by key with the same judge), or those a call
    * still in flight is judging. Nothing is asked when none are left, or
-   * once the check has failed too often in a row.
+   * when the user turned confirmations off, since no answer would be used.
+   * A run whose check has failed too often in a row still asks here: the
+   * call costs no wait, and an answer starts the single asks again.
    */
   function askPresses(run, page, env, fx) {
     if (!TOOLS.pressEntries) return;
+    if (env && env.settings && env.settings.riskConfirmation === false) return;
     const opinions = run.opinions || (run.opinions = {});
     const cache = (env && env.pressCache) || {};
     const flying = new Set((run.pressBatches || []).flatMap((b) => b.keys));
@@ -503,7 +513,7 @@
       if (!flying.has(e.key)) fresh.push(e);
     }
     if (used.length) fx.push({ type: "verdicts", used });
-    if (!fresh.length || (run.opinionMisses || 0) >= OPINION_MISSES) return;
+    if (!fresh.length) return;
     const batch = fresh.slice(0, LABELS_CAP);
     const tag = `presses-${run.step}-${(run.pressAsks = (run.pressAsks || 0) + 1)}`;
     run.pressBatches = [...(run.pressBatches || []), { tag, keys: batch.map((e) => e.key), entries: batch }];
@@ -517,6 +527,24 @@
     if (!e.url || index[e.url] || Object.keys(index).length >= LINK_INDEX) return;
     const { url: _url, ...entry } = e;
     index[e.url] = entry;
+  }
+
+  /**
+   * A question the check gave no usable answer to. It counts as a miss
+   * only when it asks about something no question missed since the last
+   * answer asked, so the press asked alone after its page's batch failed
+   * is the same miss, not a second one.
+   */
+  function missed(run, keys) {
+    const before = new Set(run.missedKeys || []);
+    if (keys.some((k) => !before.has(k))) run.opinionMisses = (run.opinionMisses || 0) + 1;
+    run.missedKeys = [...before, ...keys].slice(-LABELS_CAP);
+  }
+
+  /** The check answered: misses start again from none. */
+  function answered(run) {
+    run.opinionMisses = 0;
+    run.missedKeys = [];
   }
 
   /** The verdicts a check gave, kept for the run and, definite ones, for later runs (engine.js). */
@@ -545,10 +573,10 @@
     addUsage(run, event.usage);
     const said = event.reply ? TOOLS.readLabels(batch.entries, event.reply) : null;
     if (said) {
-      run.opinionMisses = 0;
+      answered(run);
       keepVerdicts(run, batch.entries, said, fx);
     } else {
-      run.opinionMisses = (run.opinionMisses || 0) + 1;
+      missed(run, batch.keys);
       quietLog(run, "system", "Press Check", `The check on ${batch.entries.length} control${batch.entries.length === 1 ? "" : "s"} gave no usable answer${event.timedOut ? " in time" : ""}.`);
     }
     const waiting = run.awaitingPress;
@@ -1341,10 +1369,10 @@
     const read = press ? TOOLS.readLabels([asked.entry], event.reply) : null;
     const said = press ? (read ? { does: read[0] } : null) : TOOLS.readOpinion(asked, event.reply);
     if (!said) {
-      run.opinionMisses = (run.opinionMisses || 0) + 1;
+      missed(run, [asked.key]);
       log(run, "system", "Second Check", "The check gave no usable answer, so the user is asked.");
     } else {
-      run.opinionMisses = 0;
+      answered(run);
       if (press && said.does !== "none") log(run, "system", "Second Check", `Pressing "${clip(asked.label, 60)}" looks like it would ${{ pay: "spend money", send: "send something", delete: "delete something", decide: "decide something for you", unsure: "do something the check could not tell" }[said.does]}.`);
     }
     if (press && read) keepVerdicts(run, [asked.entry], read, fx);

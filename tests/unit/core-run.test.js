@@ -1166,7 +1166,7 @@ test("a press changed after its check is judged again by its new names", () => {
   assert.equal(run.wait.risk, "pay");
 });
 
-test("a press check that fails is asked once more for the press alone; then the press is held, and after two misses nothing more is asked", () => {
+test("a press check that fails is asked once more for the press alone, then the press is held; that is one miss, not two", () => {
   const page = shop({ elements: [{ id: 2, tagName: "button", accName: "Weiter" }, { id: 3, tagName: "button", accName: "Zurück" }], forms: [] });
   const { run, check } = fresh("go on", page);
   assert.deepEqual(stepSays(run, page, [{ do: "click", ref: 2 }]), [], "waiting for the page's check");
@@ -1179,17 +1179,89 @@ test("a press check that fails is asked once more for the press alone; then the 
   fx = RUN.advance(run, { type: "model_failed", purpose: "opinion", kind: "timeout", message: "The check took too long." }, env(page));
   assert.equal(fx[0].type, "attention", "held, never pressed in the hope that it is harmless");
   assert.match(run.wait.question, /could not be checked/);
-  assert.equal(run.opinionMisses, 2);
+  assert.equal(run.opinionMisses, 1, "the same question asked again is the same miss");
   RUN.advance(run, { type: "declined", id: run.wait.id }, env(page));
-  // Two misses in a row: no more checks, and every press nothing has judged is held.
-  const later = shop({ elements: [{ id: 5, tagName: "button", accName: "Schließen" }], forms: [] });
+  // One slow page does not switch the check off: the next page is asked, and its press alone too.
+  const later = shop({ url: "https://shop.example/p2", elements: [{ id: 5, tagName: "button", accName: "Schließen" }], forms: [] });
   const look2 = RUN.advance(run, { type: "observed", page: later }, env(later));
-  assert.ok(!look2.some(JUDGE.isCheck), "no press check");
+  const check2 = look2.find(JUDGE.isCheck);
+  assert.ok(check2, "the next page is still checked");
+  judgeSays(run, later, check2, JUDGE.answer(check2));
+  assert.equal(run.opinionMisses, 0, "an answer starts the count again");
+  assert.equal(stepSays(run, later, [{ do: "click", ref: 5 }])[0].type, "act");
+});
+
+test("after two pages the check could not answer, single asks stop but each page is still checked beside the step, and the run picks up when it answers", () => {
+  const p1 = shop({ url: "https://shop.example/a", elements: [{ id: 2, tagName: "button", accName: "Weiter" }], forms: [] });
+  const { run, check } = fresh("go on", p1);
+  RUN.advance(run, { type: "model_failed", purpose: "labels", tag: check.tag, kind: "timeout", message: "late" }, env(p1));
+  const p2 = shop({ url: "https://shop.example/b", elements: [{ id: 3, tagName: "button", accName: "Fortfahren" }], forms: [] });
+  const c2 = RUN.advance(run, { type: "observed", page: p2 }, env(p2)).find(JUDGE.isCheck);
+  RUN.advance(run, { type: "model_failed", purpose: "labels", tag: c2.tag, kind: "timeout", message: "late" }, env(p2));
+  assert.equal(run.opinionMisses, 2, "two different questions missed in a row");
+  // A third page: its controls are still sent beside the step, at no wait.
+  const p3 = shop({ url: "https://news.example/", elements: [
+    { id: 4, tagName: "button", accName: "Schließen" },
+    { id: 5, tagName: "a", accName: "Sport", url: "https://news.example/sport" },
+    { id: 6, tagName: "a", accName: "Abmelden", url: "https://news.example/u?t=1" },
+  ], forms: [] });
+  const look3 = RUN.advance(run, { type: "observed", page: p3 }, env(p3));
+  const c3 = look3.find(JUDGE.isCheck);
+  assert.ok(c3, "the page is still checked beside the step");
+  RUN.advance(run, { type: "model_failed", purpose: "labels", tag: c3.tag, kind: "timeout", message: "late" }, env(p3));
   const calls = run.usage.calls;
-  fx = stepSays(run, later, [{ do: "click", ref: 5 }]);
+  // A button nothing judged is held, with no single ask.
+  let fx = stepSays(run, p3, [{ do: "click", ref: 4 }]);
   assert.equal(fx[0].type, "attention");
   assert.match(run.wait.question, /could not be checked/);
   assert.equal(run.usage.calls, calls + 1, "the step's own call only");
+  RUN.advance(run, { type: "declined", id: run.wait.id }, env(p3));
+  // An ordinary link is followed as before the check existed: no card on every link.
+  fx = stepSays(run, p3, [{ do: "click", ref: 5 }]);
+  assert.deepEqual(fx.filter((f) => f.type === "act").map((f) => f.action.ref), [5], "an ordinary link is not carded");
+  RUN.advance(run, { type: "acted", result: { ok: true, message: "Done." } }, env(p3));
+  RUN.advance(run, { type: "observed", page: p3 }, env(p3)).filter(JUDGE.isCheck).forEach((c) => RUN.advance(run, { type: "model_failed", purpose: "labels", tag: c.tag, kind: "timeout", message: "late" }, env(p3)));
+  // The step's own word that a link commits still holds it.
+  fx = stepSays(run, p3, [{ do: "click", ref: 6, commits: true }]);
+  assert.equal(fx[0].type, "attention", "the step said this link commits");
+  RUN.advance(run, { type: "declined", id: run.wait.id }, env(p3));
+  // The check answers again on a later page: misses are cleared and single asks come back.
+  const p4 = shop({ url: "https://shop.example/c", elements: [{ id: 7, tagName: "button", accName: "Weiter" }, { id: 8, tagName: "button", accName: "Zurück" }], forms: [] });
+  const c4 = RUN.advance(run, { type: "observed", page: p4 }, env(p4)).find(JUDGE.isCheck);
+  judgeSays(run, p4, c4, JUDGE.answer(c4));
+  assert.equal(run.opinionMisses, 0);
+  const p5 = shop({ url: "https://shop.example/d", elements: [{ id: 9, tagName: "button", accName: "Senden" }], forms: [] });
+  const c5 = RUN.advance(run, { type: "observed", page: p5 }, env(p5)).find(JUDGE.isCheck);
+  stepSays(run, p5, [{ do: "click", ref: 9 }]);
+  fx = RUN.advance(run, { type: "model_failed", purpose: "labels", tag: c5.tag, kind: "timeout", message: "late" }, env(p5));
+  assert.ok(JUDGE.isSingle(fx[0]), "the press is asked alone again");
+});
+
+test("with confirmations off, nothing is asked and nothing waits", () => {
+  const off = { settings: { riskConfirmation: false, allowlist: "", verify: true } };
+  const href = "https://news.example.org/u?id=abc";
+  const page = shop({ url: "https://mail.example/inbox/1", elements: [
+    { id: 2, tagName: "button", accName: "Jetzt kaufen" },
+    { id: 4, tagName: "a", accName: "Unsubscribe", url: href },
+  ], forms: [] });
+  const run = RUN.newRun({ id: "r3", task: "go", tabId: 7, startUrl: page.url, marker: "PAGE-abcd1234", now: 1 });
+  RUN.advance(run, { type: "start" }, env(page, off));
+  const look = RUN.advance(run, { type: "observed", page }, env(page, off));
+  assert.deepEqual(look.map((f) => f.purpose), ["step"], "no press check is asked");
+  for (const action of [{ do: "click", ref: 2 }, { do: "click", ref: 4 }, { do: "navigate", url: href }]) {
+    const fx = stepSays(run, page, [action], off);
+    assert.deepEqual(fx.filter((f) => f.type !== "act"), [], JSON.stringify(action));
+    assert.equal(fx.find((f) => f.type === "act").action.do, action.do);
+    RUN.advance(run, { type: "acted", result: { ok: true, message: "Done." } }, env(page, off));
+    assert.deepEqual(RUN.advance(run, { type: "observed", page }, env(page, off)).map((f) => f.purpose), ["step"]);
+  }
+  // A link a check judged before the user turned confirmations off is not held by its address either.
+  const on = fresh("read my mail", page);
+  judgeSays(on.run, page, on.check, JUDGE.answer(on.check));
+  const elsewhere = shop({ url: "https://mail.example/inbox", elements: [{ id: 1, tagName: "a", accName: "Inbox", url: "https://mail.example/inbox" }], forms: [] });
+  RUN.advance(on.run, { type: "observed", page: elsewhere }, env(elsewhere, off));
+  const fx = stepSays(on.run, elsewhere, [{ do: "navigate", url: href }], off);
+  assert.equal(fx[0].type, "act", "no card from an earlier page's verdict");
 });
 
 test("a press check whose count or numbers do not match what was asked is thrown away", () => {
