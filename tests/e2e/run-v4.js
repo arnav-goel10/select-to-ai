@@ -861,6 +861,42 @@ async function main() {
         const at = await r.fixture.evaluate(() => ({ state: document.getElementById("state").textContent, title: document.getElementById("title").value }));
         return at.state === "Title in upper case" && at.title === "SHOPPING LIST" ? null : `${JSON.stringify(at)}: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
       }],
+      // An editor with its own model of the text takes typing at its end, a
+      // word selected by its text, and its bold shortcut, and says it is bold.
+      ["editorBold", "/editor", async () => false, async (r) => {
+        const text = await r.fixture.evaluate(() => window.editorModel.map((p) => p.map((x, i) => `${x.b && !(p[i - 1] && p[i - 1].b) ? "**" : ""}${x.c}${x.b && !(p[i + 1] && p[i + 1].b) ? "**" : ""}`).join("")));
+        if (JSON.stringify(text) !== JSON.stringify(["Original text here.", "**Practice** line"])) return `the editor holds ${JSON.stringify(text)}: ${String(r.log).replace(/\s+/g, " ").slice(0, 900)}`;
+        return /Practice line/.test(r.answer) && /bold/.test(r.answer) ? null : `answer: ${JSON.stringify(r.answer)}`;
+      }],
+      // A button in a frame within a frame is listed under the frames' path
+      // and pressed by its number; a frame from a site with no access is said.
+      ["nestedFrame", "/frames", async () => false, async (r) => {
+        const inner = r.fixture.frames().find((f) => /\/frames\/inner$/.test(f.url()) && f.parentFrame() && f.parentFrame() !== r.fixture.mainFrame());
+        const at = inner ? await inner.evaluate(() => ({ text: document.getElementById("nested").textContent, clicked: window.clicked || 0 })) : null;
+        if (!at || at.text !== "Clicked, thank you" || at.clicked !== 1) return `the inner button: ${JSON.stringify(at)}: ${String(r.log).replace(/\s+/g, " ").slice(0, 900)}`;
+        const listed = r.prompts.find((p) => /frame "Outer box" > frame "Inner"/.test(p));
+        if (!listed) return `the inner frame's controls were not listed under the frames' path: ${String(r.prompts[0] || "").slice(-2500)}`;
+        if (!/could not be read: it comes from 127\.0\.0\.2, which the agent has no access to/.test(listed)) return "the frame from a site with no access was not said to be unreadable";
+        if (!/click \[2000\d\d\]/.test(r.log)) return `the inner button was not pressed by its own number: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        return /Clicked, thank you/.test(r.answer) ? null : `answer: ${JSON.stringify(r.answer)}`;
+      }],
+      // A rating set in a shadow root is read back: its value is in the
+      // listing, and what the action read back counts as evidence.
+      ["shadowRating", "/rating", async () => false, async (r) => {
+        const value = await r.fixture.evaluate(() => document.getElementById("stars").value);
+        if (value !== 4) return `the rating holds ${value}: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (!r.prompts.some((p) => /\[\d+\] div "Rating" role=slider value="4" min=0 max=5/.test(p))) return "the rating's value was not in the listing";
+        if (/not in anything you have been shown/.test(r.log)) return "a quote of what the action read back was refused as evidence";
+        return /4 of 5/.test(r.answer) ? null : `answer: ${JSON.stringify(r.answer)}`;
+      }],
+      // A key named for a control that cannot hold the focus is not sent to
+      // the page as a whole, where it changed pages; a control that takes keys gets it.
+      ["keysWhere", "/chart-keys", async () => false, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ path: location.pathname, zoom: document.getElementById("zoom") && document.getElementById("zoom").getAttribute("aria-valuenow") }));
+        if (at.path !== "/chart-keys") return `the key went to the page and it changed to ${at.path}`;
+        if (at.zoom !== "2") return `the zoom shows ${at.zoom}: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        return /cannot take the keyboard focus, so ArrowRight would go to the page as a whole/.test(r.log) ? null : `the refused key was not explained: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+      }],
       // A menu only the real mouse opens: said once, as a fact, and the hover is not repeated.
       ["hoverScripted", "/pointer-menu", async () => false, async (r) => {
         const state = await r.fixture.evaluate(() => document.getElementById("state").textContent);

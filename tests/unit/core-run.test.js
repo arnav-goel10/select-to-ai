@@ -481,7 +481,9 @@ test("the trace lists each action with what it did, for the benchmark and the sa
 test("a step is checked leniently where the meaning is clear, and strictly where it is not", () => {
   const page = shop();
   const ctx = { page, labels: { 9: "Blue Widget" }, labelOf: (e) => e.accName };
-  assert.deepEqual(STEP.checkStep({ action: "type", id: "1", text: "x" }, ctx).step.actions, [{ do: "fill", ref: 1, value: "x" }]);
+  assert.deepEqual(STEP.checkStep({ action: "input", id: "1", text: "x" }, ctx).step.actions, [{ do: "fill", ref: 1, value: "x" }]);
+  // type is an action of its own now: text typed at the cursor, keeping what is there.
+  assert.deepEqual(STEP.checkStep({ action: "type", id: "1", text: "x" }, ctx).step.actions, [{ do: "type", ref: 1, value: "x" }]);
   assert.match(STEP.checkStep({ actions: [{ do: "click", ref: 9 }] }, ctx).step.actions[0].gone, /"Blue Widget" is now \[3\]/);
   assert.match(STEP.checkStep({ actions: [{ do: "navigate", url: "javascript:alert(1)" }] }, ctx).error, /Only http and https/);
   assert.equal(STEP.checkStep({ actions: [{ do: "done", answer: "x" }] }, ctx).step.actions[0].success, true);
