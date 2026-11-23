@@ -48,6 +48,7 @@
   const SEEN_SEAM = "\n\u241e\n"; // between the kept parts of a long page, so a quote never spans two
   const DROPPED_KEPT = 50; // pages whose text was let go, named in the feedback on a quote
   const SEEN_URLS = 1500; // addresses seen on pages, for "did the agent make this address up"
+  const ACTING_LINKS = 200; // links that said they delete or send, for opening one by its address
   const INVALID_LIMIT = 3; // unusable replies in a row before the run gives up on the model
   const EVIDENCE_ROUNDS = 2;
   const VERIFY_ROUNDS = 2;
@@ -268,6 +269,7 @@
       // second ask there goes to the user (detourToLeave).
       leftDetours: [],
       trust: { sites: [...new Set(sites.filter(Boolean))], urls: [] },
+      actingLinks: [],
       current: null,
       queue: [],
       wait: null,
@@ -409,6 +411,17 @@
       for (const u of [page.url, ...(page.elements || []).map((el) => el.url), ...searches]) {
         if (u && !known.has(u) && known.size < SEEN_URLS) { known.add(u); run.trust.urls.push(u); }
       }
+    }
+    // Links that say they delete or send, by address and name: opening one
+    // later by its address, from another page, is decided as pressing it
+    // (policy.js linkOpened).
+    run.actingLinks = run.actingLinks || [];
+    for (const el of page.elements || []) {
+      if (run.actingLinks.length >= ACTING_LINKS) break;
+      if (!TOOLS.linkActs(el)) continue;
+      let url = "";
+      try { url = new URL(String(el.url || el.href), page.url || undefined).href; } catch (_e) { continue; }
+      if (!run.actingLinks.some((l) => l.url === url)) run.actingLinks.push({ url, label: TOOLS.elementLabel(el), words: clip([el.accName, el.text, el.label, el.value, el.title].filter(Boolean).join(" "), 200) });
     }
     // Kept apart too: only a search form's address takes other query values (agentTools.js addressOrigin).
     run.trust.searches = run.trust.searches || [];

@@ -320,7 +320,10 @@
     const labels = (run && run.labels) || {};
     const names = [...new Set([...found.map(TOOLS.elementLabel), ...refs.map((r) => labels[r]).filter(Boolean)])];
     const rows = [...new Set(found.map((e) => e.group).filter(Boolean))];
-    return { page: addressOf(page && page.url), keys: [...new Set(found.map(controlKey))], names, rows, urls: opensUrl(a) ? [opensUrl(a)] : [] };
+    // A link pressed is its address opened, so opening that address another way is the same step.
+    const links = found.filter((e) => TOOLS.linkActs(e)).map((e) => { try { return addressOf(new URL(String(e.url || e.href), (page && page.url) || undefined).href); } catch (_e) { return ""; } });
+    const urls = [...new Set([opensUrl(a), ...links].filter(Boolean))];
+    return { page: addressOf(page && page.url), keys: [...new Set(found.map(controlKey))], names, rows, urls };
   }
 
   /**
@@ -348,7 +351,16 @@
    * a new action is held to this as well.
    */
   function decide(a, page, run, settings, store, tabs) {
-    const v = judge(a, page, run, settings, store, tabs);
+    let v = judge(a, page, run, settings, store, tabs);
+    // Opening a link's own address is pressing that link another way: it
+    // is decided as a click on it too, and the stronger answer holds. A
+    // link that says it deletes or sends gets the same second opinion and
+    // hold however it is opened.
+    const link = STRENGTH(v) < 2 ? linkOpened(a, page, run) : null;
+    if (link) {
+      const asClick = decide({ do: "click", ref: link.ref }, link.page, run, settings, store, tabs);
+      if (STRENGTH(asClick) > STRENGTH(v)) v = asClick;
+    }
     if ((settings || {}).riskConfirmation === false || STRENGTH(v) > 2) return v;
     // A key with no ref lands where the focus is: on the control the page
     // shows focused, or the one this step last used.
@@ -361,6 +373,30 @@
     const said = `You declined "${String(what).slice(0, 80)}" a moment ago. This would do it again${a.do === "click" ? "" : " another way"}.`;
     if (v.verdict === "confirm") return { ...v, detail: [said, ...(v.detail || [])] };
     return { verdict: "confirm", kind: hit.risk || "send", why: said, detail: [], declined: true };
+  }
+
+  /**
+   * The link whose address a navigate or a new tab opens, when that link
+   * says it deletes or sends (agentTools.js linkActs): one on this page
+   * with that exact address, or one on a page read earlier (run.actingLinks,
+   * kept by run.js). Any other link is judged by where it goes, which the
+   * address already is. Returns {ref, page} for deciding a click on it,
+   * with an earlier page's link added to the page as it was named there,
+   * or null.
+   */
+  function linkOpened(a, page, run) {
+    if (!opensUrl(a)) return null;
+    const exact = TOOLS.exactUrl(String(a.url || ""));
+    if (!exact) return null;
+    const base = (page && page.url) || undefined;
+    const full = (h) => { try { return new URL(String(h), base).href; } catch (_e) { return ""; } };
+    const els = (page && page.elements) || [];
+    const here = els.find((e) => TOOLS.linkActs(e) && TOOLS.exactUrl(full(e.url || e.href)) === exact);
+    if (here) return { ref: here.id, page };
+    const seen = ((run && run.actingLinks) || []).find((l) => TOOLS.exactUrl(l.url) === exact);
+    if (!seen) return null;
+    const named = { id: -1, tagName: "a", accName: String(seen.label || ""), title: String(seen.words || ""), url: seen.url };
+    return { ref: named.id, page: { ...(page || {}), elements: [...els.filter((e) => e.id !== named.id), named] } };
   }
 
   function judge(a, page, run, settings, store, tabs) {

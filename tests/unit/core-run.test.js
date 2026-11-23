@@ -1240,6 +1240,44 @@ test("a button in everyday words that may act is put to the second opinion, and 
   }
 });
 
+test("opening a link's own address is decided as pressing it: same check, same hold, and a decline holds both ways", () => {
+  const href = "https://news.example.org/u?id=abc";
+  const mail = shop({ url: "https://mail.example/inbox/1", elements: [
+    { id: 4, tagName: "a", accName: "Unsubscribe", url: href },
+    { id: 5, tagName: "a", accName: "Older mail", url: "https://mail.example/inbox?p=2" },
+  ], forms: [] });
+  for (const action of [{ do: "navigate", url: href }, { do: "tabs", op: "open", url: href }]) {
+    const { run } = begin("unsubscribe me from newsletters", mail);
+    let fx = reply(run, mail, [action]);
+    assert.equal(fx[0].purpose, "opinion", action.do);
+    assert.match(fx[0].user, /It is a link to: "news\.example\.org\/u"/);
+    fx = opinion(run, mail, { does: "deletes", why: "It unsubscribes at once." });
+    assert.equal(fx[0].type, "attention", action.do);
+    assert.equal(run.wait.risk, "delete");
+  }
+  // A link read on an earlier page is known by its address from any page after.
+  const { run } = begin("unsubscribe me from newsletters", mail);
+  const elsewhere = shop({ url: "https://mail.example/inbox", elements: [{ id: 1, tagName: "a", accName: "Inbox", url: "https://mail.example/inbox" }], forms: [] });
+  look(run, elsewhere);
+  const fx = reply(run, elsewhere, [{ do: "navigate", url: href }]);
+  assert.equal(fx[0].purpose, "opinion");
+  assert.match(fx[0].user, /The control: "Unsubscribe"/);
+  // An ordinary link's address costs no check.
+  const plain = begin("read my mail", mail).run;
+  const calls = plain.usage.calls;
+  assert.equal(reply(plain, mail, [{ do: "navigate", url: "https://mail.example/inbox?p=2" }])[0].type, "act");
+  assert.equal(plain.usage.calls, calls + 1, "only the step's own call");
+  // Declining the press holds the same address opened by navigate.
+  const declined = begin("unsubscribe me from newsletters", mail).run;
+  reply(declined, mail, [{ do: "click", ref: 4 }]);
+  opinion(declined, mail, { does: "deletes", why: "It unsubscribes at once." });
+  RUN.advance(declined, { type: "declined", id: declined.wait.id }, env(mail));
+  look(declined, mail);
+  const again = POLICY.decide({ do: "navigate", url: href }, elsewhere, declined, { riskConfirmation: true });
+  assert.equal(again.verdict, "confirm");
+  assert.match(again.why, /You declined "Unsubscribe"/);
+});
+
 test("a press verdict is kept per site and label; after two misses the run stops asking and holds what it cannot read", () => {
   const page = shop({ elements: [{ id: 2, tagName: "button", accName: "Weiter" }, { id: 3, tagName: "button", accName: "Zurück" }, { id: 4, tagName: "button", accName: "Öffnen" }], forms: [] });
   const { run } = begin("go on", page);
