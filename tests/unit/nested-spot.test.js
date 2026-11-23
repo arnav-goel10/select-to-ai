@@ -12,7 +12,7 @@ const { CONTENT, build } = require("../helpers/content-source.js");
 
 const NAMES = ["spotIn", "aimAtSpot", "insideOf", "missedSpot", "numberedOf", "pressesOn", "innerControlAt", "sameControl",
   "aimAt", "aimClear", "aimedAt", "stillOn", "scriptedAim", "pointerOnControl", "pointerTargetIn", "spotsOf", "drawnAllOver",
-  "coverNote", "passedOverNote"];
+  "passedOverNote"];
 
 /**
  * A page of boxes. Each is [name, parent, [left, top, width, height], opts]
@@ -305,32 +305,23 @@ test("with the real pointer, what still covers a control after it is scrolled to
   assert.match(r.fail.error, /\[30\] is covered: a div "Accept cookies"/);
 });
 
-test("with no real pointer, a covered control is still pressed by script, and the result says what covers it", async () => {
-  // Events made by script go to the control whatever is drawn over it (a
-  // leftover see-through backdrop, a notice), as they always did.
+test("a control covered all over is refused the same way by every gesture, whichever pointer the engine would use", async () => {
+  // A see-through layer counts: a press, real or a person's, reaches it.
+  // Which pointer is used is known only after the gesture is asked for,
+  // so the refusal comes first for both.
   const p = world([
     ["row", null, [0, 20, 400, 44], { id: 30 }],
     ["layer", null, [0, 0, 800, 600], { fixed: true }],
-  ]);
+  ], { POINTER_TOOLS: { clickSteps: (pt) => [{ t: "move", ...pt }] }, gesture: async () => ({ real: false }) });
   const r = await p.pointerOnControl(p.row, 30, "Click", false, null);
-  assert.equal(r.fail, undefined, "not refused");
-  assert.equal(r.real, false);
-  assert.equal(r.cover, p.layer);
-  // The events start on the control itself, not on the layer.
-  assert.equal(p.pointerTargetIn(p.row, { x: 200, y: 42 }), p.row);
-  assert.match(p.coverNote(30, r.cover, false), /^ a div "layer" is drawn over \[30\] where it is on screen, so a person's press would reach that instead\. The events were made by script on \[30\] itself\.$/);
-  assert.match(p.coverNote(30, r.cover, true), /a person's pointer would reach/);
-  assert.equal(p.coverNote(30, undefined, false), "");
-  // A hover, and the gestures made only by script, the same way.
+  assert.match(r.fail.error, /^\[30\] is covered: a div "layer"/);
   const h = await p.pointerOnControl(p.row, 30, "Hover", true, null);
-  assert.equal(h.cover, p.layer);
-  const g = p.scriptedAim(p.row, 30, false);
-  assert.equal(g.fail, undefined);
-  assert.equal(g.cover, p.layer);
-  for (const said of ["Clicked element", "Double-clicked element", "Right-clicked element", "before letting go", "without pressing it, and left it there"]) {
-    const at = CONTENT.indexOf(said);
-    assert.ok(at > 0 && /coverNote\(id, (pressed|aim|moved)\.cover, (true|false)\)/.test(CONTENT.slice(at - 1200, at + 300)), `${said} says what covers the control`);
-  }
+  assert.match(h.fail.error, /^\[30\] is covered: a div "layer"/);
+  // A double click, a right click, a long press and a click with keys held.
+  assert.match(p.scriptedAim(p.row, 30, false).fail.error, /^\[30\] is covered: a div "layer"/);
+  // A control not drawn on screen at all is still pressed at its middle.
+  const off = world([["row", null, [0, 900, 400, 44], { id: 31 }]]);
+  assert.deepEqual(off.scriptedAim(off.row, 31, false), { aimed: null });
 });
 
 test("a spot asked for under a pinned bar is scrolled clear too", () => {

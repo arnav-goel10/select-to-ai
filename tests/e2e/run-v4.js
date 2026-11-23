@@ -813,17 +813,14 @@ async function main() {
         const clicks = r.actions.filter((a) => a.do === "click").length;
         return clicks === 3 ? null : `the model pressed ${clicks} times, not 3`;
       }],
-      // With no real pointer the button under a see-through layer is
-      // pressed as before, and the result says the layer is over it. A
-      // real pointer would reach the layer, so with one it is refused.
+      // A button under a see-through layer is refused as covered with or
+      // without the debugger, naming the layer, and nothing is pressed:
+      // a press, a person's or the real pointer's, would reach the layer.
       ["pressUnderLayer", "/press-under-layer", async () => false, async (r) => {
         const at = await r.fixture.evaluate(() => ({ state: document.getElementById("state").textContent, caught: window.caught }));
         const log = String(r.log).replace(/\s+/g, " ");
-        const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
-        if (DEBUGGER_ON && (!press || press.pointer !== "synthetic")) return r.prompts.some((p) => /is covered:/.test(p)) && at.state === "Not saved" ? null : `a real press under the layer: ${JSON.stringify(at)} ${log.slice(0, 600)}`;
-        if (at.state !== "Saved") return `the page shows ${JSON.stringify(at)}: ${log.slice(0, 600)}`;
-        if (at.caught) return `the layer got the press: ${JSON.stringify(at)}`;
-        return r.prompts.some((p) => /is drawn over \[\d+\] where it is on screen, so a person's press would reach that instead\. The events were made by script on \[\d+\] itself\./.test(p)) ? null : `the result did not say the layer is over the button: ${log.slice(0, 600)}`;
+        if (at.state !== "Not saved" || at.caught) return `something was pressed under the layer: ${JSON.stringify(at)} ${log.slice(0, 600)}`;
+        return r.prompts.some((p) => /\[\d+\] is covered: a div with no words is drawn over it where it is on screen/.test(p)) ? null : `the result did not name the layer over the button: ${log.slice(0, 600)}`;
       }],
       ["pressSilent", "/press-silent", async () => false, async (r) => {
         const at = await r.fixture.evaluate(() => ({ qty: document.getElementById("qty").value, steps: window.steps }));

@@ -3330,34 +3330,18 @@
 
     /**
      * For a gesture made only by script (a double click, a right click, a
-     * long press, a click with keys held): where to make it, as a press is
-     * aimed, or { fail } when every spot of it is on a control of its own
-     * inside it. A control off screen is pressed at its middle, as before,
-     * and so is one covered all over: events made by script go to the
-     * control itself whatever is drawn over it, so the gesture is made and
-     * `cover` says what a person's would have reached (see coverNote).
-     * `passed` is an inner control the aim went round.
+     * long press, a click with keys held): where to make it, aimed as a
+     * press is, or { fail } when every spot of it is on a control of its
+     * own inside it, or something else is drawn over every spot. Those are
+     * refused as a click is, so every gesture on a control follows the
+     * same rule. A control not drawn on screen at all is pressed at its
+     * middle, as before. `passed` is an inner control the aim went round.
      */
     function scriptedAim(el, id, hovering) {
         const aim = aimClear(el);
         if (!aim.point && aim.inner) return { fail: missedSpot(id, aim, hovering, true) };
-        return {
-            aimed: aim.point ? aimedAt(el, aim.point) : null,
-            ...(!aim.point && aim.cover !== undefined ? { cover: aim.cover } : {}),
-            ...(aim.passed ? { passed: aim.passed } : {}),
-        };
-    }
-
-    /**
-     * What a gesture made by script on a covered control says: what is
-     * drawn over it, that a person could not have reached it there, and
-     * that the events went to the control itself. The cover counts what a
-     * real pointer would reach, a layer drawn see-through included.
-     */
-    function coverNote(id, cover, hovering) {
-        if (cover === undefined) return '';
-        const who = /^\d+$/.test(String(id)) ? `[${id}]` : String(id);
-        return ` ${nameOfDrawn(cover)} is drawn over ${who} where it is on screen, so a person's ${hovering ? 'pointer' : 'press'} would reach that instead. The events were made by script on ${who} itself.`;
+        if (!aim.point && aim.cover !== undefined) return { fail: coveredResult(id, nameOfDrawn(aim.cover), hovering) };
+        return { aimed: aim.point ? aimedAt(el, aim.point) : null, ...(aim.passed ? { passed: aim.passed } : {}) };
     }
 
     /**
@@ -3464,26 +3448,22 @@
      * aimed } when the engine cannot move the pointer (the caller makes the
      * events by script at the same point) or the control is not drawn on
      * screen (aimed is null: its middle, as before); { fail } when every
-     * spot of it is on a control of its own inside it, or when something
-     * else is drawn over it and the real pointer would be used, since a
-     * real press would reach that instead. Events made by script go to the
-     * control whatever is drawn over it, so with no real pointer a covered
-     * control is still pressed, as it always was, and `cover` says what
-     * covers it (coverNote). The aim is the same whichever pointer is
-     * used, so a press made by script lands where a real one would.
-     * `passed` is an inner control the aim went round.
+     * spot of it is on a control of its own inside it, or something else
+     * is drawn over every spot. Which pointer will be used is known only
+     * once the engine answers the gesture, so the aim, and a refusal, come
+     * first and are the same for both: a press made by script lands where
+     * a real one would, and is refused where a real one would reach
+     * something else. `passed` is an inner control the aim went round.
      */
     async function pointerOnControl(el, id, label, hovering, spot) {
         const aim = spot ? { point: spot } : aimClear(el);
-        const real = !!POINTER_TOOLS && Date.now() >= realPointerQuietUntil;
         const passed = aim.passed ? { passed: aim.passed } : {};
         if (!aim.point) {
             if (aim.inner) return { fail: missedSpot(id, aim, hovering, true) };
-            if (aim.cover === undefined) return { real: false, aimed: null };
-            return real ? { fail: coveredResult(id, nameOfDrawn(aim.cover), hovering) } : { real: false, aimed: null, cover: aim.cover };
+            return aim.cover !== undefined ? { fail: coveredResult(id, nameOfDrawn(aim.cover), hovering) } : { real: false, aimed: null };
         }
         const aimed = aimedAt(el, aim.point);
-        if (!real) return { real: false, aimed, ...passed };
+        if (!POINTER_TOOLS || Date.now() < realPointerQuietUntil) return { real: false, aimed, ...passed };
         const steps = hovering ? [{ t: 'move', x: aim.point.x, y: aim.point.y, aim: true }] : POINTER_TOOLS.clickSteps(aim.point);
         if (!hovering) agentCursor && agentCursor.classList.remove('clicking');
         const g = await gesture(steps, { label, id, hovering });
@@ -4656,7 +4636,7 @@
                     went = dispatchClickEvents(el, modifiers, spot ? spotIn(el, data.fx, data.fy) : stillOn(el, pressed.aimed));
                 }
                 const pointer = pressed.real ? 'real' : 'synthetic';
-                const note = pressed.note || coverNote(id, pressed.cover, false);
+                const note = pressed.note || '';
                 // An inner control the aim went round: said after the press
                 // is measured, if the page showed no answer to it at all.
                 const passedOver = pressed.passed ? { passedOver: nameOfDrawn(pressed.passed) } : {};
@@ -4687,7 +4667,7 @@
                 await moveAgentCursorToElement(el, "Double click");
                 await pulseAgentCursor("Double click");
                 const went = await scriptedDoubleClick(el, modifiers, spot ? spotIn(el, data.fx, data.fy) : stillOn(el, aim.aimed));
-                return { success: true, pointer: 'synthetic', ...(went ? {} : { cancelled: true }), message: `Double-clicked element [${id}]${spotWords(data)}.${coverNote(id, aim.cover, false)}` };
+                return { success: true, pointer: 'synthetic', ...(went ? {} : { cancelled: true }), message: `Double-clicked element [${id}]${spotWords(data)}.` };
             }
 
             // ----- right_click -----
@@ -4701,7 +4681,7 @@
                 const { taken } = scriptedRightClick(el, modifiers, spot ? spotIn(el, data.fx, data.fy) : stillOn(el, aim.aimed));
                 // A page that shows a menu of its own takes the browser's over.
                 const own = taken ? '' : ' The page did not take the right click over for a menu of its own: in a browser that opens the browser\'s own menu, which is not part of the page.';
-                return { success: true, pointer: 'synthetic', message: `Right-clicked element [${id}]${spotWords(data)}.${coverNote(id, aim.cover, false)}${own}` };
+                return { success: true, pointer: 'synthetic', message: `Right-clicked element [${id}]${spotWords(data)}.${own}` };
             }
 
             // ----- hold: a long press -----
@@ -4743,7 +4723,7 @@
                         if (touched) how = seen ? ' The page did not answer the press made with the mouse; it was made again as a touch, and the page answered that.' : ` ${noAnswerSeen('press')}`;
                     }
                 }
-                return { success: true, pointer: 'synthetic', message: `Pressed [${id}]${spotWords(data)} and held it for ${ms / 1000} seconds before letting go.${coverNote(id, aim.cover, false)}${how}` };
+                return { success: true, pointer: 'synthetic', message: `Pressed [${id}]${spotWords(data)} and held it for ${ms / 1000} seconds before letting go.${how}` };
             }
 
             // ----- hover -----
@@ -4759,7 +4739,7 @@
                     await moveAgentCursorToElement(el, "Hover");
                     await dwellHover(el, spot ? spotIn(el, data.fx, data.fy) : stillOn(el, moved.aimed) || centreOf(el), modifiers);
                 }
-                return { success: true, pointer: moved.real ? 'real' : 'synthetic', message: `Moved the pointer over [${id}]${spotWords(data)} without pressing it, and left it there.${coverNote(id, moved.cover, true)}` };
+                return { success: true, pointer: moved.real ? 'real' : 'synthetic', message: `Moved the pointer over [${id}]${spotWords(data)} without pressing it, and left it there.` };
             }
 
             // ----- drag -----

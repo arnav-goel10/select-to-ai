@@ -683,8 +683,8 @@ const FIXTURES = {
      </script>`,
   ),
   // A button under a see-through layer the page left over the whole window
-  // (a backdrop that was never taken away). Events made by script still
-  // reach the button; a real pointer would reach the layer.
+  // (a backdrop that was never taken away). A press there reaches the
+  // layer, a person's or the real pointer's.
   "/press-under-layer": pageShell(
     "Draft",
     `<h1>Draft</h1><p id="state">Not saved</p>
