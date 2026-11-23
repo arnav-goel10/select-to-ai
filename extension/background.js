@@ -233,6 +233,19 @@ function keepClaudeChoice() {
     });
 }
 
+/**
+ * A new install shows Perplexity in the right-click menu, as the welcome
+ * page and the store listing say. Its host is a required permission, so
+ * nothing more is asked. Only a fresh install: an upgrade keeps what that
+ * user's version was showing (see v2SettingsFix and keepClaudeChoice).
+ */
+function showPerplexityOnFreshInstall() {
+    chrome.storage.sync.get(['showPerplexity'], (items) => {
+        if (chrome.runtime.lastError || !items || items.showPerplexity !== undefined) return;
+        chrome.storage.sync.set({ showPerplexity: true });
+    });
+}
+
 // The menu is built at every worker start from the stored settings (see
 // updateCache), so onInstalled only migrates. A fresh install also opens the
 // welcome page; an update opens nothing.
@@ -250,6 +263,7 @@ function onInstalledHandler(details) {
         migrateFrozenSettings();
     }
     if (reason === 'install') {
+        showPerplexityOnFreshInstall();
         chrome.tabs.create({ url: chrome.runtime.getURL('welcome.html') });
     }
 }
@@ -309,6 +323,9 @@ const MENU_SERVICES = {
     openAgent: () => CONFIG.URLS.AGENT,
 };
 const MODE_SUFFIX = { tab: 'tab', sidePanel: 'panel' };
+// The page item opens the side panel whatever the opening mode, so its id
+// needs no mode.
+const OPEN_PANEL_MENU_ID = 'openSidePanel';
 
 function menuId(name, mode) {
     return `${name}|${MODE_SUFFIX[mode] || MODE_SUFFIX.sidePanel}`;
@@ -351,7 +368,12 @@ async function buildContextMenus() {
             if (chrome.runtime.lastError) console.log("Menu creation ignored:", chrome.runtime.lastError.message);
         });
     };
-    // Nothing turned on: no menu at all, rather than an empty "Select to AI".
+    // Right-click on the page itself (2.0's "Open AI Sidebar"): opens the
+    // side panel as the open-sidebar shortcut does, on whatever it would
+    // show. It is there whatever is turned on, as in 2.0; with nothing on,
+    // the panel says where to turn something on.
+    create({ id: OPEN_PANEL_MENU_ID, title: 'Open Select to AI side panel', contexts: ["page"] });
+    // Nothing turned on: no selection menu, rather than an empty "Select to AI".
     if (!items.length) return;
     if (items.length === 1) {
         create({ id: menuId(items[0].name, mode), title: items[0].title, contexts: ["selection"] });
@@ -551,6 +573,7 @@ function deliverSelection(serviceBaseUrl, mode, info, tab, settings) {
  * one on a warm worker.
  */
 function onMenuClicked(info, tab) {
+    if (info && info.menuItemId === OPEN_PANEL_MENU_ID) { onOpenSidebarCommand(tab); return; }
     const parsed = parseMenuId(info && info.menuItemId);
     if (!parsed) return; // Unknown menu item
     let mode = parsed.mode || (settingsLoaded ? cachedSettings.openingMode : 'sidePanel');
@@ -573,22 +596,40 @@ chrome.contextMenus.onClicked.addListener(onMenuClicked);
  * nothing on pages where the shortcut is never pressed, and activeTab means
  * no broad host permission is added to the install prompt.
  */
-function openCommandPalette(tab) {
+function openCommandPalette(tab, onResult) {
     const tabId = tab && tab.id;
-    if (!tabId || tabId < 0 || !chrome.scripting) return;
+    const report = (opened) => { if (typeof onResult === 'function') onResult(opened); };
+    if (!tabId || tabId < 0 || !chrome.scripting) { report(false); return; }
     chrome.scripting.executeScript(
         { target: { tabId }, files: ['commandPalette.js'] },
         () => {
             if (chrome.runtime.lastError) {
                 void chrome.runtime.lastError;
                 // Chrome blocks injection on its own pages and the Web Store.
-                // Shown only if the user granted notifications.
-                if (GRANTS) GRANTS.notify({
-                    message: 'The quick box cannot open on this page. Try it on a normal website tab.',
-                });
+                paletteBlockedOn(tabId);
+                report(false);
+                return;
             }
+            report(true);
         },
     );
+}
+
+/**
+ * Says on the toolbar icon, for this tab only, that the quick box could not
+ * open here: a mark on the icon and the reason on hover, with a notification
+ * as well when the user granted those. Chrome drops a tab's own mark and
+ * title when that tab loads another page, so nothing has to clear them.
+ */
+const PALETTE_BLOCKED_TEXT = 'The quick box cannot open on this page. Try it on a website tab.';
+function paletteBlockedOn(tabId) {
+    const a = chrome.action;
+    const quiet = (p) => { if (p && typeof p.catch === 'function') p.catch(() => {}); };
+    try {
+        if (a && typeof a.setBadgeText === 'function') quiet(a.setBadgeText({ tabId, text: '!' }, () => void chrome.runtime.lastError));
+        if (a && typeof a.setTitle === 'function') quiet(a.setTitle({ tabId, title: PALETTE_BLOCKED_TEXT }, () => void chrome.runtime.lastError));
+    } catch (e) { /* the mark is a hint, never a reason to fail */ }
+    if (GRANTS) GRANTS.notify({ message: PALETTE_BLOCKED_TEXT });
 }
 
 /**
@@ -654,7 +695,8 @@ function onOpenSidebarCommand(tab) {
     Promise.all([
         whenSettings(),
         new Promise((resolve) => chrome.storage.local.get([CONFIG.STORAGE.SIDE_PANEL_STATE], (r) => resolve((r || {})[CONFIG.STORAGE.SIDE_PANEL_STATE]))),
-    ]).then(([settings, existing]) => {
+        GRANTS ? GRANTS.hasHost(CLAUDE_ORIGIN) : Promise.resolve(false),
+    ]).then(([settings, existing, claudeGranted]) => {
         let targetBaseUrl = CONFIG.URLS.CHATGPT; // Absolute fallback
         if (settings.showAgent) {
             // With the agent on, the side panel opens on the agent; the
@@ -665,7 +707,7 @@ function onOpenSidebarCommand(tab) {
         } else if (settings.showChatGPT) targetBaseUrl = CONFIG.URLS.CHATGPT;
         else if (settings.showGemini) targetBaseUrl = CONFIG.URLS.GEMINI;
         else if (settings.showPerplexity) targetBaseUrl = CONFIG.URLS.PERPLEXITY;
-        else if (settings.showClaude) targetBaseUrl = CONFIG.URLS.CLAUDE;
+        else if (settings.showClaude && claudeGranted) targetBaseUrl = CONFIG.URLS.CLAUDE;
         writePanelState(resolveSessionUrlSync(targetBaseUrl));
     });
 }
@@ -775,10 +817,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // The popup's "Quick box" row: open the palette on the tab behind it.
     if (message.action === 'openPaletteFromPopup') {
         if (!SELECT_TO_AI_SECURITY.isTrustedExtensionSender(sender, chrome.runtime.id)) return false;
+        // The popup waits for the answer: it stays open to say why when the
+        // quick box cannot open on the tab behind it.
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-            if (tabs && tabs[0]) openCommandPalette(tabs[0]);
+            openCommandPalette(tabs && tabs[0], (opened) => {
+                try { sendResponse({ opened }); } catch (e) { /* the popup closed */ }
+            });
         });
-        return false;
+        return true;
     }
 
     if (message.action === 'fetchProxy') {

@@ -44,12 +44,14 @@ test("an id without a mode suffix means the side panel on a cold worker, and the
 });
 
 test("menu ids carry the opening mode", async () => {
+  // The selection items do; the page item opens the side panel in either mode.
+  const sending = (bg) => bg.currentMenu().filter((m) => m.id !== "parentFolder" && m.contexts.includes("selection"));
   const panel = loadBackground({ sync: {} });
   await settle(10);
-  assert.ok(panel.currentMenu().filter((m) => m.id !== "parentFolder").every((m) => m.id.endsWith("|panel")));
+  assert.ok(sending(panel).length && sending(panel).every((m) => m.id.endsWith("|panel")));
   const tab = loadBackground({ sync: { openingMode: "tab" } });
   await settle(10);
-  assert.ok(tab.currentMenu().filter((m) => m.id !== "parentFolder").every((m) => m.id.endsWith("|tab")));
+  assert.ok(sending(tab).length && sending(tab).every((m) => m.id.endsWith("|tab")));
 });
 
 test("a send opens the service's base URL (a new chat), not a saved conversation", async () => {
@@ -118,16 +120,17 @@ test("a click with no tab does not throw and opens a tab", async () => {
   assert.equal(bg.calls.tabsCreate.length, 2);
 });
 
-test("zero assistants: no menu at all, not an empty parent", async () => {
+test("zero assistants: no selection menu at all, not an empty parent", async () => {
   const bg = loadBackground({ sync: { showChatGPT: false, showGemini: false, showPerplexity: false, showClaude: false } });
   await settle(10);
-  assert.deepEqual(bg.currentMenu(), []);
+  // Only the page item, which opens the side panel (its empty state says where to turn one on).
+  assert.deepEqual(bg.currentMenu().map((m) => `${m.id} ${m.contexts.join(",")}`), ["openSidePanel page"]);
 });
 
 test("one assistant: a flat item", async () => {
   const bg = loadBackground({ sync: { showGemini: false } });
   await settle(10);
-  assert.deepEqual(bg.currentMenu().map((m) => [m.id, m.title, m.parentId]), [["openChatGPT|panel", "Send to ChatGPT", undefined]]);
+  assert.deepEqual(bg.currentMenu().map((m) => [m.id, m.title, m.parentId]), [["openSidePanel", "Open Select to AI side panel", undefined], ["openChatGPT|panel", "Send to ChatGPT", undefined]]);
 });
 
 test("Claude appears only once claude.ai is granted, and the grant re-installs the frame rule", async () => {
@@ -156,7 +159,7 @@ test("menu rebuilds run one at a time: many changes leave one correct menu", asy
   bg.chrome.storage.sync.set({ showPerplexity: true });
   bg.chrome.storage.sync.set({ showGemini: false });
   await settle(30);
-  assert.deepEqual(bg.currentMenu().map((m) => m.title), ["Select to AI", "Send to ChatGPT", "Send to Perplexity"]);
+  assert.deepEqual(bg.currentMenu().map((m) => m.title), ["Open Select to AI side panel", "Select to AI", "Send to ChatGPT", "Send to Perplexity"]);
 });
 
 test("an error loading the agent does not stop right-click sending", async () => {
