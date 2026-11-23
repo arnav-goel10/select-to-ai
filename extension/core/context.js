@@ -209,6 +209,7 @@ In this browser your pointer and your keys are made by script: the page is sent 
     // Why this step is the last one, when it is.
     const w = run.wrapUp;
     if (run.finalStep && w && w.by === "stuck") facts.push(`You have taken ${w.steps} steps in a row without getting anywhere: ${w.why}. This is the last step: only done or ask_user can be used now.`);
+    else if (run.finalStep && w && w.by === "declined") facts.push(`The user declined "${String(w.what || "a step").slice(0, 80)}", and you have asked about it again. This is the last step: finish now with done, saying what you did, what you did not do and why.`);
     else if (run.finalStep && w) facts.push("The user chose to have the answer now, with what you have found so far. This is the last step: only done or ask_user can be used now.");
     else if (run.finalStep) facts.push("This is the last step: only done or ask_user can be used now.");
     // The notes' room, so a long comparison can be kept within it. Notes

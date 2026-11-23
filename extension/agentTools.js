@@ -1315,6 +1315,18 @@
     return tag === "textarea" || el.isContentEditable === true || role === "textbox";
   }
 
+  /**
+   * A button the page lists as the "x" on a value chosen in a field, a tag
+   * or a picked option (the content script marks it inField from the
+   * page's structure). Never a link or a button that submits. Taking a
+   * value out changes what the field holds: in a form nothing until it is
+   * sent, and where an app saves the field at once, adding the value back
+   * undoes it. It is not the delete of a saved record.
+   */
+  function pickedValue(el) {
+    return !!el && el.inField === true && !el.submits && String(el.tagName || "").toLowerCase() !== "a";
+  }
+
   function labelRisk(el) {
     const label = [el.accName, el.text, el.label, el.value, el.title].filter(Boolean).join(" ");
     if (!label || RISK_LABEL_HARMLESS.test(label)) return null;
@@ -1494,6 +1506,10 @@
       // A choice whose words carry what a button's would: what choosing it
       // does is judged by its meaning (pressCheckOf), not by the words.
       if (kind && choiceOf(el)) return null;
+      // The "x" on a value chosen in a field edits what the field holds:
+      // it is not a delete, however it is labelled. Words that pay or send
+      // are still held.
+      if (kind === "delete" && pickedValue(el)) return null;
       // A search or lookup form reads; its button is safe unless its own
       // words say it pays or deletes.
       if (form && form.search && el.submits) return kind === "pay" || kind === "delete" ? risk(kind, el) : null;
@@ -1588,6 +1604,8 @@
     // pays, sends or deletes would carry; otherwise choosing is moving about.
     const choice = choiceOf(el);
     if (choice && !labelRisk(el)) return null;
+    // A value's "x" in a field: removing it changes only the field.
+    if (pickedValue(el) && [null, "delete"].includes(labelRisk(el))) return null;
     // A link that says it deletes or sends may do it at once (a one-click
     // unsubscribe, a link the site runs as a request), so it is asked about,
     // told where it goes. A link that says it pays is still judged by its
