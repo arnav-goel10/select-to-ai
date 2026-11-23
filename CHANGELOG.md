@@ -18,6 +18,9 @@ A new engine, built and measured over 1 to 3 October 2026 (the measurements are 
 - Editors and frames. A new `type` action types at the cursor of a text box or a rich editor through its input events, and `select_text` selects words by their text. Key combinations such as `ctrl+b` reach the page as a key with its modifiers, and a box reads back its text and formatting after each edit. Frames inside frames are read, up to 6 in all and 3 deep. Sliders, spin buttons and meters show their values. Text the agent typed into a page never counts as evidence for its answer.
 - Whole gestures. New `double_click`, `right_click` and `hold` actions, a hover that stays, a spot inside a control (`fx`, `fy`) for charts and drawings, and drags that drop before or after a list item or on a place named by its words. Each is held to the same approval rules as a click, a double click is never used on a step that needs approval, and a spot that lands on a different control inside the one named is refused.
 - A finished run no longer keeps the text of the pages it read in session storage, and Reset now also removes saved recipes and chat addresses. The privacy policy is rewritten to match; every request and stored item is listed in `docs/privacy-disclosure.md`.
+- The privacy policy now also lists the earlier messages and replies of the same conversation that each step sends (up to six, about 500 characters each), and the last text sent to a chat site in the side panel, which stays in local storage until the next send or Reset.
+- The welcome page and store text name only ChatGPT and Gemini as right-click choices on a fresh install, and say Perplexity and Claude are in Settings. The reviewer steps now include the "What the agent sends" card before the OpenRouter sign-in.
+- CI: the core-flow-e2e and consent-gate jobs fail when their test file is missing, instead of passing after an echo.
 
 ### A run you can leave and come back to
 

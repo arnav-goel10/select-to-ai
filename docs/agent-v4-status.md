@@ -2,6 +2,12 @@
 
 The new engine is the default since 3 Oct and the only engine since 5 Oct: the old loop and the address bar's command router are removed (old-loop figures below were measured before that). This page is the short version of two nights of measurement.
 
+## 23 Nov 2026: audit fixes for CI and the store texts
+
+- **CI.** `core-flow-e2e` and `consent-gate` looked for their test file and, if it was missing, printed a line and passed. A rename would have left both required checks green while running nothing. Both jobs now run their file unconditionally. `tests/unit/ci-workflow.test.js` checks that any file check in a workflow fails the job, that no step is skipped on one, and that every test file a workflow runs exists.
+- **Privacy policy.** It did not list two items the code has. Each step sends up to six earlier turns of the same conversation, about 500 characters each (`core/context.js` `stepMessages`), and every side-panel send keeps the selected text in `sidePanelState` in `chrome.storage.local`. Both are now in `PRIVACY_POLICY.md` and `docs/privacy-disclosure.md`. `hygiene.test.js` reads the count and clip length from the code.
+- **Right-click texts.** A fresh install shows Send to ChatGPT and Send to Gemini only (`showPerplexity` is false in `DEFAULT_SETTINGS`), but the welcome page, the long description and reviewer step 2 named Perplexity. The texts now name ChatGPT and Gemini and say Perplexity and Claude are in Settings, which stays true if Perplexity is later turned on by default. A test checks the named sites against the worker's defaults. Reviewer step 4 now mentions the "What the agent sends" card and the openrouter.ai prompt in the order they appear.
+
 ## 23 Nov 2026: nightly CI fixed, PRs 30 and 31 merged, store package rebuilt
 
 - **Why the nightly failed (every night since 17 Nov).** The `e2e debugger on (nightly)` job loaded `extension/` as it is. Commit `20e03ce` (16 Nov) took `debugger` out of the 4.0 manifest so the update adds no warning, so from then on the "debugger on" suite ran a build with no debugger. The six real-input scenarios (`listened`, `pointerHover`, `pointerFrame`, `pointerDrag`, `pointerCanvas`, `realKeys`) could never pass. They are the ones `tests/e2e/not-applicable-4.0.json` lists for the shipped build. This was not a flaky site or an expired secret.
