@@ -780,6 +780,22 @@ async function main() {
       // page's elements (a field's value set from code; a change inside a
       // component's own shadow root) is pressed once: no other way is tried
       // on top, and the result says what was seen.
+      // A press with no spot on a row, a card or a label reaches that
+      // control, not a link or button of its own drawn at its middle, and
+      // a message under a pinned bar is scrolled clear and pressed.
+      ["pressInside", "/press-inside", async () => false, async (r) => {
+        const at = await r.fixture.evaluate(() => ({ row: document.getElementById("s-row").textContent, card: document.getElementById("s-card").textContent, tax: document.getElementById("s-tax").textContent, inner: window.pressedInside }));
+        const log = String(r.log).replace(/\s+/g, " ");
+        if (at.inner.link || at.inner.quick || at.inner.notes) return `a control inside the one pressed was reached: ${JSON.stringify(at)} ${log.slice(0, 600)}`;
+        if (at.row !== "Row: opened invoice 1042" || at.card !== "Card: opened Blue teapot" || at.tax !== "Tax: shown") return `the page shows ${JSON.stringify(at)}: ${log.slice(0, 600)}`;
+        return r.actions.filter((a) => a.do === "click").length === 3 ? null : `the model pressed ${r.actions.filter((a) => a.do === "click").length} times, not 3`;
+      }],
+      ["pinnedHeader", "/pinned-header", async () => false, async (r) => {
+        const state = await r.fixture.evaluate(() => document.getElementById("state").textContent);
+        const log = String(r.log).replace(/\s+/g, " ");
+        if (/is covered/.test(log) || r.prompts.some((p) => /is covered:/.test(p))) return `the message under the bar was called covered: ${log.slice(0, 600)}`;
+        return state === "Opened: Lunch on Friday" ? null : `the page shows ${JSON.stringify(state)}: ${log.slice(0, 600)}`;
+      }],
       ["pressSilent", "/press-silent", async () => false, async (r) => {
         const at = await r.fixture.evaluate(() => ({ qty: document.getElementById("qty").value, steps: window.steps }));
         const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
