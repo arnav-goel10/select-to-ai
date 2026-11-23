@@ -19,6 +19,7 @@ A full list of every request the extension makes and every item it stores, with 
 - A screenshot of the page, or a picture of one control on it such as a chart, only when the agent asks to look at it and only if your model can read images.
 - What the agent knows about you (see Memory below): your preferences and notes in your own words, and which of your saved details exist. A saved detail's value (for example your email) goes to the AI service only when the agent asks to read it, and the conversation shows that it did. Otherwise your details go straight from your browser into the form.
 - After a task that could teach it something, one more request with a summary of the task and your existing memory, to decide what to keep. Turn learning off under Settings > Memory to stop this.
+- For each page the agent reads, the names of its buttons and links, their kind, the address path of a link or form and the names of a form's fields, so a separate check can say which of them would pay, send, delete or decide something for you before the agent presses one. This check is never sent the page text or your task.
 - When a saved recipe meets a page that has changed, a short description of that step and of the page's controls, to check or repair the step.
 - Your API key for that service, in the request header.
 
@@ -42,6 +43,7 @@ Nothing below leaves your browser except as listed above.
 | Your last 20 tasks: the words you typed (including any text you selected for the quick box) and whether each worked | `chrome.storage.local` | Until Reset |
 | Recipes you saved: addresses, the names of the controls used and the words near them, the example values you typed, the last five results | `chrome.storage.local` | Until you delete the recipe, or Reset |
 | The task in progress: its steps, what it read and the excerpts of other tabs it used, so it can carry on if Chrome pauses the extension | `chrome.storage.session`, which Chrome keeps in memory and clears when the browser closes. The text of the pages it read is dropped as soon as the task ends. The excerpts of other tabs and your selection stay until the browser closes | Until the browser closes |
+| What the agent's check said about buttons and links it met: the site, the page path, the names of the control and of its form fields or dialog, and whether pressing it pays, sends, deletes or decides something, so the same control is not checked again | `chrome.storage.local`, at most 3000 answers | 30 days, or until Reset |
 | The last text you sent to a chat site in the side panel, so that site can receive it | `chrome.storage.local` | Until your next side-panel send or switch, or Reset |
 | The address of your last conversation on ChatGPT, Claude, Gemini or Perplexity, recorded only while that site is open inside the side panel (never from an ordinary tab), so opening the side panel takes you back to it | `chrome.storage.local` | Until Reset |
 
@@ -59,7 +61,7 @@ Right-click sending needs no new permission. Everything the agent adds is option
 
 ## Deleting your data
 
-- **Settings > Reset** removes your settings, API keys, Memory, task history, recipes and saved chat addresses.
+- **Settings > Reset** removes your settings, API keys, Memory, task history, recipes, saved chat addresses and the kept answers of the button check.
 - **Forget everything** in the Memory panel deletes Memory only.
 - Uninstalling the extension removes everything it stored.
 

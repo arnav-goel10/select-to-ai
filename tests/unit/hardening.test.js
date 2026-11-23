@@ -422,6 +422,7 @@ test("Reset removes every kind of data the extension keeps about the user", () =
   const kept = [
     constant("engine.js", "MEMORY_KEY"),
     constant("recipes/service.js", "STORE"),
+    constant("engine.js", "VERDICTS_KEY"),
     // Left by a development build with Sign in with ChatGPT.
     "chatgptAccount",
     "chatgptCredentials",
@@ -431,4 +432,26 @@ test("Reset removes every kind of data the extension keeps about the user", () =
   for (const k of kept) assert.ok(listed.includes(k), `Reset leaves ${k} behind`);
   assert.match(options, /startsWith\("sessionUrl_"\)/, "Reset removes the saved chat addresses");
   assert.match(options, /\.\.\.STORAGE\.API_KEYS, \.\.\.RESET_LOCAL_KEYS, \.\.\.chats/);
+});
+
+test("Reset also clears the press verdicts the worker holds, so a later run does not write them back", async () => {
+  const { fakeWorker, settle } = require("../helpers/fake-worker.js");
+  const kept = { items: { "site.example|/account|button|[\"Close\"]": { d: "none", s: "x", j: Date.now(), u: Date.now() } } };
+  const tabs = { 9: { id: 9, url: "https://site.example/account", title: "Account", windowId: 1, active: true } };
+  const w = fakeWorker({ tabs, local: { agentPressVerdicts: kept } });
+  const port = w.connect(1);
+  await port.hello();
+  await settle(40);
+  await port.post({ type: "send", text: "What does this page say?" });
+  await settle(80);
+  assert.ok(w.engine.keptVerdicts() && Object.keys(w.engine.keptVerdicts().items).length === 1, "a run reads the kept verdicts");
+  // What Reset in Settings does: the key is removed, and Chrome reports the change.
+  delete w.local.agentPressVerdicts;
+  await w.fire("storage.onChanged", { agentPressVerdicts: { oldValue: kept } }, "local");
+  assert.equal(w.engine.keptVerdicts(), null, "the worker's own copy is gone");
+  await port.post({ type: "stop" });
+  await settle(40);
+  await port.post({ type: "send", text: "And now?" });
+  await settle(80);
+  assert.equal(Object.keys(w.engine.keptVerdicts().items).length, 0, "the next run starts with none");
 });

@@ -2388,6 +2388,9 @@
   // What the next call would be made with. Two settings that give the same are the same to a held run.
   const callWith = (cfg) => JSON.stringify([cfg.provider, cfg.apiKey, cfg.baseUrl, cfg.model, cfg.liteModel, cfg.helperModel, cfg.backup, cfg.keyProblem]);
   if (chrome.storage && chrome.storage.onChanged) chrome.storage.onChanged.addListener((changes) => {
+    // Reset in Settings removed the kept press verdicts: the copy held here goes too,
+    // so a run that ends later does not write them back.
+    if (changes && changes[VERDICTS_KEY] && changes[VERDICTS_KEY].newValue === undefined) verdicts = null;
     // The user agreed somewhere (Settings, the agent's page): a run kept held for want of that is tried.
     if (changes && changes.agentDataConsent) {
       for (const s of sessions.values()) if (s.holdNeeds) resumeHeld(s, null, "user").catch((e) => console.error("Select to AI engine:", e));
@@ -2715,5 +2718,5 @@
   }
 
   // release and attention are exported for the scripted tests, as wake is.
-  root.SELECT_TO_AI_ENGINE = Object.freeze({ sessions, effectOf, wake, loadMemory, changeMemory, release, joinFrame, scan, interact, attention });
+  root.SELECT_TO_AI_ENGINE = Object.freeze({ sessions, keptVerdicts: () => verdicts, effectOf, wake, loadMemory, changeMemory, release, joinFrame, scan, interact, attention });
 })(typeof globalThis !== "undefined" ? globalThis : this);
