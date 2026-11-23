@@ -30,7 +30,7 @@ const FILES = [
  */
 function fakeWorker(o = {}) {
   const listeners = {};
-  const calls = { notices: [], cleared: [], tabMessages: [], badges: [], alarms: [], localSets: [], executes: 0, scripts: [] };
+  const calls = { notices: [], cleared: [], tabMessages: [], badges: [], titles: [], colors: [], alarms: [], localSets: [], executes: 0, scripts: [] };
   const session = { ...(o.saved || {}) };
   const local = { ...(o.local || {}) };
   const sync = { ...(o.sync || {}) };
@@ -68,7 +68,7 @@ function fakeWorker(o = {}) {
     },
     action: {
       setBadgeText: async (d) => { calls.badges.push(d); },
-      setBadgeBackgroundColor: async () => {}, setTitle: async () => {},
+      setBadgeBackgroundColor: async (d) => { calls.colors.push(d); }, setTitle: async (d) => { calls.titles.push(d); },
     },
     alarms: {
       create: async (name, info) => { calls.alarms.push({ name, info }); },

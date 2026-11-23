@@ -139,6 +139,12 @@ const CONFIG = {
     // Storage Keys
     STORAGE: {
         SIDE_PANEL_STATE: 'sidePanelState',
+        // Tabs whose toolbar icon carries a mark of its own, kept in session
+        // storage by the worker (background.js and engine.js) as
+        // { [tabId]: 'hint' | 'needs' | 'reset' }. Chrome shows a tab's own
+        // mark and title over the window-wide one, so a window-wide
+        // "needs you" is set on each of these tabs too.
+        ICON_TAB_MARKS: 'iconTabMarks',
         // Written by the worker on an update from before 4.0 and read by the
         // popup, which shows "What is new in 4.0" until it is dismissed.
         UPGRADE_NOTICE: 'upgradeNotice',
@@ -165,6 +171,11 @@ const CONFIG = {
             'agentExtraInstructions',
             'agentLearning',
         ],
+        // What a new install starts with where that differs from how an unset
+        // key reads (an unset key keeps meaning what it meant to upgraders).
+        // Written on a fresh install (background.js) and again by Reset in
+        // Settings, so a Reset gives back what a new install shows.
+        FRESH_SETTINGS: Object.freeze({ showPerplexity: true }),
         API_KEYS: [
             'agentOpenRouterKey',
             'agentAnthropicKey',

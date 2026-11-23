@@ -1481,10 +1481,17 @@
     if (watched) await watchPage(wait);
     // What is asked on the agent's page takes the user back there (core/view.js).
     if (!again) await settleView(session, wait.kind).catch((e) => console.error("Select to AI view:", e));
-    const badge = watched ? { tabId } : {};
-    quiet(chrome.action.setBadgeText({ ...badge, text: "!" }));
-    quiet(chrome.action.setBadgeBackgroundColor({ ...badge, color: "#c2410c" }));
-    quiet(chrome.action.setTitle({ ...badge, title: `Select to AI needs you: ${String(wait.question || "").slice(0, 80)}` }));
+    const needsYou = `Select to AI needs you: ${String(wait.question || "").slice(0, 80)}`;
+    const marked = await tabMarks();
+    // A tab with a mark of its own shows that one over the window-wide
+    // mark, so a window-wide "needs you" is set on those tabs too.
+    for (const id of watched ? [tabId] : [undefined, ...Object.keys(marked).map(Number)]) {
+      const badge = id === undefined ? {} : { tabId: id };
+      quiet(chrome.action.setBadgeText({ ...badge, text: "!" }));
+      quiet(chrome.action.setBadgeBackgroundColor({ ...badge, color: "#c2410c" }));
+      quiet(chrome.action.setTitle({ ...badge, title: needsYou }));
+    }
+    await markTabs(watched ? [tabId] : Object.keys(marked).map(Number), "needs");
     if (again) return;
 
     // Where the user is decides how loudly they are told.
@@ -1514,6 +1521,7 @@
       send(tabId, { action: "needsYouDone", text: how === "cleared" || how === "user_done" ? "Thanks, continuing…" : "" });
       quiet(chrome.action.setBadgeText({ tabId, text: "" }));
       quiet(chrome.action.setTitle({ tabId, title: "Select to AI" }));
+      quiet(markTabs([tabId], "reset"));
     }
     // The notice and its reminder stay while another wait of this session is open.
     if (![...session.attending.values()].some((w) => w.kind !== "pause")) {
@@ -1529,6 +1537,34 @@
     if ([...sessions.values()].some((s) => waitsOf(s.run).some((w) => w.kind !== "pause"))) return;
     quiet(chrome.action.setBadgeText({ text: "" }));
     quiet(chrome.action.setTitle({ title: "Select to AI" }));
+    // The tabs given "needs you" over a mark of their own are put back too.
+    quiet(tabMarks().then((marked) => {
+      const needs = Object.keys(marked).map(Number).filter((id) => marked[id] === "needs");
+      for (const tabId of needs) {
+        quiet(chrome.action.setBadgeText({ tabId, text: "" }));
+        quiet(chrome.action.setTitle({ tabId, title: "Select to AI" }));
+      }
+      return markTabs(needs, "reset");
+    }));
+  }
+
+  // Tabs whose toolbar icon has a mark or title of its own, set by the
+  // quick box (background.js) or here. See CONFIG.STORAGE.ICON_TAB_MARKS.
+  const TAB_MARKS = typeof CONFIG !== "undefined" && CONFIG.STORAGE ? CONFIG.STORAGE.ICON_TAB_MARKS : null;
+  async function tabMarks() {
+    if (!TAB_MARKS || !chrome.storage || !chrome.storage.session) return {};
+    const got = await quiet(chrome.storage.session.get(TAB_MARKS));
+    const marks = (got && got[TAB_MARKS]) || {};
+    // Only tabs that are still open.
+    const open = {};
+    for (const id of Object.keys(marks)) if (await quiet(chrome.tabs.get(Number(id)))) open[id] = marks[id];
+    return open;
+  }
+  async function markTabs(ids, state) {
+    if (!TAB_MARKS || !chrome.storage || !chrome.storage.session) return;
+    const marks = await tabMarks();
+    for (const id of ids) if (Number.isInteger(id)) marks[id] = state;
+    await quiet(chrome.storage.session.set({ [TAB_MARKS]: marks }));
   }
 
   /** The session, and its wait, for something only the user can do on this tab: the run's or a sub-task's. */
@@ -2349,14 +2385,29 @@
 
   // ------------------------------------------------------------------- start
 
+  /**
+   * The tab a run starts in: the one it was given, else the tab the user is
+   * looking at. When that is the extension's own page (the agent opened in a
+   * tab of its own, from the welcome page or a link), there is no tab the
+   * user pointed at, so this gives null and startingPlace opens a fresh tab.
+   * Some other tab of the user's is never taken over just because it is in
+   * the window; if the task needs one, the model asks to switch to it.
+   */
   async function targetTab(session, tabId) {
     const own = chrome.runtime.getURL("");
     if (tabId) { const t = await quiet(chrome.tabs.get(tabId)); if (t) return t; }
     const query = session.windowId > 0 ? { windowId: session.windowId } : { currentWindow: true };
     const [active] = (await quiet(chrome.tabs.query({ ...query, active: true }))) || [];
     if (active && active.url && !active.url.startsWith(own)) return active;
-    const all = (await quiet(chrome.tabs.query(query))) || [];
-    return all.find((t) => t.url && !t.url.startsWith(own)) || null;
+    // A follow-up in the same conversation goes on where the last run worked:
+    // the tab it ended on, else the latest tab it worked in that is still open.
+    const earlier = [session.run && session.run.tabId, ...((session.view && session.view.tabs) || []).slice().reverse()];
+    for (const id of earlier) {
+      if (!Number.isInteger(id)) continue;
+      const t = await quiet(chrome.tabs.get(id));
+      if (t && !String(t.url || t.pendingUrl || "").startsWith(own)) return t;
+    }
+    return null;
   }
 
   /**
