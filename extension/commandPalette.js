@@ -54,10 +54,10 @@
   // Keep these values in step with tokens.css when the palette changes.
   const TOKENS = {
     "--surface": ["#ffffff", "#1d1e21"],
-    "--surface-2": ["#f3f2f0", "#26272a"],
-    "--surface-sunken": ["#f4f3f1", "#161719"],
-    "--border": ["#e4e3df", "#2d2e32"],
-    "--border-strong": ["#d2d1cc", "#3f4045"],
+    "--surface-2": ["#f2f2f3", "#2a2b2f"],
+    "--surface-sunken": ["#f4f4f5", "#111214"],
+    "--border": ["#e4e4e7", "#2d2e32"],
+    "--border-strong": ["#d3d3d8", "#404146"],
     "--scrim": ["rgb(22 23 25 / 0.32)", "rgb(0 0 0 / 0.55)"],
     "--text": ["#17181b", "#e9eaec"],
     "--text-muted": ["#595a61", "#b0b2b6"],
@@ -68,7 +68,7 @@
     "--press-overlay": ["rgb(23 24 27 / 0.08)", "rgb(255 255 255 / 0.08)"],
     "--shadow-color": ["rgb(22 23 25 / 0.06)", "rgb(0 0 0 / 0.4)"],
     "--shadow-color-2": ["rgb(22 23 25 / 0.08)", "rgb(0 0 0 / 0.5)"],
-    "--logo-edge": ["rgb(0 0 0 / 0.10)", "rgb(255 255 255 / 0.14)"],
+    "--logo-edge": ["rgb(0 0 0 / 0.10)", "rgb(255 255 255 / 0.12)"],
   };
   const tokenBlock = (index) =>
     Object.entries(TOKENS).map(([name, values]) => `${name}: ${values[index]};`).join(" ");

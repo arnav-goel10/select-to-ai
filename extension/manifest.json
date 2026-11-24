@@ -5,7 +5,7 @@
   "description": "Send selected text to ChatGPT, Claude, Gemini or Perplexity, or ask an AI agent to read and use websites in your own browser.",
   "version": "4.0.0",
   "homepage_url": "https://github.com/arnav-goel10/select-to-ai",
-  "minimum_chrome_version": "120",
+  "minimum_chrome_version": "123",
   "offline_enabled": false,
   "incognito": "not_allowed",
   "action": {

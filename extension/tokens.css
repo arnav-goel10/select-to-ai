@@ -7,27 +7,28 @@
  * data-theme="light" or "dark" from the stored preference, so there is no
  * flash of the wrong theme while the page loads.
  *
- * Palette: ink and paper. Warm paper and soft greys in light, the graphite
- * of the logo tile in dark. There is no hue in the accent: primary actions,
- * focus rings and selected states are graphite ink in light and silver in
- * dark, like the mark on the icon. Four state colours (working, needs you,
- * done, failed) are the only hues. Contrast of every text colour against
- * every surface it sits on is at least 4.5:1.
+ * Palette: ink and paper, taken from the logo. Neutral paper and soft greys
+ * in light, the graphite of the logo tile in dark. There is no hue in the
+ * accent: primary actions, focus rings and selected states are graphite ink
+ * in light and silver in dark, like the knot on the icon. Four state colours
+ * (working, needs you, done, failed) are the only hues, and working is the
+ * ink or silver itself. scripts/contrast.mjs checks every text and control
+ * pair against WCAG AA in both themes; tests/unit/contrast.test.js runs it.
  */
 
 :root {
   color-scheme: light dark;
 
   /* Surfaces */
-  --bg: light-dark(#fafaf9, #161719);
+  --bg: light-dark(#fafafa, #161719);
   --surface: light-dark(#ffffff, #1d1e21);
-  --surface-2: light-dark(#f3f2f0, #26272a);
-  --surface-3: light-dark(#eae9e6, #2f3034);
-  --surface-sunken: light-dark(#f4f3f1, #111214);
-  --border: light-dark(#e4e3df, #2d2e32);
-  --border-strong: light-dark(#d2d1cc, #3f4045);
+  --surface-2: light-dark(#f2f2f3, #2a2b2f);
+  --surface-3: light-dark(#e8e8ea, #323337);
+  --surface-sunken: light-dark(#f4f4f5, #111214);
+  --border: light-dark(#e4e4e7, #2d2e32);
+  --border-strong: light-dark(#d3d3d8, #404146);
   /* The outline of a field the user types into: a pencil line, 3:1 on its surface. */
-  --control-edge: light-dark(#8b8a85, #707277);
+  --control-edge: light-dark(#86878c, #75777c);
   --scrim: light-dark(rgb(22 23 25 / 0.32), rgb(0 0 0 / 0.55));
 
   /* Text */
@@ -39,19 +40,26 @@
      and the agent's live state. No hue. */
   --accent: light-dark(#2a2b30, #d4d6da);
   --accent-hover: light-dark(#17181b, #eceef0);
-  --accent-fill: light-dark(#25262a, #d0d2d6);
-  --accent-fill-hover: light-dark(#3a3b40, #e4e6e9);
+  --accent-fill: light-dark(#25262a, #e6e7ea);
+  --accent-fill-hover: light-dark(#3a3b40, #f4f5f6);
   --accent-contrast: light-dark(#ffffff, #141517);
   --accent-soft: light-dark(rgb(23 24 27 / 0.06), rgb(212 214 218 / 0.10));
+  /* A chosen chip or option: a real fill, not only a tick. */
+  --accent-selected: light-dark(rgb(23 24 27 / 0.12), rgb(230 231 234 / 0.15));
   --accent-ring: light-dark(rgb(23 24 27 / 0.22), rgb(212 214 218 / 0.34));
   --link: var(--accent);
+  /* The hairline that keeps the logo tile from melting into the page. */
+  --logo-edge: light-dark(rgb(0 0 0 / 0.10), rgb(255 255 255 / 0.12));
 
   /* State: working uses the ink or silver accent, with the pulse and the
      shimmer to mark it; the other three have their own hue. */
   --working: var(--accent);
   --needs: light-dark(#a35a00, #eeb563);
   --needs-soft: light-dark(rgb(196 120 10 / 0.1), rgb(238 181 99 / 0.1));
-  --needs-edge: light-dark(rgb(196 120 10 / 0.45), rgb(238 181 99 / 0.45));
+  --needs-edge: light-dark(rgb(199 122 18 / 0.35), rgb(238 181 99 / 0.35));
+  /* Brighter amber for marks only (a dot, a card's stripe, its icon), never for text. */
+  --needs-mark: light-dark(#c77a12, #eeb563);
+  --needs-wash: light-dark(rgb(199 122 18 / 0.07), rgb(238 181 99 / 0.08));
   --done: light-dark(#187a3b, #68cd8f);
   --done-soft: light-dark(rgb(24 122 59 / 0.09), rgb(104 205 143 / 0.1));
   --failed: light-dark(#c22826, #f17871);
@@ -136,7 +144,10 @@
   --ease-decel: var(--ease-out);
   --ease-spring: var(--ease-out);
 
-  --shadow-focus: 0 0 0 3px var(--accent-ring);
+  /* Keyboard focus: a solid 2 px line in the accent. A field turns its own
+     edge into the ring, so the two never stack. */
+  --focus-ring: 2px solid var(--accent);
+  --shadow-focus: 0 0 0 1px var(--accent);
 
   /* Older names still read by some pages and scripts. */
   --danger: var(--failed);
@@ -193,7 +204,7 @@ textarea {
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: var(--focus-ring);
   outline-offset: 2px;
 }
 
