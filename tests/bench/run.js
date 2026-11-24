@@ -41,7 +41,18 @@
  *   BENCH_ALLOW        confirmations the harness allows, by kind (default
  *                      "site,address": typing on and going to sites the task
  *                      did not name). Everything else is refused, so a run
- *                      never pays, sends or deletes anything on a live site.
+ *                      never pays, sends or deletes anything on a live site,
+ *                      unless BENCH_APPROVER=on.
+ *   BENCH_APPROVER, BENCH_APPROVER_MODEL, BENCH_APPROVER_CALLS
+ *                      the simulated approver (approver.js), off by default.
+ *                      "on": every hold outside BENCH_ALLOW whose kind is not
+ *                      one approver.js never puts to it (paying, deleting,
+ *                      secrets, frames, unchecked presses) goes to one cheap
+ *                      model call that sees only the task and the card's
+ *                      description of the step, and the step is allowed on
+ *                      its yes. The headline score is still every hold
+ *                      declined; every summary also gives the score with the
+ *                      approver and the count of holds it approved.
  *   BENCH_OUT          output folder (default tests/bench/out/<timestamp>).
  *                      A run already recorded there is reused, so a stopped
  *                      benchmark carries on where it left off.
@@ -88,7 +99,7 @@
  *                      (4.0 ships without it); "off" tells the engine not to
  *                      use it. Unset, the build runs as it is.
  *   BENCH_MAX_USD      stop when the model spend of this process (the agent's
- *                      runs and the judge's calls, at the list prices in
+ *                      runs, the approver's and the judge's calls, at the list prices in
  *                      defaults.js) reaches this many US dollars (set, it must
  *                      be above 0; "0.0000" is an error). Each run is
  *                      also given what is left as its own cost budget, so no
@@ -138,6 +149,7 @@ const path = require("node:path");
 const J = require("./judge.js");
 const { summarise, normaliseTasks, sampleTasks, isInfra } = J;
 const { judgeConfig, judgeRun, JudgeBatch, waitForHolds } = require("./judge-call.js");
+const APPROVAL = require("./approver.js");
 const OM2W = require("./om2w.js");
 const BENCH_PROFILE_LIB = require("./profile.js");
 const { engineTrace, watchViews } = require("../helpers/engine-trace.js");
@@ -163,6 +175,8 @@ const KEY = DRY ? "" : process.env.BENCH_API_KEY || "";
 // Dry mode: a stub on this machine, called through judgeRun like any judge. No key, and nothing leaves the runner.
 const JUDGE_STUB_PORT = TRIAL.DRY_PORT + 1;
 const JUDGE = DRY ? { model: "dry-judge-stub", url: `http://127.0.0.1:${JUDGE_STUB_PORT}/v1/messages`, key: "", isAnthropic: true, vision: true, shots: 3, retryMs: 200, problem: "" } : judgeConfig();
+// The simulated approver at a held step: the judge's endpoint and key, a cheap model (approver.js).
+const APPROVER = APPROVAL.approverConfig(JUDGE, process.env, { dry: DRY });
 const CUSTOM_URL = DRY ? `${DRY_BASE}/v1` : process.env.BENCH_CUSTOM_URL || "";
 const DEBUGGER = process.env.BENCH_DEBUGGER || "";
 // A fixed sentence on stderr, past the sealed filter: it names nothing but the setting.
@@ -253,7 +267,46 @@ async function replayRecipeInWorker(id) {
   return { ok: true, state: rc.end.state, why: rc.end.why || "", modelCalls: rc.cost.modelCalls, usd: rc.cost.usd, tokens: rc.cost.promptTokens + rc.cost.completionTokens, steps: rc.steps.length, repairs: rc.repairs.length, healed: !!rc.healed };
 }
 
-async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
+/**
+ * Presses the extension's toolbar button on the page, as a person does to
+ * start the agent on the page they are looking at (the popup's task box).
+ * That press is what gives the extension the tab (activeTab), and the
+ * browser takes a picture of a tab for an extension only with that or with
+ * access to every address (<all_urls>), which the shipped build never asks
+ * for. Without it the agent's look tool was refused on every call. The popup
+ * it opens is closed again: the task is given as the popup's own Go button
+ * gives it, by opening agent.html with the task and the tab. Returns "" or
+ * why the press could not be made.
+ */
+async function openFromToolbar(browser, extensionId, page) {
+  await page.bringToFront().catch(() => {});
+  const ext = await browser.extensions().then((m) => m.get(extensionId)).catch(() => null);
+  try {
+    if (ext) await page.triggerExtensionAction(ext);
+    else {
+      // Not listed by the browser: the same press through the protocol, by the extension's id and the page's target.
+      const cdp = await browser.target().createCDPSession();
+      try { await cdp.send("Extensions.triggerAction", { id: extensionId, targetId: page.target()._targetId }); } finally { await cdp.detach().catch(() => {}); }
+    }
+  } catch (e) { return `the harness could not press the extension's toolbar button (${String(e.message).slice(0, 120)})`; }
+  const popup = await browser.waitForTarget((t) => t.url().startsWith(`chrome-extension://${extensionId}/popup.html`), { timeout: 5000 }).catch(() => null);
+  if (popup) {
+    const cdp = await browser.target().createCDPSession().catch(() => null);
+    if (cdp) { await cdp.send("Target.closeTarget", { targetId: popup._targetId }).catch(() => {}); await cdp.detach().catch(() => {}); }
+  }
+  return "";
+}
+
+/** Runs in the worker: whether the browser gives the extension a picture of the tab now. "" when it does, else what it said. */
+async function pictureRefusalInWorker(tabId) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 10 });
+    return "";
+  } catch (e) { return String((e && e.message) || e).slice(0, 200); }
+}
+
+async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hooks = {}) {
   if (!NO_FILES) fs.mkdirSync(dir, { recursive: true });
   // Dry mode: the scripted model plays this task's scenario.
   if (DRY) {
@@ -271,6 +324,10 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   if (!HEADFUL) await target.setViewport({ width: 1280, height: 900 });
   await target.goto(task.url, { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => {});
   await sleep(1500);
+  const problems = [];
+  // Started from the toolbar on this page, as a person starts it.
+  const toolbar = await openFromToolbar(browser, extensionId, target);
+  if (toolbar) problems.push(toolbar);
   // The agent's panel gets a window of its own, as the side panel sits
   // beside the page in real use. Opened as a tab in the page's window it
   // would put the page in the background, where Chrome stops drawing: a
@@ -283,19 +340,24 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   const { windowId } = await cdp.send("Browser.getWindowForTarget", { targetId }).catch(() => ({}));
   if (windowId) await cdp.send("Browser.setWindowBounds", { windowId, bounds: { left: HEADFUL ? 1064 : 1300, top: 0, width: HEADFUL ? 440 : 460, height: 900 } }).catch(() => {});
   await cdp.detach().catch(() => {});
-  const problems = [];
   agentPage.on("pageerror", (err) => problems.push(String(err.message).slice(0, 300)));
   agentPage.on("console", (msg) => { if (msg.type() === "error") problems.push(`console: ${msg.text().slice(0, 300)}`); });
   const tabId = await tabIdOf(browser, extensionId, agentPage, target.url());
+  // Whether the agent's look tool can have a picture of the page: asked of the browser once, before the run.
+  const refused = tabId ? await BENCH_PROFILE_LIB.workerOf(browser, extensionId).then((w) => w.evaluate(pictureRefusalInWorker, tabId)).catch((e) => `the harness could not ask (${String(e.message).slice(0, 100)})`) : "the harness found no id for the page's tab";
+  const picture = { granted: !refused, ...(refused ? { why: refused } : {}) };
+  if (refused) problems.push(`the browser would refuse the agent a picture of the page: ${refused}`);
   const t0 = Date.now();
   await agentPage.goto(`chrome-extension://${extensionId}/agent.html?task=${encodeURIComponent(task.task)}&autostart=1&fresh=1${tabId ? `&tabId=${tabId}` : ""}`, { waitUntil: "load" });
   const inView = await target.evaluate(() => document.visibilityState).catch(() => "");
   if (inView !== "visible") problems.push(`the page was not in view while the agent worked (${inView || "unknown"})`);
 
   const screenshots = [];
-  // The text of each page the agent was on, newest last: what it could have
-  // read, for the judge.
-  const seenPages = new Map();
+  // The text of each state of the pages the agent was on, in the order first seen: what
+  // it could have read, for the judge. A page that changed without its
+  // address changing (a next page of results drawn in place) is a state of
+  // its own (TRIAL.keepPageState), so no state the agent read is lost.
+  const pageStates = [];
   // The engine's own reading of each page (run.seen in core/run.js), asked of
   // the worker as the run goes: what the model was shown of the page, which
   // innerText lacks in places (values carried by a class or a label, a PDF's
@@ -324,13 +386,21 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
     if (NO_FILES) { try { screenshots.push({ name, data: await page.screenshot({ type: "jpeg", quality: 60 }) }); } catch (_e) { /* a closing tab */ } }
     else { const file = path.join(dir, name); try { await page.screenshot({ path: file, type: "jpeg", quality: 60 }); screenshots.push(file); } catch (_e) { /* a closing tab */ } }
     const seen = await page.evaluate(() => ({ url: location.href, title: document.title, text: (document.body ? document.body.innerText : "").slice(0, 60000) })).catch(() => null);
-    if (seen && seen.url) { seenPages.delete(seen.url); seenPages.set(seen.url, seen); }
+    if (seen && seen.url) TRIAL.keepPageState(pageStates, seen);
   };
 
   while (Date.now() - t0 < TIMEOUT_MS) {
-    const state = await agentPage.evaluate((allow, trace) => {
-      // The harness plays the user at a confirmation: it allows only what it
-      // was told to, and refuses the rest.
+    // The harness plays the user at a held step: it allows the kinds it was
+    // told to and declines the rest, unless the simulated approver is on
+    // (BENCH_APPROVER=on), which is asked about any kind it may answer for
+    // (approver.js settleHold).
+    const card = await agentPage.evaluate(APPROVAL.holdCardInPage, [...ALLOW]);
+    if (card && card.pending) {
+      const { yes, record } = await APPROVAL.settleHold(card, task.task, hooks.approve || null);
+      await agentPage.evaluate(APPROVAL.answerHoldInPage, yes).catch(() => false);
+      held.push(record);
+    } else if (card) held.push(card);
+    const state = await agentPage.evaluate((trace) => {
       // At a check-in the user says to keep going: the harness's own timeout is the limit.
       const keep = document.querySelector('.confirmation-bubble[data-wait-kind="check_in"] .checkin-keep-btn');
       if (keep) keep.click();
@@ -338,25 +408,15 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
       // busy) is ended with what it has, as it ended by itself before holds.
       const holdStop = document.querySelector(".confirmation-bubble[data-hold] .hold-stop-btn");
       if (holdStop) holdStop.click();
-      const bubble = document.querySelector(".confirmation-bubble.risk");
-      let asked = null;
-      if (bubble) {
-        const kind = bubble.dataset.riskKind || "unknown";
-        const ok = allow.includes(kind);
-        asked = { kind, allowed: ok, text: (bubble.innerText || "").replace(/\s+/g, " ").slice(0, 200) };
-        const btn = bubble.querySelector(ok ? ".confirm-risk-btn" : ".abort-risk-btn");
-        if (btn) btn.click();
-      }
       // A run at a check-in, or paused for its provider, is still under way.
       const held = !!keep || !!(trace && trace.waitingForUser && ["check_in", "pause"].includes(trace.waitKind));
       const running = held || document.getElementById("actionBtn").classList.contains("stop-btn");
-      return { asked, running, runId: trace ? trace.id || "" : "", steps: trace ? trace.steps : 0, costUSD: trace ? trace.costUSD || 0 : 0, tokens: trace ? trace.tokens : null };
-    }, [...ALLOW], await engineTrace(browser, agentPage));
+      return { running, runId: trace ? trace.id || "" : "", steps: trace ? trace.steps : 0, costUSD: trace ? trace.costUSD || 0 : 0, tokens: trace ? trace.tokens : null };
+    }, await engineTrace(browser, agentPage));
     // What the run has spent so far, kept outside this function: a run lost to the browser still cost it.
     live.costUSD = Math.max(live.costUSD || 0, state.costUSD || 0);
     if (state.tokens) live.tokens = state.tokens;
     live.steps = state.steps;
-    if (state.asked) held.push(state.asked);
     if (state.running) sawRunning = true;
     if (state.steps !== lastStep) { lastStep = state.steps; if (state.steps > 0) { await shot(`step${state.steps}`); await readEngine(state.runId); } }
     if (sawRunning && !state.running) { ending = "finished"; break; }
@@ -444,12 +504,20 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
     modelCalls: trace ? (trace.modelCalls || []).map((c) => ({ purpose: c.purpose, by: c.by, model: c.model, ms: c.ms, prompt: c.prompt, completion: c.completion, cached: c.cached || 0 })) : [],
     ...(LEARN ? { known: trace ? trace.known || null : null } : {}),
     held,
+    // The simulated approver was on for this run (BENCH_APPROVER=on), so its holds were put to it.
+    ...(APPROVER.enabled ? { approverOn: true } : {}),
+    // What the approver's calls cost (approver.js), counted in the spend.
+    approverUSD: live.approverUSD || 0,
+    approverCalls: live.approverCalls || 0,
+    // Whether the browser would give the agent a picture of the page at the start (its look tool).
+    picture,
     problems,
     finalUrl: final.url,
     finalTitle: final.title,
     finalText: final.text,
     formState,
-    pages: [...seenPages.values()].slice(-10),
+    // Every state of the pages it was on, in the order first seen, within TRIAL.PAGE_STATES.
+    pages: pageStates,
     // The engine's reading of the pages, cut to the parts that bear on the answer (TRIAL.engineExcerpts).
     engineReadings: TRIAL.engineExcerpts([...readings.values()], answer),
     screenshots,
@@ -517,7 +585,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   // The judge's stand-in in dry mode: answers in the judge's own format with
   // the verdict the task's pattern gives, and reports token counts as a provider does.
   // With BENCH_JUDGE_BATCH it also plays the Message Batches endpoints: the verdict of each request is the one set under its custom id.
-  const judgeStub = { verdict: null, verdicts: new Map(), batches: new Map(), cached: false, calls: 0, server: null };
+  const judgeStub = { verdict: null, verdicts: new Map(), batches: new Map(), cached: false, calls: 0, server: null, approve: false, approverCalls: 0 };
   if (DRY) {
     const stubAnswer = (params, v) => {
       judgeStub.calls++;
@@ -549,6 +617,12 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
           return send({ id, processing_status: "in_progress" });
         }
         if (req.method === "GET" && results) return send((judgeStub.batches.get(results[1]) || []).map((r) => JSON.stringify(r)).join("\n"), "application/x-jsonl");
+        // The approver's stand-in: the yes or no the fixture task sets ("dryApprove"), in the approver's own format.
+        if (req.method === "POST" && parsed.system === APPROVAL.APPROVER_SYSTEM) {
+          judgeStub.approverCalls++;
+          const text = JSON.stringify({ asks: !!judgeStub.approve, reason: `the dry stub answers ${judgeStub.approve ? "yes" : "no"}, as the fixture task says` });
+          return send({ content: [{ type: "text", text }], usage: { input_tokens: Math.ceil(JSON.stringify(parsed.messages || []).length / 4), output_tokens: Math.ceil(text.length / 4) } });
+        }
         if (req.method === "GET" && one) return send({ id: one[1], processing_status: "ended", results_url: `http://127.0.0.1:${JUDGE_STUB_PORT}/v1/messages/batches/${one[1]}/results` });
         send(stubAnswer(parsed, judgeStub.verdict));
       });
@@ -562,6 +636,9 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   const launch = async () => {
     const browser = await puppeteer.launch({
       headless: !HEADFUL,
+      // The pipe and this switch let the harness press the extension's toolbar
+      // button (openFromToolbar), as a person does to start the agent on a page.
+      pipe: true,
       // Watched by a person: the page in a window of its own size, on the left.
       ...(HEADFUL ? { defaultViewport: null } : {}),
       ...(profileCopy ? { userDataDir: profileCopy } : {}),
@@ -572,7 +649,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
       // machine with no screen).
       // BENCH_EXTRA_EXTENSION: another unpacked extension loaded beside the
       // agent's, for measuring what it changes (an ad blocker, say).
-      args: [`--disable-extensions-except=${[loaded, process.env.BENCH_EXTRA_EXTENSION].filter(Boolean).join(",")}`, `--load-extension=${[loaded, process.env.BENCH_EXTRA_EXTENSION].filter(Boolean).join(",")}`, "--no-first-run", "--disable-features=DialMediaRouteProvider",
+      args: [`--disable-extensions-except=${[loaded, process.env.BENCH_EXTRA_EXTENSION].filter(Boolean).join(",")}`, `--load-extension=${[loaded, process.env.BENCH_EXTRA_EXTENSION].filter(Boolean).join(",")}`, "--enable-unsafe-extension-debugging", "--no-first-run", "--disable-features=DialMediaRouteProvider",
         // A window on a desktop can be covered by another one, and Chrome stops drawing a covered window.
         ...(HEADFUL ? ["--window-position=0,0", "--window-size=1060,900", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"] : [])],
     });
@@ -651,7 +728,22 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   // BENCH_JUDGE_BATCH: verdicts that are still out hold the most their calls can cost.
   const batch = JUDGE_BATCH ? new JudgeBatch(JUDGE, { ratesFor: findModelRates, pollMs: DRY ? 300 : 30000 }) : null;
   // Kept back from each run's own budget for its batch judge call, so the run leaves room for it.
-  const judgeRoom = batch ? batch.estimateUSD({ max_tokens: 8000, messages: [{ content: [{ type: "text", text: "x".repeat(60000) }, ...Array.from({ length: JUDGE.shots }, () => ({ type: "image" }))] }] }) : 0;
+  // Priced on the largest message the judge can be sent (judge.js judgeMessageMostChars), so the room covers any run's verdict.
+  const judgeRoom = batch ? batch.estimateUSD({ max_tokens: 8000, messages: [{ content: [{ type: "text", text: "x".repeat(J.judgeMessageMostChars(TRIAL.READING.total)) }, ...Array.from({ length: JUDGE.shots }, () => ({ type: "image" }))] }] }) : 0;
+  // The approver's prices; the local stub in dry mode costs nothing.
+  const approverRates = DRY ? () => [0, 0] : findModelRates;
+  // Kept back from each run's own budget: the most its approver calls can cost, so the cap holds with them.
+  const approverRoom = MAX_USD ? APPROVAL.approverRoomUSD(APPROVER, approverRates) : 0;
+  /** One hold put to the approver, its cost added to what the run spent (`live`). Null when the approver is off. */
+  async function approveHold(question, live) {
+    if (!APPROVER.enabled) return null;
+    if ((live.approverCalls || 0) >= APPROVER.maxCalls) return { asks: false, skipped: true, reason: `the run had made the ${APPROVER.maxCalls} approver call(s) it may make, so the step was declined`, model: APPROVER.model, usd: 0 };
+    live.approverCalls = (live.approverCalls || 0) + 1;
+    const got = await APPROVAL.askApprover(question, APPROVER);
+    const usd = TRIAL.judgeCostUSD(got.usage, approverRates);
+    live.approverUSD = (live.approverUSD || 0) + usd;
+    return { ...got, model: APPROVER.model, usd };
+  }
   /** What the cap is measured against: spent, and the most the verdicts still out can cost. */
   const committed = () => spent + (batch ? batch.reservedUSD : 0);
   /**
@@ -671,7 +763,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
     await worker.evaluate((v) => new Promise((r) => chrome.storage.sync.set({ agentCostBudget: v }, r)), Math.max(0, left).toFixed(4));
   };
   // A run the harness lost still spent what its model calls cost up to then (`live`, kept by runTask as it goes).
-  const lostRun = (task, r, why, live = {}) => ({ id: task.id, level: task.level, family: task.level, run: r, task: task.task, startUrl: task.url, ending: `harness error: ${String(why).slice(0, 120)}`, answer: "", history: [], steps: live.steps || 0, helperSteps: 0, seconds: 0, costUSD: live.costUSD || 0, tokens: live.tokens || {}, screenshots: [], held: [] });
+  const lostRun = (task, r, why, live = {}) => ({ id: task.id, level: task.level, family: task.level, run: r, task: task.task, startUrl: task.url, ending: `harness error: ${String(why).slice(0, 120)}`, answer: "", history: [], steps: live.steps || 0, helperSteps: 0, seconds: 0, costUSD: live.costUSD || 0, approverUSD: live.approverUSD || 0, tokens: live.tokens || {}, screenshots: [], held: [], ...(APPROVER.enabled ? { approverOn: true } : {}) });
 
   /**
    * One run of a task under the cap. Each attempt gets what is left as its
@@ -684,14 +776,16 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
     let earlier = 0;
     for (let attempt = 0; attempt < (retry ? 2 : 1); attempt++) {
       if (MAX_USD) {
-        const used = committed() + already + earlier + (run ? run.costUSD || 0 : 0);
-        if (used + judgeRoom >= MAX_USD) break;
-        await setRunBudget(MAX_USD - used - judgeRoom).catch(() => {});
+        const used = committed() + already + earlier + (run ? (run.costUSD || 0) + (run.approverUSD || 0) : 0);
+        if (used + judgeRoom + approverRoom >= MAX_USD) break;
+        await setRunBudget(MAX_USD - used - judgeRoom - approverRoom).catch(() => {});
       }
-      if (run) earlier += run.costUSD || 0;
+      if (run) earlier += (run.costUSD || 0) + (run.approverUSD || 0);
       if (attempt && CHATGPT) { const again = await chatgptNotReady(); if (again) { run = lostRun(task, r, again); break; } }
       const live = {};
-      try { run = await runTask(session.browser, session.extensionId, task, r, dir, live); } catch (e) { run = lostRun(task, r, e.message, live); }
+      // Dry mode: the approver's stand-in answers as the fixture task says.
+      if (DRY) judgeStub.approve = task.dryApprove === true;
+      try { run = await runTask(session.browser, session.extensionId, task, r, dir, live, { approve: APPROVER.enabled ? (q) => approveHold(q, live) : null }); } catch (e) { run = lostRun(task, r, e.message, live); }
       const gone = /^harness error/.test(run.ending) && (BROWSER_GONE.test(run.ending) || !session.browser.connected);
       if (!gone || !retry) break;
       // The browser died: start another and give the task one more go.
@@ -739,7 +833,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
     if (lost) verdict = { success: false, reason: "not judged: the run was lost before the agent could act" };
     else {
       if (DRY) judgeStub.verdict = TRIAL.patternVerdict(task, run);
-      const runUSD = (run.costUSD || 0) + (run.lostAttemptsUSD || 0) + carriedUSD;
+      const runUSD = (run.costUSD || 0) + (run.approverUSD || 0) + (run.lostAttemptsUSD || 0) + carriedUSD;
       // Under the cap the judge is asked again only while there is room for it.
       verdict = await judgeRun(run, { ...JUDGE, ...(MAX_USD ? { stopRetry: (usage) => committed() + runUSD + TRIAL.judgeCostUSD(usage, findModelRates) >= MAX_USD } : {}) });
     }
@@ -861,7 +955,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   let requestSeq = 0;
   /** Counts a finished run's own spend now and queues its judging; its row is recorded when the verdict comes. */
   async function queueJudging(task, run, carried, dir, r) {
-    spent += (run.costUSD || 0) + (run.lostAttemptsUSD || 0) + carried + TRIAL.longPromptSurchargeUSD(run.modelCalls, findModelRates);
+    spent += (run.costUSD || 0) + (run.approverUSD || 0) + (run.lostAttemptsUSD || 0) + carried + TRIAL.longPromptSurchargeUSD(run.modelCalls, findModelRates);
     const id = `r${++requestSeq}`;
     if (DRY) judgeStub.verdicts.set(id, TRIAL.patternVerdict(task, run));
     const hold = batch.estimateUSD({ max_tokens: 8000, messages: [{ content: [{ type: "text", text: J.judgeMessage(run) }, ...Array.from({ length: Math.min(JUDGE.shots, (run.screenshots || []).length) }, () => ({ type: "image" }))] }] });
@@ -897,7 +991,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
           const prior = readSaved(dir);
           if (prior && !isInfra(prior)) { spent += TRIAL.spendOf(prior); rows.push({ ...prior, screenshots: prior.screenshots || [] }); console.log(SEALED ? `run ${rows.length} of ${tasks.length * RUNS} recorded earlier` : `${prior.success ? "PASS" : "FAIL"}  ${task.id.padEnd(28)} run ${r}  (recorded earlier)  ${prior.ending}`); continue; }
           const carried = prior ? TRIAL.spendOf(prior) : 0;
-          await settleHolds(carried + judgeRoom);
+          await settleHolds(carried + judgeRoom + approverRoom);
           if (MAX_USD && committed() + carried >= MAX_USD) { spent += carried; capStop(); break; }
           const notReady = await chatgptNotReady();
           if (notReady) { stoppedEarly = notReady; break; }
@@ -926,7 +1020,13 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
     if (judgeStub.server) await new Promise((resolve) => judgeStub.server.close(resolve));
   }
 
-  const s = summarise(rows);
+  // The headline: every hold declined, as the harness has always scored. A
+  // run in which the simulated approver allowed a hold counts as failed here
+  // (approver.js allDeclinedRow); with the approver off no row changes.
+  const s = summarise(rows.map(APPROVAL.allDeclinedRow));
+  // With the approver on: the same runs with its answers, and how its holds went.
+  const withApprover = APPROVER.enabled ? summarise(rows) : null;
+  const approvals = OM2W.approvalCounts(rows);
   const pct = (x) => `${(100 * x).toFixed(1)}%`;
   // A sealed part (BENCH_NO_FILES) shows no numbers of a shard: its counts go only to BENCH_COUNTS_OUT, and the summary reports the part whole.
   if (!NO_FILES) console.log(`\n| scored tasks | runs each | passed | success | success, blocked and lost as failures | solved at least once | solved every time | median steps (passed) | steps spent finding | median seconds | blocked by site | lost |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |`);
@@ -938,6 +1038,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
     const helped = rows.reduce((n, r) => n + (r.helperSteps || 0), 0);
     console.log(`Steps taken by the helper (${HELPER_MODEL}): ${helped} of ${all}${all ? ` (${pct(helped / all)})` : ""}.`);
   }
+  if (withApprover && !NO_FILES) console.log(`\n${APPROVAL.approverLine(APPROVER.model, approvals, { allDeclined: s.success, withApprover: withApprover.success, allDeclinedAllRuns: s.successAllRuns, withApproverAllRuns: withApprover.successAllRuns })}`);
   if (s.lost && !NO_FILES) console.log(`${s.lost} run(s) were lost to the browser, the provider or the judge and are left out of the rate.`);
   if ((s.blocked || s.lost) && !NO_FILES) console.log(`Success with the ${s.blocked} blocked and ${s.lost} lost run(s) counted as failures: ${pct(s.successAllRuns)}.`);
   // Why a shard stopped can hold a lost run's error text: a sealed log says only that it did.
@@ -950,9 +1051,9 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
     fs.mkdirSync(COUNTS_OUT, { recursive: true });
     let tier = "";
     try { const p = require(path.join(EXT, "defaults.js")).modelProfile(MODEL); tier = `${p.tier}, ${p.pageBudget} characters of page text`; } catch (_e) { tier = "unknown"; }
-    fs.writeFileSync(path.join(COUNTS_OUT, `om2w-counts-${SHARD ? `${SHARD[1]}of${SHARD[2]}` : "1of1"}.json`), JSON.stringify({ dry: DRY, sealed: SEALED, agent: `${PROVIDER} / ${MODEL}`, tier, judge: `${JUDGE.model}${batch ? ", batch" : ""}`, debuggerAvailable, capUSD: MAX_USD, spentUSD: spent, capReached, stoppedEarly: !!stoppedEarly, counts: OM2W.countsOf(rows) }, null, 2));
+    fs.writeFileSync(path.join(COUNTS_OUT, `om2w-counts-${SHARD ? `${SHARD[1]}of${SHARD[2]}` : "1of1"}.json`), JSON.stringify({ dry: DRY, sealed: SEALED, agent: `${PROVIDER} / ${MODEL}`, tier, judge: `${JUDGE.model}${batch ? ", batch" : ""}`, approver: APPROVER.enabled ? APPROVER.model : "off", debuggerAvailable, capUSD: MAX_USD, spentUSD: spent, capReached, stoppedEarly: !!stoppedEarly, counts: OM2W.countsOf(rows) }, null, 2));
   }
-  if (!NO_FILES) fs.writeFileSync(path.join(OUT, `results${SHARD ? `-${SHARD[1]}of${SHARD[2]}` : ""}.json`), JSON.stringify({ agent: { provider: PROVIDER, model: MODEL, tier: require(path.join(EXT, "defaults.js")).modelProfile(MODEL).tier, helperModel: HELPER_MODEL || undefined, url: CUSTOM_URL || undefined, extension: EXT, profile: CHATGPT ? CHATGPT.profile : undefined, debugger: DEBUGGER || "as built", debuggerAvailable, learning: LEARN || "off", recipes: RECIPES, disguise: false }, shard: SHARD ? `shard ${SHARD[1]} of ${SHARD[2]}` : "", judge: { model: JUDGE.model, url: JUDGE.url, vision: JUDGE.vision, shots: JUDGE.vision ? JUDGE.shots : 0, stubCalls: DRY ? judgeStub.calls : undefined }, dry: DRY, spentUSD: spent, capUSD: MAX_USD, capReached, runsPerTask: RUNS, planned: tasks.map((t) => t.id), summary: s, stoppedEarly, rows: rows.map((r) => ({ ...r, finalText: undefined, pages: undefined, engineReadings: undefined, screenshots: (r.screenshots || []).length })) }, null, 2));
+  if (!NO_FILES) fs.writeFileSync(path.join(OUT, `results${SHARD ? `-${SHARD[1]}of${SHARD[2]}` : ""}.json`), JSON.stringify({ agent: { provider: PROVIDER, model: MODEL, tier: require(path.join(EXT, "defaults.js")).modelProfile(MODEL).tier, helperModel: HELPER_MODEL || undefined, url: CUSTOM_URL || undefined, extension: EXT, profile: CHATGPT ? CHATGPT.profile : undefined, debugger: DEBUGGER || "as built", debuggerAvailable, learning: LEARN || "off", recipes: RECIPES, disguise: false }, shard: SHARD ? `shard ${SHARD[1]} of ${SHARD[2]}` : "", judge: { model: JUDGE.model, url: JUDGE.url, vision: JUDGE.vision, shots: JUDGE.vision ? JUDGE.shots : 0, stubCalls: DRY ? judgeStub.calls : undefined }, approver: { enabled: APPROVER.enabled, model: APPROVER.model, maxCalls: APPROVER.maxCalls, ...approvals, stubCalls: DRY ? judgeStub.approverCalls : undefined }, dry: DRY, spentUSD: spent, capUSD: MAX_USD, capReached, runsPerTask: RUNS, planned: tasks.map((t) => t.id), summary: s, ...(withApprover ? { summaryWithApprover: withApprover } : {}), stoppedEarly, rows: rows.map((r) => ({ ...r, finalText: undefined, pages: undefined, engineReadings: undefined, screenshots: (r.screenshots || []).length })) }, null, 2));
   // The spend cap doing its job is not a failure of the run.
   if (stoppedEarly && !capReached) process.exitCode = 2;
   if (sealedUnfinished) process.exitCode = 1;

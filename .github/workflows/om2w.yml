@@ -70,7 +70,7 @@ on:
         type: string
         default: all
       max_usd:
-        description: "Hard spend cap in US dollars, agent and judge together. A verdict still out holds the most it can cost"
+        description: "Hard spend cap in US dollars, agent, approver and judge together. A verdict still out holds the most it can cost"
         type: string
         default: "10"
       dry:
@@ -644,7 +644,11 @@ jobs:
           case "$LEG" in
             batch) BENCH_OUT=tests/bench/out/leg BENCH_COUNTS_OUT=tests/bench/out/leg xvfb-run -a -s "-screen 0 1920x1080x24" node tests/bench/run.js | tee tests/bench/out/leg-run.log ;;
             sealed-counts) BENCH_QUIET=sealed BENCH_NO_FILES=1 BENCH_OUT="$RUNNER_TEMP/leg/out" BENCH_COUNTS_OUT="$RUNNER_TEMP/leg/counts" xvfb-run -a -s "-screen 0 1920x1080x24" node tests/bench/run.js | tee tests/bench/out/leg-run.log ;;
-            batch-cap) BENCH_MAX_USD=0.022 BENCH_OUT=tests/bench/out/leg BENCH_COUNTS_OUT=tests/bench/out/leg xvfb-run -a -s "-screen 0 1920x1080x24" node tests/bench/run.js | tee tests/bench/out/leg-run.log ;;
+            batch-cap)
+              # The room run.js keeps back for one batch verdict (priced on the largest judge message), and $0.0045 over it for the verdicts of a few runs.
+              cap=$(node -e 'const { JudgeBatch } = require("./tests/bench/judge-call.js"); const J = require("./tests/bench/judge.js"); const T = require("./tests/bench/trial.js"); const b = new JudgeBatch({ model: "dry-judge-stub", url: "http://127.0.0.1/v1/messages", key: "", isAnthropic: true }, { ratesFor: require("./extension/defaults.js").findModelRates }); const room = b.estimateUSD({ max_tokens: 8000, messages: [{ content: [{ type: "text", text: "x".repeat(J.judgeMessageMostChars(T.READING.total)) }, { type: "image" }, { type: "image" }, { type: "image" }] }] }); console.log((room + 0.0045).toFixed(4));')
+              echo "batch-cap: a cap of $cap"
+              BENCH_MAX_USD="$cap" BENCH_OUT=tests/bench/out/leg BENCH_COUNTS_OUT=tests/bench/out/leg xvfb-run -a -s "-screen 0 1920x1080x24" node tests/bench/run.js | tee tests/bench/out/leg-run.log ;;
             census) CENSUS_TASKS=tests/bench/fixture-tasks.json CENSUS_OUT=tests/bench/out/leg CENSUS_WAIT_S=2 xvfb-run -a -s "-screen 0 1920x1080x24" node tests/bench/census.js | tee tests/bench/out/leg-run.log ;;
           esac
       - name: Check what it left
