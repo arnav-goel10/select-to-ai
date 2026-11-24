@@ -788,69 +788,74 @@
     const CONTROL_TAGS = /^(BUTTON|SELECT|OPTION|INPUT|TEXTAREA|MENU)$/;
     // Tags whose text is never drawn as words on the page.
     const UNREAD_TAGS = /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|SVG|IFRAME|OBJECT|CANVAS|HEAD)$/;
-    // Cells of a table or a definition list: data, where a value may well repeat.
-    const DATA_TAGS = /^(TD|TH|DD|DT)$/;
 
     /**
-     * The page's text cut into blocks (a paragraph, a heading, a list item, a
-     * cell, a box with words of its own), each weighed as content or as
-     * chrome by shallow text features that hold on any site:
-     * - link density: a block that is mostly link text is a menu, a list of
-     *   related pages, a tag cloud or a pager;
-     * - controls and declared landmarks (nav, header, footer, aside and
-     *   their roles) are chrome;
-     * - repetition across the page: a short line that recurs ("Reply",
-     *   "Read more", "Posted by") is a label the page stamps on every item.
-     *   Table and list cells are data, where values recur, and are not judged so.
-     * Text inside open shadow roots is counted for the element hosting it.
-     * Returns the blocks with their weights (positive for content, negative
-     * for chrome), the elements in document order and each one's parent.
+     * How much of an element a reader can see: 0 when none of it is drawn
+     * (the hidden attribute, display:none, a box off the page or clipped to
+     * nothing), 1 when its box is there but its own text is not
+     * (visibility:hidden, which a child may undo), 2 when it is seen. The
+     * same tests the reading itself applies (boxUnseeable, checkVisibility).
      */
-    function textBlocks(root) {
-        const blocks = [];
+    function drawnState(el) {
+        if (el.hidden || boxUnseeable(el)) return 0;
+        if (typeof el.checkVisibility !== 'function') return 2;
+        if (!el.checkVisibility()) return getComputedStyle(el).display === 'contents' ? 2 : 0;
+        return el.checkVisibility({ visibilityProperty: true }) ? 2 : 1;
+    }
+
+    /**
+     * The text a reader can see on the page, counted per element: how many
+     * characters each element holds, how many of those are link text, and
+     * whether it holds a control (a box, a button, a list to pick from).
+     * Text that is not drawn (drawnState, textUnseeable) counts for nothing.
+     * Declared landmarks (nav, header, footer, aside and their roles) and
+     * the controls themselves are the page's frame, not what it says, so
+     * their text is not counted. Link text is counted as text: on a listing
+     * the links are the page. Text inside open shadow roots is counted for
+     * the element hosting it.
+     */
+    function seenTextCounts(root) {
         const parentOf = new Map();
         const order = [];
-        const walk = (el, block, inLink, chrome, candidate, depth) => {
+        const chars = new Map();
+        const links = new Map();
+        const controls = new Set();
+        const add = (map, n, v) => map.set(n, (map.get(n) || 0) + v);
+        const walk = (el, state, inLink, frame, candidate, depth) => {
             if (depth > 400) return;
             const kids = [...(el.childNodes || [])];
             if (el.shadowRoot && el.shadowRoot.childNodes) kids.push(...[...el.shadowRoot.childNodes].map((n) => ({ n, shadow: true })));
+            let ownSeen = null;
             for (const item of kids) {
                 const n = item && item.shadow ? item.n : item;
                 const inShadow = !!(item && item.shadow) || !candidate;
                 if (n.nodeType === 3) {
                     const t = (n.textContent || '').replace(/\s+/g, ' ').trim();
-                    if (!t || !block) continue;
-                    block.text += (block.text ? ' ' : '') + t;
-                    if (inLink) block.links += t.length;
+                    if (!t || frame || state !== 2) continue;
+                    if (ownSeen === null) ownSeen = !textUnseeable(el);
+                    if (!ownSeen) continue;
+                    for (let up = el; up; up = parentOf.get(up)) {
+                        add(chars, up, t.length);
+                        if (inLink) add(links, up, t.length);
+                    }
                     continue;
                 }
                 if (n.nodeType !== 1) continue;
                 const tag = String(n.tagName || '').toUpperCase();
-                if (UNREAD_TAGS.test(tag) || n.hasAttribute('hidden') || n.getAttribute('aria-hidden') === 'true') continue;
+                if (UNREAD_TAGS.test(tag) || n.getAttribute('aria-hidden') === 'true') continue;
                 // The extension's own badges are not the page.
                 if (n.id === 'select-to-ai-overlay-container') continue;
+                const drawn = frame ? 2 : drawnState(n);
+                if (drawn === 0) continue;
                 parentOf.set(n, el);
                 if (!inShadow) order.push(n);
-                const isChrome = chrome || CONTROL_TAGS.test(tag) || n.matches(BOILERPLATE);
-                const link = inLink || tag === 'A';
-                if (block && INLINE_TAGS.test(tag) && isChrome === block.chrome) { walk(n, block, link, isChrome, !inShadow, depth + 1); continue; }
-                const own = { el: n, text: '', links: 0, chrome: isChrome, data: DATA_TAGS.test(tag) };
-                blocks.push(own);
-                walk(n, own, link, isChrome, !inShadow, depth + 1);
+                const control = CONTROL_TAGS.test(tag);
+                if (control) for (let up = n; up; up = parentOf.get(up)) controls.add(up);
+                walk(n, drawn, inLink || tag === 'A', frame || control || n.matches(BOILERPLATE), !inShadow, depth + 1);
             }
         };
-        const top = { el: root, text: '', links: 0, chrome: false, data: false };
-        blocks.push(top);
-        walk(root, top, false, false, true, 0);
-        const times = new Map();
-        for (const b of blocks) if (b.text) times.set(b.text, (times.get(b.text) || 0) + 1);
-        for (const b of blocks) {
-            const chars = b.text.length;
-            const linky = chars > 0 && b.links / chars > 0.5;
-            const stamped = !b.data && chars < 80 && times.get(b.text) > 1;
-            b.weight = !chars ? 0 : (b.chrome || linky || stamped ? -chars : chars);
-        }
-        return { blocks, order, parentOf };
+        walk(root, drawnState(root), false, false, true, 0);
+        return { order, parentOf, chars, links, controls };
     }
 
     /**
@@ -858,20 +863,25 @@
      * marks one with <main> or role="main" says so itself. An <article>
      * counts when it holds a fair share of the page's text: a listing has
      * one <article> per card, and taking one card as the page hid the rest.
-     * With neither, each element is scored by what reading it would bring:
-     * all the content inside it, less half the chrome inside it (textBlocks).
-     * Half, because a stray list of links inside an article column costs
-     * less than losing the column's other paragraphs, while a sidebar or a
-     * menu beside the column, which brings chrome and little content, does
-     * not pay its way. Of elements that score the same, the deeper one is
-     * taken: a wrapper around the content adds nothing to it. From the best
-     * one the reading widens to the element around it while what that adds
-     * is more words than chrome: a status line above a list is part of the
-     * page, a sidebar of links is not, and a notice or a copyright line
-     * further out is never reached. Widening to the body, or a best part
-     * that holds under half the page's content, reads the whole page.
-     * No class or id is read: what a site calls its parts says nothing
-     * that holds on another site.
+     *
+     * With neither, the rule is never to do worse than reading the whole
+     * page. A part is taken only when it is clearly the page's content: it
+     * holds at least 80 percent of all the text a reader can see on the
+     * page (seenTextCounts, link text included), once the menus outside it
+     * are set aside. A menu is a part that is mostly link text and has
+     * nothing to act on in it or in the block around it: a list of
+     * archives, a link column, a crumb trail, a rail of related pages. A
+     * row with a box or a button beside its link (a cart line, a message
+     * with a tick box) is not a menu, and a table cell goes with its row.
+     * A link on its own is part of its block, not a menu. The menus set aside
+     * may never outweigh the part itself, so a stray paragraph beside a
+     * long list of links is never the page: the list is. Of the parts that
+     * qualify, the smallest is taken, then widened to the element around it
+     * while what that adds is more words than menu (a status line above a
+     * list is part of the page, a sidebar of links is not). Widening to the
+     * body, or no part that qualifies, returns null, and the whole page is
+     * read. No class or id is read: what a site calls its parts says
+     * nothing that holds on another site.
      */
     function pickMain(doc) {
         const body = doc.body;
@@ -884,35 +894,47 @@
         }
         const article = doc.querySelector('article');
         if (article && textLength(article) > 200 && textLength(article) >= bodyLength * 0.3) return article;
-        const { blocks, order, parentOf } = textBlocks(body);
-        const score = new Map();
-        const content = new Map();
-        const chrome = new Map();
-        const add = (map, n, v) => map.set(n, (map.get(n) || 0) + v);
-        for (const b of blocks) {
-            if (!b.weight) continue;
-            for (let n = b.el; n; n = parentOf.get(n)) {
-                add(score, n, b.weight > 0 ? b.weight : b.weight / 2);
-                add(b.weight > 0 ? content : chrome, n, Math.abs(b.weight));
-            }
+        const { order, parentOf, chars, links, controls } = seenTextCounts(body);
+        const total = chars.get(body) || 0;
+        const size = (n) => chars.get(n) || 0;
+        const isMenu = (n) => {
+            const c = size(n);
+            const up = parentOf.get(n);
+            if (!c || INLINE_TAGS.test(String(n.tagName || '').toUpperCase())) return false;
+            return (links.get(n) || 0) / c > 0.5 && !controls.has(n) && !(up && controls.has(up));
+        };
+        // The menus, each counted once at its widest.
+        const menus = new Map();
+        const menuWithin = new Map();
+        let menuTotal = 0;
+        for (const n of order) {
+            const up = parentOf.get(n);
+            if (!isMenu(n) || (up && isMenu(up))) continue;
+            menus.set(n, size(n));
+            menuTotal += size(n);
+            for (let p = n; p; p = parentOf.get(p)) menuWithin.set(p, (menuWithin.get(p) || 0) + size(n));
         }
+        const menuAround = (n) => { for (let p = parentOf.get(n); p; p = parentOf.get(p)) if (menus.has(p)) return menus.get(p); return 0; };
+        const clearlyContent = (n) => {
+            const held = size(n);
+            const setAside = menuTotal - (menuWithin.get(n) || 0) - menuAround(n);
+            return held > 200 && setAside <= held && held >= 0.8 * (total - setAside);
+        };
         const inside = (n, outer) => { for (let p = n; p; p = parentOf.get(p)) if (p === outer) return true; return false; };
         let best = null;
-        let bestScore = 0;
         for (const n of order) {
-            const s = score.get(n) || 0;
-            if (s > bestScore || (best && s === bestScore && inside(n, best))) { best = n; bestScore = s; }
+            if (n === body || !clearlyContent(n)) continue;
+            if (!best || size(n) < size(best) || (size(n) === size(best) && inside(n, best))) best = n;
         }
         if (!best) return null;
+        const words = (n) => size(n) - (menuWithin.get(n) || 0);
         for (let up = parentOf.get(best); up; up = parentOf.get(best)) {
-            const words = (content.get(up) || 0) - (content.get(best) || 0);
-            const noise = (chrome.get(up) || 0) - (chrome.get(best) || 0);
-            if (!(words > 0 && words >= noise)) break;
+            const added = words(up) - words(best);
+            const menu = (menuWithin.get(up) || 0) - (menuWithin.get(best) || 0);
+            if (!(added > 0 && added >= menu)) break;
             best = up;
         }
-        if (best === body) return null;
-        const held = content.get(best) || 0;
-        return held > 200 && held >= (content.get(body) || 0) * 0.5 ? best : null;
+        return best === body ? null : best;
     }
 
     /**
@@ -1042,7 +1064,11 @@
         return out;
     }
 
-    /** True when the element's box can never be seen: off the page, or clipped to a pixel. */
+    /**
+     * True when the element's box can never be seen: off the page, or
+     * clipped to a pixel or to nothing (a panel folded to no height that
+     * hides what is in it).
+     */
     function boxUnseeable(el) {
         if (unseenBox.has(el)) return unseenBox.get(el);
         let out = false;
@@ -1052,6 +1078,10 @@
                 // Left of or above the page itself: no amount of scrolling reaches it.
                 if (r.right + window.scrollX < -50 || r.bottom + window.scrollY < -50) out = true;
                 else if (r.width <= 2 && r.height <= 2 && getComputedStyle(el).overflow !== 'visible') out = true;
+            }
+            if (!out && (r.width <= 2 || r.height <= 2) && el.firstChild && el !== document.body && el !== document.documentElement) {
+                const cs = getComputedStyle(el);
+                if ((r.width <= 2 && cs.overflowX !== 'visible') || (r.height <= 2 && cs.overflowY !== 'visible')) out = true;
             }
         } catch (_) { /* treat as seeable */ }
         unseenBox.set(el, out);

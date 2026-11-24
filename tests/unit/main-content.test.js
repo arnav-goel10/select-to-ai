@@ -23,10 +23,15 @@ const constLine = (name) => {
   assert.ok(m, `${name} is in agentContentScript.js`);
   return m[0];
 };
-const pickMain = new Function([
-  ...["BOILERPLATE", "INLINE_TAGS", "CONTROL_TAGS", "UNREAD_TAGS", "DATA_TAGS"].map(constLine),
-  source("textBlocks"), source("pickMain"), "return pickMain;",
-].join("\n"))();
+// The seeable test is the content script's own (drawnState). The small DOM
+// has no layout, so a box is unseeable when its inline style folds it to no
+// height, and no text is drawn in invisible ink.
+const pickMain = new Function("getComputedStyle", [
+  ...["BOILERPLATE", "INLINE_TAGS", "CONTROL_TAGS", "UNREAD_TAGS"].map(constLine),
+  "const boxUnseeable = (el) => !!el.folded;",
+  "const textUnseeable = () => false;",
+  source("drawnState"), source("seenTextCounts"), source("pickMain"), "return pickMain;",
+].join("\n"))((el) => ({ display: (el.style && el.style.display) || "block" }));
 
 const flat = (s) => String(s || "").replace(/\s+/g, " ");
 
@@ -37,7 +42,8 @@ for (const c of CASES) {
     assert.equal(doc.querySelector("main, [role=\"main\"], article"), null, `${c.file} has no landmark to go by`);
     const main = pickMain(doc);
     if (c.notRead.length) assert.ok(main, `${c.file}: a main area is found`);
-    const reading = flat((main || doc.body).textContent);
+    // A page that hides text is read as it is drawn, as the reader reads it.
+    const reading = flat(c.drawn ? (main || doc.body).innerText : (main || doc.body).textContent);
     for (const phrase of c.read) assert.ok(reading.includes(phrase), `${c.file}: "${phrase}" is in the main content (${main ? `${main.tagName}.${main.className}` : "whole page"})`);
     for (const phrase of c.notRead) assert.ok(!reading.includes(phrase), `${c.file}: "${phrase}" is not in the main content (${main ? `${main.tagName}.${main.className}` : "whole page"})`);
   });
@@ -68,8 +74,64 @@ test("the small DOM keeps what a browser's parser keeps", () => {
 });
 
 test("the reader goes by structure, with no class or id of any site", () => {
-  for (const name of ["textBlocks", "pickMain"]) assert.doesNotMatch(source(name), /['"][#.][a-z]/i, `${name} has no class or id selector`);
+  for (const name of ["seenTextCounts", "pickMain"]) assert.doesNotMatch(source(name), /['"][#.][a-z]/i, `${name} has no class or id selector`);
   // The extension's own badge layer is the one id it knows, and it is its own.
-  const ids = [...source("textBlocks").matchAll(/\.id\s*===\s*'([^']*)'/g)].map((m) => m[1]);
+  const ids = [...source("seenTextCounts").matchAll(/\.id\s*===\s*'([^']*)'/g)].map((m) => m[1]);
   assert.deepEqual(ids, ["select-to-ai-overlay-container"]);
+});
+
+test("text that is not drawn weighs nothing: a hidden dialog with more words than the story is never the page", () => {
+  const doc = parseHTML(html("hidden-dialog.html"));
+  const dialog = doc.querySelector("[role=\"dialog\"]");
+  const story = doc.querySelector(".story");
+  assert.ok(dialog && /Consent purpose 24/.test(dialog.textContent), "the fixture's dialog holds its text");
+  assert.ok(dialog.textContent.length > story.textContent.length, "and more of it than the story");
+  const main = pickMain(doc);
+  assert.ok(!main || (!dialog.contains(main) && !main.contains(dialog)), `the reading is not taken from the hidden dialog (${main && main.tagName})`);
+  assert.match(flat((main || doc.body).innerText), /opened again on Saturday morning/);
+  // The same page with the dialog shown: its words are seen now, and the
+  // story no longer holds most of the page, so the whole page is read.
+  const shown = parseHTML(html("hidden-dialog.html").replace('style="display:none" role="dialog"', 'role="dialog"'));
+  const picked = pickMain(shown);
+  assert.ok(!picked || picked.contains(shown.querySelector("[role=\"dialog\"]")), `a shown dialog is weighed as text (${picked && picked.tagName})`);
+});
+
+test("a part is taken only when it holds most of what can be seen, and never a paragraph beside a listing", () => {
+  // Each link-led page through pickMain: whatever is picked holds most of
+  // the page's drawn text, or the whole page is read.
+  for (const file of ["link-aggregator.html", "board-index.html", "category-grid.html", "file-directory.html", "cart.html"]) {
+    const doc = parseHTML(html(file));
+    const main = pickMain(doc);
+    if (!main) continue;
+    assert.notEqual(main.tagName, "P", `${file}: a lone paragraph is not the page`);
+    assert.ok(flat(main.innerText).length >= flat(doc.body.innerText).length * 0.5, `${file}: the part read holds most of the page (${main.tagName}.${main.className})`);
+  }
+  // A stray paragraph beside a long list of bare links: the list is the page.
+  const links = Array.from({ length: 40 }, (_, i) => `<li><a href="/t/${i}">Thread title number ${i} about the spring sowing</a></li>`).join("");
+  const para = `<p>${"Please read the house rules before posting, and keep to one question per topic so others can find it. ".repeat(3)}</p>`;
+  const listing = parseHTML(`<html><body>${para}<ul>${links}</ul></body></html>`);
+  const main = pickMain(listing);
+  assert.ok(!main || /Thread title number 39/.test(main.textContent), "the listing is read");
+  // Cart lines are rows with a box and a button, so they are not a menu and
+  // the terms paragraph does not outweigh them, in plain boxes or a table.
+  const terms = `<div class="legal"><p>${"Prices include tax and orders before two ship the same day, with a full refund at any time before it is sent. ".repeat(2)}</p></div>`;
+  const boxes = [1, 2, 3].map((i) => `<div class="line"><a href="/p${i}">Enamel kettle ${i}</a> <span>Qty</span> <input value="1"> <span>$${i}9.00</span> <button>Remove</button></div>`).join("");
+  const cells = [1, 2, 3].map((i) => `<tr><td><a href="/p${i}">Enamel kettle ${i}</a></td><td><input value="1"></td><td>$${i}9.00</td><td><button>Remove</button></td></tr>`).join("");
+  for (const lines of [boxes, `<table>${cells}</table>`]) {
+    const cart = parseHTML(`<html><body><div><a href="/">Shop</a></div><div class="cart">${lines}<div>Total $87.00</div><button>Checkout</button></div>${terms}</body></html>`);
+    const picked = pickMain(cart);
+    assert.ok(!picked || /Total \$87\.00/.test(picked.textContent), `the cart lines and total are read (${picked && picked.tagName})`);
+  }
+});
+
+test("a menu is a part that is mostly links with nothing to act on, judged by structure", () => {
+  // The same list of links is a menu beside a long column of text, and the
+  // page itself when it stands alone with a short note.
+  const column = `<div>${Array.from({ length: 10 }, (_, i) => `<p>Paragraph ${i} of a long article about field drains and the way water finds the lowest ground in a wet season.</p>`).join("")}</div>`;
+  const list = `<div>${Array.from({ length: 8 }, (_, i) => `<div><a href="/a/${i}">Archive month ${i}</a></div>`).join("")}</div>`;
+  const prose = parseHTML(`<html><body>${column}${list}</body></html>`);
+  const main = pickMain(prose);
+  assert.ok(main && /Paragraph 9/.test(main.textContent) && !/Archive month 3/.test(main.textContent), "beside a column, the list is a menu");
+  assert.equal(source("seenTextCounts").includes("className"), false, "no class is read");
+  assert.equal(source("pickMain").includes("className"), false, "no class is read");
 });

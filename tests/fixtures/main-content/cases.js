@@ -7,6 +7,15 @@
 // script), so one cannot pass while the other fails on the same page.
 // The ids and classes are often misleading on purpose: a reader that went
 // by names would pick the wrong part. No page is copied from a real site.
+//
+// The first eight are led by prose. The next five are led by links, where
+// the links are the page: a reading that weighed link text as menu took a
+// stray paragraph for the page and dropped the listing. What must hold on
+// them is the rule itself: never read less than the whole page would. The
+// last one hides more text than it shows (a closed consent dialog, a
+// mega menu, a folded panel); `drawn` marks that its reading is checked
+// as drawn text, since what is hidden must weigh nothing and be read as
+// nothing.
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -58,6 +67,43 @@ const CASES = [
     shape: "a short status line above a long list: both are the page",
     read: ["Opened: Lunch on Friday", "Notes about item 29"],
     notRead: [],
+  },
+  {
+    file: "link-aggregator.html",
+    shape: "a link aggregator: a table of ranked stories with a volunteers' blurb under it",
+    read: ["A solar kiln for drying oak boards", "The quiet economics of village shops", "Sharpening a scythe on the field edge", "points by reader1", "comments"],
+    notRead: [],
+  },
+  {
+    file: "board-index.html",
+    shape: "a forum board index: a table of forums under a welcome paragraph",
+    read: ["Getting started", "Soil and compost", "Ponds, hedgehogs, birds and the slugs that eat everything", "Off topic", "Mapping every bench in a small town"],
+    notRead: [],
+  },
+  {
+    file: "category-grid.html",
+    shape: "a shop category grid of product cards with a closing paragraph",
+    read: ["Enamel camping kettle", "Folding wood stove", "Washing-up bowl, folding", "\u00a39.00", "\u00a316.50"],
+    notRead: [],
+  },
+  {
+    file: "file-directory.html",
+    shape: "a file directory listing with an intro paragraph",
+    read: ["river-survey-01.csv", "river-survey-20.csv", "river-survey-40.csv", "SUMS.txt", "2026-01-01 04:00"],
+    notRead: [],
+  },
+  {
+    file: "cart.html",
+    shape: "a cart page: item lines with boxes and buttons, a total, and a terms paragraph",
+    read: ["Enamel camping kettle", "Stainless steel mug", "Aluminium windshield", "\u00a334.00", "\u00a324.00", "Total to pay: \u00a372.00"],
+    notRead: [],
+  },
+  {
+    file: "hidden-dialog.html",
+    shape: "a news story with a hidden consent dialog, a hidden mega menu and a folded panel, each holding more words than it shows",
+    drawn: true,
+    read: ["opened again on Saturday morning after two years of repairs", "chosen because it weathers well", "will open late on Saturday evenings"],
+    notRead: ["Consent purpose", "Your privacy choices", "Department 3.2 pages", "Correction panel"],
   },
 ];
 

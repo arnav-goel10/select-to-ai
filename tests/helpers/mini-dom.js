@@ -5,7 +5,11 @@
 // void tags and hidden elements, as the parser leaves them. It knows tag,
 // #id, .class and [attr] / [attr="value"] selectors, joined by commas,
 // with no combinators. innerText is approximate: hidden and unread parts are
-// left out and block elements go on their own lines. Nothing is laid out.
+// left out and block elements go on their own lines. Nothing is laid out,
+// and no style sheet is read: only an inline style attribute is, so a page
+// that hides a part with style="display:none", "visibility:hidden" or a
+// box folded to no height (height:0 with overflow:hidden) is seen as a
+// browser draws it. checkVisibility() and style follow the same rule.
 
 const VOID = new Set(["AREA", "BASE", "BR", "COL", "EMBED", "HR", "IMG", "INPUT", "LINK", "META", "SOURCE", "TRACK", "WBR"]);
 const RAW = new Set(["SCRIPT", "STYLE", "TEXTAREA", "TITLE"]);
@@ -38,9 +42,27 @@ class Element {
   get id() { return this.attrs.id || ""; }
   get className() { return this.attrs.class || ""; }
   get hidden() { return this.hasAttribute("hidden"); }
+  /** The inline style attribute as property: value pairs. */
+  get style() {
+    const out = {};
+    for (const part of String(this.attrs.style || "").split(";")) {
+      const at = part.indexOf(":");
+      if (at > 0) out[part.slice(0, at).trim().toLowerCase()] = part.slice(at + 1).trim().toLowerCase();
+    }
+    return out;
+  }
+  /** Folded to no height with what is inside clipped. */
+  get folded() { const st = this.style; return /^0(px)?$/.test(st.height || "") && /hidden|clip/.test(st.overflow || ""); }
+  checkVisibility(opts) {
+    for (let n = this; n; n = n.parentElement) if (n.hidden || n.style.display === "none") return false;
+    if (opts && opts.visibilityProperty) {
+      for (let n = this; n; n = n.parentElement) if (n.style.visibility) return n.style.visibility !== "hidden";
+    }
+    return true;
+  }
   get textContent() { return this.childNodes.map((n) => n.textContent).join(""); }
   get innerText() {
-    if (UNDRAWN.has(this.tagName) || this.hidden) return "";
+    if (UNDRAWN.has(this.tagName) || this.hidden || this.folded || !this.checkVisibility({ visibilityProperty: true })) return "";
     let out = "";
     for (const n of this.childNodes) {
       if (n.nodeType === 3) { out += n.textContent.replace(/\s+/g, " "); continue; }
