@@ -243,8 +243,9 @@ const SYSTEM_TOKENS_AT_MOST = Math.ceil(JUDGE_SYSTEM.length / 2);
  * a judge failure, which the report counts as lost.
  *
  * Until its verdict is in, a run's judge call is held at `reservedUSD`: the
- * most it can cost (every input token written to the cache, every output
- * token used), so a spend cap that counts the reserve is never passed.
+ * most it can cost (the fixed instructions written to the cache, the run's
+ * own text and screenshots at the input price, every output token used), so
+ * a spend cap that counts the reserve is never passed.
  */
 class JudgeBatch {
   constructor(cfg, { flushEvery = 4, pollMs = 30000, ratesFor = null, fetchImpl = (...a) => fetch(...a), now = () => Date.now(), tries = 2 } = {}) {
@@ -272,8 +273,10 @@ class JudgeBatch {
     let chars = 0;
     let images = 0;
     for (const m of params.messages) for (const part of Array.isArray(m.content) ? m.content : [{ type: "text", text: m.content }]) { if (part.type === "text") chars += String(part.text || "").length; else images++; }
-    const inTokens = Math.ceil(chars / 2) + images * IMAGE_TOKENS_AT_MOST + SYSTEM_TOKENS_AT_MOST;
-    return 0.5 * ((inTokens * input * 2) + (params.max_tokens * output)) / 1000;
+    // Only the fixed instructions carry a cache mark, so only they can be written to the cache (at twice the
+    // input price for one hour). The run's own text and screenshots are plain input, at the input price.
+    const runTokens = Math.ceil(chars / 2) + images * IMAGE_TOKENS_AT_MOST;
+    return 0.5 * ((runTokens * input) + (SYSTEM_TOKENS_AT_MOST * input * 2) + (params.max_tokens * output)) / 1000;
   }
 
   /** Queues one run's judging under `id` (letters, digits, _ and -). Returns the reserve it holds. */
@@ -364,4 +367,17 @@ class JudgeBatch {
   }
 }
 
-module.exports = { DEFAULT_JUDGE, ANTHROPIC_URL, agentEndpoint, judgeConfig, judgeRun, imageUrl, scrub, cachedSystem, addUsage, JudgeBatch, JUDGE_MAX_TOKENS };
+/**
+ * Whether a capped run should wait for the verdicts still out before it
+ * decides anything: when what they hold would leave less than `runRoomUSD`
+ * (or nothing at all) for `needUSD` under the cap. A hold is the most a
+ * verdict can cost, and it is replaced by the real price once the verdict is
+ * in, so a shard decides it is over the cap only on what was really spent.
+ */
+function waitForHolds({ capUSD = 0, committedUSD = 0, needUSD = 0, runRoomUSD = 0, waiting = 0 } = {}) {
+  if (!capUSD || !waiting) return false;
+  const room = capUSD - committedUSD - needUSD;
+  return !(room > 0 && room > runRoomUSD);
+}
+
+module.exports = { waitForHolds, DEFAULT_JUDGE, ANTHROPIC_URL, agentEndpoint, judgeConfig, judgeRun, imageUrl, scrub, cachedSystem, addUsage, JudgeBatch, JUDGE_MAX_TOKENS };

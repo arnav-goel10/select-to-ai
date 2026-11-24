@@ -92,7 +92,8 @@
  *                      use it. Unset, the build runs as it is.
  *   BENCH_MAX_USD      stop when the model spend of this process (the agent's
  *                      runs and the judge's calls, at the list prices in
- *                      defaults.js) reaches this many US dollars. Each run is
+ *                      defaults.js) reaches this many US dollars (set, it must
+ *                      be above 0; "0.0000" is an error). Each run is
  *                      also given what is left as its own cost budget, so no
  *                      single run can pass the cap. Counted: every attempt
  *                      at a run, lost ones too; every call to the judge;
@@ -105,11 +106,19 @@
  *                      the run waits at its end for the last verdicts
  *                      (BENCH_JUDGE_WAIT_S, default 5400). Until a verdict is
  *                      in, the most its call can cost is held against
- *                      BENCH_MAX_USD, so the cap is never passed.
+ *                      BENCH_MAX_USD, so the cap is never passed. A run is
+ *                      not refused for holds alone: the shard waits for the
+ *                      verdicts first and decides on what they really cost.
  *   BENCH_NO_FILES     1 for a sealed part (needs BENCH_QUIET=sealed): no file
  *                      of any run is written, screenshots are kept in memory
  *                      for the judge only, and no results file is written.
- *                      BENCH_COUNTS_OUT is then the only output.
+ *                      BENCH_COUNTS_OUT is then the only output, and the log
+ *                      shows no numbers of the shard. A shard of fewer than
+ *                      BENCH_SEALED_MIN_TASKS tasks (default 5) is refused.
+ *   BENCH_RUN_ROOM_USD with BENCH_JUDGE_BATCH and BENCH_MAX_USD: before a run,
+ *                      the verdicts still out are waited for if what they
+ *                      hold would leave less than this for the run. The cap
+ *                      is only judged reached once they are in.
  *   BENCH_COUNTS_OUT   a folder for om2w-counts-<shard>.json: counts of the
  *                      outcomes, histograms, tokens and spend (om2w.js
  *                      countsOf), and nothing that names or orders a task
@@ -128,7 +137,7 @@ const os = require("node:os");
 const path = require("node:path");
 const J = require("./judge.js");
 const { summarise, normaliseTasks, sampleTasks, isInfra } = J;
-const { judgeConfig, judgeRun, JudgeBatch } = require("./judge-call.js");
+const { judgeConfig, judgeRun, JudgeBatch, waitForHolds } = require("./judge-call.js");
 const OM2W = require("./om2w.js");
 const BENCH_PROFILE_LIB = require("./profile.js");
 const TRIAL = require("./trial.js");
@@ -155,7 +164,14 @@ const JUDGE_STUB_PORT = TRIAL.DRY_PORT + 1;
 const JUDGE = DRY ? { model: "dry-judge-stub", url: `http://127.0.0.1:${JUDGE_STUB_PORT}/v1/messages`, key: "", isAnthropic: true, vision: true, shots: 3, retryMs: 200, problem: "" } : judgeConfig();
 const CUSTOM_URL = DRY ? `${DRY_BASE}/v1` : process.env.BENCH_CUSTOM_URL || "";
 const DEBUGGER = process.env.BENCH_DEBUGGER || "";
-const MAX_USD = Math.max(0, parseFloat(process.env.BENCH_MAX_USD || "0") || 0);
+// A fixed sentence on stderr, past the sealed filter: it names nothing but the setting.
+const refuse = (why) => { process.stderr.write(`${why}\n`); process.exit(1); };
+// Set, the cap must be an amount: "0.0000" (a cap split over too many shards) is an error, never "no cap".
+const MAX_USD_SET = (process.env.BENCH_MAX_USD || "").trim() !== "";
+const MAX_USD = MAX_USD_SET ? parseFloat(process.env.BENCH_MAX_USD) : 0;
+if (MAX_USD_SET && !(Number.isFinite(MAX_USD) && MAX_USD > 0)) refuse("BENCH_MAX_USD is set but is not an amount above 0: a cap that rounds to nothing is refused, not read as no cap.");
+// BENCH_RUN_ROOM_USD: before a run starts, verdicts still out are waited for when what they hold leaves the run less than this.
+const RUN_ROOM_USD = Math.max(0, parseFloat(process.env.BENCH_RUN_ROOM_USD || "0") || 0);
 const RUNS = Math.max(1, parseInt(process.env.BENCH_RUNS || "1", 10));
 const TIMEOUT_MS = Math.max(30, parseInt(process.env.BENCH_TIMEOUT_S || "300", 10)) * 1000;
 const ALLOW = new Set((process.env.BENCH_ALLOW || "site,address").split(",").map((s) => s.trim()).filter(Boolean));
@@ -185,6 +201,8 @@ const DISGUISE = process.env.BENCH_DISGUISE !== "off";
 // A sealed part of Online-Mind2Web: counts only, and no file of any run.
 const NO_FILES = process.env.BENCH_NO_FILES === "1";
 if (NO_FILES && !SEALED) { console.error("BENCH_NO_FILES needs BENCH_QUIET=sealed."); process.exit(1); }
+// A sealed shard runs at least this many tasks, so nothing about a shard (its time, how it ended) is one task's own.
+const SEALED_MIN_TASKS = Math.max(1, parseInt(process.env.BENCH_SEALED_MIN_TASKS || "5", 10) || 5);
 const JUDGE_BATCH = process.env.BENCH_JUDGE_BATCH === "1";
 // A batch verdict comes after the run has moved on: nothing may wait on it.
 if (JUDGE_BATCH && (LEARN || RECIPES)) { console.error("The batch judge takes no learning and no recipes: both act on a verdict straight away."); process.exit(1); }
@@ -466,6 +484,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   tasks = sampleTasks(tasks, parseInt(process.env.BENCH_SAMPLE || "0", 10), parseInt(process.env.BENCH_SEED || "1", 10));
   if (SHARD) tasks = tasks.filter((_, i) => i % Number(SHARD[2]) === Number(SHARD[1]) - 1);
   if (!tasks.length) { console.error("No tasks to run."); process.exit(1); }
+  if (NO_FILES && tasks.length < SEALED_MIN_TASKS) refuse(`A sealed shard needs ${SEALED_MIN_TASKS} tasks or more and this one has ${tasks.length}: use fewer shards. Nothing was run.`);
   fs.mkdirSync(OUT, { recursive: true });
   console.log(`Benchmark: ${tasks.length} task(s) x ${RUNS} run(s), agent ${PROVIDER} / ${MODEL}, judge ${JUDGE.model}${JUDGE.vision ? ` with the last ${JUDGE.shots} screenshots` : ""}\nOutput: ${OUT}\n`);
 
@@ -645,6 +664,16 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   const judgeRoom = batch ? batch.estimateUSD({ max_tokens: 8000, messages: [{ content: [{ type: "text", text: "x".repeat(60000) }, ...Array.from({ length: JUDGE.shots }, () => ({ type: "image" }))] }] }) : 0;
   /** What the cap is measured against: spent, and the most the verdicts still out can cost. */
   const committed = () => spent + (batch ? batch.reservedUSD : 0);
+  /**
+   * Before the cap is judged reached, or a run is cramped by what verdicts
+   * still out hold: wait for those verdicts. A hold is the most a verdict can
+   * cost and its real price is far less, so a shard never stops, or starts a
+   * run with too little, for holds alone. `need` is what must fit after.
+   */
+  async function settleHolds(need) {
+    if (!batch || !waitForHolds({ capUSD: MAX_USD, committedUSD: committed(), needUSD: need, runRoomUSD: RUN_ROOM_USD, waiting: batch.waiting })) return;
+    for (const x of await batch.drain(JUDGE_WAIT_MS)) recordJudged(x.id, x.verdict);
+  }
   const capStop = () => { capReached = true; stoppedEarly = `the spend cap of $${MAX_USD >= 0.01 ? MAX_USD.toFixed(2) : MAX_USD.toFixed(4)} was reached ($${spent.toFixed(4)} spent${batch && batch.reservedUSD ? `, $${batch.reservedUSD.toFixed(4)} held for verdicts still out` : ""}); the remaining tasks were not started.`; };
   /** Gives the next run what is left under the cap as its own cost budget. */
   const setRunBudget = async (left) => {
@@ -841,12 +870,13 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   const awaiting = new Map();
   let requestSeq = 0;
   /** Counts a finished run's own spend now and queues its judging; its row is recorded when the verdict comes. */
-  function queueJudging(task, run, carried, dir, r) {
+  async function queueJudging(task, run, carried, dir, r) {
     spent += (run.costUSD || 0) + (run.lostAttemptsUSD || 0) + carried + TRIAL.longPromptSurchargeUSD(run.modelCalls, findModelRates);
     const id = `r${++requestSeq}`;
     if (DRY) judgeStub.verdicts.set(id, TRIAL.patternVerdict(task, run));
     const hold = batch.estimateUSD({ max_tokens: 8000, messages: [{ content: [{ type: "text", text: J.judgeMessage(run) }, ...Array.from({ length: Math.min(JUDGE.shots, (run.screenshots || []).length) }, () => ({ type: "image" }))] }] });
-    // No room left under the cap for this verdict: the run is not judged, and nothing more starts.
+    // No room left under the cap for this verdict once the others are in: the run is not judged, and nothing more starts.
+    if (MAX_USD && committed() + hold > MAX_USD && batch.waiting) for (const x of await batch.drain(JUDGE_WAIT_MS)) recordJudged(x.id, x.verdict);
     if (MAX_USD && committed() + hold > MAX_USD) {
       capReached = true;
       record({ ...rowOf(task, run, { success: false, reason: "not judged: the spend cap left no room for the judge", judgeFailed: true }, carried), failure: "not judged: the spend cap left no room for the judge" }, task, r, dir);
@@ -877,13 +907,14 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
           const prior = readSaved(dir);
           if (prior && !isInfra(prior)) { spent += TRIAL.spendOf(prior); rows.push({ ...prior, screenshots: prior.screenshots || [] }); console.log(SEALED ? `run ${rows.length} of ${tasks.length * RUNS} recorded earlier` : `${prior.success ? "PASS" : "FAIL"}  ${task.id.padEnd(28)} run ${r}  (recorded earlier)  ${prior.ending}`); continue; }
           const carried = prior ? TRIAL.spendOf(prior) : 0;
+          await settleHolds(carried + judgeRoom);
           if (MAX_USD && committed() + carried >= MAX_USD) { spent += carried; capStop(); break; }
           const notReady = await chatgptNotReady();
           if (notReady) { stoppedEarly = notReady; break; }
           const run = await attemptRun(task, r, dir, { already: carried });
           if (!run) { spent += carried; capStop(); break; }
           const lost = isInfra(run);
-          if (batch && !lost) queueJudging(task, run, carried, dir, r);
+          if (batch && !lost) await queueJudging(task, run, carried, dir, r);
           else record(await settle(task, run, carried), task, r, dir);
           if (batch) for (const x of await batch.tick()) recordJudged(x.id, x.verdict);
           lostInARow = lost ? lostInARow + 1 : 0;
@@ -907,17 +938,18 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
 
   const s = summarise(rows);
   const pct = (x) => `${(100 * x).toFixed(1)}%`;
-  console.log(`\n| scored tasks | runs each | passed | success | success, blocked and lost as failures | solved at least once | solved every time | median steps (passed) | steps spent finding | median seconds | blocked by site | lost |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |`);
-  console.log(`| ${s.tasks} | ${s.runsPerTask} | ${s.passed} | ${pct(s.success)} ± ${pct(s.standardError)} | ${pct(s.successAllRuns)} of ${s.tasksAllRuns} tasks | ${pct(s.solvedOnce)} | ${pct(s.solvedEveryTime)} | ${s.medianSteps} (${s.medianStepsPassed}) | ${pct(s.findingShare)} | ${s.medianSeconds} | ${s.blocked} | ${s.lost} |`);
+  // A sealed part (BENCH_NO_FILES) shows no numbers of a shard: its counts go only to BENCH_COUNTS_OUT, and the summary reports the part whole.
+  if (!NO_FILES) console.log(`\n| scored tasks | runs each | passed | success | success, blocked and lost as failures | solved at least once | solved every time | median steps (passed) | steps spent finding | median seconds | blocked by site | lost |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |`);
+  if (!NO_FILES) console.log(`| ${s.tasks} | ${s.runsPerTask} | ${s.passed} | ${pct(s.success)} ± ${pct(s.standardError)} | ${pct(s.successAllRuns)} of ${s.tasksAllRuns} tasks | ${pct(s.solvedOnce)} | ${pct(s.solvedEveryTime)} | ${s.medianSteps} (${s.medianStepsPassed}) | ${pct(s.findingShare)} | ${s.medianSeconds} | ${s.blocked} | ${s.lost} |`);
   // An ending can carry an error's text: a sealed log shows the counts above only.
   if (!SEALED) console.log(`\nHow runs ended: ${Object.entries(s.endings).map(([k, v]) => `${k} ${v}`).join(", ")}`);
-  if (HELPER_MODEL) {
+  if (HELPER_MODEL && !NO_FILES) {
     const all = rows.reduce((n, r) => n + (r.steps || 0), 0);
     const helped = rows.reduce((n, r) => n + (r.helperSteps || 0), 0);
     console.log(`Steps taken by the helper (${HELPER_MODEL}): ${helped} of ${all}${all ? ` (${pct(helped / all)})` : ""}.`);
   }
-  if (s.lost) console.log(`${s.lost} run(s) were lost to the browser, the provider or the judge and are left out of the rate.`);
-  if (s.blocked || s.lost) console.log(`Success with the ${s.blocked} blocked and ${s.lost} lost run(s) counted as failures: ${pct(s.successAllRuns)}.`);
+  if (s.lost && !NO_FILES) console.log(`${s.lost} run(s) were lost to the browser, the provider or the judge and are left out of the rate.`);
+  if ((s.blocked || s.lost) && !NO_FILES) console.log(`Success with the ${s.blocked} blocked and ${s.lost} lost run(s) counted as failures: ${pct(s.successAllRuns)}.`);
   // Why a shard stopped can hold a lost run's error text: a sealed log says only that it did.
   if (stoppedEarly) console.log(SEALED ? "Stopped early: a shard stopped early." : `Stopped early: ${stoppedEarly}`);
   // BENCH_COUNTS_OUT: the counts of this shard, the only output of a sealed part.
