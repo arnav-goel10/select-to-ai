@@ -330,12 +330,10 @@
     if (!verdicts) verdicts = items[VERDICTS_KEY] && typeof items[VERDICTS_KEY] === "object" ? items[VERDICTS_KEY] : { items: {} };
     session.items = items;
     session.cfg = LLM.settingsFrom(items, Date.now());
-    // What this model is shown and asked for in one step (defaults.js), with
-    // the context window its provider reported, where the live list gave one.
-    const windows = items.agentModelContext && typeof items.agentModelContext === "object" ? items.agentModelContext[session.cfg.provider] || {} : {};
-    session.profile = root.SELECT_TO_AI_DEFAULTS.modelProfile(session.cfg.model, windows[session.cfg.model]);
+    // What this model is shown and asked for in one step (defaults.js).
+    session.profile = root.SELECT_TO_AI_DEFAULTS.modelProfile(session.cfg.model);
     // The helper's steps are built for the helper, from its own profile.
-    session.helperProfile = session.cfg.helperModel ? root.SELECT_TO_AI_DEFAULTS.modelProfile(session.cfg.helperModel, windows[session.cfg.helperModel]) : null;
+    session.helperProfile = session.cfg.helperModel ? root.SELECT_TO_AI_DEFAULTS.modelProfile(session.cfg.helperModel) : null;
     session.settings = {
       riskConfirmation: items.agentRiskConfirmation !== false,
       allowlist: items.agentDomainAllowlist || "",

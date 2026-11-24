@@ -269,38 +269,8 @@
   });
   const TIER_OF = new Map(Object.entries(MODEL_TIERS).flatMap(([tier, ids]) => ids.map((id) => [id, tier])));
 
-  // How much a model can be given, from the context window its provider
-  // reports for it (OpenRouter, Gemini, Mistral, Groq, Together and
-  // Anthropic list one beside each model; options.js keeps what the live
-  // list said). The tiers' page budgets are 8,000, 12,000 and 24,000
-  // characters, with the listing and the run's history on top: under 32,000
-  // tokens a model is given the small room, from 200,000 the frontier one.
-  function contextTier(tokens) {
-    const n = Number(tokens);
-    if (!Number.isFinite(n) || n <= 0) return "";
-    return n >= 200000 ? "frontier" : n >= 32000 ? "standard" : "small";
-  }
-
-  /**
-   * The context window a provider's model list gives for one model, in
-   * tokens, or 0. The field is each API's own: context_length (OpenRouter,
-   * Together, with OpenRouter's top_provider as the served one),
-   * context_window (Groq), max_context_length (Mistral), inputTokenLimit
-   * (Gemini), max_input_tokens (Anthropic).
-   */
-  function reportedContext(row) {
-    if (!row || typeof row !== "object") return 0;
-    const served = row.top_provider && typeof row.top_provider === "object" ? row.top_provider.context_length : undefined;
-    for (const v of [served, row.context_length, row.context_window, row.max_context_length, row.inputTokenLimit, row.max_input_tokens]) {
-      const n = Number(v);
-      if (Number.isFinite(n) && n > 0) return Math.round(n);
-    }
-    return 0;
-  }
-
   // LEGACY FALLBACK, kept as it was before the table so that no model's
-  // tier moves: how a model the table does not list, whose provider reports
-  // no context window, was placed by its name. A family known to be a
+  // tier moves: how a model the table does not list was placed by its name. A family known to be a
   // maker's largest; else a parameter count in the name ("-20b", "550b");
   // else a word that marks a maker's small model, as a whole word ("mini"
   // is not the end of "gemini"); else mid-sized. It reads words in the
@@ -319,16 +289,15 @@
 
   /**
    * A model's tier: the tier the table sets for a model the extension
-   * lists; else the tier the context window its provider reports gives;
-   * else the legacy fallback above, which is the tier the name gave before
-   * the table, unchanged.
+   * lists, else the legacy fallback above, which is the tier the name gave
+   * before the table, unchanged.
    */
-  function tierOf(id, contextTokens) {
-    return TIER_OF.get(String(id || "")) || contextTier(contextTokens) || legacyNameTier(id);
+  function tierOf(id) {
+    return TIER_OF.get(String(id || "")) || legacyNameTier(id);
   }
   /** The listing size, page budget and actions per step for a model, by its tier. */
-  function limitsFor(id, contextTokens) {
-    return TIER_LIMITS[tierOf(id, contextTokens)];
+  function limitsFor(id) {
+    return TIER_LIMITS[tierOf(id)];
   }
 
   // Claude models that think adaptively (thinking: {type: "adaptive"}) and
@@ -353,14 +322,10 @@
   // Models that think before they answer need room for both.
   const THINKING_MODELS = /gpt-oss|nemotron|qwen|gemini|deepseek-r|magistral|claude-(fable|mythos|opus|sonnet|haiku-[5-9])|gpt-(5|6)|grok-4|:free|openrouter\/free/i;
 
-  /**
-   * What a run on this model is given: listing size, actions per step,
-   * sampling, and whether it thinks. `contextTokens` is the context window
-   * the provider reported for the model, when it did.
-   */
-  function modelProfile(model, contextTokens) {
+  /** What a run on this model is given: listing size, actions per step, sampling, and whether it thinks. */
+  function modelProfile(model) {
     const id = String(model || "");
-    const base = limitsFor(id, contextTokens);
+    const base = limitsFor(id);
     const sampling = (MODEL_SAMPLING.find(([re]) => re.test(id)) || [null, { temperature: 0.1 }])[1];
     const thinks = THINKING_MODELS.test(id);
     return { ...base, temperature: sampling.temperature, maxTokens: thinks ? 6000 : 4000, thinks, adaptive: CLAUDE_ADAPTIVE.test(id) };
@@ -556,8 +521,6 @@
     siblingModel,
     modelProfile,
     MODEL_TIERS,
-    contextTier,
-    reportedContext,
     legacyNameTier,
     MODEL_PRICES,
     VISION_MODEL_PATTERNS,

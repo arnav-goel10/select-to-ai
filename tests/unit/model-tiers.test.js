@@ -3,10 +3,9 @@
 // it may take in one step. No model's tier moves in this change:
 // - a model the extension lists has its tier set in the table
 //   (defaults.js MODEL_TIERS), at the tier main gave it;
-// - any other id takes the tier the context window its provider reports
-//   gives, when the provider's model list gives one;
-// - otherwise the legacy fallback (defaults.js legacyNameTier) gives
-//   exactly the tier main's function gave.
+// - every other id gets the legacy fallback (defaults.js legacyNameTier),
+//   exactly the tier main's function gave. Nothing a provider reports, a
+//   context window included, moves a tier.
 // The yardstick is main's own function, copied under tests/helpers. The ids
 // are real ones, in the forms people type them, and generated variants of
 // each: provider prefixes, Bedrock's region and version forms, release
@@ -86,46 +85,28 @@ test("every model the extension lists is set in the table at the tier main gave 
   assert.deepEqual(moved, []);
 });
 
-test("with no context window reported, no id's tier moves from main's, over a wide list of real ids and their forms", () => {
+test("no id's tier moves from main's, over a wide list of real ids and their forms", () => {
   assert.ok(ALL.length > 3000, `a wide list (${ALL.length})`);
   const moved = ALL.map((id) => [id, mainTier(id), D.modelProfile(id).tier]).filter(([, was, now]) => was !== now).map(([id, was, now]) => `${id}: ${was} -> ${now}`);
   assert.deepEqual(moved, []);
-  // The same holds when the provider's list gave no usable number.
-  for (const id of ALL.slice(0, 400)) for (const none of [undefined, null, 0, -1, "", "n/a", NaN]) assert.equal(D.modelProfile(id, none).tier, mainTier(id), `${id} with ${none}`);
+  // A second argument, such as a context window a provider reported, moves nothing.
+  for (const id of ALL.slice(0, 400)) for (const extra of [8192, 200000, 1048576, undefined, null, 0, -1, "", "n/a", NaN]) assert.equal(D.modelProfile(id, extra).tier, mainTier(id), `${id} with ${extra}`);
 });
 
-test("a model the extension does not list takes the tier its reported context window gives", () => {
-  assert.equal(D.contextTier(8192), "small");
-  assert.equal(D.contextTier(31999), "small");
-  assert.equal(D.contextTier(32000), "standard");
-  assert.equal(D.contextTier(131072), "standard");
-  assert.equal(D.contextTier(200000), "frontier");
-  assert.equal(D.contextTier(1048576), "frontier");
-  // Unlisted: the reported window decides, whatever the name says.
-  assert.equal(D.modelProfile("qwen3-max", 262144).tier, "frontier");
-  assert.equal(D.modelProfile("some-lab/tiny-chat-v2", 8192).tier, "small");
-  assert.equal(D.modelProfile("claude-sonnet-5-mini", 64000).tier, "standard");
-  // Listed: the table's tier stands, whatever is reported.
-  assert.equal(D.modelProfile("claude-opus-5-5", 8000).tier, "frontier");
-  assert.equal(D.modelProfile("gpt-5.4-mini", 400000).tier, "small");
+test("no provider-reported context window is read or kept", () => {
+  assert.equal(D.contextTier, undefined);
+  assert.equal(D.reportedContext, undefined);
+  const fs = require("node:fs"); const path = require("node:path");
+  for (const f of ["defaults.js", "options.js", "engine.js"]) {
+    const src = fs.readFileSync(path.join(__dirname, "../../extension", f), "utf8");
+    assert.doesNotMatch(src, /agentModelContext|contextTier|reportedContext/, f);
+  }
 });
 
-test("the context window is read from each provider's own model list", () => {
-  assert.equal(D.reportedContext({ id: "qwen/qwen3-max", context_length: 262144, top_provider: { context_length: 131072 } }), 131072, "OpenRouter: the provider it is served by");
-  assert.equal(D.reportedContext({ id: "qwen/qwen3-max", context_length: 262144 }), 262144, "OpenRouter and Together");
-  assert.equal(D.reportedContext({ id: "llama-3.1-8b-instant", context_window: 131072 }), 131072, "Groq");
-  assert.equal(D.reportedContext({ id: "mistral-large-latest", max_context_length: 131072 }), 131072, "Mistral");
-  assert.equal(D.reportedContext({ name: "models/gemini-2.5-pro", inputTokenLimit: 1048576 }), 1048576, "Gemini");
-  assert.equal(D.reportedContext({ id: "claude-opus-5-5", max_input_tokens: 200000 }), 200000, "Anthropic");
-  assert.equal(D.reportedContext({ id: "gpt-5.5", object: "model" }), 0, "OpenAI gives none");
-  assert.equal(D.reportedContext("gpt-5.5"), 0);
-  assert.equal(D.reportedContext(null), 0);
-});
-
-test("the tier is picked from the table, the reported window, then the legacy fallback, in that order", () => {
+test("the tier is picked from the table, then the legacy fallback, in that order", () => {
   const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "../../extension/defaults.js"), "utf8");
   const pick = src.slice(src.indexOf("function tierOf("), src.indexOf("\n  }\n", src.indexOf("function tierOf(")));
-  assert.ok(pick.includes('return TIER_OF.get(String(id || "")) || contextTier(contextTokens) || legacyNameTier(id);'), pick);
+  assert.ok(pick.includes('return TIER_OF.get(String(id || "")) || legacyNameTier(id);'), pick);
   // The legacy fallback is the one place a name is read, and it is main's.
   for (const id of ALL.slice(0, 2000)) assert.equal(D.legacyNameTier(id), mainTier(id), id);
 });
