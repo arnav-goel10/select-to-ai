@@ -935,7 +935,7 @@ test("a form whose value goes out from a box with no size on the page, or from a
 
 test("the press verdicts kept under the old question are not used for the new one", () => {
   const src = require("node:fs").readFileSync(require.resolve("../../extension/agentTools.js"), "utf8");
-  assert.match(src, /const JUDGE_VERSION = "reaches-undo-3";/);
+  assert.match(src, /const JUDGE_VERSION = "reaches-undo-4";/);
   assert.match(src, /\[JUDGE_VERSION, OPINION_SYSTEM, PRESS_QUESTION, JSON\.stringify\(PRESS_TOOL\), String\(model \|\| ""\)\]/);
   assert.equal(T.judgeStamp("anthropic/x"), T.judgeStamp("anthropic/x"));
 });
