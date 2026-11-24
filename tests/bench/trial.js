@@ -67,6 +67,7 @@ const FAMILIES = Object.freeze({
   "maps-transit": "Maps and transit",
   "news-sports": "News and sports",
   "widgets": "Page widgets: hover, drag, sliders, keys, pickers, frames, dialogs",
+  "om2w": "Online-Mind2Web (fetched at run time, never committed)",
   "fixture": "Fixture pages (dry mode)",
 });
 
@@ -455,11 +456,23 @@ function countersOf(run) {
   };
 }
 
-/** What a judge call cost, from its token counts and a rates lookup (defaults.js findModelRates: USD per 1K tokens). */
+// A cache read's price as a share of the model's input price, where it is not
+// the usual tenth (platform.claude.com pricing, read 24 Nov 2026).
+const CACHE_READ_SHARE = Object.freeze([{ model: /claude-(sonnet|opus)-5-5/i, share: 0.05 }, { model: /claude-(fable|mythos)-5-[12]/i, share: 0.025 }]);
+
+/**
+ * What a judge call cost, from its token counts and a rates lookup
+ * (defaults.js findModelRates: USD per 1K tokens). Cache writes cost 1.25
+ * times the input price (2 times for a one-hour entry), cache reads the
+ * model's share of it, and a batch half of everything.
+ */
 function judgeCostUSD(usage, ratesFor) {
   if (!usage || !ratesFor) return 0;
   const [input, output] = ratesFor(usage.model) || [0, 0];
-  return ((usage.input || 0) * input + (usage.output || 0) * output) / 1000;
+  const read = (CACHE_READ_SHARE.find((x) => x.model.test(String(usage.model || ""))) || { share: 0.1 }).share;
+  const write = usage.cacheTtl === "1h" ? 2 : 1.25;
+  const full = ((usage.input || 0) * input + (usage.cacheWrite || 0) * input * write + (usage.cacheRead || 0) * input * read + (usage.output || 0) * output) / 1000;
+  return usage.batch ? full / 2 : full;
 }
 
 /** One of: passed, blocked, timed out, lost, failed. */

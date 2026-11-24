@@ -215,13 +215,16 @@ test("the judge call counts the tokens of every attempt and stops asking when th
   const { judgeRun } = require("../bench/judge-call.js");
   const real = globalThis.fetch;
   let calls = 0;
-  globalThis.fetch = async () => { calls++; return { ok: true, status: 200, json: async () => ({ content: [{ type: "text", text: calls < 3 ? "no verdict here" : '{"key_points":["x"],"met":[true],"success":true,"blocked":false,"reason":"ok"}' }], usage: { input_tokens: 100, output_tokens: 10 } }) }; };
+  let sent = null;
+  globalThis.fetch = async (_url, init) => { calls++; sent = JSON.parse(init.body); return { ok: true, status: 200, json: async () => ({ content: [{ type: "text", text: calls < 3 ? "no verdict here" : '{"key_points":["x"],"met":[true],"success":true,"blocked":false,"reason":"ok"}' }], usage: { input_tokens: 100, output_tokens: 10, ...(calls > 1 ? { cache_read_input_tokens: 50 } : { cache_creation_input_tokens: 50 }) } }) }; };
   try {
     const run = { task: "t", startUrl: "https://a.example/", answer: "x", history: [], finalUrl: "https://a.example/", finalText: "x" };
     const cfg = { url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-5-5", key: "k", isAnthropic: true, vision: false, shots: 0, retryMs: 1 };
     const v = await judgeRun(run, cfg);
     assert.equal(v.success, true);
-    assert.deepEqual(v.judgeUsage, { model: "claude-sonnet-5-5", input: 300, output: 30, calls: 3 });
+    assert.deepEqual(v.judgeUsage, { model: "claude-sonnet-5-5", input: 300, output: 30, cacheWrite: 50, cacheRead: 100, calls: 3 });
+    // The judge's fixed instructions go as one cached block, the same bytes on every call.
+    assert.deepEqual(sent.system, [{ type: "text", text: J.JUDGE_SYSTEM, cache_control: { type: "ephemeral" } }]);
     calls = 0;
     const capped = await judgeRun(run, { ...cfg, stopRetry: (u) => u.calls >= 1 });
     assert.equal(calls, 1);

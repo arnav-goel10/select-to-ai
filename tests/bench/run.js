@@ -99,6 +99,20 @@
  *                      the higher price of long prompts where a model has
  *                      one; a recipe replay's repairs; and, with learning
  *                      on, an allowance for the calls made after a run.
+ *   BENCH_JUDGE_BATCH  1 judges through Anthropic's Message Batches API at half
+ *                      price, the judge's instructions in a one-hour cache
+ *                      block. Runs are judged in batches as they finish, and
+ *                      the run waits at its end for the last verdicts
+ *                      (BENCH_JUDGE_WAIT_S, default 5400). Until a verdict is
+ *                      in, the most its call can cost is held against
+ *                      BENCH_MAX_USD, so the cap is never passed.
+ *   BENCH_NO_FILES     1 for a sealed part (needs BENCH_QUIET=sealed): no file
+ *                      of any run is written, screenshots are kept in memory
+ *                      for the judge only, and no results file is written.
+ *                      BENCH_COUNTS_OUT is then the only output.
+ *   BENCH_COUNTS_OUT   a folder for om2w-counts-<shard>.json: counts of the
+ *                      outcomes, histograms, tokens and spend (om2w.js
+ *                      countsOf), and nothing that names or orders a task
  *   BENCH_DRY          1 runs without any key: the model is the scripted one
  *                      in tests/e2e/server.js, the pages are its fixtures
  *                      (tests/bench/fixture-tasks.json), and the judge is a
@@ -114,7 +128,8 @@ const os = require("node:os");
 const path = require("node:path");
 const J = require("./judge.js");
 const { summarise, normaliseTasks, sampleTasks, isInfra } = J;
-const { judgeConfig, judgeRun } = require("./judge-call.js");
+const { judgeConfig, judgeRun, JudgeBatch } = require("./judge-call.js");
+const OM2W = require("./om2w.js");
 const BENCH_PROFILE_LIB = require("./profile.js");
 const TRIAL = require("./trial.js");
 // A sealed run (the holdout suite): before anything can print, the log is
@@ -167,6 +182,14 @@ if (SEALED && LEARN) { console.error("A sealed run takes no learning."); process
 const PAIRED = ["1", "near", "pairs"].includes(LEARN);
 const RECIPES = process.env.BENCH_RECIPES === "1";
 const DISGUISE = process.env.BENCH_DISGUISE !== "off";
+// A sealed part of Online-Mind2Web: counts only, and no file of any run.
+const NO_FILES = process.env.BENCH_NO_FILES === "1";
+if (NO_FILES && !SEALED) { console.error("BENCH_NO_FILES needs BENCH_QUIET=sealed."); process.exit(1); }
+const JUDGE_BATCH = process.env.BENCH_JUDGE_BATCH === "1";
+// A batch verdict comes after the run has moved on: nothing may wait on it.
+if (JUDGE_BATCH && (LEARN || RECIPES)) { console.error("The batch judge takes no learning and no recipes: both act on a verdict straight away."); process.exit(1); }
+const JUDGE_WAIT_MS = Math.max(60, parseInt(process.env.BENCH_JUDGE_WAIT_S || "5400", 10)) * 1000;
+const COUNTS_OUT = process.env.BENCH_COUNTS_OUT || "";
 
 /** Chrome's id for the tab showing `url`, asked of the extension itself. */
 async function tabIdOf(browser, extensionId, agentPage, url) {
@@ -213,7 +236,7 @@ async function replayRecipeInWorker(id) {
 }
 
 async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
-  fs.mkdirSync(dir, { recursive: true });
+  if (!NO_FILES) fs.mkdirSync(dir, { recursive: true });
   // Dry mode: the scripted model plays this task's scenario.
   if (DRY) {
     const set = await fetch(`${DRY_BASE}/control/scenario`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: task.scenario }) }).then((r) => r.json());
@@ -278,8 +301,10 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
     const pages = (await browser.pages()).filter((p) => /^https?:/.test(p.url()));
     const page = pages[pages.length - 1];
     if (!page) return;
-    const file = path.join(dir, `${String(screenshots.length).padStart(2, "0")}-${label}.jpg`);
-    try { await page.screenshot({ path: file, type: "jpeg", quality: 60 }); screenshots.push(file); } catch (_e) { /* a closing tab */ }
+    const name = `${String(screenshots.length).padStart(2, "0")}-${label}.jpg`;
+    // BENCH_NO_FILES: the shot is kept in memory for the judge and never written.
+    if (NO_FILES) { try { screenshots.push({ name, data: await page.screenshot({ type: "jpeg", quality: 60 }) }); } catch (_e) { /* a closing tab */ } }
+    else { const file = path.join(dir, name); try { await page.screenshot({ path: file, type: "jpeg", quality: 60 }); screenshots.push(file); } catch (_e) { /* a closing tab */ } }
     const seen = await page.evaluate(() => ({ url: location.href, title: document.title, text: (document.body ? document.body.innerText : "").slice(0, 60000) })).catch(() => null);
     if (seen && seen.url) { seenPages.delete(seen.url); seenPages.set(seen.url, seen); }
   };
@@ -417,7 +442,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   run.grounding = TRIAL.answerGrounding({ ...run, readings: [...readings.values()] });
   // What the user would be looking at in the agent's panel when the run ended.
   const panel = await agentPage.evaluate(() => (document.body.innerText || "").replace(/\n{2,}/g, "\n").slice(-1500)).catch(() => "");
-  fs.writeFileSync(path.join(dir, "log.txt"), `${log}\n\n--- panel at the end ---\n${panel}`);
+  if (!NO_FILES) fs.writeFileSync(path.join(dir, "log.txt"), `${log}\n\n--- panel at the end ---\n${panel}`);
   await agentPage.close().catch(() => {});
   // Close what this task opened; the next task starts its own tab.
   const left = (await browser.pages()).filter((p) => !p.url().startsWith("chrome-extension://"));
@@ -471,22 +496,41 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   if (dryServer) await dryServer.listen();
   // The judge's stand-in in dry mode: answers in the judge's own format with
   // the verdict the task's pattern gives, and reports token counts as a provider does.
-  const judgeStub = { verdict: null, calls: 0, server: null };
+  // With BENCH_JUDGE_BATCH it also plays the Message Batches endpoints: the verdict of each request is the one set under its custom id.
+  const judgeStub = { verdict: null, verdicts: new Map(), batches: new Map(), cached: false, calls: 0, server: null };
   if (DRY) {
+    const stubAnswer = (params, v) => {
+      judgeStub.calls++;
+      let words = 0;
+      let images = 0;
+      for (const m of (params && params.messages) || []) for (const part of Array.isArray(m.content) ? m.content : [{ type: "text", text: m.content }]) { if (part.type === "text") words += String(part.text || "").length; else images++; }
+      // The fixed instructions, when sent as a cache block: written once, read after.
+      const sys = Array.isArray(params && params.system) && params.system.some((b) => b.cache_control) ? Math.ceil(params.system.map((b) => b.text).join("").length / 4) : 0;
+      const usage = { input_tokens: Math.ceil(words / 4) + images * 1000, output_tokens: 0, cache_creation_input_tokens: sys && !judgeStub.cached ? sys : 0, cache_read_input_tokens: sys && judgeStub.cached ? sys : 0 };
+      if (sys) judgeStub.cached = true;
+      const verdict = v || { success: false, blocked: false, reason: "the harness set no verdict for the stub" };
+      const text = JSON.stringify({ key_points: ["the run ends as the fixture task's pattern says"], met: [!!verdict.success], success: !!verdict.success, blocked: !!verdict.blocked, reason: verdict.reason });
+      usage.output_tokens = Math.ceil(text.length / 4);
+      return { content: [{ type: "text", text }], usage };
+    };
     judgeStub.server = require("node:http").createServer((req, res) => {
       let body = "";
       req.on("data", (c) => { body += c; });
       req.on("end", () => {
-        judgeStub.calls++;
-        let words = 0;
-        let images = 0;
-        try {
-          for (const m of JSON.parse(body).messages || []) for (const part of Array.isArray(m.content) ? m.content : [{ type: "text", text: m.content }]) { if (part.type === "text") words += String(part.text || "").length; else images++; }
-        } catch (_e) { /* counted as nothing */ }
-        const v = judgeStub.verdict || { success: false, blocked: false, reason: "the harness set no verdict for the stub" };
-        const text = JSON.stringify({ key_points: ["the run ends as the fixture task's pattern says"], met: [!!v.success], success: !!v.success, blocked: !!v.blocked, reason: v.reason });
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ content: [{ type: "text", text }], usage: { input_tokens: Math.ceil(words / 4) + images * 1000, output_tokens: Math.ceil(text.length / 4) } }));
+        const send = (obj, type = "application/json") => { res.writeHead(200, { "content-type": type }); res.end(typeof obj === "string" ? obj : JSON.stringify(obj)); };
+        let parsed = {};
+        try { parsed = body ? JSON.parse(body) : {}; } catch (_e) { /* counted as nothing */ }
+        const at = String(req.url || "");
+        const results = /^\/v1\/messages\/batches\/([\w-]+)\/results$/.exec(at);
+        const one = /^\/v1\/messages\/batches\/([\w-]+)$/.exec(at);
+        if (req.method === "POST" && at === "/v1/messages/batches") {
+          const id = `stub_batch_${judgeStub.batches.size + 1}`;
+          judgeStub.batches.set(id, (parsed.requests || []).map((r) => ({ custom_id: r.custom_id, result: { type: "succeeded", message: stubAnswer(r.params, judgeStub.verdicts.get(r.custom_id)) } })));
+          return send({ id, processing_status: "in_progress" });
+        }
+        if (req.method === "GET" && results) return send((judgeStub.batches.get(results[1]) || []).map((r) => JSON.stringify(r)).join("\n"), "application/x-jsonl");
+        if (req.method === "GET" && one) return send({ id: one[1], processing_status: "ended", results_url: `http://127.0.0.1:${JUDGE_STUB_PORT}/v1/messages/batches/${one[1]}/results` });
+        send(stubAnswer(parsed, judgeStub.verdict));
       });
     });
     await new Promise((resolve, reject) => { judgeStub.server.once("error", reject); judgeStub.server.listen(JUDGE_STUB_PORT, "127.0.0.1", resolve); });
@@ -595,6 +639,12 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   // BENCH_MAX_USD: what this process has spent on models: the agent's runs (lost ones too), the judge's calls, replays.
   let spent = 0;
   let capReached = false;
+  // BENCH_JUDGE_BATCH: verdicts that are still out hold the most their calls can cost.
+  const batch = JUDGE_BATCH ? new JudgeBatch(JUDGE, { ratesFor: findModelRates, pollMs: DRY ? 300 : 30000 }) : null;
+  // Kept back from each run's own budget for its batch judge call, so the run leaves room for it.
+  const judgeRoom = batch ? batch.estimateUSD({ max_tokens: 8000, messages: [{ content: [{ type: "text", text: "x".repeat(60000) }, ...Array.from({ length: JUDGE.shots }, () => ({ type: "image" }))] }] }) : 0;
+  /** What the cap is measured against: spent, and the most the verdicts still out can cost. */
+  const committed = () => spent + (batch ? batch.reservedUSD : 0);
   const capStop = () => { capReached = true; stoppedEarly = `the spend cap of $${MAX_USD >= 0.01 ? MAX_USD.toFixed(2) : MAX_USD.toFixed(4)} was reached ($${spent.toFixed(4)} spent); the remaining tasks were not started.`; };
   /** Gives the next run what is left under the cap as its own cost budget. */
   const setRunBudget = async (left) => {
@@ -615,9 +665,9 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
     let earlier = 0;
     for (let attempt = 0; attempt < (retry ? 2 : 1); attempt++) {
       if (MAX_USD) {
-        const used = spent + already + earlier + (run ? run.costUSD || 0 : 0);
-        if (used >= MAX_USD) break;
-        await setRunBudget(MAX_USD - used).catch(() => {});
+        const used = committed() + already + earlier + (run ? run.costUSD || 0 : 0);
+        if (used + judgeRoom >= MAX_USD) break;
+        await setRunBudget(MAX_USD - used - judgeRoom).catch(() => {});
       }
       if (run) earlier += run.costUSD || 0;
       if (attempt && CHATGPT) { const again = await chatgptNotReady(); if (again) { run = lostRun(task, r, again); break; } }
@@ -648,17 +698,9 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
     return { ...out, seconds: Math.round((Date.now() - t0) / 1000) };
   }
 
-  /** The verdict on a run and everything the report needs beside it. `carriedUSD` is the spend of an earlier, lost recording of the same run. */
-  async function settle(task, run, carriedUSD = 0) {
+  /** A run with its verdict, and what the report needs beside it, before any spend is counted. */
+  function rowOf(task, run, verdict, carriedUSD = 0) {
     const lost = isInfra(run);
-    let verdict;
-    if (lost) verdict = { success: false, reason: "not judged: the run was lost before the agent could act" };
-    else {
-      if (DRY) judgeStub.verdict = TRIAL.patternVerdict(task, run);
-      const runUSD = (run.costUSD || 0) + (run.lostAttemptsUSD || 0) + carriedUSD;
-      // Under the cap the judge is asked again only while there is room for it.
-      verdict = await judgeRun(run, { ...JUDGE, ...(MAX_USD ? { stopRetry: (usage) => spent + runUSD + TRIAL.judgeCostUSD(usage, findModelRates) >= MAX_USD } : {}) });
-    }
     const row = { ...run, success: verdict.success, blocked: !!verdict.blocked, reason: verdict.reason, keyPoints: verdict.keyPoints, met: verdict.met, judgeFailed: !!verdict.judgeFailed, judgeReply: verdict.judgeReply, judgeUsage: verdict.judgeUsage };
     if (carriedUSD) row.lostAttemptsUSD = (row.lostAttemptsUSD || 0) + carriedUSD;
     // The task's own answer pattern beside the judge, what the judge cost, and what the run did by script or had held.
@@ -668,8 +710,23 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
     // With learning on, up to three model calls follow a run and are in no trace: charged at the run's own mean call price.
     if (LEARN && !lost && run.calls) row.learnAllowanceUSD = 3 * ((run.costUSD || 0) + row.longPromptUSD) / run.calls;
     row.counters = TRIAL.countersOf(run);
+    return row;
+  }
+
+  /** The verdict on a run and everything the report needs beside it. `carriedUSD` is the spend of an earlier, lost recording of the same run. */
+  async function settle(task, run, carriedUSD = 0) {
+    const lost = isInfra(run);
+    let verdict;
+    if (lost) verdict = { success: false, reason: "not judged: the run was lost before the agent could act" };
+    else {
+      if (DRY) judgeStub.verdict = TRIAL.patternVerdict(task, run);
+      const runUSD = (run.costUSD || 0) + (run.lostAttemptsUSD || 0) + carriedUSD;
+      // Under the cap the judge is asked again only while there is room for it.
+      verdict = await judgeRun(run, { ...JUDGE, ...(MAX_USD ? { stopRetry: (usage) => committed() + runUSD + TRIAL.judgeCostUSD(usage, findModelRates) >= MAX_USD } : {}) });
+    }
+    const row = rowOf(task, run, verdict, carriedUSD);
     // BENCH_RECIPES: a run the judge passed, and the extension saved, is replayed once.
-    if (row.recipe && row.recipe.saveable && row.recipe.id && row.success && !(MAX_USD && spent + TRIAL.spendOf(row) >= MAX_USD)) row.recipe = { ...row.recipe, replay: await replayRecipe(row.recipe.id) };
+    if (row.recipe && row.recipe.saveable && row.recipe.id && row.success && !(MAX_USD && committed() + TRIAL.spendOf(row) >= MAX_USD)) row.recipe = { ...row.recipe, replay: await replayRecipe(row.recipe.id) };
     row.failure = TRIAL.failureOf(row);
     spent += TRIAL.spendOf(row);
     if (row.ending === "spend cap reached") capReached = true;
@@ -677,11 +734,12 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   }
 
   const saveRow = (row, dir) => {
+    if (NO_FILES) return;
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, "run.json"), JSON.stringify({ ...row, pages: (row.pages || []).map((p) => ({ ...p, text: String(p.text || "").slice(0, 20000) })), screenshots: (row.screenshots || []).map((x) => path.basename(x)) }, null, 2));
   };
   const markOf = (row) => (row.success ? "PASS" : row.blocked ? "BLOCK" : isInfra(row) || row.judgeFailed ? "LOST" : "FAIL");
-  const readSaved = (d) => { const f = path.join(d, "run.json"); try { return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : null; } catch (_e) { return null; } };
+  const readSaved = (d) => { if (NO_FILES) return null; const f = path.join(d, "run.json"); try { return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : null; } catch (_e) { return null; } };
 
   /** Runs each task twice in one fresh browser, or a task and the next one from its site, or the pairs the task file names. */
   async function learnPairs() {
@@ -765,37 +823,79 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
     fs.writeFileSync(path.join(OUT, `learn-results${SHARD ? `-${SHARD[1]}of${SHARD[2]}` : ""}.json`), JSON.stringify({ mode: LEARN, agent: { provider: PROVIDER, model: MODEL, helperModel: HELPER_MODEL || undefined }, judge: { model: JUDGE.model }, pairs: done.map((p) => ({ a: { id: p.a.id, success: p.a.success, steps: p.a.steps, seconds: p.a.seconds, calls: p.a.calls, tokens: p.a.tokens, ending: p.a.ending, reason: p.a.reason }, b: { id: p.b.id, success: p.b.success, steps: p.b.steps, seconds: p.b.seconds, calls: p.b.calls, tokens: p.b.tokens, ending: p.b.ending, reason: p.b.reason, learn: p.b.learn } })) }, null, 2));
   }
 
+  /** A finished row: kept, saved (not under BENCH_NO_FILES) and printed. */
+  function record(row, task, r, dir) {
+    row.slot = `${task.id}#${r}`;
+    // Under BENCH_NO_FILES nothing of the run outlives its counts: the shots in memory go too.
+    if (NO_FILES) row.screenshots = [];
+    rows.push(row);
+    saveRow(row, dir);
+    if (!QUIET && row.problems && row.problems.length) console.log(`  [page errors] ${row.problems.slice(0, 3).join(" | ")}`);
+    // Sealed: which run this was and nothing about how it went.
+    if (SEALED) console.log(`run ${rows.length} of ${tasks.length * RUNS} done`);
+    else console.log(`${markOf(row).padEnd(5)} ${task.id.padEnd(28)} run ${r}  ${String(row.steps).padStart(2)} steps ${String(row.seconds).padStart(3)}s  ${row.ending}${QUIET ? "" : `  | ${String(row.reason).slice(0, 110)}`}`);
+    if (row.recipe && !QUIET) console.log(`      recipe: ${row.recipe.saveable ? `saved (${row.recipe.steps} steps)${row.recipe.replay ? `, replay ${row.recipe.replay.state || `did not run: ${row.recipe.replay.why}`}, ${row.recipe.replay.modelCalls || 0} model call(s), ${row.recipe.replay.seconds}s` : ", not replayed"}` : `not saveable: ${row.recipe.why}`}`);
+  }
+
+  // BENCH_JUDGE_BATCH: runs waiting for their verdict, by the batch request's id (which names no task).
+  const awaiting = new Map();
+  let requestSeq = 0;
+  /** Counts a finished run's own spend now and queues its judging; its row is recorded when the verdict comes. */
+  function queueJudging(task, run, carried, dir, r) {
+    spent += (run.costUSD || 0) + (run.lostAttemptsUSD || 0) + carried + TRIAL.longPromptSurchargeUSD(run.modelCalls, findModelRates);
+    const id = `r${++requestSeq}`;
+    if (DRY) judgeStub.verdicts.set(id, TRIAL.patternVerdict(task, run));
+    const hold = batch.estimateUSD({ max_tokens: 8000, messages: [{ content: [{ type: "text", text: J.judgeMessage(run) }, ...Array.from({ length: Math.min(JUDGE.shots, (run.screenshots || []).length) }, () => ({ type: "image" }))] }] });
+    // No room left under the cap for this verdict: the run is not judged, and nothing more starts.
+    if (MAX_USD && committed() + hold > MAX_USD) {
+      capReached = true;
+      record({ ...rowOf(task, run, { success: false, reason: "not judged: the spend cap left no room for the judge", judgeFailed: true }, carried), failure: "not judged: the spend cap left no room for the judge" }, task, r, dir);
+      return;
+    }
+    batch.add(id, run);
+    awaiting.set(id, { task, run, carried, dir, r });
+  }
+  /** A verdict from the batch judge: the run's row, with only the judge's cost still to count. */
+  function recordJudged(id, verdict) {
+    const w = awaiting.get(id);
+    if (!w) return;
+    awaiting.delete(id);
+    const row = rowOf(w.task, w.run, verdict, w.carried);
+    row.failure = TRIAL.failureOf(row);
+    spent += row.judgeCostUSD;
+    record(row, w.task, w.r, w.dir);
+  }
 
   try {
     if (PAIRED) learnSummary(await learnPairs());
-    else for (const task of tasks) {
-      for (let r = 1; r <= RUNS; r++) {
-        const dir = path.join(OUT, task.id, `run${r}`);
-        // A run recorded earlier stands, unless it was lost to the browser,
-        // the provider or the judge. A lost one is run again, and what it spent still counts.
-        const prior = readSaved(dir);
-        if (prior && !isInfra(prior)) { spent += TRIAL.spendOf(prior); rows.push({ ...prior, screenshots: prior.screenshots || [] }); console.log(SEALED ? `run ${rows.length} of ${tasks.length * RUNS} recorded earlier` : `${prior.success ? "PASS" : "FAIL"}  ${task.id.padEnd(28)} run ${r}  (recorded earlier)  ${prior.ending}`); continue; }
-        const carried = prior ? TRIAL.spendOf(prior) : 0;
-        if (MAX_USD && spent + carried >= MAX_USD) { spent += carried; capStop(); break; }
-        const notReady = await chatgptNotReady();
-        if (notReady) { stoppedEarly = notReady; break; }
-        const run = await attemptRun(task, r, dir, { already: carried });
-        if (!run) { spent += carried; capStop(); break; }
-        const row = { ...(await settle(task, run, carried)), slot: `${task.id}#${r}` };
-        const lost = isInfra(row);
-        rows.push(row);
-        saveRow(row, dir);
-        if (!QUIET && row.problems && row.problems.length) console.log(`  [page errors] ${row.problems.slice(0, 3).join(" | ")}`);
-        // Sealed: which run this was and nothing about how it went.
-        if (SEALED) console.log(`run ${rows.length} of ${tasks.length * RUNS} done`);
-        else console.log(`${markOf(row).padEnd(5)} ${task.id.padEnd(28)} run ${r}  ${String(row.steps).padStart(2)} steps ${String(row.seconds).padStart(3)}s  ${row.ending}${QUIET ? "" : `  | ${String(row.reason).slice(0, 110)}`}`);
-        if (row.recipe && !QUIET) console.log(`      recipe: ${row.recipe.saveable ? `saved (${row.recipe.steps} steps)${row.recipe.replay ? `, replay ${row.recipe.replay.state || `did not run: ${row.recipe.replay.why}`}, ${row.recipe.replay.modelCalls || 0} model call(s), ${row.recipe.replay.seconds}s` : ", not replayed"}` : `not saveable: ${row.recipe.why}`}`);
-        lostInARow = lost ? lostInARow + 1 : 0;
-        // The plan says its usage is used up: every later run would end the same way.
-        if (CHATGPT && BENCH_PROFILE_LIB.isPlanLimit(row.ending)) { stoppedEarly = "the ChatGPT plan's usage limit was reached; run again when it has room (Manage usage at chatgpt.com/settings/usage)."; break; }
-        if (lostInARow >= MAX_LOST_IN_A_ROW) { stoppedEarly = `${lostInARow} runs in a row were lost (${row.ending}); stopping so the rest are not wasted.`; break; }
+    else {
+      for (const task of tasks) {
+        for (let r = 1; r <= RUNS; r++) {
+          const dir = path.join(OUT, task.id, `run${r}`);
+          // A run recorded earlier stands, unless it was lost to the browser,
+          // the provider or the judge. A lost one is run again, and what it spent still counts.
+          const prior = readSaved(dir);
+          if (prior && !isInfra(prior)) { spent += TRIAL.spendOf(prior); rows.push({ ...prior, screenshots: prior.screenshots || [] }); console.log(SEALED ? `run ${rows.length} of ${tasks.length * RUNS} recorded earlier` : `${prior.success ? "PASS" : "FAIL"}  ${task.id.padEnd(28)} run ${r}  (recorded earlier)  ${prior.ending}`); continue; }
+          const carried = prior ? TRIAL.spendOf(prior) : 0;
+          if (MAX_USD && committed() + carried >= MAX_USD) { spent += carried; capStop(); break; }
+          const notReady = await chatgptNotReady();
+          if (notReady) { stoppedEarly = notReady; break; }
+          const run = await attemptRun(task, r, dir, { already: carried });
+          if (!run) { spent += carried; capStop(); break; }
+          const lost = isInfra(run);
+          if (batch && !lost) queueJudging(task, run, carried, dir, r);
+          else record(await settle(task, run, carried), task, r, dir);
+          if (batch) for (const x of await batch.tick()) recordJudged(x.id, x.verdict);
+          lostInARow = lost ? lostInARow + 1 : 0;
+          // The plan says its usage is used up: every later run would end the same way.
+          if (CHATGPT && BENCH_PROFILE_LIB.isPlanLimit(run.ending)) { stoppedEarly = "the ChatGPT plan's usage limit was reached; run again when it has room (Manage usage at chatgpt.com/settings/usage)."; break; }
+          if (lostInARow >= MAX_LOST_IN_A_ROW) { stoppedEarly = `${lostInARow} runs in a row were lost (${run.ending}); stopping so the rest are not wasted.`; break; }
+          if (capReached) { if (!stoppedEarly) capStop(); break; }
+        }
+        if (stoppedEarly) break;
       }
-      if (stoppedEarly) break;
+      // The last verdicts of the batch judge. The browser is not needed for them.
+      if (batch && batch.waiting) for (const x of await batch.drain(JUDGE_WAIT_MS)) recordJudged(x.id, x.verdict);
     }
   } finally {
     await session.browser.close().catch(() => {});
@@ -820,7 +920,14 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   if (s.blocked || s.lost) console.log(`Success with the ${s.blocked} blocked and ${s.lost} lost run(s) counted as failures: ${pct(s.successAllRuns)}.`);
   // Why a shard stopped can hold a lost run's error text: a sealed log says only that it did.
   if (stoppedEarly) console.log(SEALED ? "Stopped early: a shard stopped early." : `Stopped early: ${stoppedEarly}`);
-  fs.writeFileSync(path.join(OUT, `results${SHARD ? `-${SHARD[1]}of${SHARD[2]}` : ""}.json`), JSON.stringify({ agent: { provider: PROVIDER, model: MODEL, helperModel: HELPER_MODEL || undefined, url: CUSTOM_URL || undefined, extension: EXT, profile: CHATGPT ? CHATGPT.profile : undefined, debugger: DEBUGGER || "as built", debuggerAvailable, learning: LEARN || "off", recipes: RECIPES, disguise: DISGUISE }, shard: SHARD ? `shard ${SHARD[1]} of ${SHARD[2]}` : "", judge: { model: JUDGE.model, url: JUDGE.url, vision: JUDGE.vision, shots: JUDGE.vision ? JUDGE.shots : 0, stubCalls: DRY ? judgeStub.calls : undefined }, dry: DRY, spentUSD: spent, capUSD: MAX_USD, capReached, runsPerTask: RUNS, planned: tasks.map((t) => t.id), summary: s, stoppedEarly, rows: rows.map((r) => ({ ...r, finalText: undefined, pages: undefined, engineReadings: undefined, screenshots: (r.screenshots || []).length })) }, null, 2));
+  // BENCH_COUNTS_OUT: the counts of this shard, the only output of a sealed part.
+  if (COUNTS_OUT) {
+    fs.mkdirSync(COUNTS_OUT, { recursive: true });
+    let tier = "";
+    try { const p = require(path.join(EXT, "defaults.js")).modelProfile(MODEL); tier = `${p.tier}, ${p.pageBudget} characters of page text`; } catch (_e) { tier = "unknown"; }
+    fs.writeFileSync(path.join(COUNTS_OUT, `om2w-counts-${SHARD ? `${SHARD[1]}of${SHARD[2]}` : "1of1"}.json`), JSON.stringify({ dry: DRY, sealed: SEALED, agent: `${PROVIDER} / ${MODEL}`, tier, judge: `${JUDGE.model}${batch ? ", batch" : ""}`, debuggerAvailable, capUSD: MAX_USD, spentUSD: spent, capReached, stoppedEarly: !!stoppedEarly, counts: OM2W.countsOf(rows) }, null, 2));
+  }
+  if (!NO_FILES) fs.writeFileSync(path.join(OUT, `results${SHARD ? `-${SHARD[1]}of${SHARD[2]}` : ""}.json`), JSON.stringify({ agent: { provider: PROVIDER, model: MODEL, helperModel: HELPER_MODEL || undefined, url: CUSTOM_URL || undefined, extension: EXT, profile: CHATGPT ? CHATGPT.profile : undefined, debugger: DEBUGGER || "as built", debuggerAvailable, learning: LEARN || "off", recipes: RECIPES, disguise: DISGUISE }, shard: SHARD ? `shard ${SHARD[1]} of ${SHARD[2]}` : "", judge: { model: JUDGE.model, url: JUDGE.url, vision: JUDGE.vision, shots: JUDGE.vision ? JUDGE.shots : 0, stubCalls: DRY ? judgeStub.calls : undefined }, dry: DRY, spentUSD: spent, capUSD: MAX_USD, capReached, runsPerTask: RUNS, planned: tasks.map((t) => t.id), summary: s, stoppedEarly, rows: rows.map((r) => ({ ...r, finalText: undefined, pages: undefined, engineReadings: undefined, screenshots: (r.screenshots || []).length })) }, null, 2));
   // The spend cap doing its job is not a failure of the run.
   if (stoppedEarly && !capReached) process.exitCode = 2;
 })().catch((e) => { console.error(SEALED ? "The harness stopped with an error; a sealed run withholds the detail." : e); process.exit(1); });

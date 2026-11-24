@@ -204,7 +204,8 @@ const LEFT_PAGE = /^Opened https?:|The page changed: now at|^Now on |^Went back/
 function pickScreenshots(files, history, n = 3) {
   const list = [...(files || [])];
   if (n <= 0 || !list.length) return [];
-  const stepOf = (f) => { const m = /step(\d+)\b/.exec(String(f).split(/[\\/]/).pop()); return m ? Number(m[1]) : Infinity; };
+  // A screenshot is a file path, or {name, data} for one kept in memory only (a sealed run writes no file).
+  const stepOf = (f) => { const m = /step(\d+)\b/.exec(String(f && typeof f === "object" ? f.name : f).split(/[\\/]/).pop()); return m ? Number(m[1]) : Infinity; };
   const chosen = [list[list.length - 1]];
   const leaving = (history || []).filter((h) => LEFT_PAGE.test(String(h.outcome || ""))).map((h) => h.step).sort((a, b) => b - a);
   for (const s of leaving) {

@@ -100,6 +100,8 @@ let canScale = null;
  * 150 KB to about 50 KB); otherwise the file as it is.
  */
 function imageUrl(file, edge = 1024) {
+  // A screenshot kept in memory ({name, data}): sent as it was taken.
+  if (file && typeof file === "object" && file.data) return `data:image/jpeg;base64,${Buffer.from(file.data).toString("base64")}`;
   let bytes = null;
   if (canScale !== false) {
     const out = path.join(os.tmpdir(), `judge-shot-${process.pid}-${path.basename(file)}`);
@@ -118,36 +120,55 @@ function imageUrl(file, edge = 1024) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const shotThere = (f) => (f && typeof f === "object" ? !!f.data : fs.existsSync(f));
+const JUDGE_MAX_TOKENS = 8000;
+
+/**
+ * The judge's fixed instructions as a cached block: the same bytes on every
+ * call, so every call after the first reads them from the cache. `ttl` "1h"
+ * for a batch, whose requests can run far apart.
+ */
+function cachedSystem(ttl = "") {
+  return [{ type: "text", text: JUDGE_SYSTEM, cache_control: ttl ? { type: "ephemeral", ttl } : { type: "ephemeral" } }];
+}
+
+/** A provider's usage block added to a judge's running count: uncached input, cache writes and reads, output, calls. */
+function addUsage(into, u = {}) {
+  into.input += u.input_tokens || u.prompt_tokens || 0;
+  into.output += u.output_tokens || u.completion_tokens || 0;
+  into.cacheWrite = (into.cacheWrite || 0) + (u.cache_creation_input_tokens || 0);
+  into.cacheRead = (into.cacheRead || 0) + (u.cache_read_input_tokens || 0);
+  into.calls++;
+  return into;
+}
+
+function anthropicContent(run, shots) {
+  const text = judgeMessage({ ...run, screenshots: shots });
+  if (!shots.length) return text;
+  return [
+    { type: "text", text },
+    ...shots.map((f) => ({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageUrl(f).replace(/^data:image\/jpeg;base64,/, "") } })),
+  ];
+}
+
+function openAiContent(run, shots) {
+  const text = judgeMessage({ ...run, screenshots: shots });
+  if (!shots.length) return text;
+  return [{ type: "text", text }, ...shots.map((f) => ({ type: "image_url", image_url: { url: imageUrl(f) } }))];
+}
+
 /**
  * The verdict on one run. `run.screenshots` are file paths, oldest first.
  * Returns {success, blocked, keyPoints, met, reason} or, when no verdict
  * could be had, {success: false, judgeFailed: true, reason}.
  */
 async function judgeRun(run, cfg = judgeConfig()) {
-  let files = cfg.vision ? pickScreenshots((run.screenshots || []).filter((f) => fs.existsSync(f)), run.history, cfg.shots) : [];
+  let files = cfg.vision ? pickScreenshots((run.screenshots || []).filter(shotThere), run.history, cfg.shots) : [];
   const isAnthropic = cfg.isAnthropic !== undefined ? !!cfg.isAnthropic : /(^|\.)anthropic\.com$/.test(hostOf(cfg.url));
   // Every answered call is paid for, whether or not its verdict could be read.
-  const judgeUsage = { model: cfg.model, input: 0, output: 0, calls: 0 };
-  const paid = (body) => {
-    const u = (body && body.usage) || {};
-    judgeUsage.input += u.input_tokens || u.prompt_tokens || 0;
-    judgeUsage.output += u.output_tokens || u.completion_tokens || 0;
-    judgeUsage.calls++;
-  };
-  const contentFor = (shots) => {
-    const text = judgeMessage({ ...run, screenshots: shots });
-    if (!shots.length) return text;
-    if (isAnthropic) {
-      return [
-        { type: "text", text },
-        ...shots.map((f) => {
-          const data = imageUrl(f).replace(/^data:image\/jpeg;base64,/, "");
-          return { type: "image", source: { type: "base64", media_type: "image/jpeg", data } };
-        }),
-      ];
-    }
-    return [{ type: "text", text }, ...shots.map((f) => ({ type: "image_url", image_url: { url: imageUrl(f) } }))];
-  };
+  const judgeUsage = { model: cfg.model, input: 0, output: 0, cacheWrite: 0, cacheRead: 0, calls: 0 };
+  const paid = (body) => addUsage(judgeUsage, body && body.usage);
+  const contentFor = (shots) => (isAnthropic ? anthropicContent(run, shots) : openAiContent(run, shots));
   let content = contentFor(files);
   let lastReply = "";
   let degenerated = false;
@@ -162,7 +183,7 @@ async function judgeRun(run, cfg = judgeConfig()) {
       : { "content-type": "application/json", authorization: `Bearer ${cfg.key}` };
     const reqBody = isAnthropic
       // Current Claude models take no temperature but their own; they think adaptively, so the room covers thinking too.
-      ? { model: cfg.model, max_tokens: 8000, system: JUDGE_SYSTEM, messages: [{ role: "user", content }] }
+      ? { model: cfg.model, max_tokens: JUDGE_MAX_TOKENS, system: cachedSystem(), messages: [{ role: "user", content }] }
       : { model: cfg.model, temperature: degenerated ? 0.2 : 0, max_tokens: degenerated ? 4000 : 8000, messages: [{ role: "system", content: JUDGE_SYSTEM }, { role: "user", content }] };
     const res = await fetch(endpoint, {
       method: "POST",
@@ -205,4 +226,142 @@ async function judgeRun(run, cfg = judgeConfig()) {
   return { success: false, reason: "the judge gave no readable verdict", judgeFailed: true, judgeReply: lastReply, judgeUsage };
 }
 
-module.exports = { DEFAULT_JUDGE, ANTHROPIC_URL, agentEndpoint, judgeConfig, judgeRun, imageUrl, scrub };
+
+// Tokens an image of at most 1024 pixels on its long side can take, and the
+// judge's fixed instructions, for a reserve that is never less than a call's
+// real price (Anthropic counts about one token per 750 pixels).
+const IMAGE_TOKENS_AT_MOST = 1600;
+const SYSTEM_TOKENS_AT_MOST = Math.ceil(JUDGE_SYSTEM.length / 2);
+
+/**
+ * The judge through Anthropic's Message Batches API, for runs whose verdict
+ * can wait: half the price of a direct call, with the fixed instructions in a
+ * one-hour cache block. Runs are added as they finish and sent in batches of
+ * `flushEvery`; `tick` sends what is due and collects the batches that have
+ * ended; `drain` waits for the rest. Each request is retried once (an errored
+ * or expired request, or a reply with no readable verdict), then given up as
+ * a judge failure, which the report counts as lost.
+ *
+ * Until its verdict is in, a run's judge call is held at `reservedUSD`: the
+ * most it can cost (every input token written to the cache, every output
+ * token used), so a spend cap that counts the reserve is never passed.
+ */
+class JudgeBatch {
+  constructor(cfg, { flushEvery = 4, pollMs = 30000, ratesFor = null, fetchImpl = (...a) => fetch(...a), now = () => Date.now(), tries = 2 } = {}) {
+    if (!cfg.isAnthropic) throw new Error("The batch judge runs on Anthropic's endpoint only.");
+    this.cfg = cfg;
+    this.flushEvery = flushEvery;
+    this.pollMs = pollMs;
+    this.ratesFor = ratesFor;
+    this.fetch = fetchImpl;
+    this.now = now;
+    this.tries = tries;
+    this.items = new Map();
+    this.pending = [];
+    this.open = new Map();
+    this.sendFailures = 0;
+    const messages = /\/v1\/messages$/.test(cfg.url) ? cfg.url : `${cfg.url.replace(/\/v1$/, "")}/v1/messages`;
+    this.batchesUrl = `${messages}/batches`;
+  }
+
+  headers() { return { "content-type": "application/json", "x-api-key": this.cfg.key, "anthropic-version": "2023-06-01" }; }
+
+  /** The most a request can cost, in US dollars, at batch prices. */
+  estimateUSD(params) {
+    const [input, output] = (this.ratesFor && this.ratesFor(this.cfg.model)) || [0, 0];
+    let chars = 0;
+    let images = 0;
+    for (const m of params.messages) for (const part of Array.isArray(m.content) ? m.content : [{ type: "text", text: m.content }]) { if (part.type === "text") chars += String(part.text || "").length; else images++; }
+    const inTokens = Math.ceil(chars / 2) + images * IMAGE_TOKENS_AT_MOST + SYSTEM_TOKENS_AT_MOST;
+    return 0.5 * ((inTokens * input * 2) + (params.max_tokens * output)) / 1000;
+  }
+
+  /** Queues one run's judging under `id` (letters, digits, _ and -). Returns the reserve it holds. */
+  add(id, run) {
+    const files = this.cfg.vision ? pickScreenshots((run.screenshots || []).filter(shotThere), run.history, this.cfg.shots) : [];
+    const params = { model: this.cfg.model, max_tokens: JUDGE_MAX_TOKENS, system: cachedSystem("1h"), messages: [{ role: "user", content: anthropicContent(run, files) }] };
+    const estimateUSD = this.estimateUSD(params);
+    this.items.set(id, { params, estimateUSD, tries: 0, shots: files.length, usage: { model: this.cfg.model, input: 0, output: 0, cacheWrite: 0, cacheRead: 0, calls: 0, batch: true, cacheTtl: "1h" }, lastReply: "" });
+    this.pending.push(id);
+    return estimateUSD;
+  }
+
+  get reservedUSD() { let n = 0; for (const it of this.items.values()) n += it.estimateUSD; return n; }
+  get waiting() { return this.items.size; }
+
+  async send() {
+    const ids = this.pending.splice(0);
+    if (!ids.length) return;
+    const body = { requests: ids.map((id) => ({ custom_id: id, params: this.items.get(id).params })) };
+    const res = await this.fetch(this.batchesUrl, { method: "POST", headers: this.headers(), body: JSON.stringify(body), signal: AbortSignal.timeout(120000) }).catch(() => null);
+    const json = res ? await res.json().catch(() => ({})) : {};
+    if (!res || !res.ok || !json.id) {
+      this.pending.unshift(...ids);
+      this.sendFailures++;
+      this.lastError = res ? `the batch was refused, HTTP ${res.status}: ${scrub(JSON.stringify(json).slice(0, 160))}` : "the batch endpoint did not answer";
+      return;
+    }
+    for (const id of ids) this.items.get(id).tries++;
+    this.open.set(json.id, { ids, polled: this.now() });
+  }
+
+  /** What one result means: a verdict, or null when the request goes round again. */
+  settleResult(id, result) {
+    const it = this.items.get(id);
+    if (!it) return null;
+    if (result && result.type === "succeeded" && result.message) {
+      addUsage(it.usage, result.message.usage);
+      const text = (Array.isArray(result.message.content) ? result.message.content : []).filter((b) => b && b.type === "text").map((b) => b.text).join("\n");
+      const verdict = parseVerdict(text);
+      if (verdict) return { ...verdict, screenshotsSeen: it.shots, judgeUsage: it.usage };
+      it.lastReply = scrub(String(text).slice(0, 600));
+    } else it.lastReply = scrub(JSON.stringify(result || {}).slice(0, 300));
+    if (it.tries < this.tries) { this.pending.push(id); return null; }
+    return { success: false, reason: "the judge gave no readable verdict", judgeFailed: true, judgeReply: it.lastReply, judgeUsage: it.usage };
+  }
+
+  /** Sends what is due and collects every batch that has ended. Returns [{id, verdict}]. */
+  async tick({ force = false } = {}) {
+    if (this.pending.length && (force || this.pending.length >= this.flushEvery)) await this.send();
+    const done = [];
+    for (const [batchId, b] of [...this.open]) {
+      if (!force && this.now() - b.polled < this.pollMs) continue;
+      b.polled = this.now();
+      const res = await this.fetch(`${this.batchesUrl}/${encodeURIComponent(batchId)}`, { headers: this.headers(), signal: AbortSignal.timeout(60000) }).catch(() => null);
+      const info = res && res.ok ? await res.json().catch(() => ({})) : {};
+      if (info.processing_status !== "ended" || !info.results_url) continue;
+      const out = await this.fetch(info.results_url, { headers: this.headers(), signal: AbortSignal.timeout(120000) }).catch(() => null);
+      if (!out || !out.ok) continue;
+      const lines = String(await out.text().catch(() => "")).split("\n").filter((l) => l.trim());
+      const seen = new Set();
+      for (const line of lines) {
+        let r;
+        try { r = JSON.parse(line); } catch (_e) { continue; }
+        if (!r || !b.ids.includes(r.custom_id)) continue;
+        seen.add(r.custom_id);
+        const verdict = this.settleResult(r.custom_id, r.result);
+        if (verdict) { done.push({ id: r.custom_id, verdict }); this.items.delete(r.custom_id); }
+      }
+      // A request the results left out goes round again, as an errored one would.
+      for (const id of b.ids) if (!seen.has(id)) { const verdict = this.settleResult(id, null); if (verdict) { done.push({ id, verdict }); this.items.delete(id); } }
+      this.open.delete(batchId);
+    }
+    return done;
+  }
+
+  /** Waits for every queued verdict, up to `maxMs`; what is still out then is a judge failure. */
+  async drain(maxMs, sleepMs = this.pollMs) {
+    const t0 = this.now();
+    const done = [];
+    while (this.items.size && this.now() - t0 < maxMs) {
+      done.push(...(await this.tick({ force: true })));
+      if (this.items.size) await sleep(sleepMs);
+    }
+    for (const [id, it] of this.items) done.push({ id, verdict: { success: false, reason: `the batch judge gave no verdict in time${this.lastError ? ` (${this.lastError})` : ""}`, judgeFailed: true, judgeReply: it.lastReply, judgeUsage: it.usage } });
+    this.items.clear();
+    this.pending = [];
+    return done;
+  }
+}
+
+module.exports = { DEFAULT_JUDGE, ANTHROPIC_URL, agentEndpoint, judgeConfig, judgeRun, imageUrl, scrub, cachedSystem, addUsage, JudgeBatch, JUDGE_MAX_TOKENS };
