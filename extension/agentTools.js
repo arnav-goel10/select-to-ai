@@ -724,7 +724,6 @@
     return lines.join("\n");
   }
 
-  const STOPWORDS = new Set("a an and are as at be by can do does for from get give has have how i in into is it its me my of on or please show tell than that the their them then there these this to today up us was we what when where which who why will with you your find page site open go look search current now right about some any also just like two three one sentence sentences summary summarize summarise bullet bullets points point briefly brief short list lines line words word".split(" "));
 
   /** Words from the task worth looking for on the page. */
 
@@ -747,8 +746,11 @@
   const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}]/u;
 
   /**
-   * The words of a task worth looking for on a page, in any script. Text
-   * written without spaces (Chinese, Japanese, Thai) is matched by pairs of
+   * The words of a task to look for on a page, in any script: every word
+   * of three letters or more, and no list of words to skip in any one
+   * language. Which of them matter is measured on the page itself
+   * (relevantPassages weighs each by how rare it is there). Text written
+   * without spaces (Chinese, Japanese, Thai) is matched by pairs of
    * characters, since a whole sentence never appears verbatim on a page.
    */
   function taskKeywords(task) {
@@ -760,11 +762,11 @@
         const chars = [...w];
         if (chars.length <= 2) out.push(w);
         else for (let i = 0; i + 1 < chars.length; i++) out.push(chars[i] + chars[i + 1]);
-      } else if (w.length >= 3 && !STOPWORDS.has(w)) {
+      } else if (w.length >= 3) {
         out.push(w);
       }
     }
-    return [...new Set(out)].slice(0, 24);
+    return [...new Set(out)].slice(0, 40);
   }
 
   /**
@@ -791,21 +793,26 @@
       if (last && last.text.length < 200) last.text += " | " + line;
       else blocks.push({ text: line, start });
     }
-    // A word that appears in most blocks (the page's own subject, like
-    // "singapore" on the Singapore article) says little; a rare one
-    // ("population") pinpoints the passage. Weight each word by rarity.
+    // A word that appears in most blocks (a word of the language like "the"
+    // or "der", or the page's own subject, like "singapore" on the
+    // Singapore article) says little; a rare one ("population") pinpoints
+    // the passage. Each word is weighed by how rare it is on this page, and
+    // on a page of several blocks a block is a match only through a word
+    // that is in at most half of them.
     const lowered = blocks.map((b) => b.text.toLowerCase());
     const weight = {};
+    const telling = new Set();
     for (const w of words) {
       const df = lowered.filter((t) => t.includes(w)).length;
       weight[w] = df ? Math.log(1 + blocks.length / df) : 0;
+      if (df && (blocks.length < 4 || df <= blocks.length / 2)) telling.add(w);
     }
     return blocks
       .filter((b) => b.start >= o.skipPrefixChars)
       .map((b, i) => {
         const lower = lowered[i];
         const hits = words.filter((w) => lower.includes(w));
-        return { i, text: b.text, hits: hits.length, score: hits.reduce((t, w) => t + weight[w], 0) };
+        return { i, text: b.text, hits: hits.filter((w) => telling.has(w)).length, score: hits.reduce((t, w) => t + weight[w], 0) };
       })
       .filter((b) => b.hits > 0)
       .sort((a, b) => b.score - a.score || a.i - b.i)
@@ -1150,34 +1157,21 @@
   }
 
   /**
-   * Which of the user's other tabs a request is about, from their titles
-   * and addresses alone: nothing is read from a tab that is not picked.
-   * A tab is picked when the request names something in its title or site,
-   * or points at several things ("these", "both", "compare") and the tab is
-   * like the current one. "My tabs" with no closer match means all of them.
+   * Which of the user's other tabs are read ahead of the run, from their
+   * addresses alone: a tab on a site the request writes out ("the tab on
+   * shop.example"). No other tab is read. The run is shown the list of the
+   * user's tabs, their titles and addresses, and the model asks to move to
+   * the one it needs, which the user allows once per site. Which tab a
+   * request means ("these two", "my other tab") is the model's to read, in
+   * whatever language the request is in.
    */
   function pickContextTabs(task, current, others, max) {
-    const limit = max || 4;
-    const text = String(task || "");
-    const explicit = /\b(tabs?|windows?|open pages?|other (?:page|site|one)s?)\b/i.test(text);
-    const several = /\b(these|those|both|them|all of them|compare|comparison|vs\.?|versus|which (?:one|is))\b/i.test(text);
-    const words = taskKeywords(text);
-    const titleWords = (t) => taskKeywords(`${t.title || ""} ${siteOf(t.url || "").split(".")[0]}`);
-    const here = current ? new Set(titleWords(current)) : new Set();
-    const hereSite = current ? siteOf(current.url || "") : "";
-    const scored = (others || []).map((t) => {
-      const tw = titleWords(t);
-      const hay = `${String(t.title || "").toLowerCase()} ${siteOf(t.url || "")}`;
-      const named = words.filter((w) => hay.includes(w)).length;
-      const alike = (hereSite && siteOf(t.url || "") === hereSite) || tw.filter((w) => here.has(w)).length >= 2;
-      return { tab: t, named, alike };
-    });
-    let picked = scored.filter((x) => x.named > 0 || (several && x.alike));
-    if (!picked.length && explicit) picked = scored;
-    return picked
-      .sort((a, b) => b.named - a.named || Number(b.alike) - Number(a.alike) || (b.tab.lastAccessed || 0) - (a.tab.lastAccessed || 0))
-      .slice(0, limit)
-      .map((x) => x.tab);
+    const named = sitesNamedIn(task);
+    if (!named.size) return [];
+    return (others || [])
+      .filter((t) => named.has(siteOf(t.url || "")))
+      .sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))
+      .slice(0, max || 4);
   }
 
   /**

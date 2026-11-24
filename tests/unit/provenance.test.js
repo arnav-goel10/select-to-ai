@@ -167,7 +167,7 @@ test("what a page says decides no hold: ordinary steps go through, and risky one
 
 const tab = (id, title, url, lastAccessed) => ({ id, title, url, lastAccessed: lastAccessed || id });
 
-test("a tab is read only when the request is about it", () => {
+test("a tab is read ahead only when the request writes out its site; any other tab is the model's to ask for", () => {
   const here = tab(1, "Sony WH-1000XM5 Wireless Headphones - Shop", "https://shop.example.com/p/sony");
   const others = [
     tab(2, "Bose QuietComfort 45 Headphones - Shop", "https://shop.example.com/p/bose"),
@@ -176,22 +176,17 @@ test("a tab is read only when the request is about it", () => {
     tab(5, "Anker Soundcore Q30 Headphones review", "https://reviews.example.io/anker-q30"),
   ];
   const ids = (task) => T.pickContextTabs(task, here, others).map((t) => t.id).sort();
-  assert.deepEqual(ids("compare these two"), [2, 5], "the tabs like this one, not the mailbox or the bank");
-  assert.deepEqual(ids("which one has the better battery"), [2, 5]);
-  assert.deepEqual(ids("what colours does this come in"), [], "a question about this page reads nothing else");
-  assert.deepEqual(ids("compare these two laptops on this page"), [2, 5]);
-  assert.deepEqual(ids("summarise the email in my inbox tab"), [3], "named by its title");
-  assert.deepEqual(ids("is the bose cheaper"), [2]);
-  assert.deepEqual(ids("summarize all my open tabs"), [2, 3, 4, 5], "asked for outright");
+  // Words that point at tabs, in any language, read nothing ahead: the model sees the tab list and moves to one.
+  for (const task of ["compare these two", "which one has the better battery", "summarize all my open tabs", "summarise the email in my inbox tab", "is the bose cheaper", "vergleiche diese beiden", "what colours does this come in"]) {
+    assert.deepEqual(ids(task), [], task);
+  }
+  assert.deepEqual(ids("what does the review on reviews.example.io say?"), [5], "a site written out is the request's own");
+  assert.deepEqual(ids("check mail.example.org and bank.example.net"), [3, 4]);
+  // The pick reads no word of the request: only the sites it writes out.
+  const src = String(T.pickContextTabs);
+  assert.match(src, /sitesNamedIn/);
+  assert.doesNotMatch(src, /taskKeywords|\/[^/\n]{3,}\/[gimsuy]*\.test\(/);
 });
-
-test("with nothing alike open, pointing words read no other tab", () => {
-  const here = tab(1, "Spaghetti carbonara recipe", "https://food.example.com/carbonara");
-  const others = [tab(2, "Inbox - Mail", "https://mail.example.org/inbox"), tab(3, "Quarterly report.xlsx", "https://docs.example.net/sheet/9")];
-  assert.deepEqual(T.pickContextTabs("compare these two cooking times", here, others), []);
-  assert.deepEqual(T.pickContextTabs("is this vegetarian", here, others), []);
-});
-
 
 test("a bare word in the request trusts no site: going there is asked about once", () => {
   const RUN = require("../../extension/core/run.js");

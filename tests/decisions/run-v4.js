@@ -125,15 +125,18 @@ function buildCase(c, again) {
   const searches = (page.forms || []).filter((f) => f.search && f.action).map((f) => f.action);
   run.trust.urls = [...new Set([page.url, ...(page.elements || []).map((el) => el.url), ...searches].filter(Boolean))];
   run.trust.searches = [...new Set(searches)];
-  for (const t of snap.tabs || []) { const site = t.scan ? TOOLS.siteOf(t.url) : ""; if (site && !run.trust.sites.includes(site)) run.trust.sites.push(site); }
   const current = { id: 1, current: true, active: true, title: page.title, url: page.url };
   const others = (snap.tabs || []).map((t, i) => ({ id: 2 + i, title: t.title, url: t.url, active: false }));
+  // The tabs the engine reads ahead of the run (engine.js gatherContext), and trusts the sites of.
+  const read = new Set(TOOLS.pickContextTabs(c.task, current, others, 4).map((t) => t.id));
+  const ahead = (snap.tabs || []).map((t, i) => ({ ...t, id: 2 + i })).filter((t) => t.scan && read.has(t.id));
+  for (const t of ahead) { const site = TOOLS.siteOf(t.url); if (site && !run.trust.sites.includes(site)) run.trust.sites.push(site); }
   const m = CONTEXT.stepMessages(run, page, {
     selection: c.selection || "",
     // What the user's memory would show this step (core/memory.js knownBlock), when the case has one.
     known: c.known ? KNOWN.knownBlock(c.known(KNOWN), "", c.task).text : "",
     tabs: [current, ...others],
-    openTabPages: (snap.tabs || []).filter((t) => t.scan).map((t, i) => ({ tabId: 2 + i, url: t.url, title: t.title, digest: TOOLS.digestPage(t.scan.innerText, 900) })),
+    openTabPages: ahead.map((t) => ({ tabId: t.id, url: t.url, title: t.title, digest: TOOLS.digestPage(t.scan.innerText, 900) })),
   });
   const lines = (page.elements || []).map((el) => ({ id: el.id, line: TOOLS.formatElementLine(el) }));
   const ctx = { ids: (re) => lines.filter((l) => re.test(l.line)).map((l) => l.id), prompt: `${m.system}\n\n${m.user}` };

@@ -12,12 +12,15 @@ const TOOLS_SRC = fs.readFileSync(path.join(EXT, "agentTools.js"), "utf8");
 const T = require(path.join(EXT, "agentTools.js"));
 const POLICY = require(path.join(EXT, "core/policy.js"));
 
-test("agentTools.js holds no word list made by splitting a string, but the one that picks a request's keywords for reading", () => {
-  const lists = [...TOOLS_SRC.matchAll(/const (\w+) = new Set\(\s*["'`][^"'`]*["'`]\s*\.split\(\s*["'`] ["'`]\s*\)\s*\)/g)].map((m) => m[1]);
-  // STOPWORDS drops "the", "please" and the like from a request before its
-  // words are looked for in a page's text (taskKeywords). It decides nothing about a press.
-  assert.deepEqual(lists, ["STOPWORDS"], `word lists in agentTools.js: ${lists.join(", ")}`);
-  for (const fn of [T.pressKind, T.pressEntryOf, T.pressEntries, T.pressFor, T.actionRisk, T.readLabels, POLICY.decide]) assert.ok(!String(fn).includes("STOPWORDS"), fn.name);
+test("agentTools.js and pageSearch.js hold no word list made by splitting a string, and no list of words to skip", () => {
+  const PAGE_SRC = fs.readFileSync(path.join(EXT, "pageSearch.js"), "utf8");
+  for (const [file, src] of [["agentTools.js", TOOLS_SRC], ["pageSearch.js", PAGE_SRC]]) {
+    const split = [...src.matchAll(/const (\w+) = new Set\(\s*["'`][^"'`]*["'`]\s*\.split\(/g)].map((m) => m[1]);
+    assert.deepEqual(split, [], `word lists in ${file}`);
+    // The words of a request or a query are skipped by how common they are on the page, never by a list.
+    assert.doesNotMatch(src, /new Set\(\[\s*"(?:what|the|and|which|does)"/, `a list of common words in ${file}`);
+  }
+  assert.ok(!/STOPWORDS|\bSTOP\b/.test(TOOLS_SRC + PAGE_SRC), "the stop lists are gone");
 });
 
 test("the word lists and label patterns the gate once used are gone", () => {

@@ -205,13 +205,20 @@ test("element lines carry the state a person would see", () => {
   assert.equal(T.formatElementLine({ id: 6, tagName: "button", text: "Continue", disabled: true }), '[6] button "Continue" disabled');
 });
 
-test("task keywords work in any script", () => {
-  assert.deepEqual(T.taskKeywords("the café's opening hours"), ["café", "opening", "hours"]);
+test("task keywords work in any script, with no list of words to skip in any language", () => {
+  assert.deepEqual(T.taskKeywords("the café's opening hours"), ["the", "café", "opening", "hours"]);
   assert.ok(T.taskKeywords("Wie viel kostet die Lieferung nach Österreich?").includes("österreich"));
   assert.ok(T.taskKeywords("这个页面的退款政策是什么").includes("退款"));
   assert.ok(T.taskKeywords("返品ポリシーを教えて").includes("返品"));
   assert.ok(T.taskKeywords("стоимость доставки").includes("доставки"));
-  assert.deepEqual(T.taskKeywords("what is the price of the $249 plan"), ["price", "$249", "plan"]);
+  assert.deepEqual(T.taskKeywords("what is the price of the $249 plan"), ["what", "the", "price", "$249", "plan"]);
+  // Which words matter is measured on the page: one in most of its blocks tells nothing.
+  const blocks = Array.from({ length: 5 }, (_, i) => `${["The shop is open every day", "The staff are friendly", "The refund policy gives 30 days with a receipt", "The car park is free", "The café sells cake"][i]}. ${"Filler words go here. ".repeat(10)}`);
+  for (const [task, want] of [["what is the refund policy", /refund policy/], ["wie lange gilt die refund policy", /refund policy/], ["the the the", null]]) {
+    const got = T.relevantPassages(blocks.join("\n"), task, { max: 1 });
+    if (want) assert.match(got[0] || "", want, task);
+    else assert.deepEqual(got, [], "words in every block point at none of them");
+  }
 });
 
 test("no word list reads the request for \"do not send\": the model reads it, and the gate holds a send however the request is put", () => {
