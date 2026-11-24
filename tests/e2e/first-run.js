@@ -108,7 +108,7 @@ function gateway() {
         state.steps.push({ url: ctx.url, actions: reply.actions.map((a) => a.do) });
       } else if (tool === "verdict") reply = { requirements: [{ need: "what was asked", met: true }], pass: true, reason: "The quotes support the answer." };
       else if (tool === "press_check") reply = require("../helpers/fake-judge.js").answer({ user: userText }, () => null);
-      else if (tool === "form_check") reply = { sends: false, why: "Scripted: a search form." };
+      else if (tool === "form_check") reply = { reaches: "this_visit", undo: "yes", why: "Scripted: a search form." };
       else if (tool === "learned") reply = { site_notes: [], lesson: "", about_user: [], drop: [] };
       else if (tool === "context") reply = { items: [] };
       else if (tool === "addressed_check") reply = { addressed: false };

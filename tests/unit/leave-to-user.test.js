@@ -31,7 +31,7 @@ function started(task, settings, leave) {
   const run = RUN.newRun({ id: "rl", task, tabId: 7, startUrl: page.url, marker: "PAGE-abcd1234", now: 1 });
   RUN.advance(run, { type: "start" }, env(settings));
   RUN.advance(run, { type: "observed", page }, env(settings));
-  RUN.advance(run, { type: "model_replied", reply: { note: "", goal: "fill the name", ...(leave === undefined ? {} : { leave_to_user: leave }), do: "fill", ref: 1, value: "Ada", commits: false }, usage: {} }, env(settings));
+  RUN.advance(run, { type: "model_replied", reply: { note: "", goal: "fill the name", ...(leave === undefined ? {} : { leave_to_user: leave }), do: "fill", ref: 1, value: "Ada", reaches: "this_visit", undo: "yes" }, usage: {} }, env(settings));
   RUN.advance(run, { type: "acted", result: { ok: true, message: "Filled.", pageChanged: false } }, env(settings));
   RUN.advance(run, { type: "observed", page }, env(settings));
   return run;
@@ -54,7 +54,7 @@ for (const confirmations of [false, true]) {
     const settings = { riskConfirmation: confirmations };
     // The wording is the user's, in their language: no pattern reads it, the step said it.
     const task = "Trag meinen Namen ins Kontaktformular ein, abschicken mache ich selbst";
-    for (const action of [{ do: "click", ref: 3, commits: true }, { do: "click", ref: 3, commits: false }, { do: "press", key: "Enter", ref: 2, commits: false }, { do: "click", ref: 6, commits: true }]) {
+    for (const action of [{ do: "click", ref: 3, reaches: "other_people", undo: "no" }, { do: "click", ref: 3, reaches: "this_visit", undo: "yes" }, { do: "press", key: "Enter", ref: 2, reaches: "this_visit", undo: "yes" }, { do: "click", ref: 6, reaches: "other_people", undo: "no" }]) {
       const run = started(task, settings, true);
       const fx = next(run, settings, action);
       assert.equal(acted(fx), false, `${JSON.stringify(action)} is not taken: ${JSON.stringify(fx).slice(0, 300)}`);
@@ -63,7 +63,7 @@ for (const confirmations of [false, true]) {
       assert.match(String(last && (last.result || last.message || JSON.stringify(last))), /leaves this to them/);
     }
     // What does not commit still runs: a search, a link, more typing.
-    for (const action of [{ do: "press", key: "Enter", ref: 4, commits: false }, { do: "click", ref: 5, commits: false }, { do: "fill", ref: 2, value: "Hallo", commits: false }]) {
+    for (const action of [{ do: "press", key: "Enter", ref: 4, reaches: "this_visit", undo: "yes" }, { do: "click", ref: 5, reaches: "this_visit", undo: "yes" }, { do: "fill", ref: 2, value: "Hallo", reaches: "this_visit", undo: "yes" }]) {
       const run = started(task, settings, true);
       const fx = next(run, settings, action);
       if (confirmations && action.ref === 5) continue;
@@ -76,17 +76,17 @@ test("a later step that forgets the hold does not lift it; the user's new words 
   const settings = { riskConfirmation: false };
   const run = started("Fill in my name and leave the sending to me", settings, true);
   // The next step says nothing of it: the hold read earlier still stands.
-  assert.equal(acted(next(run, settings, { leave_to_user: false, do: "click", ref: 3, commits: true })), false);
+  assert.equal(acted(next(run, settings, { leave_to_user: false, do: "click", ref: 3, reaches: "other_people", undo: "no" })), false);
   // The user says something new: the hold is theirs to renew, and the step reads their words again.
   run.said.push("ok, send it now");
   assert.equal(POLICY.leavesToUser(run), false);
-  assert.equal(POLICY.decide({ do: "click", ref: 3, commits: true }, page, run, settings).verdict, "allow");
+  assert.equal(POLICY.decide({ do: "click", ref: 3, reaches: "other_people", undo: "no" }, page, run, settings).verdict, "allow");
 });
 
 test("a request the step did not read as a hold is sent as before: with confirmations off it is the model's to follow", () => {
   const settings = { riskConfirmation: false };
   const run = started("Fill in my name and send the form", settings, false);
-  assert.equal(acted(next(run, settings, { do: "click", ref: 3, commits: true })), true);
+  assert.equal(acted(next(run, settings, { do: "click", ref: 3, reaches: "other_people", undo: "no" })), true);
   assert.equal(POLICY.leavesToUser(run), false);
 });
 
@@ -94,5 +94,5 @@ test("a sub-task is held by the hold its parent's request carries", () => {
   const run = { leaveToUser: { said: 0 }, said: [] };
   assert.equal(POLICY.leavesToUser(run), true);
   const child = { said: [], leaveToUser: { said: 0 } };
-  assert.equal(POLICY.decide({ do: "click", ref: 3, commits: true }, page, child, { riskConfirmation: false }).verdict, "refuse");
+  assert.equal(POLICY.decide({ do: "click", ref: 3, reaches: "other_people", undo: "no" }, page, child, { riskConfirmation: false }).verdict, "refuse");
 });

@@ -12,10 +12,13 @@
  * structure does not settle is decided by what a check that is shown only
  * the control's markup names said of it (run.opinions, by press entry);
  * until it has said, the verdict carries a `check` and the run waits for
- * the page's batch or asks it alone. A form of one box is held as a send
- * unless its own check says plainly that it asks. The step's own word
- * that a press commits (commits: true) holds it; its word that a press
- * does not commit grants nothing.
+ * the page's batch or asks it alone. A form that sends what was typed and
+ * holds nothing of the person's is held as a send unless its own check
+ * says it stays within this visit. The press check, the form check and the
+ * step's own word about a press all answer the same two fields (where the
+ * effect lands, whether the user can put it back), mapped by one function
+ * (agentTools.js effectVerdict, then heldAs here). The step's word can add
+ * a hold and never takes one away.
  *
  * Pure functions: no DOM, no chrome.* calls.
  */
@@ -366,10 +369,12 @@
       if (STRENGTH(asPress) > STRENGTH(v)) v = asPress;
     }
     if (STRENGTH(v) > 2) return v;
-    // The step said this press commits the user to something: it is held,
-    // whatever the check said. Saying it does not commits grants nothing.
-    if (a.commits === true && v.verdict === "allow" && pressing(a)) {
-      v = { verdict: "confirm", kind: "decide", why: TOOLS.RISK_TEXT.declared, detail: [] };
+    // The step said where this press lands, in the check's own words, and
+    // that holds it: it is held whatever the check said. Its word that the
+    // press stays within this visit grants nothing.
+    const declared = declaredHold(a);
+    if (declared && v.verdict === "allow") {
+      v = { verdict: "confirm", kind: declared, why: TOOLS.RISK_TEXT.declared, detail: [] };
     }
     // A key with no ref lands where the focus is: on the control the page
     // shows focused, or the one this step last used.
@@ -382,6 +387,26 @@
     const said = `You declined "${String(what).slice(0, 80)}" a moment ago. This would do it again${a.do === "click" ? "" : " another way"}.`;
     if (v.verdict === "confirm") return { ...v, detail: [said, ...(v.detail || [])] };
     return { verdict: "confirm", kind: hit.risk || "send", why: said, detail: [], declined: true };
+  }
+
+  /**
+   * What a verdict of effectVerdict holds as: the kind of the hold, or ""
+   * for "none". Every route that holds by an answer to the shared question
+   * comes through here, so one answer is one hold on every route.
+   */
+  function heldAs(does) {
+    if (does === "none") return "";
+    return { pay: "pay", send: "send", delete: "delete" }[does] || "decide";
+  }
+
+  /**
+   * The hold the step's own word puts on a press, or "": what it said in
+   * reaches and undo, mapped as the check's answer is. A press it said
+   * nothing about is left to the checks.
+   */
+  function declaredHold(a) {
+    if (!a || a.reaches === undefined || a.reaches === null || !pressing(a)) return "";
+    return heldAs(TOOLS.effectVerdict({ reaches: a.reaches, undo: a.undo }));
   }
 
   /** True while a step's reading that the user's words leave committing steps to them still holds: until they say something new. */
@@ -398,13 +423,15 @@
    * or off, until the user says something new: the step itself said it
    * commits, or the page's structure shows it pays, sends, deletes or
    * decides. A search only asks the site something, and is not held.
+   * "Commits" is the shared question's answer: the step's own word on the
+   * press (declaredHold), or what the page's structure and checks hold.
    */
   function leftToUser(a, el, page, run, risky) {
     if (!leavesToUser(run) || !risky) return null;
     const form = el && el.formId !== undefined ? ((page && page.forms) || []).find((f) => f.id === el.formId) : null;
     if (form && form.search) return null;
     const risk = TOOLS.contentRisk(risky, page);
-    const commits = (a.commits === true && pressing(a)) || (!!risk && ["pay", "send", "delete", "decide"].includes(risk.kind));
+    const commits = !!declaredHold(a) || (!!risk && ["pay", "send", "delete", "decide"].includes(risk.kind));
     if (!commits) return null;
     const what = (el && TOOLS.elementLabel(el)) || (risk && risk.target) || "";
     return { verdict: "refuse", leftToUser: true, message: `The user's request leaves this to them, so ${what ? `"${String(what).slice(0, 80)}"` : "this step"} was not taken: it would commit them to something. Finish now and tell the user what is ready for them to check and do themselves.` };
@@ -450,12 +477,13 @@
     const said = ((run && run.opinions) || {})[entry.key];
     if (!said) return { check: true };
     if (said.unanswered) return run && run.uncheckedOk ? { unchecked: true } : { risk: { kind: "unchecked", why: TOOLS.RISK_TEXT.unchecked, target } };
-    if (said.does === "unsure") return { risk: { kind: "decide", why: TOOLS.RISK_TEXT.unsure, target } };
-    if (["pay", "send", "delete", "decide"].includes(said.does)) return { risk: { kind: said.does, why: TOOLS.RISK_TEXT[said.does], target }, opinion: VERB[said.does] };
-    return {};
+    const kind = heldAs(said.does);
+    if (!kind) return {};
+    if (!VERB[said.does]) return { risk: { kind, why: TOOLS.RISK_TEXT.unsure, target } };
+    return { risk: { kind, why: TOOLS.RISK_TEXT[kind], target }, opinion: VERB[said.does] };
   }
   const UNCHECKED = Object.freeze({ verdict: "allow", note: "The safety check was not answering, and you chose to carry on without it for this task, so this was not checked." });
-  const VERB = Object.freeze({ pay: "it spends money", send: "it sends something", delete: "it deletes something", decide: "it decides something for you" });
+  const VERB = Object.freeze({ pay: "money moves", send: "it reaches other people", delete: "it changes something of yours that may not be put back" });
 
   /** A verdict on pressing an entry alone, for a link opened by its address. */
   function entryVerdict(entry, run, target) {
@@ -556,23 +584,42 @@
       risk = r.risk;
       opinion = r.opinion ? `from the control's names alone, ${r.opinion}` : "";
     } else if (risk.unsure && !(page && page.injection)) {
-      // A form of one box: held as a send, unless a second opinion says it
-      // asks the site something. On a page that hides text written to an
-      // AI it is held without asking. Until it has been asked, the run asks it
-      // first, and holds the send if the answer is not a clear "asks".
+      // A form that sends what was typed and holds nothing of the
+      // person's: held as a send, unless its check, answering the shared
+      // question, says it stays within this visit. Any other answer holds
+      // it as that answer holds a press (heldAs). On a page that hides text
+      // written to an AI it is held without asking. Until it has been
+      // asked, the run asks it first.
       const u = risk.unsure;
-      const key = `form|${u.key}`;
+      // Only text the agent typed is shown to the check. Text the page put
+      // in a box could argue for its own submission, so it is not shown.
+      const flat = (t) => String(t || "").replace(/\s+/g, " ").trim().slice(0, 290);
+      const typedIn = (b) => {
+        const now = run.typed && b.ref !== undefined ? run.typed[b.ref] : undefined;
+        const mine = now !== undefined ? now : (run.typedTexts || []).find((t) => flat(t) && flat(t) === flat(b.text));
+        return { name: b.name, text: mine || "", prefilled: !mine && !!flat(b.text) };
+      };
+      const listed = u.boxes && u.boxes.length ? u.boxes : [{ name: u.box, ref: u.boxRef, text: u.text }];
+      const boxes = listed.map(typedIn);
+      // Each choice the form sends, with the page's words for what is chosen.
+      const choices = (u.choices || []).map((c) => (c.checked ? { name: c.name, checked: true } : { name: c.name, chosen: c.chosen || "" }));
+      // An answer is about this form sent by this control with this text
+      // and these choices: another button on it, other words in its boxes,
+      // or another option chosen, is asked again.
+      const key = `form|${u.key}|${u.button || ""}|${TOOLS.textStamp(JSON.stringify([boxes, listed.map((b) => b.text || ""), ...(choices.length ? [choices] : [])]))}`;
       const said = opinions[key];
-      if (said && said.sends === false) {
-        return { verdict: "allow", note: `Not held for approval: a check shown only the site, the names of the box and its button, and the text judged that this asks ${u.to || u.host || "the site"} for something and sends nothing to other people${said.why ? ` (${said.why.replace(/[.\s]+$/, "")})` : ""}.` };
+      if (said && said.does === "none") {
+        return { verdict: "allow", note: `Not held for approval: a check shown only the site, the names of the boxes and the button, and the text judged that this stays within this visit to ${u.to || u.host || "the site"} and reaches no one else${said.why ? ` (${said.why.replace(/[.\s]+$/, "")})` : ""}.` };
       }
+      // A definite answer names the hold. An unsure one leaves it the send
+      // the form's structure makes it.
+      if (said && VERB[said.does]) {
+        const kind = heldAs(said.does);
+        risk = { ...risk, kind, why: TOOLS.RISK_TEXT[kind] };
+      }
+      if (said && said.why && said.does !== "none") opinion = `from the site, the form's names and the text, ${said.why.replace(/[.\s]+$/, "")}`;
       if (!said) {
-        // Only text the agent typed is shown to the check. Text the page put
-        // in the box could argue for its own submission, so it is not shown.
-        const flat = (t) => String(t || "").replace(/\s+/g, " ").trim().slice(0, 290);
-        const now = run.typed && u.boxRef !== undefined ? run.typed[u.boxRef] : undefined;
-        const mine = now !== undefined ? now : (run.typedTexts || []).find((t) => flat(t) && flat(t) === flat(u.text));
-        check = { kind: "form", key, host: u.host, to: u.to, box: u.box, button: u.button, text: mine || "", prefilled: !mine && !!flat(u.text), task: requestOf(run) };
+        check = { kind: "form", key, host: u.host, to: u.to, box: boxes[0].name, button: u.button, text: boxes[0].text, prefilled: boxes[0].prefilled, boxes, ...(choices.length ? { choices } : {}), task: requestOf(run) };
       }
     }
     // The button that pays is pressed by the user: the agent fills the form,
@@ -703,7 +750,7 @@
     return t;
   }
 
-  const api = Object.freeze({ leavesToUser, leftToUser, decide, decideSwitch, placeRiskier, pressesOn, POINTER_PRESSES, keysToo, blockersOf, detourSite, detourMessage, remember, asRiskAction, pressesControl, pressLandsOn, writesText, secretField, firstAddress, pointTarget, dropPoint, declinedMark, declinedAgain, HANDOVER });
+  const api = Object.freeze({ heldAs, declaredHold, leavesToUser, leftToUser, decide, decideSwitch, placeRiskier, pressesOn, POINTER_PRESSES, keysToo, blockersOf, detourSite, detourMessage, remember, asRiskAction, pressesControl, pressLandsOn, writesText, secretField, firstAddress, pointTarget, dropPoint, declinedMark, declinedAgain, HANDOVER });
   root.SELECT_TO_AI_POLICY = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -13,6 +13,11 @@
 (function initStep(root) {
   "use strict";
 
+  // The words of "does this reach past the visit", shared with the press
+  // check and the form check (agentTools.js effectVerdict), so the three
+  // routes that can hold an action answer one question.
+  const TOOLS = root.SELECT_TO_AI_TOOLS || (typeof require === "function" ? require("../agentTools.js") : null);
+
   const clip = (t, n) => {
     const v = String(t == null ? "" : t).replace(/\s+/g, " ").trim();
     return v.length > n ? `${v.slice(0, n - 1)}…` : v;
@@ -160,7 +165,8 @@
       key: { type: "string", description: "press: the key name." },
       times: { type: "integer", description: "press: how many times in a row, when more than once." },
       url: { type: "string", description: "navigate, tabs open: a full https address." },
-      commits: { type: "boolean", description: "Whether this action, if it works, commits the user to something: true when it pays, sends, submits, deletes, cancels, joins, leaves, accepts or rejects for them; false when it only moves, opens, shows, chooses or searches, or presses nothing." },
+      reaches: { type: "string", enum: TOOLS.REACHES, description: `For this action, if it works and does what it is for: ${TOOLS.REACHES_TEXT} An action that presses nothing is this_visit.` },
+      undo: { type: "string", enum: TOOLS.UNDO, description: `For this action: ${TOOLS.UNDO_TEXT}` },
     };
     return {
       name: "step",
@@ -223,7 +229,7 @@
             },
           }),
         },
-        required: ["note", "goal", "do", "commits"],
+        required: ["note", "goal", "do", "reaches", "undo"],
       },
     };
   }
@@ -289,7 +295,7 @@
   }
 
   // Every field the step tool has, at the top level or in an action.
-  const FIELDS = Object.freeze(["note", "rewrite_notes", "memory", "goal", "leave_to_user", "do", "commits", "ref", "fx", "fy", "to_ref", "to_text", "place", "to_fx", "to_fy", "distance", "x", "y", "value", "from", "key", "times", "url", "direction", "query", "part", "op", "tab", "seconds", "scope", "kind", "question", "success", "answer", "evidence", "tasks", "then"]);
+  const FIELDS = Object.freeze(["note", "rewrite_notes", "memory", "goal", "leave_to_user", "do", "reaches", "undo", "ref", "fx", "fy", "to_ref", "to_text", "place", "to_fx", "to_fy", "distance", "x", "y", "value", "from", "key", "times", "url", "direction", "query", "part", "op", "tab", "seconds", "scope", "kind", "question", "success", "answer", "evidence", "tasks", "then"]);
   const PARAM_TAG = /<parameter=\s*["']?([A-Za-z_]+)["']?\s*>/g;
 
   /**
@@ -474,9 +480,13 @@
       }
     }
     if (name === "wait") out.seconds = Math.min(10, Math.max(0.5, Number(a.seconds) || 2));
-    // What the step says of a press: true holds it for the user (policy.js);
-    // false, or nothing said, leaves it to the checks.
-    if ((AIMED.includes(name) || name === "click_at" || name === "press") && (a.commits === true || a.commits === "true")) out.commits = true;
+    // What the step says of a press, in the press check's own two fields:
+    // policy.js maps it with the same function, and it can only add a hold.
+    // Saying nothing leaves the press to the checks.
+    if ((AIMED.includes(name) || name === "click_at" || name === "press") && a.reaches !== undefined && a.reaches !== null && String(a.reaches).trim()) {
+      out.reaches = clip(a.reaches, 40);
+      if (a.undo !== undefined && a.undo !== null) out.undo = clip(a.undo, 40);
+    }
     // Looking for words is find, whichever of the two it was asked of.
     if (name === "read" && a.query !== undefined && String(a.query).trim()) { name = "find"; out.do = "find"; }
     if (name === "read" && asInt(a.part) !== null) out.part = Math.max(1, asInt(a.part));
