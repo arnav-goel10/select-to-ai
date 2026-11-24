@@ -125,24 +125,34 @@
   --measure: 720px;
   --measure-wide: 940px;
 
-  /* Motion: things arrive in about 200 ms and leave in about 120 ms. */
-  --dur-instant: 90ms;
-  --dur-exit: 120ms;
-  --dur-fast: 140ms;
-  --dur-base: 200ms;
-  --dur-height: 220ms;
-  --dur-slow: 220ms;
-  --dur-slower: 320ms;
+  /* Motion: one small system, used everywhere. Three durations, one
+     ease-out for things that arrive and one gentle spring for a press that
+     lets go. Things leave on the shortest one. Only transform and opacity
+     move, so the compositor does the work; reduce motion makes every one of
+     them an instant change (the rule at the end of this file). */
+  --dur-1: 120ms;
+  --dur-2: 180ms;
+  --dur-3: 240ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.32, 0.64, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --press-scale: 0.96;
+  --lift: -1px;
+  --enter-rise: 6px;
   --dur-shimmer: 1.8s;
   --dur-pulse: 1.6s;
 
-  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  --ease-in: cubic-bezier(0.4, 0, 1, 1);
-  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
-  /* Older names, kept so every page resolves them to the same curve. */
+  /* Older names, all resolved to the three durations and two curves. */
+  --dur-instant: var(--dur-1);
+  --dur-exit: var(--dur-1);
+  --dur-fast: var(--dur-1);
+  --dur-base: var(--dur-2);
+  --dur-height: var(--dur-3);
+  --dur-slow: var(--dur-3);
+  --dur-slower: var(--dur-3);
+  --ease-in-out: var(--ease-out);
   --ease-out-quart: var(--ease-out);
   --ease-decel: var(--ease-out);
-  --ease-spring: var(--ease-out);
 
   /* Keyboard focus: a solid 2 px line in the accent. A field turns its own
      edge into the ring, so the two never stack. */
@@ -251,8 +261,13 @@ time {
 /* -------------------------------------------------------------- motion */
 
 @keyframes ui-enter {
-  from { opacity: 0; transform: translateY(6px); }
+  from { opacity: 0; transform: translateY(var(--enter-rise)); }
   to { opacity: 1; transform: none; }
+}
+
+@keyframes ui-leave {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(-4px); }
 }
 
 @keyframes ui-fade {
@@ -260,9 +275,16 @@ time {
   to { opacity: 1; }
 }
 
-@keyframes ui-shimmer {
-  from { background-position: 150% 0; }
-  to { background-position: -50% 0; }
+@keyframes ui-pop {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+/* The live step's shimmer: a soft band that crosses the words. It moves by
+   transform, so the words are not repainted on every frame. */
+@keyframes ui-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(260%); }
 }
 
 @keyframes ui-pulse {
@@ -276,8 +298,8 @@ time {
 }
 
 @keyframes ui-caret {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.15; }
+  0%, 45% { opacity: 1; }
+  55%, 100% { opacity: 0.2; }
 }
 
 @keyframes ui-spin {
@@ -285,8 +307,23 @@ time {
 }
 
 .ui-enter {
-  animation: ui-enter var(--dur-base) var(--ease-out) both;
+  animation: ui-enter var(--dur-2) var(--ease-out) both;
 }
+
+/* Something on its way out: a fast fade and a small lift (see leave() in the page scripts). */
+.ui-leaving {
+  animation: ui-leave var(--dur-1) var(--ease-in) both !important;
+  pointer-events: none;
+}
+
+/* Page and panel changes cross-fade with the View Transitions API where
+   Chrome has it; elsewhere the change is plain. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--dur-2);
+  animation-timing-function: var(--ease-out);
+}
+@view-transition { navigation: auto; }
 
 /* Reduce motion: every animation and transition becomes an instant change. */
 @media (prefers-reduced-motion: reduce) {
@@ -299,5 +336,10 @@ time {
     transition-duration: 0.01ms !important;
     transition-delay: 0s !important;
     scroll-behavior: auto !important;
+  }
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
 }

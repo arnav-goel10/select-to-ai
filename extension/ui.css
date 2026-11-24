@@ -55,15 +55,9 @@ code {
   white-space: nowrap;
   text-decoration: none;
   box-shadow: var(--shadow-xs);
-  transition:
-    background-color var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    box-shadow var(--dur-fast) var(--ease-out),
-    transform var(--dur-fast) var(--ease-out);
 }
 .btn:hover { background: var(--surface-2); }
-.btn:active { transform: translateY(0.5px); background: var(--surface-3); }
+.btn:active { background: var(--surface-3); }
 .btn:disabled,
 .btn[aria-disabled="true"] { opacity: 0.5; cursor: default; transform: none; }
 .btn svg { flex-shrink: 0; }
@@ -74,7 +68,7 @@ code {
   color: var(--accent-contrast);
   box-shadow: var(--shadow-xs), inset 0 1px 0 rgb(255 255 255 / 0.12);
 }
-.btn-primary:hover { background: var(--accent-fill-hover); border-color: var(--accent-fill-hover); }
+.btn-primary:hover { background: var(--accent-fill-hover); border-color: var(--accent-fill-hover); transform: translateY(var(--lift)); }
 .btn-primary:active { background: var(--accent-fill-hover); }
 
 /* A quiet button still looks pressable: text colour and a hairline edge. */
@@ -124,13 +118,33 @@ code {
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .icon-btn:hover { background: var(--hover-overlay); color: var(--text); }
 .icon-btn:active { background: var(--press-overlay); }
 .icon-btn svg { width: 18px; height: 18px; display: block; }
 .icon-btn.sm { width: 28px; height: 28px; }
 .icon-btn.sm svg { width: 16px; height: 16px; }
+
+/* --------------------------------------------------------------- press */
+
+/* Everything that can be pressed answers the press: it sinks a little at
+   once and springs back when let go. Colours ease; the shape moves by
+   transform only. Pages add their own controls to this list with the
+   .pressable class. */
+:where(.btn, .icon-btn, .pill, .chip span, .seg span, .link-btn, .menu-item, .pressable) {
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    opacity var(--dur-1) var(--ease-out),
+    transform var(--dur-2) var(--ease-spring);
+}
+:where(.btn, .icon-btn, .pill, .link-btn, .menu-item, .pressable):not(:disabled, [aria-disabled="true"]):active,
+:where(.chip, .seg label):active span {
+  transform: scale(var(--press-scale));
+  transition-duration: var(--dur-1), var(--dur-1), var(--dur-1), var(--dur-1), 60ms;
+  transition-timing-function: var(--ease-out);
+}
 
 /* ------------------------------------------------------------ inputs */
 
@@ -194,7 +208,7 @@ input[type="checkbox"]:not(.switch input):not(.chip input) {
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
-  transition: transform var(--dur-base) var(--ease-out);
+  transition: transform var(--dur-2) var(--ease-spring);
 }
 .switch input:checked + span { background: var(--accent-fill); box-shadow: inset 0 0 0 1px var(--accent-fill); }
 .switch input:checked + span::after { transform: translateX(16px); background: var(--accent-contrast); }
@@ -219,7 +233,6 @@ input[type="checkbox"]:not(.switch input):not(.chip input) {
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   color: var(--text-muted);
-  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
 }
 .seg label:hover span { color: var(--text); }
 .seg input:checked + span { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); }
@@ -243,7 +256,6 @@ input[type="checkbox"]:not(.switch input):not(.chip input) {
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   color: var(--text-muted);
-  transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .chip span::before {
   content: "+";
@@ -274,7 +286,6 @@ input[type="checkbox"]:not(.switch input):not(.chip input) {
   text-decoration: none;
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 .pill:hover { color: var(--text); border-color: var(--border-strong); background: var(--surface-2); }
 .pill > span { overflow: hidden; text-overflow: ellipsis; }
@@ -362,7 +373,8 @@ details[open] > summary .chev { transform: rotate(180deg); }
   border: 1px solid var(--border);
   background: var(--surface);
   box-shadow: var(--shadow-lg);
-  animation: ui-enter var(--dur-base) var(--ease-out) both;
+  transform-origin: top right;
+  animation: ui-pop var(--dur-2) var(--ease-out) both;
 }
 .menu-pop .menu-label {
   padding: 6px 10px 4px;
@@ -414,8 +426,9 @@ details[open] > summary .chev { transform: rotate(180deg); }
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-lg);
-  animation: ui-enter var(--dur-base) var(--ease-out) both;
+  animation: ui-pop var(--dur-3) var(--ease-out) both;
 }
+.modal.ui-leaving .modal-sheet { animation: ui-leave var(--dur-1) var(--ease-in) both; }
 
 /* ------------------------------------------------------------- toast */
 
