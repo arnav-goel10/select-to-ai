@@ -146,24 +146,54 @@ function engineReadingText(readings) {
   return `\nThe engine's reading of the pages visited (the page text the extension's own page reader extracted and showed the agent, which can hold what the captured page text lacks: a value carried by a class, title or label such as a star rating, a PDF's text, text inside components, the rest of a long page). Excerpts: each page's opening, then the text around the values the answer states:\n${pages.join("\n\n")}\n`;
 }
 
+// How many earlier page states the judge is shown, and how many the harness
+// keeps (trial.js PAGE_STATES.most): the newest, in order.
+const EARLIER_STATES_SHOWN = 10;
+const PAGE_STATES_KEPT = 30;
+
+/**
+ * The page states a run saw before its final page, oldest first: every kept
+ * state except the final page itself (the newest state at the final address,
+ * and any with the final page's text), which the message shows on its own.
+ */
+function earlierStates(run) {
+  const flat = (t) => String(t || "").replace(/\s+/g, " ").trim();
+  const final = flat(run.finalText);
+  const list = (run.pages || []).filter((p) => p && p.url);
+  // The newest state at the final address is the harness's last capture of the final page.
+  const last = list.length && list[list.length - 1].url === run.finalUrl ? list.length - 1 : -1;
+  return list.filter((p, i) => i !== last && !(p.url === run.finalUrl && flat(p.text) === final));
+}
+
 /** The judge's user message for one run. */
 function judgeMessage(run) {
   const actions = (run.history || [])
     .map((h) => `${h.step}. ${h.ok ? "ok  " : "FAIL"} ${h.action}${h.on ? ` on "${h.on}"` : ""} -> ${h.outcome}`)
     .join("\n");
-  const pages = run.pages || [];
   const quotes = quotesOf(run);
+  // The states of the pages the run was on before the final one, oldest first.
+  const before = earlierStates(run);
   // Where each quote of the agent's was found among the pages the harness captured.
-  const captured = [...pages.filter((p) => p.url !== run.finalUrl), { url: run.finalUrl, text: run.finalText }].filter((p) => p.url);
+  const captured = [...before, { url: run.finalUrl, text: run.finalText }].filter((p) => p.url);
   const located = quotes.map((q) => {
     const probe = fold(q);
     const where = [...new Set([...captured, ...(run.engineReadings || []).map((p) => ({ url: `${p.url} (engine's reading)`, text: p.text }))].filter((p) => fold(p.text).includes(probe)).map((p) => p.url))];
     return `- "${q}": ${where.length ? `on ${where.join(" and ")}` : "not in the captured page text"}`;
   });
-  // Pages visited before the last one, newest first: an answer read on an
-  // earlier page is evidence too.
-  const earlier = pages.filter((p) => p.url !== run.finalUrl).slice(-5).reverse()
-    .map((p) => `Page: ${p.title || ""} | ${p.url}\n${excerptFor(p.text, run.task, { quotes })}`);
+  // Each state of the pages before the final one, in the order the run saw
+  // them: an answer read on an earlier page, or on an earlier state of the
+  // same address (the first page of results, before the next was drawn in
+  // its place), is evidence too.
+  const total = new Map();
+  for (const p of before) total.set(p.url, (total.get(p.url) || 0) + 1);
+  const seen = new Map();
+  const labelled = before.map((p) => {
+    seen.set(p.url, (seen.get(p.url) || 0) + 1);
+    const n = total.get(p.url);
+    return `Page: ${p.title || ""} | ${p.url}${n > 1 ? ` (state ${seen.get(p.url)} of ${n} at this address)` : ""}\n${excerptFor(p.text, run.task, { quotes })}`;
+  });
+  const earlier = labelled.slice(-EARLIER_STATES_SHOWN);
+  const leftOut = labelled.length - earlier.length;
   const shots = (run.screenshots || []).length;
   // A task across several sites names them itself (the task file's "sites").
   const named = [...new Set([siteOf(run.startUrl), ...(run.sites || []).map((s) => siteOf(/^https?:/.test(s) ? s : `https://${s}`))].filter(Boolean))];
@@ -178,8 +208,8 @@ function judgeMessage(run) {
     `How the run ended: ${run.ending}`,
     `Final answer given to the user:\n${run.answer || "(none)"}`,
     "",
-    located.length ? `Quoted passages in the answer, and the captured pages that contain them (the harness keeps the text of the last few pages only, so "not in the captured page text" is not proof the agent never saw it):\n${located.join("\n")}\n` : "",
-    earlier.length ? `Pages visited earlier in the run (excerpts):\n${earlier.join("\n\n")}\n` : "",
+    located.length ? `Quoted passages in the answer, and the captured pages that contain them (the harness keeps the text of up to ${PAGE_STATES_KEPT} page states, so "not in the captured page text" is not proof the agent never saw it):\n${located.join("\n")}\n` : "",
+    earlier.length ? `Pages visited earlier in the run, oldest first (excerpts; a page that changed without its address changing is shown once for each state)${leftOut > 0 ? `; the ${leftOut} oldest state(s) are left out here` : ""}:\n${earlier.join("\n\n")}\n` : "",
     `Final page address: ${run.finalUrl || "(unknown)"}`,
     `Final page title: ${run.finalTitle || ""}`,
     `Final page text (excerpt):\n${excerptFor(run.finalText, run.task, { opening: 3000, windows: 6, size: 500, quotes }) || "(not captured)"}`,
@@ -390,4 +420,4 @@ function finalAnswer(trace, shown) {
   return String(shown || "").trim();
 }
 
-module.exports = { taskList, finalAnswer, JUDGE_SYSTEM, judgeMessage, formStateText, engineReadingText, pickScreenshots, taskTerms, quotesOf, siteOf, parseVerdict, summarise, normaliseTasks, sampleTasks, excerptFor, isInfra, hashUnit, splitTasks, samplePerGroup };
+module.exports = { taskList, finalAnswer, JUDGE_SYSTEM, judgeMessage, earlierStates, EARLIER_STATES_SHOWN, formStateText, engineReadingText, pickScreenshots, taskTerms, quotesOf, siteOf, parseVerdict, summarise, normaliseTasks, sampleTasks, excerptFor, isInfra, hashUnit, splitTasks, samplePerGroup };

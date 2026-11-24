@@ -93,7 +93,7 @@ test("the judge sees what earlier pages said about the task, not only the last p
     pages: [{ url: "https://code.example/people", title: "People", text: `${filler}\nTop contributors: benibenj 501 commits\n${filler}` }, { url: "https://code.example/graph", title: "Graph", text: "A chart." }],
     screenshots: [],
   });
-  assert.match(msg, /Pages visited earlier in the run \(excerpts\):\nPage: People \| https:\/\/code\.example\/people/);
+  assert.match(msg, /Pages visited earlier in the run, oldest first \(excerpts[^\n]*\):\nPage: People \| https:\/\/code\.example\/people/);
   assert.match(msg, /benibenj 501 commits/);
   assert.equal((msg.match(/code\.example\/graph/g) || []).length, 1, "the final page is not repeated as an earlier one");
   assert.ok(msg.length < 6000, "a long page is cut down to the parts about the task");

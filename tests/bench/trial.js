@@ -229,9 +229,9 @@ function longPromptSurchargeUSD(modelCalls, ratesFor) {
   return extra;
 }
 
-/** Everything a row cost: the agent, its long prompts, attempts that were lost, the allowance for learning calls, the judge, and a recipe replay. */
+/** Everything a row cost: the agent, the approver, its long prompts, attempts that were lost, the allowance for learning calls, the judge, and a recipe replay. */
 function spendOf(row) {
-  return (row.costUSD || 0) + (row.longPromptUSD || 0) + (row.lostAttemptsUSD || 0) + (row.learnAllowanceUSD || 0) + (row.judgeCostUSD || 0) + ((row.recipe && row.recipe.replay && row.recipe.replay.usd) || 0);
+  return (row.costUSD || 0) + (row.approverUSD || 0) + (row.longPromptUSD || 0) + (row.lostAttemptsUSD || 0) + (row.learnAllowanceUSD || 0) + (row.judgeCostUSD || 0) + ((row.recipe && row.recipe.replay && row.recipe.replay.usd) || 0);
 }
 
 /** A digit of any script as 0 to 9: Unicode's decimal digits come in runs of ten. */
@@ -304,6 +304,34 @@ function mergeReadings(map, got) {
     map.set(p.url, { url: p.url, title: p.title || "", text: String(p.text || "") });
   }
   return map;
+}
+
+// The bounds on the page states the harness keeps for the judge: at most this
+// many, and this many characters of their text in all. The oldest go first.
+const PAGE_STATES = Object.freeze({ most: 30, chars: 400000 });
+
+const foldState = (p) => `${p.url}\n${p.title || ""}\n${String(p.text || "").replace(/\s+/g, " ").trim()}`;
+
+/**
+ * Adds one capture of the page ({url, title, text}) to the states a run
+ * saw, oldest first. A page that changed while its address stayed the same
+ * (a next page of results drawn in place, a filter, a tab inside the page)
+ * is a state of its own, so the judge sees each one and not only the last.
+ * A capture the same as one already kept (same address, title and text) is
+ * not kept twice: the earlier copy moves to the end, as the newest. Past
+ * the bounds the oldest states go. Returns the list.
+ */
+function keepPageState(states, seen, bounds = PAGE_STATES) {
+  if (!seen || !seen.url) return states;
+  const state = { url: seen.url, title: seen.title || "", text: String(seen.text || "") };
+  const key = foldState(state);
+  const at = states.findIndex((p) => foldState(p) === key);
+  if (at >= 0) states.splice(at, 1);
+  states.push(state);
+  while (states.length > bounds.most) states.shift();
+  let chars = states.reduce((n, p) => n + p.text.length, 0);
+  while (states.length > 1 && chars > bounds.chars) chars -= states.shift().text.length;
+  return states;
 }
 
 // The bounds on the engine's readings shown to the judge.
@@ -521,6 +549,8 @@ function familyTable(rows, tasks) {
       medianSeconds: median(scored.map((r) => r.seconds)),
       agentUSD: rs.reduce((a, r) => a + (r.costUSD || 0) + (r.longPromptUSD || 0) + (r.lostAttemptsUSD || 0) + (r.learnAllowanceUSD || 0), 0),
       replayUSD: rs.reduce((a, r) => a + ((r.recipe && r.recipe.replay && r.recipe.replay.usd) || 0), 0),
+      // The simulated approver at held steps (approver.js).
+      approverUSD: rs.reduce((a, r) => a + (r.approverUSD || 0), 0),
       judgeUSD: rs.reduce((a, r) => a + (r.judgeCostUSD || 0), 0),
       scriptedInputs: rs.reduce((a, r) => a + ((r.counters && r.counters.scriptedInputs) || 0), 0),
       realInputs: rs.reduce((a, r) => a + ((r.counters && r.counters.realInputs) || 0), 0),
@@ -567,8 +597,8 @@ function markdown(table, meta = {}) {
   const t = table.total;
   const scored = t.passed + t.failed + t.timedOut;
   out.push(`Passed ${t.passed} of ${scored} scored runs${scored ? ` (${(100 * t.passed / scored).toFixed(1)}%)` : ""}; with blocked, lost and not-run tasks counted as failures, ${t.passed} of ${t.tasks}${t.tasks ? ` (${(100 * t.passed / t.tasks).toFixed(1)}%)` : ""}.`);
-  const spend = t.agentUSD + t.judgeUSD + (t.replayUSD || 0);
-  out.push(`${meta.dry ? "Priced tokens of the scripted model and the judge stub, nothing spent" : "Model spend"}: ${usd(spend)} (agent ${usd(t.agentUSD)}, judge ${usd(t.judgeUSD)}${t.replayUSD ? `, recipe replays ${usd(t.replayUSD)}` : ""})${meta.capUSD ? `, cap ${capText(meta.capUSD)}` : ""}.${meta.capReached ? " The spend cap stopped the run: the tasks under \"not run\" were never started." : ""}`);
+  const spend = t.agentUSD + t.judgeUSD + (t.replayUSD || 0) + (t.approverUSD || 0);
+  out.push(`${meta.dry ? "Priced tokens of the scripted model and the judge stub, nothing spent" : "Model spend"}: ${usd(spend)} (agent ${usd(t.agentUSD)}, judge ${usd(t.judgeUSD)}${t.approverUSD ? `, approver ${usd(t.approverUSD)}` : ""}${t.replayUSD ? `, recipe replays ${usd(t.replayUSD)}` : ""})${meta.capUSD ? `, cap ${capText(meta.capUSD)}` : ""}.${meta.capReached ? " The spend cap stopped the run: the tasks under \"not run\" were never started." : ""}`);
   if (meta.spentUSD !== undefined && Math.abs(meta.spentUSD - spend) > 0.00005) out.push(`The shards counted ${usd(meta.spentUSD)} against the cap; the table adds up to ${usd(spend)}.`);
   if (t.patternDisagrees) out.push(`In ${t.patternDisagrees} run(s) the judge and the task's answer pattern disagree: read those first (trial-summary.json lists them).`);
   if (t.ungrounded) out.push(`${t.ungrounded} passed run(s) state numbers of which none is in any captured page: read those too.`);
@@ -753,6 +783,10 @@ function checkDry(rows, tasks, shards) {
     for (const k of ["steps", "seconds", "costUSD", "counters", "family", "ending", "history", "formState", "grounding"]) if (row[k] === undefined) problems.push(`${t.id}: run.json has no "${k}"`);
     // The form controls of the final page were read back, with the value the run typed.
     if (t.dryForm && !(((row.formState && row.formState.controls) || []).some((c) => String(c.value || "") === t.dryForm))) problems.push(`${t.id}: no form control of the final page holds "${t.dryForm}" (${((row.formState && row.formState.controls) || []).length} control(s) read)`);
+    // The run was started from the toolbar on its page, as a person starts it, so the browser would give the agent a picture of the page.
+    if (got !== "lost" && !(row.picture && row.picture.granted)) problems.push(`${t.id}: the browser would not give the agent a picture of the page (${(row.picture && row.picture.why) || "not recorded"})`);
+    // Every hold the allow list did not decide went to the approver (its stand-in), and its answer was recorded.
+    for (const h of row.held || []) if (h && h.by !== "allow list" && !(h.by === "approver" && h.approver && typeof h.approver.asks === "boolean")) problems.push(`${t.id}: a held step (${h.kind}) has no recorded answer from the approver`);
     // The judge's code path ran against the stub, and its tokens were counted.
     if (got !== "lost" && !(row.judgeUsage && row.judgeUsage.calls >= 1 && row.judgeCostUSD > 0)) problems.push(`${t.id}: the judge stub was not called, or its tokens were not counted`);
   }
@@ -997,7 +1031,7 @@ function sealedCounts(l) {
     passRate: scored ? l.passed / scored : null,
     strictPassRate: l.tasks ? l.passed / l.tasks : null,
     medianSeconds: l.medianSeconds,
-    spendUSD: l.agentUSD + l.judgeUSD + (l.replayUSD || 0),
+    spendUSD: l.agentUSD + l.judgeUSD + (l.replayUSD || 0) + (l.approverUSD || 0),
   };
 }
 
@@ -1253,7 +1287,7 @@ function main(argv) {
   process.exit(1);
 }
 
-module.exports = { FAMILIES, DIFFICULTIES, SUITES, SEALED_SUITES, WIDGET_KINDS, WIDGET_SOURCES, PRACTICE_SUITE, siteOverlapProblems, widgetsShapeProblems, kindMarkdown, READING_CHECKS, SEALED_CRASH, readingCheckPages, SEALED_MIN_GROUP, SEALED_WITHHELD, HOLDOUT_ENCRYPTED, DRY_PORT, PRACTICE_SITES, validateTasks, taskSites, holdoutFile, holdoutProblems, holdoutShapeProblems, readSuites, groupTable, sealedReport, sealedMarkdown, sealedLogText, sealConsole, leaksIn, patternMatch, patternVerdict, learnPlan, plannedRuns, longPromptSurchargeUSD, spendOf, answerGrounding, engineReadingsInWorker, mergeReadings, answerValues, engineExcerpts, READING, countersOf, judgeCostUSD, bucketOf, failureOf, familyTable, markdown, armProblems, learnTable, learnMarkdown, recipeTable, recipeMarkdown, readRows, readShards, checkDry, checkLeg, readFormControls };
+module.exports = { FAMILIES, DIFFICULTIES, SUITES, SEALED_SUITES, WIDGET_KINDS, WIDGET_SOURCES, PRACTICE_SUITE, siteOverlapProblems, widgetsShapeProblems, kindMarkdown, READING_CHECKS, SEALED_CRASH, readingCheckPages, SEALED_MIN_GROUP, SEALED_WITHHELD, HOLDOUT_ENCRYPTED, DRY_PORT, PRACTICE_SITES, validateTasks, taskSites, holdoutFile, holdoutProblems, holdoutShapeProblems, readSuites, groupTable, sealedReport, sealedMarkdown, sealedLogText, sealConsole, leaksIn, patternMatch, patternVerdict, learnPlan, plannedRuns, longPromptSurchargeUSD, spendOf, answerGrounding, engineReadingsInWorker, mergeReadings, PAGE_STATES, keepPageState, answerValues, engineExcerpts, READING, countersOf, judgeCostUSD, bucketOf, failureOf, familyTable, markdown, armProblems, learnTable, learnMarkdown, recipeTable, recipeMarkdown, readRows, readShards, checkDry, checkLeg, readFormControls };
 
 if (require.main === module) {
   const argv = process.argv.slice(2);

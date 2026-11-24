@@ -70,7 +70,7 @@ on:
         type: string
         default: all
       max_usd:
-        description: "Hard spend cap in US dollars, agent and judge together. A verdict still out holds the most it can cost"
+        description: "Hard spend cap in US dollars, agent, approver and judge together. A verdict still out holds the most it can cost"
         type: string
         default: "10"
       dry:
