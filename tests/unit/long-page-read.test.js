@@ -12,8 +12,10 @@
 //   reading was the one used: the find hits in the trial log carry footer
 //   text, which the Markdown walk never reads. The walk did read the
 //   component, but lost to the plain reading on the footer's words.
-// - Books to Scrape: a book's rating is only the class "star-rating Three"
-//   on an empty paragraph of star icons, inside li > article on a listing.
+// A rating drawn as icons is read from its accessible name (aria-label,
+// aria-labelledby, title), as a screen reader reads it; a class name is not
+// read as a meaning. The main content is found from the page's structure,
+// with no class or id of any site.
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -52,21 +54,6 @@ function el(tag, o = {}) {
   return node;
 }
 
-test("a guessed main area that holds a small share of the page is not taken for the page", () => {
-  const pickMain = new Function(`${constLine("MAIN_SELECTORS")}\n${source("pickMain")}\nreturn pickMain;`)();
-  const section = el("div", { text: "6.4. Content ".repeat(400) });
-  const doc = { body: { innerText: "x".repeat(500000) }, querySelector: (sel) => (sel === "#content" ? section : null) };
-  assert.equal(pickMain(doc), null, "the RFC's section 6.4 (id=content) is not the main content");
-
-  const main = el("main", { text: "short main ".repeat(30) });
-  const declared = { body: { innerText: "x".repeat(500000) }, querySelector: (sel) => (sel === "main" ? main : null) };
-  assert.equal(pickMain(declared), main, "a page's own <main> is still taken");
-
-  const wiki = el("div", { text: "article text ".repeat(3000) });
-  const article = { body: { innerText: "y".repeat(50000) }, querySelector: (sel) => (sel === "#mw-content-text" ? wiki : null) };
-  assert.equal(pickMain(article), wiki, "a guessed area holding most of the page is still taken");
-});
-
 test("the page text kept for find and read reaches deep into a long document", () => {
   const limit = Number((/const PAGE_TEXT_LIMIT = (\d+);/.exec(CONTENT) || [])[1]);
   assert.ok(limit >= 600000, `kept text is at least 600,000 characters (is ${limit})`);
@@ -86,22 +73,24 @@ test("text drawn inside open shadow roots is part of the plain reading", () => {
   assert.doesNotMatch(text, /:host/, "style sheets inside a shadow root are not text");
 });
 
-const MEANING_SRC = `${constLine("RATING_WORD")}\n${constLine("VALUE_WORD")}\n${source("ratingClass")}\n${source("markedMeaning")}`;
+const MEANING_SRC = source("markedMeaning");
 
-test("a rating carried only by an attribute is read as text", () => {
+test("a rating drawn as icons is read from its accessible name, and never from its class", () => {
   const markedMeaning = new Function(`${MEANING_SRC}\nreturn markedMeaning;`)();
-  assert.equal(markedMeaning(el("p", { attrs: { class: "star-rating Three" } })), 'class "star-rating Three"');
-  assert.equal(markedMeaning(el("i", { attrs: { class: "a-icon a-star-4-5" } })), 'class "a-icon a-star-4-5"');
   assert.equal(markedMeaning(el("div", { attrs: { role: "img", "aria-label": "4.5 out of 5 stars" } })), "4.5 out of 5 stars");
   assert.equal(markedMeaning(el("span", { attrs: { title: "Supported" } })), "Supported");
-  assert.equal(markedMeaning(el("i", { attrs: { class: "icon-star" } })), "", "a star icon with no value says nothing");
-  assert.equal(markedMeaning(el("p", { text: "Three stars", attrs: { class: "star-rating Three" } })), "", "words the element shows speak for it");
+  const named = el("p", { attrs: { "aria-labelledby": "r1" } });
+  named.ownerDocument = { getElementById: (id) => (id === "r1" ? { textContent: "Rated 3 of 5" } : null) };
+  assert.equal(markedMeaning(named), "Rated 3 of 5", "aria-labelledby names it by another element's text");
+  // A class is what a site calls its style. It is not read, whatever it says.
+  for (const cls of ["star-rating Three", "a-icon a-star-4-5", "rating-45", "icon-star", "score-panel mt-2", "layout main"]) {
+    assert.equal(markedMeaning(el("p", { attrs: { class: cls } })), "", cls);
+  }
+  assert.equal(markedMeaning(el("p", { text: "Three stars", attrs: { "aria-label": "3 stars" } })), "", "words the element shows speak for it");
+  assert.equal(markedMeaning(el("div", { attrs: { "aria-hidden": "true", "aria-label": "decoration" } })), "", "what is hidden from a screen reader is not read");
   assert.equal(markedMeaning(el("a", { attrs: { "aria-label": "Home" } })), "", "controls are listed with their names, not read as text");
   assert.equal(markedMeaning(el("img", { attrs: { title: "cover" } })), "", "pictures are read as media");
-  assert.equal(markedMeaning(el("div", { attrs: { class: "layout main" } })), "");
-  assert.equal(markedMeaning(el("div", { attrs: { class: "score-panel mt-2" } })), "", "a number in a layout class is not a score");
-  assert.equal(markedMeaning(el("div", { attrs: { class: "stars-bg col-3" } })), "", "nor is a column number beside a star background");
-  assert.equal(markedMeaning(el("span", { attrs: { class: "rating-45" } })), 'class "rating-45"');
+  assert.doesNotMatch(MEANING_SRC, /class/i, "the function reads no class");
 });
 
 // A small DOM for running the Markdown walk itself: elements with child
@@ -138,9 +127,20 @@ function h(tag, attrs, ...kids) {
       const all = this.descendants();
       if (sel === "*") return all;
       if (sel === "img") return all.filter((n) => n.tagName === "IMG");
+      if (sel === "a") return all.filter((n) => n.tagName === "A");
       if (/:scope > ul/.test(sel)) return this.children.filter((n) => /^(UL|OL)$/.test(n.tagName));
-      if (/\[class\]/.test(sel)) return all.filter((n) => n.hasAttribute("class") || n.hasAttribute("aria-label") || n.hasAttribute("title"));
+      if (/\[aria-label\]/.test(sel)) return all.filter((n) => n.hasAttribute("aria-label") || n.hasAttribute("aria-labelledby") || n.hasAttribute("title"));
       throw new Error(`selector not in the fake DOM: ${sel}`);
+    },
+    // Tag and role selectors only: the reader asks for nothing else.
+    matches(sel) {
+      return sel.split(",").map((x) => x.trim()).some((one) => {
+        const role = /^\[role="([a-z]+)"\]$/.exec(one);
+        if (role) return this.attrs.role === role[1];
+        if (/^\[aria-hidden="true"\]$/.test(one)) return this.attrs["aria-hidden"] === "true";
+        if (/^[a-z]+$/.test(one)) return this.tagName === one.toUpperCase();
+        throw new Error(`selector not in the fake DOM: ${one}`);
+      });
     },
     checkVisibility: () => true,
     getBoundingClientRect: () => ({ width: 200, height: 200, top: 0, bottom: 200, left: 0, right: 200 }),
@@ -151,7 +151,7 @@ function h(tag, attrs, ...kids) {
 function withShadow(host, ...kids) { host.shadowRoot = { children: kids }; return host; }
 const extractMarkdown = new Function("getComputedStyle", "window", [
   MEANING_SRC,
-  constLine("SKIP_TAGS"), constLine("SKIP_CLASS"),
+  constLine("SKIP_TAGS"),
   "const seenText = (el) => el.innerText;",
   "const textUnseeable = () => false;",
   "const boxUnseeable = () => false;",
@@ -161,19 +161,23 @@ const extractMarkdown = new Function("getComputedStyle", "window", [
 ].join("\n"))((n) => ({ display: n.display, position: "static" }), { scrollX: 0, scrollY: 0 });
 const md = (root) => extractMarkdown(root, 100000).markdown;
 
-test("a listing card's star rating is read with the card: li > article > p.star-rating", () => {
-  const card = (title, price, stars) => h("li", { class: "col-xs-6" },
+test("a listing card's rating is read with the card from its accessible name, and a class-only rating is not guessed", () => {
+  const card = (title, price, rating) => h("li", { class: "col-xs-6" },
     h("article", { class: "product_pod" },
       h("div", { class: "image_container" }, h("a", { href: "#" }, h("img", { alt: title }))),
-      h("p", { class: `star-rating ${stars}` }, h("i", { class: "icon-star" }), h("i", { class: "icon-star" })),
+      h("p", rating, h("i", { class: "icon-star" }), h("i", { class: "icon-star" })),
       h("h3", {}, h("a", { href: "#" }, title)),
       h("div", { class: "product_price" }, h("p", { class: "price_color" }, price), h("p", { class: "instock availability" }, "In stock"))));
-  const text = md(h("section", {}, h("ol", { class: "row" }, card("A Light in the Attic", "£51.77", "Three"), card("Tipping the Velvet", "£53.74", "One"))));
+  const text = md(h("section", {}, h("ol", { class: "row" },
+    card("A Light in the Attic", "£51.77", { role: "img", "aria-label": "3 out of 5 stars" }),
+    card("Tipping the Velvet", "£53.74", { class: "star-rating One" }))));
   const lines = text.split("\n");
   const attic = lines.find((l) => l.includes("A Light in the Attic"));
   assert.ok(attic, text);
-  assert.match(attic, /star-rating Three/, `the rating is on the card's own line: ${attic}`);
-  assert.match(lines.find((l) => l.includes("Tipping the Velvet")), /star-rating One/);
+  assert.match(attic, /3 out of 5 stars/, `the rating is on the card's own line: ${attic}`);
+  const velvet = lines.find((l) => l.includes("Tipping the Velvet"));
+  assert.ok(velvet && /53\.74/.test(velvet), text);
+  assert.doesNotMatch(text, /star-rating|class "/, "a class name is not read as a rating");
 });
 
 test("a label on an element does not hide what is inside it", () => {
@@ -185,15 +189,67 @@ test("a label on an element does not hide what is inside it", () => {
   const usage = md(h("div", {}, widget));
   assert.match(usage, /Global 96\.09%/, `a labelled web component's shadow content is read: ${usage}`);
 
-  const stars = md(h("div", {}, h("p", { class: "star-rating Four" }, h("i", { class: "icon-star" }))));
-  assert.equal((stars.match(/star-rating Four/g) || []).length, 1, `an empty rating is read once: ${stars}`);
+  const stars = md(h("div", {}, h("p", { role: "img", "aria-label": "4 out of 5 stars" }, h("i", { class: "icon-star" }))));
+  assert.equal((stars.match(/4 out of 5 stars/g) || []).length, 1, `an empty rating is read once: ${stars}`);
+});
+
+// What the walk reads does not depend on a class: a box of links, a list of
+// notes, a block a site calls "reference" or "toc" is read like any other,
+// and a number in brackets is the page's own text.
+test("the Markdown walk reads blocks whatever their class, and keeps bracketed numbers", () => {
+  const text = md(h("div", {},
+    h("p", {}, "Index ", h("code", {}, "a[12]"), " is the thirteenth item."),
+    h("div", { class: "reference noprint" }, h("p", {}, "Notes and sources for this page.")),
+    h("div", { class: "navbox toc sidebar" }, h("p", {}, "Related reading on the same subject.")),
+    h("p", {}, "The value was 42 [3] in that year.")));
+  assert.match(text, /a\[12\]/, "an array index in documentation is kept");
+  assert.match(text, /42 \[3\]/, "a bracketed number is the page's text");
+  assert.match(text, /Notes and sources for this page\./);
+  assert.match(text, /Related reading on the same subject\./);
+});
+
+// The main content from structure: a document's own landmark, or where the
+// text is. The fixtures give the parts misleading ids and classes, so a
+// reader that went by names would pick the wrong part.
+const pickMain = new Function([
+  constLine("BOILERPLATE"), source("proseLength"), source("pickMain"), "return pickMain;",
+].join("\n"))();
+const page = (...kids) => { const body = h("body", {}, ...kids); return { body, querySelector: (sel) => body.descendants().find((n) => n.matches(sel)) || null }; };
+const words = (n, w) => Array.from({ length: n }, (_, i) => `${w} ${i}.`).join(" ");
+
+test("the main content is found from the page's structure, not from its names", () => {
+  // A page that marks its <main> says so itself.
+  const declared = h("main", {}, h("p", {}, words(60, "Main text")));
+  assert.equal(pickMain(page(h("div", { id: "content" }, h("p", {}, words(400, "Other"))), declared)), declared);
+
+  // No landmark: a content column beside a sidebar of links, under a wrapper.
+  // The sidebar is the one called "content"; the column is called "sidebar".
+  const column = h("div", { class: "sidebar" }, h("h1", {}, "Mosses"), h("p", {}, words(200, "Mosses grow on stone")), h("p", {}, words(100, "Spores travel far")));
+  const links = h("div", { id: "content", class: "main-content" }, ...Array.from({ length: 40 }, (_, i) => h("a", { href: `/p/${i}` }, `Related page number ${i}`)));
+  const wrapped = page(h("header", {}, h("a", { href: "/" }, "Home")), h("div", { id: "main" }, links, column), h("footer", {}, "Footer text"));
+  assert.equal(pickMain(wrapped), column, "the text column, not the links called content");
+
+  // A long document whose sections take their ids from their titles: one
+  // section called "Content" holds a small share, and is not the page.
+  const sections = Array.from({ length: 6 }, (_, i) => h("section", i === 3 ? { id: "content" } : {}, h("h2", {}, `Section ${i}`), h("p", {}, words(80, `Section ${i} text`))));
+  const doc = h("div", {}, ...sections);
+  const rfc = page(doc);
+  const picked = pickMain(rfc);
+  assert.notEqual(picked, sections[3], "the section with id=content is not taken for the page");
+  assert.ok(picked === doc || picked === null, "the document as a whole, or the whole page");
+
+  // A listing: one <article> per card is a card, not the page.
+  const cards = h("ol", {}, ...Array.from({ length: 12 }, (_, i) => h("li", {}, h("article", {}, h("p", {}, words(8, `Card ${i}`))))));
+  const listing = page(cards);
+  assert.ok(listing.querySelector("article"));
+  assert.notEqual(pickMain(listing), listing.querySelector("article"), "the first card is not the page");
+  assert.doesNotMatch(source("pickMain"), /['"][#.][a-z]/i, "no class or id selector");
 });
 
 test("the Markdown reading is not judged by the menu and footer words it leaves out on purpose", () => {
   const keptShare = new Function(`${source("keptShare")}\nreturn keptShare;`)();
-  // caniuse.com/css-has in the 17 Nov trial: the guessed main area is
-  // div#main, which wraps the header menu and the footer, and the feature
-  // itself is drawn inside web components.
+  // A page whose main area wraps the header menu and the footer, with the
+  // content itself drawn inside web components (seen in the 17 Nov trial).
   const nav = "Home\nNews\nCompare browsers\nAbout\nMarch 5, 2026 - New feature: Lazy loading via attribute for video & audio";
   const footer = "Can I use...\nBrowser support tables for modern web technologies\nCreated & maintained by @Fyrd, design by @Lensco.\nSupport data contributions by the GitHub community.\nUsage share statistics by StatCounter GlobalStats for October, 2026\nLocation detection provided by ipinfo.io.\nSupport via Patreon\nBecome a caniuse Patron to support the site and disable ads for only $1/month!\nSite links\nHome\nFeature index\nBrowser usage table\nFeature suggestion list\nCaniuse data on GitHub\nLegend\nGreen\n= Supported\nRed\n= Not supported";
   const shadow = ":has() CSS relational pseudo-class\nSelect elements containing specific content.\nUsage\n% of\nGlobal\n96.09%\nChrome\n4 - 104\n105 - 147";

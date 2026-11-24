@@ -44,7 +44,9 @@ const HTML = `<!doctype html><html><body>
   <p style="color:#777">Grey small print that is still readable</p>
   <div class="carousel"><div class="slide">Council approves the new cross-island tram line today</div><div class="slide" aria-hidden="true">Harbour festival returns after five years with fireworks</div><div class="slide clone" aria-hidden="true">Council approves the new cross-island tram line today</div></div>
   <pre>${Array.from({ length: 120 }, (_, i) => `line ${i + 1} of a long plain-text readme`).join("\n")}</pre>
-  <ol class="row"><li class="col-xs-6"><article class="product_pod"><div class="image_container"><a href="/b1"><img alt="A Light in the Attic" width="60" height="90"></a></div><p class="star-rating Three"><i class="icon-star"></i><i class="icon-star"></i><i class="icon-star"></i></p><h3><a href="/b1">A Light in the Attic</a></h3><div class="product_price"><p class="price_color">£51.77</p><p class="instock availability">In stock</p></div></article></li></ol>
+  <ol class="row"><li class="col-xs-6"><article class="product_pod"><div class="image_container"><a href="/b1"><img alt="A Light in the Attic" width="60" height="90"></a></div><p class="star-rating Three" role="img" aria-label="3 out of 5 stars"><i class="icon-star"></i><i class="icon-star"></i><i class="icon-star"></i></p><h3><a href="/b1">A Light in the Attic</a></h3><div class="product_price"><p class="price_color">£51.77</p><p class="instock availability">In stock</p></div></article></li><li class="col-xs-6"><article class="product_pod"><p class="star-rating One"><i class="icon-star"></i></p><h3><a href="/b2">Tipping the Velvet</a></h3><div class="product_price"><p class="price_color">£53.74</p></div></article></li></ol>
+  <p>Use <code>items[12]</code> for the thirteenth entry, as the guide says [3].</p>
+  <div class="reference toc navbox">Notes block a site happens to call reference</div>
   <div aria-label="Product images"><img alt="Front cover of the guide" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Crect width='200' height='200' fill='%23468'/%3E%3C/svg%3E" width="200" height="200"></div>
   <table><tr><th>Feature</th><th>Starter</th></tr>${Array.from({ length: 60 }, (_, i) => `<tr><td>Feature ${i + 1}</td><td>Included</td></tr>`).join("")}</table>
 </main>
@@ -67,6 +69,18 @@ customElements.define("x-feature", class extends HTMLElement { connectedCallback
 </script>
 </body></html>`;
 
+// No <main> and no role: a wrapper holds a column of links (whose id says
+// "content") beside the article (whose class says "sidebar"). The reader
+// goes by where the text is, not by what the parts are called.
+const NO_LANDMARK = `<!doctype html><html><body>
+<header><a href="/">Home</a> <a href="/about">About</a></header>
+<div id="main" class="wrap">
+  <div id="content" class="main-content">${Array.from({ length: 40 }, (_, i) => `<a href="/p/${i}">Related page number ${i}</a><br>`).join("")}</div>
+  <div class="sidebar"><h1>Mosses</h1><p>${Array.from({ length: 200 }, (_, i) => `Mosses grow on stone ${i}.`).join(" ")}</p><p>${Array.from({ length: 80 }, (_, i) => `Spores travel far ${i}.`).join(" ")}</p></div>
+</div>
+<footer>Footer links and copyright</footer>
+</body></html>`;
+
 async function scanOf(browser, html) {
   const page = await browser.newPage();
   await page.evaluateOnNewDocument(() => {
@@ -83,6 +97,7 @@ async function scanOf(browser, html) {
   const browser = await puppeteer.launch({ headless: true });
   const scan = await scanOf(browser, HTML);
   const comp = await scanOf(browser, COMPONENTS);
+  const noLandmark = await scanOf(browser, NO_LANDMARK);
   await browser.close();
   const text = scan.innerText;
   // Unseeable text must stay out of every reading of the page, not only the main one.
@@ -117,7 +132,11 @@ async function scanOf(browser, html) {
     ["cloned slide not repeated", (text.match(/cross-island tram line/g) || []).length === 1],
     ["long preformatted block read in full", /line 120 of a long plain-text readme/.test(text)],
     ["menu and footer left out", !/Menu item that is navigation|Footer links/.test(text)],
-    ["a listing card's star rating is on the card's line", text.split("\n").some((l) => /A Light in the Attic/.test(l) && /star-rating Three/.test(l) && /51\.77/.test(l))],
+    ["a listing card's star rating is on the card's line, read from its accessible name", text.split("\n").some((l) => /A Light in the Attic/.test(l) && /3 out of 5 stars/.test(l) && /51\.77/.test(l))],
+    ["a class name is never read as a rating", !/star-rating|class "/.test(text) && /Tipping the Velvet/.test(text)],
+    ["bracketed numbers are the page's own text", /items\[12\]/.test(text) && /says \[3\]/.test(text)],
+    ["a block is read whatever its class", /Notes block a site happens to call reference/.test(text)],
+    ["with no landmark, the text column is the main content, not the links its site calls content", /Mosses grow on stone 120\./.test(noLandmark.innerText) && !/Related page number 7\b/.test(noLandmark.innerText)],
     ["a labelled box of pictures keeps its label and its pictures", /\[Product images\]/.test(text) && /\[image: Front cover of the guide\]/.test(text)],
     ["web components: the structured reading wins over a plain one full of menu and footer", comp.textFormat === "markdown"],
     ["web components: the global usage figure is read where it is drawn", /Global 96\.09%/.test(comp.innerText)],

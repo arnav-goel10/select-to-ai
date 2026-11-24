@@ -777,31 +777,62 @@
     }
 
     const BOILERPLATE = 'nav, header, footer, aside, [role="navigation"], [role="banner"], [role="contentinfo"], [role="complementary"], [aria-hidden="true"]';
-    const MAIN_SELECTORS = ['main', '[role="main"]', 'article', '#mw-content-text', '#content', '#main', '.main-content', '#main-content'];
     // How much of a page's text is kept for find and read. Long documents
     // (a specification, a manual) run to half a million characters, and a
     // section past the cap could be seen in its table of contents but never read.
     const PAGE_TEXT_LIMIT = 700000;
 
+    /** The length of an element's text outside its links: a menu or a column of related links has little. */
+    function proseLength(el) {
+        const all = (el.textContent || '').replace(/\s+/g, ' ').trim().length;
+        let links = 0;
+        for (const a of el.querySelectorAll('a')) links += (a.textContent || '').replace(/\s+/g, ' ').trim().length;
+        return Math.max(0, all - links);
+    }
+
     /**
-     * The page's main content area. A page that marks one with <main> or
-     * role="main" says so itself. The other selectors are guesses from
-     * common names, and a guess must hold a fair share of the page's text:
-     * a document whose sections take their ids from their titles has a
-     * section called "Content" (id="content"), and a listing has one
-     * <article> per card. Taking that one part as the page hid the rest.
+     * The page's main content area, from its structure alone. A page that
+     * marks one with <main> or role="main" says so itself. An <article>
+     * counts when it holds a fair share of the page's text: a listing has
+     * one <article> per card, and taking one card as the page hid the rest.
+     * With neither, the reading follows the text down from the body: into
+     * the container that holds nearly all of the text outside menus,
+     * banners, footers and links, for as long as one does. A wrapper around
+     * the whole page is walked through; a content column beside a sidebar
+     * of links is where it stops, and so is a container whose text is split
+     * among its parts or held in its own paragraphs, headings and lists.
+     * No class or id is read: what a site calls its parts says nothing
+     * that holds on another site.
      */
     function pickMain(doc) {
-        const bodyLength = ((doc.body && doc.body.innerText) || '').trim().length;
-        for (const sel of MAIN_SELECTORS) {
+        const body = doc.body;
+        if (!body) return null;
+        const textLength = (el) => ((el && el.innerText) || '').trim().length;
+        const bodyLength = textLength(body);
+        for (const sel of ['main', '[role="main"]']) {
             const cand = doc.querySelector(sel);
-            if (!cand) continue;
-            const length = (cand.innerText || '').trim().length;
-            if (length <= 200) continue;
-            const declared = sel === 'main' || sel === '[role="main"]';
-            if (declared || length >= bodyLength * 0.3) return cand;
+            if (cand && textLength(cand) > 200) return cand;
         }
-        return null;
+        const article = doc.querySelector('article');
+        if (article && textLength(article) > 200 && textLength(article) >= bodyLength * 0.3) return article;
+        let node = body;
+        for (let depth = 0; depth < 16; depth++) {
+            let best = null;
+            let bestLength = 0;
+            let total = 0;
+            for (const kid of node.children) {
+                if (/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(kid.tagName) || kid.matches(BOILERPLATE)) continue;
+                const length = proseLength(kid);
+                total += length;
+                if (length > bestLength) { best = kid; bestLength = length; }
+            }
+            // A block of text (a paragraph, a heading, a list, a table) is content, not a container of it.
+            if (!best || bestLength < total * 0.8 || /^(P|H[1-6]|UL|OL|LI|DL|TABLE|PRE|BLOCKQUOTE|FIGURE)$/.test(best.tagName)) break;
+            node = best;
+        }
+        if (node === body) return null;
+        const length = textLength(node);
+        return length > 200 && length >= bodyLength * 0.3 ? node : null;
     }
 
     /**
@@ -831,46 +862,27 @@
     }
 
     /**
-     * What an element with no words of its own says through its attributes.
-     * Star ratings, levels and scores are often drawn as icons, with the value
-     * only in an attribute: aria-label="4 out of 5", title="Supported", or a
-     * class like "star-rating Three" or "rating-45" that the page's style turns
-     * into stars. Controls are left out: they are listed with their names.
+     * What an element with no words of its own says through its accessible
+     * name: aria-label, the text of what aria-labelledby points to, or its
+     * title. Star ratings, levels and scores drawn as icons carry their value
+     * there (role="img" aria-label="4 out of 5"), which is what a screen
+     * reader says. Its class is not read: what a site calls its styles is
+     * not a meaning. Controls are left out: they are listed with their names.
      */
-    const RATING_WORD = /^(?:rating|ratings|rated|stars?|score)$/i;
-    const VALUE_WORD = /^(?:\d+|zero|one|two|three|four|five|six|seven|eight|nine|ten|half|full|empty)$/i;
-    /**
-     * True when a class list carries a rating's value: a rating word with a
-     * value after it in the same class ("a-star-4-5", "rating-45"), or a
-     * rating class beside a class that is only a value ("star-rating Three").
-     * A value elsewhere ("score-panel mt-2") is layout, not a rating.
-     */
-    function ratingClass(cls) {
-        const tokens = String(cls || '').split(/\s+/).filter(Boolean);
-        const parts = tokens.map((t) => t.split(/[_-]+/));
-        let rated = false;
-        for (const p of parts) {
-            const at = p.findIndex((x) => RATING_WORD.test(x));
-            if (at < 0) continue;
-            rated = true;
-            if (p.slice(at + 1).some((x) => VALUE_WORD.test(x))) return true;
-        }
-        return rated && tokens.some((t) => VALUE_WORD.test(t));
-    }
     function markedMeaning(el) {
         if (!el || el.nodeType !== 1) return '';
         // Controls are listed with their names; pictures and frames are read as media.
         if (/^(A|BUTTON|INPUT|SELECT|TEXTAREA|OPTION|LABEL|SUMMARY|IMG|VIDEO|CANVAS|SVG|IFRAME|PICTURE)$/i.test(el.tagName)) return '';
         const role = el.getAttribute('role') || '';
         if (/^(button|link|menuitem|tab|checkbox|radio|switch|option|textbox|combobox|slider)$/.test(role)) return '';
-        // Attributes first: they are cheap, and most elements have none of these.
-        const said = el.getAttribute('aria-hidden') === 'true' ? '' : (el.getAttribute('aria-label') || el.getAttribute('title') || '').replace(/\s+/g, ' ').trim();
-        const cls = (typeof el.className === 'string' ? el.className : (el.getAttribute('class') || '')).replace(/\s+/g, ' ').trim();
-        const byClass = cls && ratingClass(cls) ? `class "${cls.slice(0, 80)}"` : '';
-        if (!said && !byClass) return '';
+        if (el.getAttribute('aria-hidden') === 'true') return '';
+        const by = (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)
+            .map((id) => { const n = el.ownerDocument.getElementById(id); return n ? (n.textContent || '') : ''; }).join(' ');
+        const said = (el.getAttribute('aria-label') || by || el.getAttribute('title') || '').replace(/\s+/g, ' ').trim();
+        if (!said) return '';
         // Only an element with no words of its own: otherwise its words say it.
         if ((el.innerText || el.textContent || '').trim()) return '';
-        return said ? said.slice(0, 120) : byClass;
+        return said.slice(0, 120);
     }
 
     /**
@@ -912,7 +924,7 @@
      * tables as rows, code fenced, images and media as short notes. Structure
      * is what lets a model read one section, skip another, or read a table,
      * and it costs fewer tokens than flattened text with the same words.
-     * Hidden elements, menus and citation markers ("[12]") are left out.
+     * Hidden elements and menus are left out.
      */
     // ---- text a reader cannot see ---------------------------------------
     // The agent reads what a person looking at the page would read. Text
@@ -1034,7 +1046,6 @@
     }
 
     const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'NAV', 'FOOTER', 'ASIDE', 'BUTTON', 'SELECT', 'OPTION', 'INPUT', 'TEXTAREA', 'IFRAME', 'MENU']);
-    const SKIP_CLASS = /(?:^|\s)(?:mw-editsection|reference|noprint|navbox|sidebar|toc|cookie|advert|ads?|share|social|breadcrumb)(?:\s|$)/i;
     function extractMarkdown(root, maxChars) {
         const out = [];
         let used = 0;
@@ -1051,7 +1062,6 @@
             used += s.length + 1;
         };
         const inlineText = (el) => seenText(el)
-            .replace(/\[\d+\]|\[citation needed\]|\[edit\]/gi, '')
             .replace(/[ \t ]+/g, ' ').replace(/\s*\n\s*/g, ' ').trim();
         // Elements inside one read as a line that say what they mean only
         // through attributes: a listing card's empty star-rating paragraph
@@ -1059,7 +1069,7 @@
         const marksIn = (el) => {
             const found = [];
             if (!el.querySelectorAll) return found;
-            for (const d of el.querySelectorAll('[class], [aria-label], [title]')) {
+            for (const d of el.querySelectorAll('[aria-label], [aria-labelledby], [title]')) {
                 if (found.length >= 8) break;
                 if (found.some((f) => f.el.contains(d))) continue;
                 if (d.closest && d.closest('button, [role="button"]')) continue;
@@ -1098,11 +1108,11 @@
                 if (t) push(t);
                 return;
             }
-            if (SKIP_TAGS.has(tag) || SKIP_CLASS.test(el.className && el.className.baseVal === undefined ? el.className : '')) return;
+            if (SKIP_TAGS.has(tag)) return;
             const role = el.getAttribute('role');
             if (role === 'navigation' || role === 'banner' || role === 'contentinfo' || role === 'complementary') return;
             if (hidden(el)) return;
-            // An element with no words whose attributes carry its meaning (a star rating drawn from a class).
+            // An element with no words whose accessible name carries its meaning (a star rating drawn as icons).
             // Its content is still read when it has any: pictures inside it,
             // or a web component's shadow root, which innerText does not see.
             const marked = markedMeaning(el);
@@ -1120,7 +1130,7 @@
             if (tag === 'LI') {
                 const readable = !textUnseeable(el);
                 const own = [...el.childNodes].filter((n) => !(n.nodeType === 1 && /^(UL|OL)$/.test(n.tagName)))
-                    .map((n) => (n.nodeType === 3 ? (readable ? n.textContent : '') : (n.nodeType === 1 && !hidden(n) ? inlineOrMarked(n) : ''))).join(' ').replace(/\s+/g, ' ').replace(/\[\d+\]/g, '').trim();
+                    .map((n) => (n.nodeType === 3 ? (readable ? n.textContent : '') : (n.nodeType === 1 && !hidden(n) ? inlineOrMarked(n) : ''))).join(' ').replace(/\s+/g, ' ').trim();
                 if (own) push(`${'  '.repeat(Math.max(0, depth))}- ${own}`);
                 el.querySelectorAll(':scope > ul, :scope > ol').forEach((sub) => walk(sub, depth + 1));
                 return;
@@ -1161,7 +1171,7 @@
             // in bare divs and spans, so short text is content too.
             let line = [];
             const flush = () => {
-                const t = line.join(' ').replace(/\s+/g, ' ').replace(/\[\d+\]|\[citation needed\]|\[edit\]/gi, '').trim();
+                const t = line.join(' ').replace(/\s+/g, ' ').trim();
                 line = [];
                 if (/[\p{L}\p{N}]/u.test(t)) push(t);
             };
@@ -1183,7 +1193,6 @@
         // An inline element whose text has no line breaks (so no block inside it).
         const runsInline = (el) => {
             if (/^(IMG|VIDEO|CANVAS|TABLE|PRE|UL|OL|LI|P|BLOCKQUOTE|FIGCAPTION|DT|DD|H[1-6])$/.test(el.tagName) || el.shadowRoot) return false;
-            if (SKIP_CLASS.test(el.className && el.className.baseVal === undefined ? el.className : '')) return false;
             const display = getComputedStyle(el).display;
             return display.startsWith('inline') && !/\n/.test(el.innerText || '');
         };
@@ -1267,9 +1276,9 @@
         // markup hides content from the walk. Judged by words kept, not by
         // length: a structured version missing every price is not "long enough".
         // Menus and the footer are left out of the walk on purpose, so their
-        // words are not counted against it: a guessed main area that wraps
-        // the whole page (caniuse's div#main) would otherwise lose the walk
-        // to a plain reading that is mostly menu and footer.
+        // words are not counted against it: a main area that wraps the whole
+        // page, its menus and its footer would otherwise lose the walk to a
+        // plain reading that is mostly menu and footer.
         const skipped = [...(mainEl || document.body).querySelectorAll(WALK_SKIPS)].map((b) => tidyText(b.innerText || ''));
         const useMarkdown = md.markdown.length > 0 && keptShare(md.markdown, text, skipped) >= 0.85;
         const forms = document.querySelectorAll('form, input:not([type="hidden"]), textarea, select').length;
