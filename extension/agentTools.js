@@ -1179,8 +1179,28 @@
     return "";
   }
 
-  // Search engines whose results address is a person typing into their box.
-  const SEARCH_HOST = /(?:^|\.)(?:google|bing|duckduckgo|ecosia|startpage|kagi|baidu|yandex|qwant|mojeek)\.[a-z.]{2,}$|^search\.(?:brave\.com|yahoo\.com)$/i;
+  // Search engines whose results address is a person typing into their box,
+  // by the whole host they answer on (a "www." in front is the same host).
+  // A reviewed list: tests/unit/hygiene-allowlist.json says why each is here.
+  const SEARCH_HOSTS = Object.freeze(["google.com", "bing.com", "duckduckgo.com", "ecosia.org", "startpage.com", "kagi.com", "baidu.com", "yandex.com", "yandex.ru", "qwant.com", "mojeek.com", "search.brave.com", "search.yahoo.com"]);
+  // An engine that answers on its country domains too (google.de, google.co.uk, google.com.sg).
+  const COUNTRY_SEARCH = Object.freeze(["google"]);
+
+  /**
+   * True for a search engine's own host. The host is compared whole, and a
+   * country domain by its registrable domain (siteOf), so a name that only
+   * starts like an engine's ("google.example.com", "bing.com.example.net")
+   * is not one.
+   */
+  function isSearchHost(hostname) {
+    const host = String(hostname || "").toLowerCase().replace(/\.$/, "").replace(/^www\./, "");
+    if (!host || SEARCH_HOSTS.includes(host)) return !!host;
+    const site = siteOf(`https://${host}/`);
+    if (site !== host) return false;
+    const label = site.split(".")[0];
+    const suffix = site.slice(label.length + 1);
+    return COUNTRY_SEARCH.includes(label) && /^(?:(?:co|com)\.)?[a-z]{2}$/.test(suffix);
+  }
   // The parts of a results address that hold the words searched for.
   const SEARCH_QUERY_PARAMS = new Set(["q", "p", "query", "wd", "text"]);
   // Other parts a results address may carry: a language, a tab of results.
@@ -1205,7 +1225,7 @@
     let u;
     try { u = new URL(String(url || "")); } catch (_e) { return false; }
     if (u.protocol !== "https:" || u.username || u.password || u.port) return false;
-    if (!SEARCH_HOST.test(u.hostname)) return false;
+    if (!isSearchHost(u.hostname)) return false;
     if (u.hash && u.hash !== "#") return false;
     if (!u.pathname.split("/").every((part) => SEARCH_PATH_PARTS.has(part.toLowerCase()))) return false;
     const fromRequest = wordFrom(new Set(wordsOf(task)));
@@ -2117,6 +2137,7 @@
     wordsKnownHere,
     startPageKind,
     searchOfRequest,
+    isSearchHost,
     carriesDetail,
     pickContextTabs,
     actionRisk,

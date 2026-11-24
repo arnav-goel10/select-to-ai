@@ -267,6 +267,23 @@ test("a run that began on a web page is not changed", () => {
   assert.equal(POLICY.decide({ do: "navigate", url: "https://www.bing.com/search?q=flight+rome" }, { url: "https://shop.example/", elements: [] }, run, settings, KNOWN.empty()).verdict, "confirm");
 });
 
+test("a host that only looks like a search engine's is not one, and its results address is held", () => {
+  for (const host of ["google.com", "www.google.com", "google.de", "www.google.co.uk", "google.com.sg", "search.brave.com", "duckduckgo.com", "www.bing.com"]) {
+    assert.equal(TOOLS.isSearchHost(host), true, host);
+  }
+  for (const host of ["google.evil.com", "www.google.evil.com", "bing.com.evil.net", "duckduckgo.co.uk.attacker.example", "google.xyz", "google.example",
+    "googlesearch.com", "evilgoogle.com", "brave.com", "search.brave.com.evil.io", "yahoo.com", "maps.google.evil.co.uk", "search.evil.com", ""]) {
+    assert.equal(TOOLS.isSearchHost(host), false, host);
+  }
+  const run = RUN.newRun({ id: "r2", task: "rome flights", tabId: 4, startUrl: "", marker: "PAGE-abcd1234", now: 1, fromNothing: { from: "newtab" } });
+  for (const url of ["https://google.evil.com/search?q=rome+flights", "https://www.bing.com.evil.net/search?q=rome", "https://duckduckgo.attacker.example/?q=rome"]) {
+    assert.equal(TOOLS.searchOfRequest(url, "rome flights"), false, url);
+    assert.equal(POLICY.firstAddress({ do: "navigate", url }, run, KNOWN.empty()), null, `${url} is left to the usual rules`);
+  }
+  assert.equal(POLICY.firstAddress({ do: "navigate", url: "https://duckduckgo.com/?q=rome+flights" }, run, KNOWN.empty()).verdict, "allow");
+  assert.equal(TOOLS.searchOfRequest("https://www.google.co.uk/search?q=rome+flights", "rome flights"), true);
+});
+
 test("searchOfRequest and carriesDetail on their own", () => {
   assert.equal(TOOLS.searchOfRequest("https://search.brave.com/search?q=rome+flights", "Rome flights"), true);
   assert.equal(TOOLS.searchOfRequest("http://duckduckgo.com/?q=rome", "rome"), false, "https only");
