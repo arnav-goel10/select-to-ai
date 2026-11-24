@@ -490,6 +490,14 @@
       const rows = Array.isArray(data.data) ? data.data : Array.isArray(data.models) ? data.models : [];
       liveModels = rows.map((m) => (typeof m === "string" ? m : String(m.id || m.name || "").replace(/^models\//, ""))).filter(Boolean);
       fillModelList([...(D.MODEL_PRESETS[p] || []), ...liveModels]);
+      // The context window the provider gives for each model, where it gives
+      // one: a model the extension does not list is given room by it (defaults.js tierOf).
+      const windows = {};
+      rows.forEach((m, i) => { const n = D.reportedContext(m); if (n && liveModels[i] && Object.keys(windows).length < 2000) windows[liveModels[i]] = n; });
+      chrome.storage.local.get({ agentModelContext: {} }, (got) => {
+        const all = got && got.agentModelContext && typeof got.agentModelContext === "object" ? got.agentModelContext : {};
+        chrome.storage.local.set({ agentModelContext: { ...all, [p]: windows } });
+      });
     } catch (e) { /* presets stay */ }
   });
 
