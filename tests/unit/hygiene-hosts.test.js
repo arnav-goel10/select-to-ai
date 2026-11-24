@@ -289,6 +289,14 @@ test("the fifth round's misses are found, apart from the limits the pull request
   assert.deepEqual(passes, []);
 });
 
+test("a literal an object holds under a property is held against that property", () => {
+  const found = scan('const els = [{ id: -1, tagName: "div" }]; const r = 1; if (els.find((e) => e.id === r)) x();').filter((f) => f.what === "div");
+  assert.deepEqual(found.map((f) => [f.kind, f.against]), [["markup test", "tag name"]]);
+  const byId = scan('const els = [{ id: "nav-main", tagName: "div" }]; const r = 1; if (els.find((e) => e.id === r)) x();');
+  assert.ok(byId.some((f) => f.what === "nav-main" && f.against === "id"), "a value under id is still held against id");
+  assert.ok(byId.some((f) => f.what === "div" && f.against === "tag name"));
+});
+
 test("a literal held against an attribute property is found, by the attribute it reads", () => {
   for (const [src, against] of [
     ['if (el.placeholder === "Search products") x();', "placeholder"],

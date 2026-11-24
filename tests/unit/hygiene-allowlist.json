@@ -3070,17 +3070,6 @@
       "file": "core/policy.js",
       "kind": "markup test",
       "against": [
-        "id"
-      ],
-      "what": [
-        "div"
-      ],
-      "why": "Standard HTML and SVG tag names, the same on every site."
-    },
-    {
-      "file": "core/policy.js",
-      "kind": "markup test",
-      "against": [
         "role"
       ],
       "what": [
@@ -3097,6 +3086,7 @@
       "what": [
         "a",
         "button",
+        "div",
         "input",
         "select",
         "summary",
