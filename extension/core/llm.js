@@ -126,7 +126,10 @@
     // On ChatGPT a model has to be one the account lists.
     const listed = (m) => provider !== "chatgpt" || !slugs.length || slugs.includes(m);
     const pro = modelFits(provider, model) && listed(model) ? model : provider === "chatgpt" && CHATGPT ? CHATGPT.bestModel(account && account.models) || fallbacks.pro : fallbacks.pro;
-    const lite = provider === "custom" ? pro : provider === "chatgpt" ? (CHATGPT && CHATGPT.liteModel(account && account.models)) || pro : fallbacks.lite || pro;
+    // On OpenRouter a free main model keeps the cheap calls free too; a
+    // paid one has Haiku as its cheap model, like a direct key.
+    const freeOnOpenRouter = provider === "openrouter" && DEFAULTS.findModelRates(pro)[0] === 0;
+    const lite = provider === "custom" || freeOnOpenRouter ? pro : provider === "chatgpt" ? (CHATGPT && CHATGPT.liteModel(account && account.models)) || pro : fallbacks.lite || pro;
     const d = detailsOf(provider);
     // A stronger model on the same provider and key. A backup standing in has none.
     const helper = String(it.agentHelperModel || "").trim();

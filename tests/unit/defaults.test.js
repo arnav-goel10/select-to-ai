@@ -72,6 +72,12 @@ test("no retired model ids remain anywhere in the extension sources", () => {
     "llama-3.1-8b-instant",
     "o1-mini",
     "o1-preview",
+    // Taken out on 25 Nov 2026. Only ids that are not the start of a
+    // current one go here (claude-sonnet-5 would match claude-sonnet-5-5);
+    // the rest are held out of every list by the test below.
+    "anthropic/claude-sonnet-4.6",
+    "anthropic/claude-haiku-4.5",
+    "gemma-4-26b-a4b-it",
   ];
   const sources = readExtensionSources([".js", ".html"]);
   for (const { name, text } of sources) {
@@ -181,15 +187,20 @@ test("agent, options, and background all read the shared defaults module", () =>
   assert.match(background, /importScripts\([^)]*['"]defaults\.js['"]/);
 });
 
-test("the OpenRouter lite default costs nothing to run", () => {
+test("OpenRouter starts on a free model, and paid is a choice the user makes", () => {
   // Regression: both OpenRouter fallbacks used to be paid models and not one
   // of the presets was free, so switching provider silently started billing.
-  const lite = defaults.PROVIDER_FALLBACK_MODELS.openrouter.lite;
-  assert.deepEqual(
-    defaults.findModelRates(lite),
-    [0, 0],
-    `OpenRouter lite default "${lite}" must be a free model`,
-  );
+  // Since 25 Nov 2026 OpenRouter has a real paid main model (lite), so the
+  // free one has its own field, and that is where every path starts.
+  const or = defaults.PROVIDER_FALLBACK_MODELS.openrouter;
+  assert.deepEqual(defaults.findModelRates(or.free), [0, 0], `OpenRouter free default "${or.free}" must be a free model`);
+  assert.equal(defaults.startModelFor("openrouter"), or.free);
+  assert.equal(defaults.AGENT_DEFAULTS.model, or.free);
+  assert.ok(defaults.findModelRates(or.lite)[0] > 0, "lite is the paid main model, for an account with credit");
+  // Settings and the welcome page both start a provider through startModelFor.
+  for (const file of ["options.js", "welcome.js"]) {
+    assert.match(fs.readFileSync(path.join(extensionRoot, file), "utf8"), /D\.startModelFor\(provider\)/, `${file} starts a provider on its start model`);
+  }
 });
 
 test("OpenRouter presets offer free models before paid ones", () => {
@@ -358,13 +369,15 @@ test("no retired provider hosts remain in any user-facing link", () => {
 test("the OpenCode key link and API base agree on one host", () => {
   // The link said zen.opencode.co while the base URL said opencode.ai; that
   // split is what let the dead host survive unnoticed.
-  const defaults = fs.readFileSync(path.join(extensionRoot, "defaults.js"), "utf8");
+  const defaultsJs = fs.readFileSync(path.join(extensionRoot, "defaults.js"), "utf8");
   assert.ok(
-    defaults.includes("https://opencode.ai/zen/v1"),
+    defaultsJs.includes("https://opencode.ai/zen/v1"),
     "OpenCode base URL must stay on opencode.ai (confirmed against the Zen docs)",
   );
+  // The key links live in one table that Settings and the welcome page share.
+  assert.equal(defaults.PROVIDER_INFO.opencode.keyUrl, "https://opencode.ai/console", "key link must be the OpenCode console");
   const optionsJs = fs.readFileSync(path.join(extensionRoot, "options.js"), "utf8");
-  assert.ok(optionsJs.includes("https://opencode.ai/console"), "key link must be the OpenCode console");
+  assert.match(optionsJs, /\.\.\.D\.PROVIDER_INFO/, "Settings reads the shared table");
 });
 
 test("no preset or fallback uses OpenCode's app-only free tier", () => {
@@ -377,9 +390,9 @@ test("no preset or fallback uses OpenCode's app-only free tier", () => {
 });
 
 test("a free backup runs its free model; a paid backup runs its full model", () => {
-  assert.equal(defaults.backupModelFor("gemini"), "gemini-flash-latest");
+  assert.equal(defaults.backupModelFor("gemini"), "gemini-3.8-flash");
   assert.equal(defaults.backupModelFor("groq"), "openai/gpt-oss-120b");
-  assert.equal(defaults.backupModelFor("cerebras"), "qwen-3.8-27b");
+  assert.equal(defaults.backupModelFor("cerebras"), "gpt-oss-120b");
   assert.equal(defaults.backupModelFor("anthropic"), defaults.PROVIDER_FALLBACK_MODELS.anthropic.pro);
   assert.equal(defaults.backupModelFor("openai"), defaults.PROVIDER_FALLBACK_MODELS.openai.pro);
   for (const b of defaults.FREE_BACKUPS) assert.ok(b.model, `${b.provider} names its free model`);
@@ -398,11 +411,11 @@ test("the free router is sent as an ordered list of free models, the router last
 });
 
 test("an overloaded model hands over to a sibling from the same provider, each once", () => {
-  assert.equal(defaults.siblingModel("gemini", "gemini-flash-latest", []), "gemini-flash-lite-latest");
-  assert.equal(defaults.siblingModel("gemini", "gemini-flash-lite-latest", ["gemini-flash-latest"]), "gemini-3.5-flash-lite");
-  assert.equal(defaults.siblingModel("gemini", "gemini-3.1-flash-lite", ["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-3.5-flash-lite"]), "", "the chain runs out");
-  assert.equal(defaults.siblingModel("gemini", "gemini-pro-latest", []), "", "a model the user picked outside the chain is never swapped");
-  assert.equal(defaults.siblingModel("openai", "gpt-5.5", []), "");
+  assert.equal(defaults.siblingModel("gemini", "gemini-3.8-flash", []), "gemini-3.5-flash-lite");
+  assert.equal(defaults.siblingModel("gemini", "gemini-3.5-flash-lite", ["gemini-3.8-flash"]), "", "the chain runs out");
+  assert.equal(defaults.siblingModel("gemini", "gemini-4-hydrogen", []), "", "a model the user picked outside the chain is never swapped");
+  assert.equal(defaults.siblingModel("mistral", "mistral-small-latest", []), "mistral-large-latest");
+  assert.equal(defaults.siblingModel("openai", "gpt-6.2-sol", []), "");
 });
 
 test("every model the extension lists has a tier set for it, and no tier is guessed from a name", () => {
@@ -423,4 +436,119 @@ test("every model the extension lists has a tier set for it, and no tier is gues
   const pick = src.slice(src.indexOf("function limitsFor("), src.indexOf("\n  }\n", src.indexOf("function limitsFor(")));
   assert.ok(pick.length > 20);
   assert.doesNotMatch(pick, /\/[^/\n]+\/[gimsuy]*\.test\(|\.match\(|\.includes\(/, "limitsFor tests no pattern against the name");
+});
+
+// ---------- the defaults chosen on 25 Nov 2026 ----------
+
+test("each provider's main and stronger model are the ids picked from its own pages on 25 Nov 2026", () => {
+  const want = {
+    openrouter: ["anthropic/claude-haiku-5.5", "anthropic/claude-sonnet-5.5"],
+    anthropic: ["claude-haiku-5-5", "claude-sonnet-5-5"],
+    openai: ["gpt-6-luna", "gpt-6.2-sol"],
+    gemini: ["gemini-3.8-flash", "gemini-4-hydrogen"],
+    deepseek: ["deepseek-flash", "deepseek-v4-pro"],
+    mistral: ["mistral-small-latest", "mistral-large-latest"],
+    groq: ["openai/gpt-oss-120b", "openai/gpt-oss-120b"],
+    together: ["openai/gpt-oss-120b", "deepseek-ai/DeepSeek-V4-Pro-0813"],
+    xai: ["grok-4.3", "grok-4.7"],
+    cerebras: ["gpt-oss-120b", "gpt-oss-120b"],
+    opencode: ["deepseek-v4.1-flash", "claude-sonnet-5-5"],
+  };
+  for (const [provider, [lite, pro]] of Object.entries(want)) {
+    const pair = defaults.PROVIDER_FALLBACK_MODELS[provider];
+    assert.equal(pair.lite, lite, `${provider} main model`);
+    assert.equal(pair.pro, pro, `${provider} stronger model`);
+    assert.equal((defaults.MODEL_PRESETS[provider] || [])[provider === "openrouter" ? 4 : 0], lite, `${provider}: the main model leads its paid presets`);
+  }
+  assert.deepEqual(defaults.MODEL_PRESETS.openrouter, [
+    "openrouter/free",
+    "nvidia/nemotron-3.5-super-vl:free",
+    "nvidia/nemotron-3.5-lightning:free",
+    "google/gemma-4-31b-it:free",
+    "anthropic/claude-haiku-5.5",
+    "anthropic/claude-sonnet-5.5",
+    "openai/gpt-6.2-sol",
+    "google/gemini-4-hydrogen",
+    "deepseek/deepseek-v4.1-flash-1017",
+    "qwen/qwen3.8-flash",
+  ]);
+  assert.deepEqual(defaults.OPENROUTER_FREE_CHAIN, [
+    "nvidia/nemotron-3.5-super-vl:free",
+    "nvidia/nemotron-3.5-lightning:free",
+    "google/gemma-4-31b-it:free",
+    "openrouter/free",
+  ]);
+});
+
+test("ids taken out on 25 Nov 2026 are offered nowhere: not as a default, preset, backup, sibling or chain member", () => {
+  const stale = [
+    "anthropic/claude-sonnet-4.6", "anthropic/claude-sonnet-5", "anthropic/claude-haiku-4.5", "claude-sonnet-5",
+    "gpt-5.4-mini", "openai/gpt-5.4-mini", "gpt-5.5", "gpt-5.4", "gpt-5.4-nano",
+    "mistral-medium-latest", "gemini-flash-latest", "gemini-pro-latest", "gemini-flash-lite-latest", "gemini-3.1-pro-preview",
+    "google/gemma-4-26b-a4b-it:free", "grok-4.6",
+  ];
+  const offered = new Set();
+  for (const pair of Object.values(defaults.PROVIDER_FALLBACK_MODELS)) for (const id of Object.values(pair)) offered.add(id);
+  for (const ids of Object.values(defaults.MODEL_PRESETS)) for (const id of ids) offered.add(id);
+  for (const b of defaults.FREE_BACKUPS) offered.add(b.model);
+  for (const id of defaults.OPENROUTER_FREE_CHAIN) offered.add(id);
+  for (const ids of Object.values(defaults.MODEL_SIBLINGS)) for (const id of ids) offered.add(id);
+  for (const id of stale) assert.ok(!offered.has(id), `${id} is still offered`);
+  // A 20B model is not the main model anywhere: it would run every step.
+  for (const [provider, pair] of Object.entries(defaults.PROVIDER_FALLBACK_MODELS)) assert.ok(!/(^|[^0-9])20b/i.test(pair.lite), `${provider} runs on ${pair.lite}`);
+});
+
+test("every default and preset has its price, and the ones that read images or think are marked so", () => {
+  for (const [provider, pair] of Object.entries(defaults.PROVIDER_FALLBACK_MODELS)) {
+    if (provider === "custom") continue;
+    for (const id of Object.values(pair)) assert.ok(defaults.pricePerMillion(id), `${provider}: ${id} has a price on file, not the guess`);
+  }
+  // Cerebras's pricing page showed no table for Qwen3.8 27B (25 Nov 2026),
+  // so setup shows that one without a price rather than a guessed one.
+  const unpriced = new Set(["cerebras qwen-3.8-27b"]);
+  for (const [provider, ids] of Object.entries(defaults.MODEL_PRESETS)) {
+    if (provider === "custom") continue;
+    for (const id of ids) if (!unpriced.has(`${provider} ${id}`)) assert.ok(defaults.pricePerMillion(id), `${provider} preset ${id} has a price on file`);
+  }
+  // Prices per million tokens, as the providers' pages list them on 25 Nov 2026.
+  const per = (id) => defaults.pricePerMillion(id);
+  assert.deepEqual(per("anthropic/claude-haiku-5.5"), { input: 0.1, output: 0.5 });
+  assert.deepEqual(per("anthropic/claude-sonnet-5.5"), { input: 2, output: 10 });
+  assert.deepEqual(per("gpt-6-luna"), { input: 0.1, output: 0.5 });
+  assert.deepEqual(per("gpt-6.2-sol"), { input: 2, output: 10 });
+  assert.deepEqual(per("gemini-4-hydrogen"), { input: 1.5, output: 7.5 });
+  assert.deepEqual(per("gemini-3.5-flash-lite"), { input: 0.3, output: 2.5 });
+  assert.deepEqual(per("grok-4.7"), { input: 2, output: 6 });
+  assert.deepEqual(per("mistral-large-latest"), { input: 0.7, output: 2.1 });
+  assert.deepEqual(per("gpt-oss-120b"), { input: 0.35, output: 0.75 }, "the bare id is Cerebras's");
+  assert.deepEqual(per("openai/gpt-oss-120b"), { input: 0.15, output: 0.6 });
+  assert.deepEqual(per("deepseek/deepseek-v4.1-flash-1017"), { input: 0.03, output: 0.2 });
+  assert.deepEqual(per("openrouter/free"), { input: 0, output: 0 });
+  assert.equal(per("some-model-nobody-lists"), null, "an unknown model has no price to show");
+  for (const id of ["gpt-6-luna", "gpt-6.2-sol", "openai/gpt-6.2-sol", "gemini-4-hydrogen", "grok-4.7", "nvidia/nemotron-3.5-super-vl:free", "nvidia/NVIDIA-Nemotron-3.5-Super-VL", "anthropic/claude-sonnet-5.5", "anthropic/claude-haiku-5.5"]) {
+    assert.equal(defaults.isVisionModel(id), true, `${id} reads images`);
+  }
+  for (const id of ["nvidia/nemotron-3.5-lightning:free", "openai/gpt-oss-120b", "gpt-oss-120b", "deepseek-v4.1-flash"]) {
+    assert.equal(defaults.isVisionModel(id), false, `${id} is text only`);
+  }
+  for (const id of ["gpt-6-luna", "gpt-6.2-sol", "gemini-3.8-flash", "gemini-4-hydrogen", "grok-4.7", "openai/gpt-oss-120b", "gpt-oss-120b", "anthropic/claude-haiku-5.5", "nvidia/nemotron-3.5-super-vl:free", "qwen3.8-max"]) {
+    assert.equal(defaults.modelProfile(id).thinks, true, `${id} thinks, so it gets the room for it`);
+  }
+});
+
+test("setup's provider table names every provider the extension can reach, once, with its key page", () => {
+  const info = defaults.PROVIDER_INFO;
+  assert.deepEqual(Object.keys(info).sort(), [...Object.keys(defaults.PROVIDER_ENDPOINTS), "custom"].sort());
+  for (const [provider, row] of Object.entries(info)) {
+    assert.ok(row.name && row.line, `${provider} has a name and a line`);
+    if (provider !== "custom") assert.match(row.keyUrl, /^https:\/\//, `${provider} links to its key page`);
+    assert.ok(!/\u2014/.test(`${row.name} ${row.line} ${row.badge || ""}`), `${provider}: no em dash`);
+  }
+  // The first row: OpenRouter, Anthropic, OpenAI and Gemini, in that order.
+  assert.deepEqual(Object.keys(info).filter((p) => info[p].top), ["openrouter", "anthropic", "openai", "gemini"]);
+  assert.equal(info.openrouter.badge, "Recommended");
+  assert.equal(info.anthropic.badge, "Most tested");
+  // A free tier is marked on OpenRouter and on each free backup provider.
+  const free = Object.keys(info).filter((p) => info[p].free).sort();
+  assert.deepEqual(free, ["openrouter", ...defaults.FREE_BACKUPS.map((b) => b.provider)].sort());
 });

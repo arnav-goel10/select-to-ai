@@ -46,7 +46,7 @@ test("the free path is sent at the sampling of the model it goes out as", () => 
   const free = cfg({ provider: "openrouter", apiKey: "sk-or-test", baseUrl: "https://openrouter.ai/api/v1", model: "openrouter/free" });
   const first = LLM.buildRequest({ system: "s", user: "u", tool }, free, "openrouter/free", { maxTokens: 4000 }).body;
   assert.equal(first.model, D.OPENROUTER_FREE_CHAIN[0]);
-  assert.match(first.model, /gemma/);
+  assert.match(first.model, /nemotron-3\.5-super-vl/);
   assert.equal(first.temperature, D.modelProfile(first.model).temperature);
   // The chain's head now takes the steady default, so to see the sampling
   // follow the id sent, not "openrouter/free", a fresh client is given a

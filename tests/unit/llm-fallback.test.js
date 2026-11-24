@@ -115,6 +115,8 @@ test("recipe repairs use the run's own model for a paid OpenRouter model or a cu
     [{ provider: "openrouter", model: "google/gemma-4-31b-it:free", liteModel: "openrouter/free" }, "lite", "openrouter/free"],
     [{ provider: "custom", model: "my-gateway-model", liteModel: "my-gateway-model" }, "pro", "my-gateway-model"],
     [{ provider: "anthropic", model: "claude-sonnet-5-5", liteModel: "claude-haiku-5-5" }, "lite", "claude-haiku-5-5"],
+    // Since 25 Nov 2026 a paid OpenRouter model has Haiku as its cheap one (llm.js settingsFrom).
+    [{ provider: "openrouter", model: "anthropic/claude-sonnet-5.5", liteModel: "anthropic/claude-haiku-5.5" }, "lite", "anthropic/claude-haiku-5.5"],
   ];
   for (const [c, tier, model] of cases) {
     const calls = [];
@@ -166,4 +168,15 @@ test("a second refusal of the limit's name is not answered with another swap", a
   const refusal = () => err(400, "Unsupported parameter: 'max_completion_tokens'.");
   await assert.rejects(client([refusal(), refusal(), refusal()], seen).call(ask, keyed("openai")));
   assert.ok(sent(seen).length <= 3);
+});
+
+test("on OpenRouter a free main model keeps the cheap calls free, and a paid one has Haiku as its cheap model", () => {
+  const LLM = require("../../extension/core/llm.js");
+  const at = (model) => LLM.settingsFrom({ agentActiveProvider: "openrouter", agentModel: model, agentOpenRouterKey: "sk-or-v1-test" }, 0);
+  assert.equal(at("openrouter/free").liteModel, "openrouter/free");
+  assert.equal(at("nvidia/nemotron-3.5-lightning:free").liteModel, "nvidia/nemotron-3.5-lightning:free");
+  const paid = at("anthropic/claude-sonnet-5.5");
+  assert.equal(paid.model, "anthropic/claude-sonnet-5.5");
+  assert.equal(paid.liteModel, D.PROVIDER_FALLBACK_MODELS.openrouter.lite);
+  assert.equal(paid.liteModel, "anthropic/claude-haiku-5.5");
 });
