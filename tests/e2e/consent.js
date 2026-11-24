@@ -174,7 +174,15 @@ async function main() {
       const before = await calls(a);
       const page = await open(`chrome-extension://${id}/options.html`, "options");
       await sleep(600);
+      // The provider fields are on show without a click. Change opens the
+      // setup picker in its own tab, which sends nothing either.
+      check("settings: the provider fields show without a click", await page.$eval("#providerPanel", (el) => !el.hidden), "the panel is hidden");
+      const picker = browser.waitForTarget((t) => t.url().includes("/welcome.html?step=connect"), { timeout: 5000 }).catch(() => null);
       await page.click("#changeBtn");
+      const opened = await picker;
+      check("settings: Change opens the setup picker", !!opened, "no welcome.html?step=connect tab");
+      if (opened) { const p = await opened.page(); if (p) await p.close(); }
+      await page.bringToFront();
       await page.click("#testBtn");
       const card = await waitFor(() => page.$("#consentSlot .consent-card"), 5000);
       await sleep(1000);
