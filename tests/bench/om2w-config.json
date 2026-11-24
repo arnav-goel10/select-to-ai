@@ -16,7 +16,7 @@
       ["vault", 0.8667],
       ["reserve", 1]
     ],
-    "digest": "",
+    "digest": "e77edb046bc7eb74819f8735fa9286b4815a8ab668dc2c5065c9086cacb1efe5",
     "sealedShardMinTasks": 5,
     "sealedReportMinTasks": 10,
     "sealedParts": ["gate", "vault", "reserve"],
