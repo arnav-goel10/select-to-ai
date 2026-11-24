@@ -209,7 +209,7 @@ const STATES = {
   },
   approval: {
     ready: true,
-    msgs: [snap("waiting", [...BASE, status("executor", "Step 5…"), log("executor", "Step 5", "Continue to payment for the ZIPAIR fare"), status("executor", "Checking what this button does…"), log("system", "Second Check", 'Pressing "Continue to payment" looks like it would spend money: it moves to card details for S$248.'), ask({ kind: "approval", risk: "pay", question: 'Pressing "Continue to payment" would spend money: the ZIPAIR fare for S$248.', detail: ["On: Continue to payment", "Why: the request asked for the price, not to book"] }), status("idle", "Waiting for your go-ahead")], { waitingForUser: true, waitKind: "approval" }, { kind: "approval" })],
+    msgs: [snap("waiting", [...BASE, status("executor", "Step 5…"), log("executor", "Step 5", "Continue to payment for the ZIPAIR fare"), status("executor", "Checking what this button does…"), log("system", "Second Check", 'Pressing "Continue to payment" looks like it would spend money: it moves to card details for S$248.'), ask({ kind: "approval", risk: "pay", question: 'Pressing "Continue to payment" would spend money: the ZIPAIR fare for S$248.', detail: ["On: Continue to payment", "Why: Continue to payment for the ZIPAIR fare"] }), status("idle", "Waiting for your go-ahead")], { waitingForUser: true, waitKind: "approval" }, { kind: "approval" })],
   },
   handover: {
     ready: true,

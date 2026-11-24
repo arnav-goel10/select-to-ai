@@ -76,6 +76,17 @@
   const liveTime = document.getElementById("liveTime");
   const liveStopBtn = document.getElementById("liveStopBtn");
   const topbarTitle = document.getElementById("topbarTitle");
+  // What a screen reader hears: a step starting, a wait beginning, the run
+  // ending. Never the goal as it is being written.
+  const liveAnnounce = document.getElementById("liveAnnounce");
+  let lastAnnounced = "";
+  function announce(text) {
+    const t = String(text || "").trim();
+    if (!liveAnnounce || !t || t === lastAnnounced) return;
+    lastAnnounced = t;
+    liveAnnounce.textContent = t;
+  }
+  const WORDS = globalThis.SELECT_TO_AI_RUNWORDS;
 
   const credentialsWarning = document.getElementById("credentialsWarning");
   const openKeySettings = document.getElementById("openKeySettings");
@@ -162,6 +173,26 @@
     return el("span", `dot${cls ? ` ${cls}` : ""}`);
   }
 
+  // ---------- motion ----------
+  // The look of each move lives in tokens.css and agent.css. Scripts only
+  // say when: a view that changes as a whole goes through viewChange, and
+  // something that leaves goes through leave().
+  const reduceMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /** A change of view, cross-faded by the View Transitions API where Chrome has it, plain elsewhere. */
+  function viewChange(update) {
+    if (!document.startViewTransition || reduceMotion() || document.hidden) { update(); return; }
+    try { document.startViewTransition(update); } catch (_e) { update(); }
+  }
+
+  /** Takes a node away with a short fade and lift; at once under reduced motion. */
+  function leave(node, then) {
+    if (!node) return;
+    if (reduceMotion() || !node.isConnected) { node.remove(); if (then) then(); return; }
+    node.classList.add("ui-leaving");
+    setTimeout(() => { node.remove(); if (then) then(); }, 130);
+  }
+
   // The icon for each kind of action the model can take.
   const ACTION_ICON = {
     click: "pointer", click_at: "pointer", double_click: "pointer", right_click: "pointer", hold: "pointer", hover: "hover", drag: "move", fill: "pencil", fill_details: "idcard",
@@ -230,15 +261,35 @@
   });
   if (liveStopBtn) liveStopBtn.addEventListener("click", () => enginePost({ type: "stop", text: "Stopped." }));
 
-  // Auto-grow textarea helper
+  // The box grows with its text. The height moves from where it was to
+  // where it needs to be (a short transition in agent.css), instead of
+  // jumping; nothing is measured when the height would not change.
   function adjustTextareaHeight() {
+    const was = taskInput.offsetHeight;
     taskInput.style.height = "auto";
-    taskInput.style.height = taskInput.scrollHeight + "px";
+    const want = taskInput.scrollHeight;
+    if (!was || want === was) { taskInput.style.height = `${want}px`; paintSendState(); return; }
+    taskInput.style.height = `${was}px`;
+    void taskInput.offsetHeight;
+    taskInput.style.height = `${want}px`;
+    paintSendState();
   }
 
-  // Suggestion prompt clicks
+  // An empty box has nothing to send: the button looks it, until there is text.
+  function paintSendState() {
+    const empty = !taskInput.value.trim() && !isRunning && !actionBtn.disabled;
+    if (empty) actionBtn.setAttribute("aria-disabled", "true");
+    else actionBtn.removeAttribute("aria-disabled");
+  }
+
+  // A suggestion fills the box. With no model connected it cannot run, so it
+  // goes to the one-click setup instead of looking ready.
   document.querySelectorAll(".suggestion-card").forEach((card) => {
     card.addEventListener("click", () => {
+      if (!hasProviderCredentials(config.agentActiveProvider)) {
+        chrome.tabs.create({ url: chrome.runtime.getURL("welcome.html?step=connect") });
+        return;
+      }
       taskInput.value = card.getAttribute("data-prompt");
       taskInput.focus();
       adjustTextareaHeight();
@@ -259,15 +310,36 @@
   taskInput.addEventListener("input", adjustTextareaHeight);
   adjustTextareaHeight();
 
-  // Escape key to stop agent execution
+  // Escape backs out: it closes a menu or the drawer, and clears what is
+  // typed in the box. It stops a run only when pressed twice, so a reflex
+  // press never throws away work.
+  let escArmedUntil = 0;
   document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
+    if (e.key !== "Escape" || e.isComposing) return;
     if (assistantsMenu && !assistantsMenu.hidden) { closeAssistants(); return; }
     if (memoryModal && !memoryModal.hidden) return;
     if (recipesModal && !recipesModal.hidden) return;
     if (isNarrow() && sidebar && !sidebar.classList.contains("collapsed")) { setSidebar(false); return; }
-    if (engineBusy()) enginePost({ type: "stop", text: "Stopped." });
+    if (document.activeElement === taskInput && taskInput.value) { taskInput.value = ""; adjustTextareaHeight(); return; }
+    if (!engineBusy()) return;
+    if (Date.now() < escArmedUntil) {
+      escArmedUntil = 0;
+      enginePost({ type: "stop", text: "Stopped." });
+      return;
+    }
+    escArmedUntil = Date.now() + 2500;
+    sayUnderComposer("Press Esc again to stop the task.", 2500);
+    announce("Press Escape again to stop the task.");
   });
+
+  // A short line under the box (what was sent, how to stop); it clears itself.
+  let steerTimer = null;
+  function sayUnderComposer(text, ms) {
+    if (!steerPending) return;
+    steerPending.textContent = text;
+    clearTimeout(steerTimer);
+    steerTimer = setTimeout(() => { steerPending.textContent = ""; }, ms || 4000);
+  }
 
   // In a narrow window (the side panel) the drawer overlays the run, so it
   // always starts closed there; the remembered open or closed choice is for
@@ -276,6 +348,16 @@
   let sidebarRestored = false;
   function setSidebar(open, remember) {
     if (!sidebar) return;
+    // On a wide page the drawer pushes the run aside: the browser moves the
+    // two as pictures (a view transition) instead of laying the run out on
+    // every frame. In the side panel it slides over the run by transform.
+    if (remember && !isNarrow() && sidebar.classList.contains("collapsed") === open) {
+      viewChange(() => applySidebar(open, remember));
+      return;
+    }
+    applySidebar(open, remember);
+  }
+  function applySidebar(open, remember) {
     sidebar.classList.toggle("collapsed", !open);
     if (sidebarToggleBtn) {
       sidebarToggleBtn.setAttribute("aria-expanded", String(open));
@@ -304,18 +386,13 @@
   // --- Guidance while running ---
   // A message typed while the run works goes to the engine, which gives it
   // to the model before its next step. It never interrupts or stops the run.
-  let steerTimer = null;
   function queueSteerMessage() {
     const text = (taskInput.value || "").trim();
     if (!text) return;
     enginePost({ type: "send", text });
     taskInput.value = "";
     adjustTextareaHeight();
-    if (steerPending) {
-      steerPending.textContent = "Sent. It reads this before its next step.";
-      clearTimeout(steerTimer);
-      steerTimer = setTimeout(() => { steerPending.textContent = ""; }, 4000);
-    }
+    sayUnderComposer("Sent. It reads this before its next step.", 4000);
   }
 
   // --- History: recent tasks, with how each ended ---
@@ -399,18 +476,32 @@
   // ---------- Memory panel ----------
   const memoryModal = document.getElementById("memoryModal");
   let memoryOpener = null;
+  const appContainer = document.querySelector(".app-container");
+  const modalOpen = () => [memoryModal, document.getElementById("recipesModal")].some((m) => m && !m.hidden);
+  /** A dialog opens over the page; Tab stays in it because the page behind is inert. */
+  function showModal(modal) {
+    modal.classList.remove("ui-leaving");
+    modal.hidden = false;
+    if (appContainer) appContainer.inert = true;
+  }
+  function hideModal(modal) {
+    if (appContainer) appContainer.inert = false;
+    if (reduceMotion()) { modal.hidden = true; return; }
+    modal.classList.add("ui-leaving");
+    setTimeout(() => { if (modal.classList.contains("ui-leaving")) { modal.hidden = true; modal.classList.remove("ui-leaving"); } }, 130);
+  }
   function openMemoryModal() {
     if (!memoryModal) return;
     memoryOpener = document.activeElement;
     enginePost({ type: "memory_get" });
     renderKnown();
-    memoryModal.hidden = false;
+    showModal(memoryModal);
     const close = document.getElementById("memoryClose");
     if (close) close.focus();
   }
   function closeMemoryModal() {
     if (!memoryModal) return;
-    memoryModal.hidden = true;
+    hideModal(memoryModal);
     if (memoryOpener && memoryOpener.isConnected) memoryOpener.focus();
   }
   function memoryRow(text, sub, onDelete, onEdit) {
@@ -507,13 +598,13 @@
    * for a run that did nothing on a page, which has nothing to repeat.
    */
   function drawSaveRecipe(runId) {
-    const host = activeBubbleAnswer ? activeBubbleAnswer.parentElement : null;
+    const host = answerFoot();
     if (!host || !runId || host.querySelector(".recipe-save")) return;
-    const note = el("div", "memory-note recipe-save");
+    const note = el("span", "recipe-save");
     note.hidden = true;
     host.appendChild(note);
     const saved = () => {
-      const view = el("button", "", "View");
+      const view = el("button", "link-btn", "View");
       view.type = "button";
       view.addEventListener("click", openRecipesModal);
       note.textContent = "";
@@ -535,14 +626,20 @@
     ask().then((can) => {
       if (can && can.saved) { saved(); return; }
       if (!can || !can.ok) {
-        if (can && (can.nothing || can.pending)) return;
-        if (!can || can.lost) say("Save as recipe could not be checked: the extension is restarting. Reopen this page to try again.");
-        else say(`This run cannot be saved as a recipe: ${can.why || "it was not recorded"}.`);
+        // A run with nothing to repeat, one still going, or one whose
+        // recording the extension no longer holds says nothing: that is the
+        // extension's business, not the user's. A reason that is about the
+        // run itself (it used saved details) is said in one line.
+        if (!can || can.lost || can.gone || can.nothing || can.pending) return;
+        say(`This run cannot be saved as a recipe: ${can.why || "it was not recorded"}.`);
         return;
       }
-      const label = el("span", "", `Repeat this without the AI: ${can.steps} step${can.steps === 1 ? "" : "s"} on the page.`);
-      const save = el("button", "recipe-save-btn", "Save as recipe");
+      const repeat = `Repeat this without the AI: ${can.steps} step${can.steps === 1 ? "" : "s"} on the page.`;
+      const label = el("span", "visually-hidden", repeat);
+      const save = el("button", "recipe-save-btn pill", "");
       save.type = "button";
+      save.title = repeat;
+      save.append(icon("play"), el("span", "", "Save as recipe"));
       save.addEventListener("click", async () => {
         save.disabled = true;
         const r = await recipesAsk({ type: "save", runId });
@@ -689,14 +786,14 @@
   function openRecipesModal() {
     if (!recipesModal) return;
     recipesOpener = document.activeElement;
-    recipesModal.hidden = false;
+    showModal(recipesModal);
     renderRecipes();
     const close = document.getElementById("recipesClose");
     if (close) close.focus();
   }
   function closeRecipesModal() {
     if (!recipesModal) return;
-    recipesModal.hidden = true;
+    hideModal(recipesModal);
     if (recipesOpener && recipesOpener.isConnected) recipesOpener.focus();
   }
   const openRecipesBtn = document.getElementById("openRecipesBtn");
@@ -717,10 +814,12 @@
   if (newTaskBtn) {
     newTaskBtn.addEventListener("click", () => {
       enginePost({ type: "reset" });
-      // Clear the conversation
-      chatContainer.querySelectorAll(".message-bubble, .chat-note").forEach((b) => b.remove());
-      activeRun = null;
-      welcomeScreen.style.display = "flex";
+      // Clear the conversation: the old one cross-fades into the empty state.
+      viewChange(() => {
+        chatContainer.querySelectorAll(".message-bubble, .chat-note").forEach((b) => b.remove());
+        activeRun = null;
+        showWelcome(true);
+      });
       taskInput.value = "";
       adjustTextareaHeight();
       if (isNarrow()) setSidebar(false);
@@ -927,7 +1026,7 @@
       if (!a || !a.signedIn) return "The agent needs you to sign in with ChatGPT first.";
       return a.planEnabled ? "" : "ChatGPT plan use is not turned on for this sign-in. Turn it on in Settings with Continue with ChatGPT.";
     }
-    if (!key) return `Missing API key for active provider "${provider}".`;
+    if (!key) return `There is no key for ${friendlyProviderName(provider)} yet.`;
     if (
       key === "sk-or-v1-..." ||
       key === "sk-proj-..." ||
@@ -936,7 +1035,7 @@
       key === "gsk_..." ||
       key.toLowerCase() === "api key"
     ) {
-      return `The saved ${provider} API key looks like a placeholder, not a real key.`;
+      return `The saved ${friendlyProviderName(provider)} key looks like a placeholder, not a real key.`;
     }
     if (provider === "openrouter" && !key.startsWith("sk-or-"))
       return 'OpenRouter keys usually start with "sk-or-". Check that the active provider matches the key you saved.';
@@ -965,13 +1064,16 @@
     return !getProviderKeyValidationError(provider, details.apiKey);
   }
 
+  /** Why the task cannot run yet, in one or two plain sentences, with what to do. */
   function getMissingCredentialsMessage(provider) {
     const details = getProviderDetails(provider);
     const validationError = getProviderKeyValidationError(
       provider,
       details.apiKey,
     );
-    return `${validationError || `The agent needs an AI model connected first.`} Press "Connect" below, then run the task again.`;
+    // No key at all is the usual first run: one sentence on what to do.
+    if (!validationError || !(details.apiKey || "").trim()) return "Connect a model first. It is free and takes about 20 seconds: press Connect below, then press Enter here to run this task.";
+    return `${validationError} Fix it with Connect below, then press Enter here to run this task.`;
   }
 
   // Load non-sensitive settings from sync storage and credentials locally.
@@ -1088,6 +1190,9 @@
         credentialsWarning.style.display = "none";
         actionBtn.disabled = false;
       }
+      // With nothing connected the suggestions lead to Connect, and look it.
+      welcomeScreen.dataset.ready = missingCredentials ? "false" : "true";
+      paintSendState();
       if (callback) callback();
         });
       },
@@ -1119,8 +1224,18 @@
     }
   });
 
+  // The empty state shows only once the engine has said there is nothing to
+  // show (or after a short wait for a slow worker), so a panel reopened on a
+  // finished task never flashes "What should I do?" first.
+  let welcomeKnown = false;
+  function showWelcome(show) {
+    welcomeKnown = true;
+    welcomeScreen.style.display = show ? "flex" : "none";
+  }
+  setTimeout(() => { if (!welcomeKnown && !chatContainer.querySelector(".message-bubble")) showWelcome(true); }, 900);
+
   function appendSimpleUserBubble(text, selection) {
-    welcomeScreen.style.display = "none";
+    showWelcome(false);
     const userBubble = document.createElement("div");
     userBubble.className = "message-bubble user";
     const content = document.createElement("div");
@@ -1238,9 +1353,25 @@
   }
 
   // The view follows new work only while the user is at the bottom of it.
+  // Whether they are is kept from their own scrolling, so drawing a step
+  // never has to read the layout it just changed; the scroll itself is one
+  // write per frame, however many entries arrived in it.
+  let followBottom = true;
+  let scrollQueued = false;
+  let replaying = false;
+  chatViewport.addEventListener("scroll", () => {
+    if (scrollQueued) return;
+    followBottom = chatViewport.scrollHeight - chatViewport.scrollTop - chatViewport.clientHeight < 160;
+  }, { passive: true });
   function scrollToBottom(force) {
-    const gap = chatViewport.scrollHeight - chatViewport.scrollTop - chatViewport.clientHeight;
-    if (force || gap < 160) chatViewport.scrollTop = chatViewport.scrollHeight;
+    if (force) followBottom = true;
+    if (!followBottom || scrollQueued || replaying) return;
+    scrollQueued = true;
+    requestAnimationFrame(() => {
+      chatViewport.scrollTop = chatViewport.scrollHeight;
+      // The scroll event this write fires is ours, not the user's.
+      requestAnimationFrame(() => { scrollQueued = false; });
+    });
   }
 
   // ==========================================
@@ -1312,25 +1443,41 @@
     goal.appendChild(goalWords);
     const host = el("span", "tl-host");
     host.hidden = true;
-    line.append(goal, host);
+    // The one way to see what a step did: the chevron at the end of its line
+    // (the whole line answers a click too). It shows once there is something to see.
+    const toggle = el("button", "tl-toggle pressable");
+    toggle.type = "button";
+    toggle.hidden = true;
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.setAttribute("aria-label", `What step ${n} did`);
+    toggle.title = "What it did";
+    const chev = icon("chevron");
+    chev.classList.add("chev");
+    toggle.appendChild(chev);
+    line.append(goal, host, toggle);
     const summary = el("div", "tl-summary");
     const more = el("details", "tl-more");
     more.hidden = true;
     const moreSummary = el("summary");
-    moreSummary.append(icon("chevron"), el("span", "", "Details"));
-    moreSummary.firstChild.classList.add("chev");
+    moreSummary.tabIndex = -1;
+    moreSummary.setAttribute("aria-hidden", "true");
     const moreBody = el("div", "tl-more-body");
     more.append(moreSummary, moreBody);
     body.append(line, summary, more);
     li.append(ic, body);
     activeLogsWrapper.appendChild(li);
-    const step = { li, ic, goalWords, host, summary, more, moreBody, n, kind: "" };
+    const flip = () => { more.open = !more.open; };
+    toggle.addEventListener("click", (e) => { e.stopPropagation(); flip(); });
+    line.addEventListener("click", (e) => { if (!toggle.hidden && !e.target.closest("a, button")) flip(); });
+    more.addEventListener("toggle", () => { toggle.setAttribute("aria-expanded", String(more.open)); li.classList.toggle("is-open", more.open); });
+    const step = { li, ic, goalWords, host, summary, more, moreBody, toggle, n, kind: "" };
     activeRun.steps.set(n, step);
     activeRun.count = Math.max(activeRun.count, n);
     setCurrentStep(step);
     syncStepHosts();
     updateRunSummary();
     updateLive();
+    if (!drawingSub && !replaying) announce(`Step ${n}: ${goalText}`);
     return step;
   }
 
@@ -1354,6 +1501,12 @@
     item.append(el("span", "log-text", text), el("time", "log-time", stamp()));
     s.moreBody.appendChild(item);
     s.more.hidden = false;
+    s.toggle.hidden = false;
+    // The names the model gave the page's controls, so results can use them.
+    if (WORDS) activeRun.names = WORDS.namesIn(text, activeRun.names);
+    // Until its result is in, the step's sub-line says what it is doing.
+    s.summary.textContent = `${plainAction(text)}…`;
+    s.summary.classList.add("is-doing");
   }
 
   function addResult(text, failed) {
@@ -1363,8 +1516,12 @@
     item.append(el("span", "log-text", text), el("time", "log-time", stamp()));
     s.moreBody.appendChild(item);
     s.more.hidden = false;
-    const first = String(text || "").replace(/\s+/g, " ").trim();
-    s.summary.textContent = first.length > 240 ? `${first.slice(0, 239)}…` : first;
+    s.toggle.hidden = false;
+    // The row says it the way a person would: the control by its name and
+    // the site by its host, cut between sentences. The raw text is in the details.
+    const plain = WORDS ? WORDS.clipWords(WORDS.plainResult(text, activeRun.names), 200) : String(text || "").replace(/\s+/g, " ").trim().slice(0, 200);
+    s.summary.textContent = plain;
+    s.summary.classList.remove("is-doing");
     s.li.classList.toggle("is-failed", !!failed);
   }
 
@@ -1404,6 +1561,9 @@
     body.appendChild(item);
     li.append(ic, body);
     activeLogsWrapper.appendChild(li);
+    if (title === "Second Check" && activeRun) activeRun.secondCheck = li;
+    // A failed check reads in full here; the answer it sent back only says so.
+    if (look[1] === "bad" || look[1] === "warn") li.classList.add("tl-full");
   }
 
   // ---------- sub-tasks ----------
@@ -1618,11 +1778,7 @@
       // Say it where the answer would have appeared, and keep the task.
       try {
         appendSimpleUserBubble(task);
-        appendSimpleAssistantBubble(
-          "I can't run this yet: " + message +
-            "\n\nPress \"Connect\" below (it takes about 20 seconds, free), " +
-            "then press Enter here to run the task again.",
-        );
+        appendSimpleAssistantBubble(message);
         taskInput.value = task;
       } catch (_e) { /* the warning strip still stands */ }
       return;
@@ -2025,8 +2181,14 @@
   }
 
   /** The site the run is on: the tab's address, or the last page a step was on. */
+  let liveSiteKey = "";
   function updateLiveSite() {
     const history = (engineTrace && engineTrace.history) || [];
+    // The browser is asked for the tab's address only when the tab or the
+    // steps changed, not on every update.
+    const key = `${engineTrace && engineTrace.tabId}|${history.length}|${engineStatus}`;
+    if (key === liveSiteKey) return;
+    liveSiteKey = key;
     const lastUrl = [...history].reverse().map((h) => h.url).find((u) => hostOf(u)) || "";
     const show = (url) => {
       const host = hostOf(url);
@@ -2109,23 +2271,84 @@
   }
 
   function clearDraft() {
+    streamRaw = null;
     if (!activeRun || !activeRun.draft) return;
-    activeRun.draft.hidden = true;
-    activeRun.draft.textContent = "";
+    const draft = activeRun.draft;
+    draft.hidden = true;
+    draft.textContent = "";
+    draft.done = null;
+    draft.doneText = "";
+    draft.liveText = "";
   }
 
+  /** Where the finished blocks of a Markdown text end: after its last blank line outside a code block. */
+  function finishedBlocksEnd(text) {
+    let fenced = false;
+    let pos = 0;
+    let end = 0;
+    const lines = text.split("\n");
+    for (let i = 0; i < lines.length - 1; i++) {
+      const line = lines[i];
+      if (/^\s*```/.test(line)) fenced = !fenced;
+      pos += line.length + 1;
+      if (!fenced && !line.trim()) end = pos;
+    }
+    return end;
+  }
+
+  /**
+   * The answer as it is written. Blocks that are finished are rendered once
+   * and kept; only the block being written is rendered again, so a long
+   * answer costs the same per update as a short one. The caret is CSS on
+   * the last block.
+   */
+  function paintDraft(answer) {
+    const draft = activeRun.draft;
+    if (!(draft instanceof HTMLElement)) return;
+    if (!draft.done || !answer.startsWith(draft.doneText || "")) {
+      draft.textContent = "";
+      draft.done = el("div", "draft-done");
+      draft.live = el("div", "draft-live");
+      draft.append(draft.done, draft.live);
+      draft.doneText = "";
+      draft.liveText = "";
+    }
+    const end = finishedBlocksEnd(answer);
+    if (end > draft.doneText.length) {
+      draft.done.insertAdjacentHTML("beforeend", renderAnswerHtml(answer.slice(draft.doneText.length, end)));
+      draft.doneText = answer.slice(0, end);
+    }
+    const tail = tidyDraft(answer.slice(end));
+    if (tail !== draft.liveText) {
+      draft.liveText = tail;
+      draft.live.innerHTML = tail.trim() ? renderAnswerHtml(tail) : "";
+    }
+    draft.classList.toggle("tail-empty", !tail.trim());
+    draft.hidden = false;
+  }
+
+  // Streamed text is drawn at most once a frame, from the latest message.
+  let streamRaw = null;
+  let streamQueued = false;
   function onStream(text) {
+    streamRaw = String(text || "");
+    if (streamQueued) return;
+    streamQueued = true;
+    requestAnimationFrame(() => {
+      streamQueued = false;
+      const latest = streamRaw;
+      streamRaw = null;
+      if (latest !== null) drawStream(latest);
+    });
+  }
+
+  function drawStream(raw) {
     if (!activeRun) return;
-    const raw = String(text || "");
     if (!raw) { if (activeRun.pendingThought) activeRun.pendingThought.textContent = ""; return; }
     const answer = /"do"\s*:\s*"done"/.test(raw) || /"answer"\s*:/.test(raw) ? partialField(raw, "answer") : null;
     if (answer && answer.trim()) {
       clearPending();
-      const draft = activeRun.draft;
-      draft.innerHTML = renderAnswerHtml(tidyDraft(answer));
-      const blocks = draft.querySelectorAll("p, li, h2, h3, h4, h5, td");
-      (blocks.length ? blocks[blocks.length - 1] : draft).appendChild(el("span", "caret"));
-      draft.hidden = false;
+      paintDraft(answer);
       updateLive();
       scrollToBottom();
       return;
@@ -2133,6 +2356,8 @@
     const goal = partialField(raw, "goal");
     if (goal && goal.trim() && engineStatus === "running") {
       showPending(goal.trim());
+      // The step it is about to take has a sub-line too, until it acts.
+      if (activeRun.pendingThought && !activeRun.pendingThought.textContent) activeRun.pendingThought.textContent = "Working out how";
       return;
     }
     // Plain words from a model that thinks out loud: one quiet line.
@@ -2143,24 +2368,20 @@
   }
 
   /** The composer and buttons, for where the run is. */
+  let controlsMode = "";
+  let hintMode = "";
   function engineControls() {
     const working = engineBusy();
     isRunning = working;
-    actionBtn.classList.toggle("stop-btn", working);
-    actionBtn.title = working ? "Stop" : "Run";
-    actionBtn.setAttribute("aria-label", working ? "Stop" : "Run");
-    actionBtn.textContent = "";
-    if (working) {
-      const sq = icon("stop");
-      sq.setAttribute("width", "14");
-      sq.setAttribute("height", "14");
-      actionBtn.appendChild(sq);
-    } else {
-      const up = icon("up");
-      up.setAttribute("width", "16");
-      up.setAttribute("height", "16");
-      up.setAttribute("stroke-width", "2.5");
-      actionBtn.appendChild(up);
+    // The send button turns into Stop: both icons are in the button, and the
+    // class change morphs one into the other (agent.css). Nothing is rebuilt.
+    const mode = working ? "stop" : "send";
+    if (mode !== controlsMode) {
+      controlsMode = mode;
+      actionBtn.classList.toggle("stop-btn", working);
+      actionBtn.title = working ? "Stop" : "Run";
+      actionBtn.setAttribute("aria-label", working ? "Stop" : "Run");
+      paintSendState();
     }
     // While the run works, the composer takes guidance for its next step.
     // A sub-task waiting on a question takes the next message as its answer.
@@ -2177,8 +2398,13 @@
           : kind === "check_in" ? "Add something and keep going"
             : kind === "question" ? "Type your answer"
               : asking ? "Reply here, or do it on the page" : aboutSelection ? "Ask about the selected text" : "Ask anything, or tell it what to do";
-    composerHint.textContent = "";
-    composerHint.append(el("kbd", "", "Enter"), document.createTextNode(steering ? " to add" : " to send"));
+    const hint = steering ? "steer" : "send";
+    if (hint !== hintMode) {
+      hintMode = hint;
+      composerHint.textContent = "";
+      if (steering) composerHint.append(el("kbd", "", "Enter"), document.createTextNode(" to add, "), el("kbd", "", "Esc"), document.createTextNode(" twice to stop"));
+      else composerHint.append(el("kbd", "", "Enter"), document.createTextNode(" to send"));
+    }
     composerHint.hidden = taskInput.disabled;
     if (activeRun && activeRun.step) activeRun.step.li.classList.toggle("is-current", engineStatus === "running" && !activeRun.pending);
     if (engineStatus !== "running") clearPending();
@@ -2215,11 +2441,41 @@
     return b;
   }
 
+  /**
+   * The facts under a card's question, as label and value, without what is
+   * already on screen: the control's name when the question names it, and
+   * the step's aim when it is the step just above.
+   */
+  const DETAIL_LABELS = { On: "Button", Why: "For the step", Address: "Address" };
+  /** An address as a person reads it: the site and the path, without the scheme or the tracking query. */
+  function shortAddress(url) {
+    try {
+      const u = new URL(url);
+      const path = u.pathname.replace(/\/$/, "");
+      return `${u.host.replace(/^www\./, "")}${path.length > 48 ? `${path.slice(0, 47)}…` : path}`;
+    } catch (_e) { return String(url || ""); }
+  }
+  function cardDetails(wait) {
+    const said = String(wait.question || "");
+    const stepGoal = activeRun && activeRun.step ? activeRun.step.goalWords.textContent.trim() : "";
+    const out = [];
+    for (const line of wait.detail || []) {
+      const m = /^(On|Why|Address):\s*(.*)$/s.exec(String(line || ""));
+      if (!m) { out.push(["", String(line || "")]); continue; }
+      const value = m[2].trim();
+      if (!value) continue;
+      if (m[1] === "On" && said.toLowerCase().includes(value.toLowerCase())) continue;
+      if (m[1] === "Why" && value.toLowerCase() === stepGoal.toLowerCase()) continue;
+      out.push([DETAIL_LABELS[m[1]], m[1] === "Address" ? shortAddress(value) : value]);
+    }
+    return out;
+  }
+
   /** A card for something the run is waiting on the user for. */
   function drawWait(wait) {
     const card = document.createElement("div");
     const approval = wait.kind === "approval";
-    card.className = `message-bubble assistant confirmation-bubble ${approval && wait.risk !== "share" ? "risk" : approval ? "share" : "needs-you"}`;
+    card.className = `message-bubble assistant wait-card confirmation-bubble ${approval && wait.risk !== "share" ? "risk" : approval ? "share" : "needs-you"}`;
     if (approval) card.dataset.riskKind = wait.risk || "unknown";
     card.dataset.waitKind = wait.kind;
     const look = CARD_LOOK[approval && wait.risk === "share" ? "share" : wait.kind] || ["help", "needs"];
@@ -2245,10 +2501,17 @@
     text.className = "confirm-text";
     text.textContent = wait.question || "";
     content.appendChild(text);
-    if ((wait.detail || []).length) {
+    const details = cardDetails(wait);
+    if (details.length) {
       const detail = document.createElement("div");
       detail.className = "confirm-detail";
-      for (const line of wait.detail) { const row = document.createElement("div"); row.textContent = line; detail.appendChild(row); }
+      for (const [label, line] of details) {
+        const row = document.createElement("div");
+        row.className = "confirm-detail-row";
+        if (label) row.dataset.label = label;
+        row.textContent = line;
+        detail.appendChild(row);
+      }
       content.appendChild(detail);
     }
     // A hand-off carries what the run found before it, for a user who cannot do this part.
@@ -2359,20 +2622,36 @@
     }
     if (actions.children.length) content.appendChild(actions);
     card.appendChild(content);
+    // The second check's row said what the card now asks: the card stands for it.
+    if (approval && activeRun && activeRun.secondCheck) { activeRun.secondCheck.classList.add("tl-quiet"); activeRun.secondCheck = null; }
     chatContainer.appendChild(card);
     engineCards.set(wait.id, card);
     scrollToBottom(true);
+    if (replaying) return;
+    announce(`${title.textContent} ${wait.question || ""}`.trim());
+    // A decision takes focus, so Enter or Tab acts on it; never out of a dialog
+    // or a field the user is typing in.
+    const first = actions.querySelector("button");
+    const active = document.activeElement;
+    const free = !active || active === document.body || active === taskInput || active === actionBtn;
+    if (first && free && (approval || wait.kind === "site_access" || wait.kind === "check_in" || wait.kind === "pause")) {
+      requestAnimationFrame(() => first.focus({ preventScroll: true }));
+    }
   }
 
   /** An answered card leaves quickly; it stops counting as a card at once. */
   function removeCard(card) {
     if (!card) return;
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduce || !card.isConnected) { card.remove(); return; }
-    card.className = "card-leaving";
+    // It keeps its look while it fades: only a marker class is added, and
+    // the attributes the harnesses look for go at once.
+    // It keeps its look while it fades (that comes from .wait-card), but it
+    // stops counting as a card at once: the classes and attributes that
+    // name it as one go now.
+    card.classList.remove("message-bubble", "confirmation-bubble", "risk", "share", "needs-you", "save-offer");
+    card.classList.add("card-leaving");
     card.removeAttribute("data-wait-kind");
     card.removeAttribute("data-risk-kind");
-    setTimeout(() => card.remove(), 130);
+    leave(card);
   }
 
   /**
@@ -2382,9 +2661,9 @@
    */
   function drawSources(host, sources) {
     const pages = (sources || []).filter((x) => x && hostOf(x.url));
-    if (!pages.length) return;
-    const row = el("div", "answer-meta answer-sources");
-    row.appendChild(el("span", "meta-label", "Pages used"));
+    if (!pages.length || !host) return;
+    const row = el("span", "answer-meta answer-sources");
+    row.appendChild(el("span", "meta-label visually-hidden", "Pages used"));
     for (const p of pages.slice(0, 6)) {
       const a = el("a", "pill");
       a.href = p.url;
@@ -2430,9 +2709,9 @@
   /** The check sent the answer back: it stays in view, marked as replaced, while the run works on. */
   function provisionalSentBack(entry) {
     if (!activeRun || !activeRun.provisional || activeRun.provisional.hidden) return;
-    const why = String(entry.why || "").replace(/\s+/g, " ").trim().replace(/[.\s]+$/, "");
-    const short = why.length > 200 ? `${why.slice(0, 199)}…` : why;
-    setProvisionalMark(activeRun.provisional, "replaced", `Checking found a problem${short ? `: ${short}` : ""}; still working`);
+    // The reason is in full in the "Check failed" row just above; here it is one line.
+    setProvisionalMark(activeRun.provisional, "replaced", "The check sent this answer back. Still working on it.");
+    activeRun.provisional.title = String(entry.why || "").replace(/\s+/g, " ").trim();
     activeRun.provisionalText = "";
   }
 
@@ -2486,11 +2765,12 @@
         activeBubbleAnswer.insertAdjacentElement("afterend", note);
       }
       if (entry.state === "limit") { activeBubbleAnswer.classList.add("notice"); addBackupOffer(activeBubbleAnswer); }
-      else if (entry.state === "success" || unconfirmed) drawSources(activeBubbleAnswer.parentElement, entry.sources);
+      else if (entry.state === "success" || unconfirmed) drawSources(answerFoot(), entry.sources);
       setRunState(entry.state === "success" ? "success" : unconfirmed ? "unconfirmed" : entry.state === "limit" ? "limit" : "idle",
         entry.state === "success" ? "Done" : unconfirmed ? "Answered, not confirmed" : entry.state === "limit" ? "Usage limit reached" : "Stopped");
     }
     updateRunSummary();
+    if (!replaying) announce(`${activeRun.label.textContent}.`);
   }
 
   function drawEntry(entry, live) {
@@ -2527,16 +2807,51 @@
   const KNOWN = globalThis.SELECT_TO_AI_KNOWN;
   let engineMemory = null;
 
+  // Under an answer there is one row and at most one card. The row holds
+  // the pages it used, what it knew about the user, the user's word on it
+  // and Save as recipe. The card holds what it remembered or learned and
+  // what it offers to keep.
+
+  /** The one row under the answer. */
+  function answerFoot() {
+    const host = activeBubbleAnswer ? activeBubbleAnswer.parentElement : null;
+    if (!host) return null;
+    let foot = host.querySelector(":scope > .answer-foot");
+    if (!foot) {
+      foot = el("div", "answer-foot");
+      host.insertBefore(foot, host.querySelector(":scope > .after-card"));
+    }
+    return foot;
+  }
+
+  /** The one card after the answer. */
+  function afterCard() {
+    const host = activeBubbleAnswer ? activeBubbleAnswer.parentElement : null;
+    if (!host) return null;
+    let card = host.querySelector(":scope > .after-card");
+    if (!card) { card = el("div", "after-card"); host.appendChild(card); }
+    return card;
+  }
+
+  /** A line or section leaves the after-run card; the card goes with its last one. */
+  function leaveAfterCard(node) {
+    const card = node && node.closest(".after-card");
+    if (card && card.children.length === 1) leave(card);
+    else leave(node);
+  }
+
   /** "Remembered: ..." under the run, with a way to take it back. */
   function drawRemembered(text) {
-    const host = activeBubbleAnswer ? activeBubbleAnswer.parentElement : null;
+    const host = afterCard();
     if (!host) return;
     const note = document.createElement("div");
     note.className = "memory-note";
     const label = document.createElement("span");
+    label.className = "memory-note-text";
     label.textContent = `Remembered: ${text.length > 70 ? `${text.slice(0, 69)}…` : text}`;
     const undo = document.createElement("button");
     undo.type = "button";
+    undo.className = "link-btn";
     undo.textContent = "Undo";
     undo.addEventListener("click", () => {
       const entry = engineMemory && engineMemory.entries.find((e) => e.text === text);
@@ -2545,17 +2860,18 @@
     });
     const view = document.createElement("button");
     view.type = "button";
+    view.className = "link-btn";
     view.textContent = "View";
     view.addEventListener("click", openMemoryModal);
     note.append(label, view, undo);
-    host.appendChild(note);
+    host.insertBefore(note, host.querySelector(":scope > .save-offer"));
   }
 
   /** Two small buttons under an answer: the user's word on whether it was right. */
   function drawFeedback(runId) {
-    const host = activeBubbleAnswer ? activeBubbleAnswer.parentElement : null;
+    const host = answerFoot();
     if (!host || host.querySelector(".answer-feedback")) return;
-    const row = document.createElement("div");
+    const row = document.createElement("span");
     row.className = "answer-feedback";
     const send = (up, reason) => {
       enginePost({ type: "feedback", runId, up, reason: reason || "" });
@@ -2575,19 +2891,24 @@
       go.textContent = "Send";
       go.addEventListener("click", () => send(false, why.value.trim()));
       why.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); e.stopPropagation(); send(false, why.value.trim()); } });
+      go.classList.add("pressable");
+      row.classList.add("is-asking");
       row.append(why, go);
       why.focus();
     };
-    const label = el("span", "feedback-label", "Was this right?");
+    const label = el("span", "feedback-label", "Right?");
+    label.title = "Was this right?";
     const good = document.createElement("button");
     good.type = "button";
-    good.className = "feedback-up";
-    good.append(icon("thumbUp"), el("span", "", "This was right"));
+    good.className = "feedback-up pressable";
+    good.title = "This was right";
+    good.append(icon("thumbUp"), el("span", "visually-hidden", "This was right"));
     good.addEventListener("click", () => say(true));
     const bad = document.createElement("button");
     bad.type = "button";
-    bad.className = "feedback-down";
-    bad.append(icon("thumbDown"), el("span", "", "Not right"));
+    bad.className = "feedback-down pressable";
+    bad.title = "Not right";
+    bad.append(icon("thumbDown"), el("span", "visually-hidden", "Not right"));
     bad.addEventListener("click", () => say(false));
     row.append(label, good, bad);
     host.appendChild(row);
@@ -2595,32 +2916,40 @@
 
   /** "Learned: ..." under the run that taught it. */
   function drawLearned(changes) {
-    const host = activeBubbleAnswer ? activeBubbleAnswer.parentElement : null;
-    if (!host || !changes || !changes.length) return;
+    if (!changes || !changes.length) return;
+    const host = afterCard();
+    if (!host) return;
     const note = document.createElement("div");
     note.className = "memory-note";
     const label = document.createElement("span");
+    label.className = "memory-note-text";
     const text = changes.slice(0, 2).join("; ");
     label.textContent = `Learned ${text.length > 90 ? `${text.slice(0, 89)}…` : text}${changes.length > 2 ? ` and ${changes.length - 2} more` : ""}`;
     label.title = changes.join("\n");
     const view = document.createElement("button");
     view.type = "button";
+    view.className = "link-btn";
     view.textContent = "View";
     view.addEventListener("click", openMemoryModal);
     note.append(label, view);
-    host.appendChild(note);
+    host.insertBefore(note, host.querySelector(":scope > .save-offer"));
   }
 
   /** Which of the user's details and notes this run used, under its answer. */
   function drawUsed(used) {
-    const host = activeBubbleAnswer ? activeBubbleAnswer.parentElement : null;
-    if (!host || !used || (!(used.details || []).length && !used.notes)) return;
-    const row = document.createElement("div");
+    if (!used || (!(used.details || []).length && !used.notes)) return;
+    const host = answerFoot();
+    if (!host) return;
+    const row = document.createElement("span");
     row.className = "used-chips";
     const label = document.createElement("span");
+    label.className = "visually-hidden";
     label.textContent = "Used";
     row.appendChild(label);
-    const chip = (text) => { const b = document.createElement("button"); b.type = "button"; b.textContent = text; b.addEventListener("click", openMemoryModal); row.appendChild(b); };
+    // One chip for all of it: how many things from memory, and what they
+    // were in its title and for screen readers.
+    const parts = [];
+    const chip = (text) => parts.push(text);
     for (const d of used.details || []) chip(`your ${String(d).toLowerCase()}`);
     // By kind, so the user can see why this run went as it did: a way of
     // doing it learned before, notes about the site, their own preferences.
@@ -2633,6 +2962,14 @@
       if (k.preference) chip(n(k.preference, "of your preferences", "of your preferences"));
       if (k.context) chip(n(k.context, "thing it knows about you", "things it knows about you"));
     } else if (used.notes) chip(`${used.notes} thing${used.notes === 1 ? "" : "s"} it knows about you`);
+    const count = (used.details || []).length + Object.values(k).reduce((a, b) => a + (Number(b) || 0), 0) || used.notes || parts.length;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "pressable";
+    b.title = `Used from memory: ${parts.join(", ")}. Open Memory`;
+    b.append(icon("bookmark"), el("span", "", `${count} from memory`), el("span", "visually-hidden", `: ${parts.join(", ")}`));
+    b.addEventListener("click", openMemoryModal);
+    row.appendChild(b);
     host.appendChild(row);
   }
 
@@ -2640,11 +2977,14 @@
   function drawOffer(entry) {
     const items = (entry.items || []).filter((i) => i.type === "field" || i.type === "entry");
     if (!items.length) return;
+    // In the after-run card when there is an answer to hang it under;
+    // otherwise as a card of its own in the conversation.
+    const after = afterCard();
     const card = document.createElement("div");
-    card.className = "message-bubble assistant confirmation-bubble save-offer";
+    card.className = after ? "save-offer" : "message-bubble assistant wait-card confirmation-bubble save-offer";
     card.dataset.tone = "accent";
     const content = document.createElement("div");
-    content.className = "bubble-content";
+    content.className = after ? "save-offer-body" : "bubble-content";
     const title = document.createElement("p");
     title.className = "confirm-title";
     title.textContent = "Keep these for next time?";
@@ -2679,11 +3019,11 @@
     skip.type = "button";
     skip.className = "offer-skip-btn secondary-btn btn btn-ghost";
     skip.textContent = "Not now";
-    skip.addEventListener("click", () => removeCard(card));
+    skip.addEventListener("click", () => { if (after) leaveAfterCard(card); else removeCard(card); });
     actions.append(save, skip);
     content.append(list, actions);
     card.appendChild(content);
-    chatContainer.appendChild(card);
+    (after || chatContainer).appendChild(card);
     scrollToBottom();
   }
 
@@ -2808,9 +3148,15 @@
       engineWait = null;
       subs.clear();
       workedMs = 0;
+      liveSiteKey = "";
       const turns = m.turns || [];
-      welcomeScreen.style.display = turns.length || m.run ? "none" : "flex";
-      for (const t of turns) { if (t.role === "user") appendSimpleUserBubble(t.text); else appendSimpleAssistantBubble(t.text); }
+      showWelcome(!(turns.length || m.run));
+      // A replay of what is already done draws in one go: no entrance
+      // animation per row and no layout read per entry, one scroll at the end.
+      replaying = true;
+      chatContainer.classList.add("is-replaying");
+      try {
+        for (const t of turns) { if (t.role === "user") appendSimpleUserBubble(t.text); else appendSimpleAssistantBubble(t.text); }
       engineRunId = m.run ? m.run.id : "";
       engineStatus = m.run ? m.run.status : "";
       engineTrace = m.run ? m.run.trace : null;
@@ -2818,11 +3164,16 @@
       if (m.run) {
         appendSimpleUserBubble(m.run.task, m.run.selection);
         openRunBubble();
-        for (const entry of m.run.journal) drawEntry(entry, false);
-        if (m.run.status === "waiting") engineWait = m.run.wait;
-        else if (!(engineWait && engineWait.sub)) engineWait = null;
+          for (const entry of m.run.journal) drawEntry(entry, false);
+          if (m.run.status === "waiting") engineWait = m.run.wait;
+          else if (!(engineWait && engineWait.sub)) engineWait = null;
+        }
+      } finally {
+        replaying = false;
       }
       afterTrace();
+      scrollToBottom(true);
+      requestAnimationFrame(() => requestAnimationFrame(() => chatContainer.classList.remove("is-replaying")));
       return;
     }
     if (m.type === "handoff_live") { askAboutHandoff(m); return; }
@@ -2837,7 +3188,8 @@
       subs.clear();
       workedMs = 0;
       liveUrl = "";
-      welcomeScreen.style.display = "none";
+      liveSiteKey = "";
+      showWelcome(false);
       appendSimpleUserBubble(m.task, m.selection);
       openRunBubble();
       afterTrace();
@@ -2853,7 +3205,11 @@
       for (const entry of m.entries) drawEntry(entry, true);
       if (engineStatus !== "waiting" && !(engineWait && engineWait.sub)) engineWait = null;
       afterTrace();
-      if (engineStatus !== "running") taskInput.focus();
+      // Back to the box when the run stops for the user, but never out of a
+      // dialog, a card's button or a field they are in.
+      const active = document.activeElement;
+      const free = !active || active === document.body || active === actionBtn;
+      if (engineStatus !== "running" && free && !modalOpen()) taskInput.focus({ preventScroll: true });
     }
   }
 
