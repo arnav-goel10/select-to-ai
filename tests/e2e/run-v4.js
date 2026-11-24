@@ -634,6 +634,16 @@ async function main() {
         const left = await until(async () => ((await attachedTabs()).length ? null : "none"), 4000);
         return left ? null : `the debugger is still attached to ${JSON.stringify(await attachedTabs())} after the run ended`;
       }],
+      // A page that loads, goes quiet and then replaces itself, in this tab
+      // and in a new one: the run reads the page that took its place, after
+      // one press and no wait step.
+      ...[["selfCheckSameTab", "/self-check-start"], ["selfCheckNewTab", "/self-check-start?tab=1"]].map(([label, start]) => ["selfCheck", start, async () => false, (r) => {
+        if (!/Harbour bridge repair/.test(r.answer)) return `the page was read before it replaced itself: ${JSON.stringify(r.answer)}; log: ${String(r.log).replace(/\s+/g, " ").slice(0, 600)}`;
+        if (r.actions.some((a) => a.do === "wait") || r.actions.filter((a) => a.do === "click").length !== 1) return `more than the one press was needed: ${JSON.stringify(r.actions.map((a) => a.do))}`;
+        const press = (r.trace.history || []).find((h) => /^click/.test(h.action));
+        if (press) settleTimes.push(`${label}: ${press.settle} ms`);
+        return press && press.settle <= TOOLS.SETTLE.CEILING_MS ? null : `the press waited past the ceiling: ${JSON.stringify(press)}`;
+      }, label]),
       // Started on an empty tab: told that no site is open, the run goes to
       // the site in that same tab, with nothing to approve, and answers.
       ["fromNothing", "about:blank", async () => false, (r) => {

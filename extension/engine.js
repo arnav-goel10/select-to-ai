@@ -1070,11 +1070,107 @@
     }
   }
 
-  /** Waits for a page the action loaded, then for what that page asks for, within the ceiling. */
-  async function loadSettled(tabId, since, startWindowMs, maxMs) {
-    const loaded = await settled(tabId, startWindowMs, maxMs);
-    if (!loaded) return { loading: false };
-    return netSettled(tabId, since, Math.max(since + TOOLS.SETTLE.CEILING_MS, Date.now() + 2 * TOOLS.SETTLE.QUIET_MS));
+  // How long a tab is watched after its page has loaded, for a page that
+  // puts another in its place (a page of its own that goes on to the real
+  // one, an address changed by script). Counted from the end of the load,
+  // so the time spent waiting for the page's requests is part of it.
+  const WATCH_MS = 1000;
+  // A page given a moment after it loads before it is read, as settled does.
+  const AFTER_LOAD_MS = 250;
+
+  /**
+   * What the browser says of one tab from now on: each change with the
+   * time it came, and a wait for the first one that fits. Only the tab's
+   * own events: nothing on the page is read.
+   */
+  function tabEvents(tabId) {
+    const seen = [];
+    const waits = new Set();
+    const listen = (id, info) => {
+      if (id !== tabId || !info) return;
+      seen.push({ at: Date.now(), status: info.status || "", url: info.url || "" });
+      for (const w of [...waits]) w();
+    };
+    chrome.tabs.onUpdated.addListener(listen);
+    return {
+      seen,
+      /** The first change that fits, once one has come, or null at `until`. */
+      first(fits, until) {
+        const now = seen.find(fits);
+        if (now || Date.now() >= until) return Promise.resolve(now || null);
+        return new Promise((resolve) => {
+          const end = (e) => { waits.delete(check); clearTimeout(timer); resolve(e || null); };
+          const check = () => { const e = seen.find(fits); if (e) end(e); };
+          const timer = setTimeout(() => end(null), Math.max(0, until - Date.now()));
+          waits.add(check);
+        });
+      },
+      stop() { chrome.tabs.onUpdated.removeListener(listen); for (const w of [...waits]) waits.delete(w); },
+    };
+  }
+
+  // An address without its fragment: a move to a part of the same page is not another page.
+  const pageAddress = (u) => String(u || "").split("#")[0];
+
+  /**
+   * The one wait for a tab loading a page, in this tab or a new one: the
+   * load, then what the page asks for, then a short watch of the tab. If
+   * in that watch the tab loads again or its address changes, that load is
+   * waited for the same way, once: the page read is the one that took the
+   * first one's place. All within the ceiling the wait already had.
+   *
+   * opened: the tab was just made, so it is loading a page however early
+   * its load is seen, and its requests are watched from here (the
+   * connection is let go with the run's other tabs). loads: the tab's
+   * events from before the action (tabEvents, stopped by the caller), so
+   * a load that began and ended before this was called is still seen.
+   * Returns { loading, signs }.
+   */
+  async function settleTab(tabId, since, startWindowMs, maxMs, { opened = false, owner = null, loads = null } = {}) {
+    const events = loads || tabEvents(tabId);
+    // What the page asks for while this waits is the action's, not the page's own background.
+    let net = null;
+    const watchNet = async (tab) => {
+      // A new tab's requests are seen as this tab's are, from as soon as it has a web address.
+      if (opened && !nets.has(tabId) && tab && isWeb(tab.url || tab.pendingUrl)) {
+        touch(owner, tabId);
+        await connected(tabId);
+      }
+      if (!net && nets.get(tabId)) { net = nets.get(tabId); net.begin(); }
+    };
+    try {
+      await watchNet(await quiet(chrome.tabs.get(tabId)));
+      const loaded = (await settled(tabId, startWindowMs, maxMs)) || events.seen.some((e) => e.status === "loading");
+      if (!loaded && !opened) return { loading: false };
+      // Where the first load ended in the tab's events. What comes after it is
+      // told by its place in that list, not its time: two events can share a millisecond.
+      const doneAt = events.seen.findLastIndex((e) => e.status === "complete");
+      const after = doneAt < 0 ? events.seen.length : doneAt + 1;
+      const loadedAt = doneAt < 0 ? Date.now() : Math.min(Date.now(), events.seen[doneAt].at);
+      const deadline = Math.max(since + TOOLS.SETTLE.CEILING_MS, Date.now() + 2 * TOOLS.SETTLE.QUIET_MS);
+      const first = (await quiet(chrome.tabs.get(tabId))) || {};
+      await watchNet(first);
+      const waited = await netSettled(tabId, since, deadline);
+      // At the ceiling the wait is over, whatever the tab does next.
+      if (waited.loading) return waited;
+      // Another load, or another address, after the first load ended.
+      const address = pageAddress(first.url);
+      const other = (e, i) => i >= after && (e.status === "loading" || (e.url && pageAddress(e.url) !== address));
+      const next = await events.first(other, Math.min(loadedAt + WATCH_MS, deadline));
+      if (!next) return waited;
+      // Once: the page that took its place is waited for, and not watched again.
+      const now = (await quiet(chrome.tabs.get(tabId))) || {};
+      if (next.status === "loading" || now.status === "loading") {
+        const from = events.seen.indexOf(next);
+        const done = await events.first((e, i) => i > from && e.status === "complete", deadline);
+        if (!done) return { loading: true, signs: [] };
+        await sleep(Math.min(AFTER_LOAD_MS, Math.max(0, deadline - Date.now())));
+      }
+      return netSettled(tabId, next.at, deadline);
+    } finally {
+      if (!loads) events.stop();
+      if (net) net.end();
+    }
   }
 
   /** The model is told when the page was still loading as the wait ended. */
@@ -1097,18 +1193,21 @@
     const net = nets.get(tabId);
     if (net) net.begin();
     const waits = { ms: 0, dialogs: [] };
+    // The tab's loads from before the action: a page that loads quickly may be done before the wait begins.
+    const loads = tabEvents(tabId);
     try {
-      const r = await interactOnce(session, data, navigates, started, waits);
+      const r = await interactOnce(session, data, navigates, started, waits, loads);
       // A dialog the action set off is said with what it did (core/context.js).
       const said = CONTEXT.dialogsNote(waits.dialogs);
       // It comes first: the rest of a long result is cut when a step is told again.
       return { ...r, ...(said ? { message: [said, r.message].filter(Boolean).join(" "), dialogs: waits.dialogs } : {}), settleMs: waits.ms };
     } finally {
+      loads.stop();
       if (net) net.end();
     }
   }
 
-  async function interactOnce(session, data, navigates, started, waits) {
+  async function interactOnce(session, data, navigates, started, waits, loads) {
     const run = session.run;
     const tabId = run.tabId;
     const timed = async (p) => { const t0 = Date.now(); try { return await p; } finally { waits.ms += Date.now() - t0; } };
@@ -1159,9 +1258,9 @@
       const view = rootOf(session).view || newView(null);
       const back = VIEW.restoreAfterOpen({ before: frontBefore && frontBefore.id, after: frontNow && frontNow.id, home: view.home, tabs: session.parent ? [] : [...view.tabs, tabId] });
       if (back !== null) await quiet(chrome.tabs.update(back, { active: true }));
-      await timed(settled(opened.id, 800, 15000));
+      const waited = await timed(settleTab(opened.id, started, 800, 15000, { opened: true, owner: session }));
       const now = (await quiet(chrome.tabs.get(opened.id))) || opened;
-      return { ok: true, pageChanged: true, tabId: opened.id, openedTab: opened.id, ...pointer, message: `${String((res && res.message) || "Done.").replace(/\s*Outcome:.*$/s, "")} It opened in a new tab, and you are on that tab now: ${now.url || now.pendingUrl || res.opensTab || ""}` };
+      return { ok: true, pageChanged: true, tabId: opened.id, openedTab: opened.id, ...pointer, message: `${String((res && res.message) || "Done.").replace(/\s*Outcome:.*$/s, "")} It opened in a new tab, and you are on that tab now: ${now.url || now.pendingUrl || res.opensTab || ""}${loadingNote(waited, Date.now() - started)}` };
     }
     // A frame that goes away under an action on it is what closing a notice
     // looks like from here: its own button took it off the page.
@@ -1170,7 +1269,7 @@
       // The page went away under the action: that is what a click that
       // loads a new page looks like from here.
       if (navigates) {
-        const waited = await timed(loadSettled(tabId, started, 400, 8000));
+        const waited = await timed(settleTab(tabId, started, 400, 8000, { loads }));
         const after = (await quiet(chrome.tabs.get(tabId))) || {};
         if (after.url && after.url !== before.url) return { ok: true, pageChanged: true, message: `Done. The page changed: now at ${after.url}${loadingNote(waited, Date.now() - started)}` };
       }
@@ -1178,7 +1277,7 @@
     }
     if (!res.success) return { ok: false, ...pointer, message: res.error || "That did not work." };
     if (res.settle) waits.ms += Number(res.settle.ms) || 0;
-    const loaded = navigates ? await timed(loadSettled(tabId, started, 60, 8000)) : null;
+    const loaded = navigates ? await timed(settleTab(tabId, started, 60, 8000, { loads })) : null;
     const after = (await quiet(chrome.tabs.get(tabId))) || {};
     const o = res.outcome || {};
     const moved = !!(after.url && before.url && after.url !== before.url);
@@ -1350,8 +1449,9 @@
         const before = (await quiet(chrome.tabs.get(tabId))) || {};
         if (isWeb(before.url)) await connected(tabId);
         const started = Date.now();
+        const loads = tabEvents(tabId);
         await quiet(chrome.tabs.goBack(tabId));
-        const waited = await loadSettled(tabId, started, 500, 8000);
+        const waited = await settleTab(tabId, started, 500, 8000, { loads }).finally(() => loads.stop());
         const settleMs = Date.now() - started;
         const after = (await quiet(chrome.tabs.get(tabId))) || {};
         return after.url !== before.url ? { ok: true, pageChanged: true, message: `Went back. Now at ${after.url}${loadingNote(waited, settleMs)}`, settleMs } : { ok: false, message: "There is no earlier page to go back to in this tab.", settleMs };
@@ -1363,9 +1463,10 @@
         const current = await quiet(chrome.tabs.get(tabId));
         if (current && isWeb(current.url)) await connected(tabId);
         const started = Date.now();
+        const loads = tabEvents(tabId);
         const tab = await quiet(chrome.tabs.update(tabId, { url: a.url }));
-        if (!tab) return { ok: false, message: "The tab could not be sent to that address." };
-        const waited = await loadSettled(tabId, started, 800, 15000);
+        if (!tab) { loads.stop(); return { ok: false, message: "The tab could not be sent to that address." }; }
+        const waited = await settleTab(tabId, started, 800, 15000, { loads }).finally(() => loads.stop());
         const settleMs = Date.now() - started;
         const after = (await quiet(chrome.tabs.get(tabId))) || {};
         // Whether it arrived where it asked: the status the site answered
@@ -1381,10 +1482,12 @@
           // Opened behind: a tab is read where it is, and brought to front
           // only when the run acts on its page (toFront).
           const here = await quiet(chrome.tabs.get(tabId));
+          const started = Date.now();
           const tab = await quiet(chrome.tabs.create({ url: a.url, active: false, windowId: here ? here.windowId : session.windowId > 0 ? session.windowId : undefined, ...(here && !session.background ? { index: here.index + 1 } : {}) }));
           if (!tab) return { ok: false, message: "A new tab could not be opened." };
-          await settled(tab.id, 800, 15000);
-          return { ok: true, pageChanged: true, tabId: tab.id, openedTab: tab.id, message: `Opened ${a.url} in a new tab. You are now on that tab.` };
+          const waited = await settleTab(tab.id, started, 800, 15000, { opened: true, owner: session });
+          const settleMs = Date.now() - started;
+          return { ok: true, pageChanged: true, tabId: tab.id, openedTab: tab.id, message: `Opened ${a.url} in a new tab. You are now on that tab.${loadingNote(waited, settleMs)}`, settleMs };
         }
         // A sub-task works in the tabs it opened, behind the user's.
         if (session.background && !run.openedTabs.includes(a.tab)) return { ok: false, message: `Tab ${a.tab} is not one this sub-task opened. It works only in its own tabs.` };
@@ -2739,6 +2842,6 @@
     return restore();
   }
 
-  // release and attention are exported for the scripted tests, as wake is.
-  root.SELECT_TO_AI_ENGINE = Object.freeze({ sessions, keptVerdicts: () => verdicts, effectOf, wake, loadMemory, changeMemory, release, joinFrame, scan, interact, attention });
+  // release, attention and settleTab are exported for the scripted tests, as wake is.
+  root.SELECT_TO_AI_ENGINE = Object.freeze({ sessions, keptVerdicts: () => verdicts, effectOf, wake, loadMemory, changeMemory, release, joinFrame, scan, interact, attention, settleTab, WATCH_MS });
 })(typeof globalThis !== "undefined" ? globalThis : this);
