@@ -75,7 +75,7 @@ async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (!opts.folder || !fs.existsSync(opts.folder)) { console.error("Usage: node tests/bench/rejudge.js <run folder> [--out file] [--only ids] [--labels file] [--concurrency n]"); process.exit(1); }
   const cfg = judgeConfig();
-  if (!cfg.key) { console.error("Set BENCH_JUDGE_KEY (or BENCH_API_KEY)."); process.exit(1); }
+  if (!cfg.key) { console.error(cfg.problem || "Set BENCH_JUDGE_KEY."); process.exit(1); }
   const folder = path.resolve(opts.folder);
   const name = path.basename(folder);
   const out = opts.out || path.join(folder, `rejudged-${cfg.model.replace(/[^\w.-]+/g, "_")}.json`);

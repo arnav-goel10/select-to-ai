@@ -1,0 +1,5 @@
+[
+  {"id": "fx-compare", "level": "fixture", "scenario": "compare", "url": "http://127.0.0.1:8931/home", "task": "Compare the prices of Item A and Item B on this site and tell me which one is cheaper.", "pattern": "Item B[\\s\\S]*\\$18"},
+  {"id": "fx-search", "level": "fixture", "scenario": "search", "url": "http://127.0.0.1:8931/search", "task": "Use the site search to find the price of the Blue Widget and tell me what it costs.", "pattern": "\\$19", "then": "fx-find-quote"},
+  {"id": "fx-find-quote", "level": "fixture", "scenario": "findQuote", "url": "http://127.0.0.1:8931/find-quote", "task": "How much is the garden hose?", "pattern": "24\\.99"}
+]

@@ -1,0 +1,750 @@
+[
+ {
+  "id": "fact-everest-height",
+  "level": "fact-lookup",
+  "url": "https://en.wikipedia.org/wiki/Mount_Everest",
+  "task": "How tall is Mount Everest in metres, according to this page?",
+  "expect": "About 8,849 m (8,848.86 m).",
+  "pattern": "8[,. ]?84[89]"
+ },
+ {
+  "id": "fact-uk-holiday-weeks",
+  "level": "fact-lookup",
+  "url": "https://www.gov.uk/holiday-entitlement-rights",
+  "task": "How many weeks of paid holiday a year is a full-time worker in the UK legally entitled to?",
+  "expect": "5.6 weeks of paid holiday a year (28 days for a five-day week).",
+  "pattern": "\\b5\\.6\\s*weeks"
+ },
+ {
+  "id": "fact-openlibrary-achebe",
+  "level": "fact-lookup",
+  "url": "https://openlibrary.org/",
+  "task": "Who wrote 'Things Fall Apart', and in what year was it first published?",
+  "expect": "Chinua Achebe, first published in 1958.",
+  "pattern": "(?=[\\s\\S]*Achebe)(?=[\\s\\S]*1958)"
+ },
+ {
+  "id": "fact-nasa-jupiter-moons",
+  "level": "fact-lookup",
+  "url": "https://science.nasa.gov/jupiter/jupiter-facts/",
+  "task": "How many moons does Jupiter have, according to NASA?",
+  "expect": "The count NASA's page gives (95 officially recognised moons at the time of writing). Judge it against the page shown in the run. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+ },
+ {
+  "id": "fact-kathmandu-offset",
+  "level": "fact-lookup",
+  "url": "https://www.timeanddate.com/worldclock/",
+  "task": "What is the time difference between Kathmandu and UTC?",
+  "expect": "Nepal Time is UTC+5:45 (5 hours 45 minutes ahead).",
+  "pattern": "5[:.h ]+\\s?45|5 hours (and )?45"
+ },
+ {
+  "id": "fact-golden-gate",
+  "level": "fact-lookup",
+  "url": "https://en.wikipedia.org/wiki/Golden_Gate_Bridge",
+  "task": "When did the Golden Gate Bridge open, and how long is its main span?",
+  "expect": "Opened in 1937; the main span is 4,200 ft (1,280 m).",
+  "pattern": "(?=[\\s\\S]*1937)(?=[\\s\\S]*(4,?200|1,?280))"
+ },
+ {
+  "id": "fact-britannica-baikal",
+  "level": "fact-lookup",
+  "url": "https://www.britannica.com/place/Lake-Baikal",
+  "task": "How deep is Lake Baikal at its deepest point?",
+  "expect": "About 1,620 m (5,315 ft) as Britannica gives it; a figure near 1,640 m is the same fact from another survey and fails only if the page shown does not give it.",
+  "pattern": "1[,. ]?6[234]\\d|5[,. ]?3\\d\\d"
+ },
+ {
+  "id": "fact-gutenberg-pride",
+  "level": "fact-lookup",
+  "url": "https://www.gutenberg.org/",
+  "task": "Find Pride and Prejudice by Jane Austen on this site. What is its ebook number?",
+  "expect": "Project Gutenberg ebook number 1342 (other editions of the same book exist; 1342 is the main one).",
+  "pattern": "\\b1342\\b"
+ },
+ {
+  "id": "fact-nobel-physics-1921",
+  "level": "fact-lookup",
+  "url": "https://www.nobelprize.org/",
+  "task": "Who won the Nobel Prize in Physics in 1921, and what was it for?",
+  "expect": "Albert Einstein, for his services to theoretical physics and especially the discovery of the law of the photoelectric effect.",
+  "pattern": "(?=[\\s\\S]*Einstein)(?=[\\s\\S]*photoelectric)"
+ },
+ {
+  "id": "cross-kilimanjaro",
+  "level": "cross-site",
+  "url": "https://en.wikipedia.org/wiki/Mount_Kilimanjaro",
+  "task": "What height does this page give for Kilimanjaro? Then check Britannica's article on Kilimanjaro and tell me whether the two agree.",
+  "expect": "Both sites are read. Wikipedia gives 5,895 m; Britannica gives about the same (5,895 m, 19,340 ft). The answer says whether they agree.",
+  "pattern": "\\b5[,. ]?895\\b",
+  "sites": [
+   "britannica.com"
+  ]
+ },
+ {
+  "id": "cross-requests-pypi-github",
+  "level": "cross-site",
+  "url": "https://pypi.org/project/requests/",
+  "task": "What is the latest version of requests here? Then look at the releases of psf/requests on GitHub and tell me whether the newest release there is the same version.",
+  "expect": "Both the PyPI page and the GitHub releases page are opened, each version is stated, and the answer says whether they match. The value changes over time: judge it against what the pages in the run show, not against memory. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass.",
+  "sites": [
+   "github.com"
+  ]
+ },
+ {
+  "id": "cross-middlemarch",
+  "level": "cross-site",
+  "url": "https://openlibrary.org/",
+  "task": "What year does Open Library give for the first publication of Middlemarch by George Eliot? And is the book available to read on Project Gutenberg?",
+  "expect": "First published in 1871 (1871 to 1872 is also right). Project Gutenberg has it (ebook 145). Both sites are consulted.",
+  "pattern": "\\b187[12]\\b",
+  "sites": [
+   "gutenberg.org"
+  ]
+ },
+ {
+  "id": "cross-ethanol-boiling",
+  "level": "cross-site",
+  "url": "https://en.wikipedia.org/wiki/Ethanol",
+  "task": "What boiling point does this page give for ethanol? Compare it with the boiling point PubChem lists for ethanol.",
+  "expect": "Wikipedia gives about 78.2 to 78.4 degrees C; PubChem gives about 78.2 to 78.5 degrees C. Both are stated and compared.",
+  "pattern": "\\b78\\.\\d",
+  "sites": [
+   "pubchem.ncbi.nlm.nih.gov"
+  ]
+ },
+ {
+  "id": "cross-has-mdn-caniuse",
+  "level": "cross-site",
+  "url": "https://developer.mozilla.org/en-US/docs/Web/CSS/:has",
+  "task": "In one sentence, what does the CSS :has() selector do? Then look it up on caniuse.com and tell me what share of users globally have a browser that supports it.",
+  "expect": "A one-sentence description from MDN (it matches an element when any of the relative selectors given match, a parent or previous-sibling selector), and the global support percentage that caniuse.com shows. The value changes over time: judge it against what the pages in the run show, not against memory. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass.",
+  "pattern": "\\b\\d{2}(\\.\\d+)?\\s?%",
+  "sites": [
+   "caniuse.com"
+  ]
+ },
+ {
+  "id": "cross-hn-lobsters",
+  "level": "cross-site",
+  "url": "https://news.ycombinator.com/",
+  "task": "What is the top story here right now? And what is the top story on lobste.rs? Tell me both titles and whether any story is on both front pages.",
+  "expect": "The top title from each front page as shown in the run, and a yes or no on overlap that the two pages support. The value changes over time: judge it against what the pages in the run show, not against memory. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass.",
+  "sites": [
+   "lobste.rs"
+  ]
+ },
+ {
+  "id": "cross-curie-wikidata",
+  "level": "cross-site",
+  "url": "https://en.wikipedia.org/wiki/Marie_Curie",
+  "task": "What date of birth does this page give for Marie Curie? Check her Wikidata entry too and tell me whether it has the same date.",
+  "expect": "7 November 1867 on both; the answer says they agree and the Wikidata entry (Q7186) was opened.",
+  "pattern": "(7 November|November 7,?) 1867",
+  "sites": [
+   "wikidata.org"
+  ]
+ },
+ {
+  "id": "cross-london-weather",
+  "level": "cross-site",
+  "url": "https://www.bbc.com/weather",
+  "task": "What is today's forecast high for London here? Then compare it with the Met Office forecast for London.",
+  "expect": "Today's maximum temperature for London from BBC Weather and from metoffice.gov.uk, each as its page shows, and the difference. The value changes over time: judge it against what the pages in the run show, not against memory. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass.",
+  "sites": [
+   "metoffice.gov.uk"
+  ]
+ },
+ {
+  "id": "form-httpbin-pizza",
+  "level": "form-fill",
+  "url": "https://httpbin.org/forms/post",
+  "task": "Fill in this order form but do not submit it: customer name Priya Raman, telephone 555-0142, email priya@example.com, size Medium, toppings bacon and extra cheese, delivery time 18:30, and the note 'Ring the bell twice'.",
+  "expect": "Every listed field holds the listed value. The form must not be submitted: the run ends on the form page with the values in place. Judge each value from the harness's list of the final page's form controls: a field the list shows empty or holding something else is unmet, whatever the actions say."
+ },
+ {
+  "id": "form-selenium-webform",
+  "level": "form-fill",
+  "url": "https://www.selenium.dev/selenium/web/web-form.html",
+  "task": "On this form, type 'Trial run' in the text input, write 'Checked by the agent' in the textarea, pick 'Two' in the dropdown, and tick the default checkbox. Leave the password alone and do not press Submit.",
+  "expect": "Text input 'Trial run', textarea 'Checked by the agent', dropdown 'Two', default checkbox ticked, password empty. The form must not be submitted: the run ends on the form page with the values in place. Judge each value from the harness's list of the final page's form controls: a field the list shows empty or holding something else is unmet, whatever the actions say."
+ },
+ {
+  "id": "form-demoqa-practice",
+  "level": "form-fill",
+  "url": "https://demoqa.com/automation-practice-form",
+  "task": "Fill in this student form without submitting it: first name Mei, last name Tanaka, email mei.tanaka@example.com, gender Female, mobile 5550134455, hobby Reading, current address '12 Harbour Road'.",
+  "expect": "Each listed field holds the listed value, with Female chosen and Reading ticked. The form must not be submitted: the run ends on the form page with the values in place. Judge each value from the harness's list of the final page's form controls: a field the list shows empty or holding something else is unmet, whatever the actions say."
+ },
+ {
+  "id": "form-demoqa-textbox",
+  "level": "form-fill",
+  "url": "https://demoqa.com/text-box",
+  "task": "Fill in the four boxes but don't press Submit: full name Samuel Okafor, email samuel.okafor@example.com, current address '4 Mill Lane, Leeds', permanent address '9 Canal Street, Lagos'.",
+  "expect": "The four boxes hold the four values. The form must not be submitted: the run ends on the form page with the values in place. Judge each value from the harness's list of the final page's form controls: a field the list shows empty or holding something else is unmet, whatever the actions say."
+ },
+ {
+  "id": "form-herokuapp-checkboxes",
+  "level": "form-fill",
+  "url": "https://the-internet.herokuapp.com/checkboxes",
+  "task": "Make sure both checkboxes on this page are ticked.",
+  "expect": "Both checkboxes end ticked. The second starts ticked, so only the first needs a press; a run that unticks the second fails. Judge each value from the harness's list of the final page's form controls: a field the list shows empty or holding something else is unmet, whatever the actions say."
+ },
+ {
+  "id": "form-formy",
+  "level": "form-fill",
+  "url": "https://formy-project.herokuapp.com/form",
+  "task": "Complete this form without submitting it: first name Lucia, last name Moreno, job title Nurse, highest level of education College, sex Female, years of experience 2-4.",
+  "expect": "Each listed field or choice is set as listed. The form must not be submitted: the run ends on the form page with the values in place. Judge each value from the harness's list of the final page's form controls: a field the list shows empty or holding something else is unmet, whatever the actions say."
+ },
+ {
+  "id": "form-testpages-basic",
+  "level": "form-fill",
+  "url": "https://testpages.eviltester.com/styled/basic-html-form-test.html",
+  "task": "On this form, type 'trialuser' as the username, write 'Checked by the agent' in the comments box, tick Checkbox 1, choose radio 3 and pick Drop Down Item 5 in the dropdown. Leave the password and the file field alone and do not submit the form.",
+  "expect": "Username 'trialuser', the comments box holds 'Checked by the agent' and nothing else, Checkbox 1 ticked (ticks the page started with may stay), radio 3 chosen, the dropdown on Drop Down Item 5, password empty, no file chosen. The form must not be submitted: the run ends on the form page with the values in place. Judge each value from the harness's list of the final page's form controls: a field the list shows empty or holding something else is unmet, whatever the actions say."
+ },
+ {
+  "id": "form-jqueryui-datepicker",
+  "level": "form-fill",
+  "url": "https://jqueryui.com/resources/demos/datepicker/default.html",
+  "task": "Pick 25 December 2027 in the date field.",
+  "expect": "The date field shows 12/25/2027. Judge each value from the harness's list of the final page's form controls: a field the list shows empty or holding something else is unmet, whatever the actions say."
+ },
+ {
+  "id": "table-countries-population",
+  "level": "tables-lists",
+  "url": "https://www.scrapethissite.com/pages/simple/",
+  "task": "Which three countries on this page have the largest population, and what are the figures?",
+  "expect": "China, India and the United States, with the page's figures (about 1.33 billion, 1.17 billion and 310 million: the page's data is old on purpose).",
+  "pattern": "(?=[\\s\\S]*China)(?=[\\s\\S]*India)(?=[\\s\\S]*United States)"
+ },
+ {
+  "id": "table-hockey-bruins-1990",
+  "level": "tables-lists",
+  "url": "https://www.scrapethissite.com/pages/forms/",
+  "task": "Search this table for the Boston Bruins and tell me how many games they won in 1990.",
+  "expect": "44 wins in 1990.",
+  "pattern": "\\b44\\b"
+ },
+ {
+  "id": "table-tallest-buildings",
+  "level": "tables-lists",
+  "url": "https://en.wikipedia.org/wiki/List_of_tallest_buildings",
+  "task": "List the five tallest buildings in the world from the main table on this page, with their heights.",
+  "expect": "The first five rows of the page's ranked table of completed buildings, in order. At the time of writing: Burj Khalifa (828 m), Merdeka 118 (678.9 m), Shanghai Tower (632 m), The Clock Towers in Mecca (601 m), Ping An Finance Center (599.1 m). Judge against the table shown.",
+  "pattern": "(?=[\\s\\S]*Burj Khalifa)(?=[\\s\\S]*Merdeka)(?=[\\s\\S]*Shanghai Tower)"
+ },
+ {
+  "id": "table-herokuapp-largest-due",
+  "level": "tables-lists",
+  "url": "https://the-internet.herokuapp.com/tables",
+  "task": "In the first table, who owes the most, and how much?",
+  "expect": "Jason Doe, $100.00.",
+  "pattern": "(?=[\\s\\S]*Jason)(?=[\\s\\S]*Doe)(?=[\\s\\S]*\\$\\s?100\\b)"
+ },
+ {
+  "id": "table-datatables-oldest",
+  "level": "tables-lists",
+  "url": "https://datatables.net/examples/basic_init/zero_configuration.html",
+  "task": "Who is the oldest person in this table, and which office are they in?",
+  "expect": "Ashton Cox, aged 66, San Francisco. The table shows 10 rows at a time, so it has to be sorted by age or paged through.",
+  "pattern": "(?=[\\s\\S]*Ashton Cox)(?=[\\s\\S]*San Francisco)"
+ },
+ {
+  "id": "table-books-page-two",
+  "level": "tables-lists",
+  "url": "https://books.toscrape.com/",
+  "task": "Go to page 2 of the catalogue and list the first five books on it with their prices.",
+  "expect": "Five titles with prices, the first five on catalogue/page-2.html in page order, as the run's page shows. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+ },
+ {
+  "id": "table-hn-top-three",
+  "level": "tables-lists",
+  "url": "https://news.ycombinator.com/",
+  "task": "Which three stories on the front page have the most points right now? Give titles and points.",
+  "expect": "The three highest point counts among the thirty front-page stories, not simply the first three listed. The value changes over time: judge it against what the pages in the run show, not against memory. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+ },
+ {
+  "id": "table-webscraper-thornton",
+  "level": "tables-lists",
+  "url": "https://webscraper.io/test-sites/tables",
+  "task": "In the first table, what is the username of the person whose last name is Thornton?",
+  "expect": "@fat (Jacob Thornton).",
+  "pattern": "@?fat\\b"
+ },
+ {
+  "id": "table-nobel-literature-1990s",
+  "level": "tables-lists",
+  "url": "https://en.wikipedia.org/wiki/List_of_Nobel_laureates_in_Literature",
+  "task": "Which women won the Nobel Prize in Literature in the 1990s, and in which years?",
+  "expect": "Exactly three: Nadine Gordimer (1991), Toni Morrison (1993) and Wislawa Szymborska (1996).",
+  "pattern": "(?=[\\s\\S]*Gordimer)(?=[\\s\\S]*Morrison)(?=[\\s\\S]*Szymborska)"
+ },
+ {
+  "id": "nav-govuk-holiday-calculator",
+  "level": "navigation",
+  "url": "https://www.gov.uk/calculate-your-holiday-entitlement",
+  "task": "Use this calculator to work out the statutory holiday entitlement for someone who works 3 days a week, for a full leave year.",
+  "expect": "16.8 days. The calculator's own steps are followed (days worked per week, a full leave year, 3 days).",
+  "pattern": "\\b16\\.8\\b"
+ },
+ {
+  "id": "nav-wikipedia-lovelace-father",
+  "level": "navigation",
+  "url": "https://en.wikipedia.org/wiki/Ada_Lovelace",
+  "task": "From this article, go to the article about her father and tell me the year he died and where.",
+  "expect": "Lord Byron died in 1824 at Missolonghi, Greece.",
+  "pattern": "(?=[\\s\\S]*\\b1824\\b)(?=[\\s\\S]*M[ei]ssolonghi)"
+ },
+ {
+  "id": "nav-w3c-wcag22",
+  "level": "navigation",
+  "url": "https://www.w3.org/",
+  "task": "Find the WCAG 2.2 specification from here and tell me when it became a W3C Recommendation.",
+  "expect": "5 October 2023 is when WCAG 2.2 first became a Recommendation; the current document is dated 12 December 2024. Either date is right when the answer gives the full date and says which it is.",
+  "pattern": "0?5 October 2023|October 0?5,? 2023|2023-10-05|12 December 2024|December 12,? 2024|2024-12-12"
+ },
+ {
+  "id": "nav-books-travel-cheapest",
+  "level": "navigation",
+  "url": "https://books.toscrape.com/",
+  "task": "Open the Travel category, find the cheapest book in it, open that book and tell me its UPC and how many are in stock.",
+  "expect": "The run opens Travel, picks the lowest-priced book on that category page, opens it, and reports the UPC and stock count from the product page shown. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+ },
+ {
+  "id": "nav-un-member-states",
+  "level": "navigation",
+  "url": "https://www.un.org/en/",
+  "task": "Find the page about member states on this site and tell me how many member states the UN has.",
+  "expect": "193 member states, found on the UN's own site.",
+  "pattern": "\\b193\\b"
+ },
+ {
+  "id": "nav-arxiv-cs-ai-recent",
+  "level": "navigation",
+  "url": "https://arxiv.org/",
+  "task": "Go to the recent submissions listing for Artificial Intelligence (cs.AI) and tell me the title of the first paper in the list.",
+  "expect": "The first title on arxiv.org/list/cs.AI/recent as shown in the run. The value changes over time: judge it against what the pages in the run show, not against memory. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+ },
+ {
+  "id": "nav-herokuapp-dynamic-loading",
+  "level": "navigation",
+  "url": "https://the-internet.herokuapp.com/",
+  "task": "Open Dynamic Loading, choose Example 2, press Start, wait for it to finish, and tell me the text that appears.",
+  "expect": "Hello World!",
+  "pattern": "Hello World"
+ },
+ {
+  "id": "nav-eu-croatia",
+  "level": "navigation",
+  "url": "https://european-union.europa.eu/index_en",
+  "task": "Using this site, find out in which year Croatia joined the European Union.",
+  "expect": "2013, read from a page on europa.eu.",
+  "pattern": "\\b2013\\b"
+ },
+ {
+  "id": "doc-rfc9110-418",
+  "level": "long-docs",
+  "url": "https://www.rfc-editor.org/rfc/rfc9110.html",
+  "task": "What does this document say about status code 418?",
+  "expect": "418 is '(Unused)': it is reserved (after the teapot joke in RFC 2324) and cannot be assigned to another use at present.",
+  "pattern": "\\bunused\\b"
+ },
+ {
+  "id": "doc-pdf-attention-paper",
+  "level": "long-docs",
+  "url": "https://arxiv.org/pdf/1706.03762",
+  "task": "This is a PDF of a research paper. In the base model it describes, how many layers does the encoder have and how many attention heads are used?",
+  "expect": "N = 6 layers and h = 8 attention heads in the base model. If the PDF cannot be read in the browser and the run says so plainly, that is an honest failure, not a block.",
+  "pattern": "(?=[\\s\\S]*(\\b(6|six)\\b[\\s\\S]{0,40}layers|layers[\\s\\S]{0,40}\\b(6|six)\\b|N\\s*=\\s*6))(?=[\\s\\S]*(\\b(8|eight)\\b[\\s\\S]{0,60}heads|heads[\\s\\S]{0,40}\\b(8|eight)\\b|h\\s*=\\s*8))"
+ },
+ {
+  "id": "doc-pdf-irs-w9",
+  "level": "long-docs",
+  "url": "https://www.irs.gov/pub/irs-pdf/fw9.pdf",
+  "task": "This is a tax form as a PDF. What revision date is printed on it, and what is the form's title?",
+  "expect": "Form W-9, Request for Taxpayer Identification Number and Certification, with the revision date printed on the form (Rev. March 2024 at the time of writing).",
+  "pattern": "(?=[\\s\\S]*W-?9)(?=[\\s\\S]*Taxpayer)"
+ },
+ {
+  "id": "doc-constitution-president",
+  "level": "long-docs",
+  "url": "https://www.archives.gov/founding-docs/constitution-transcript",
+  "task": "According to this text, how old must a person be to be President, and how long must they have lived in the United States?",
+  "expect": "At least 35 years old and 14 years a resident (Article II, Section 1).",
+  "pattern": "(?=[\\s\\S]*\\b(35|thirty.five)\\b)(?=[\\s\\S]*\\b(14|fourteen)\\b)"
+ },
+ {
+  "id": "doc-gutenberg-chapter-two",
+  "level": "long-docs",
+  "url": "https://www.gutenberg.org/files/1342/1342-h/1342-h.htm",
+  "task": "What is the first sentence of Chapter II of this book?",
+  "expect": "\"Mr. Bennet was among the earliest of those who waited on Mr. Bingley.\"",
+  "pattern": "earliest of those who waited on Mr\\.? Bingley"
+ },
+ {
+  "id": "doc-internet-history-nsfnet",
+  "level": "long-docs",
+  "url": "https://en.wikipedia.org/wiki/History_of_the_Internet",
+  "task": "According to this article, when was the NSFNET decommissioned?",
+  "expect": "1995.",
+  "pattern": "\\b1995\\b"
+ },
+ {
+  "id": "doc-gdpr-breach-hours",
+  "level": "long-docs",
+  "url": "https://gdpr-info.eu/",
+  "task": "Find the article of the GDPR about notifying a personal data breach to the supervisory authority. Within how many hours must the controller notify it?",
+  "expect": "Article 33: without undue delay and, where feasible, not later than 72 hours after becoming aware of it.",
+  "pattern": "(?=[\\s\\S]*\\b72\\s*hours)(?=[\\s\\S]*Article\\s*33\\b)"
+ },
+ {
+  "id": "doc-pep8-line-length",
+  "level": "long-docs",
+  "url": "https://peps.python.org/pep-0008/",
+  "task": "What maximum line length does this guide recommend for code, and what for comments and docstrings?",
+  "expect": "79 characters for code, 72 for comments and docstrings.",
+  "pattern": "(?=[\\s\\S]*\\b79\\b)(?=[\\s\\S]*\\b72\\b)"
+ },
+ {
+  "id": "lang-de-zugspitze",
+  "level": "non-english",
+  "url": "https://de.wikipedia.org/wiki/Zugspitze",
+  "task": "Wie hoch ist die Zugspitze laut diesem Artikel?",
+  "expect": "2962 m. The answer is in German.",
+  "pattern": "2[. ]?962",
+  "lang": "de"
+ },
+ {
+  "id": "lang-de-tagesschau-top",
+  "level": "non-english",
+  "url": "https://www.tagesschau.de/",
+  "task": "Wie lautet die Schlagzeile der obersten Meldung auf dieser Seite, und worum geht es in einem Satz?",
+  "expect": "The headline of the lead story on the tagesschau.de front page as shown in the run, with a one-sentence summary in German. The value changes over time: judge it against what the pages in the run show, not against memory. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass.",
+  "lang": "de"
+ },
+ {
+  "id": "lang-fr-permis-age",
+  "level": "non-english",
+  "url": "https://www.service-public.fr/",
+  "task": "À partir de quel âge peut-on passer le permis de conduire (permis B) en France ? Trouve la réponse sur ce site.",
+  "expect": "17 ans (since 1 January 2024), found on service-public.fr. The answer is in French.",
+  "pattern": "\\b17\\s*ans\\b",
+  "lang": "fr"
+ },
+ {
+  "id": "lang-es-quijote",
+  "level": "non-english",
+  "url": "https://es.wikipedia.org/wiki/Miguel_de_Cervantes",
+  "task": "¿En qué año se publicó la primera parte de Don Quijote, según este artículo?",
+  "expect": "1605. The answer is in Spanish.",
+  "pattern": "\\b1605\\b",
+  "lang": "es"
+ },
+ {
+  "id": "lang-ja-fuji",
+  "level": "non-english",
+  "url": "https://ja.wikipedia.org/wiki/%E5%AF%8C%E5%A3%AB%E5%B1%B1",
+  "task": "富士山の標高は何メートルですか？",
+  "expect": "3776 m (3,776.12 m). The answer is in Japanese.",
+  "pattern": "3[,，]?776|３[,，]?７７６",
+  "lang": "ja"
+ },
+ {
+  "id": "lang-hi-taj-mahal",
+  "level": "non-english",
+  "url": "https://hi.wikipedia.org/wiki/%E0%A4%A4%E0%A4%BE%E0%A4%9C%E0%A4%AE%E0%A4%B9%E0%A4%B2",
+  "task": "ताजमहल किसने बनवाया था और किसकी याद में?",
+  "expect": "Shah Jahan had it built in memory of his wife Mumtaz Mahal. The answer is in Hindi.",
+  "pattern": "शाहजहाँ|शाहजहां|शाह जहाँ|शाह जहां|Shah Jahan",
+  "lang": "hi"
+ },
+ {
+  "id": "lang-pt-brasilia",
+  "level": "non-english",
+  "url": "https://pt.wikipedia.org/wiki/Bras%C3%ADlia",
+  "task": "Em que ano Brasília foi inaugurada, segundo este artigo?",
+  "expect": "1960 (21 April 1960). The answer is in Portuguese.",
+  "pattern": "\\b1960\\b",
+  "lang": "pt"
+ },
+ {
+  "id": "lang-zh-forbidden-city",
+  "level": "non-english",
+  "url": "https://zh.wikipedia.org/wiki/%E5%8C%97%E4%BA%AC%E6%95%85%E5%AE%AB",
+  "task": "故宫是哪一年建成的？",
+  "expect": "1420 (construction ran from 1406 to 1420). The answer is in Chinese.",
+  "pattern": "(?<!\\d)1420(?!\\d)",
+  "lang": "zh"
+ },
+ {
+  "id": "lang-it-dante",
+  "level": "non-english",
+  "url": "https://it.wikipedia.org/wiki/Dante_Alighieri",
+  "task": "In che anno è morto Dante, e in quale città?",
+  "expect": "1321, in Ravenna. The answer is in Italian.",
+  "pattern": "(?=[\\s\\S]*1321)(?=[\\s\\S]*Ravenna)",
+  "lang": "it"
+ },
+ {
+  "id": "lang-ar-burj-khalifa",
+  "level": "non-english",
+  "url": "https://ar.wikipedia.org/wiki/%D8%A8%D8%B1%D8%AC_%D8%AE%D9%84%D9%8A%D9%81%D8%A9",
+  "task": "كم يبلغ ارتفاع برج خليفة حسب هذه الصفحة؟",
+  "expect": "828 m (829.8 m to the tip). The answer is in Arabic.",
+  "pattern": "82[89]|٨٢[٨٩]",
+  "lang": "ar"
+ },
+ {
+  "id": "dev-github-vscode-licence",
+  "level": "developer",
+  "url": "https://github.com/microsoft/vscode",
+  "task": "What licence is this repository under, and what is its main language?",
+  "expect": "MIT licence; TypeScript.",
+  "pattern": "(?=[\\s\\S]*\\bMIT\\b)(?=[\\s\\S]*TypeScript)"
+ },
+ {
+  "id": "dev-github-node-latest-release",
+  "level": "developer",
+  "url": "https://github.com/nodejs/node",
+  "task": "What is the latest release of this project, and when was it published?",
+  "expect": "The release marked Latest on the repository's releases as shown in the run, with its date. The value changes over time: judge it against what the pages in the run show, not against memory. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+ },
+ {
+  "id": "dev-pypi-numpy-python",
+  "level": "developer",
+  "url": "https://pypi.org/",
+  "task": "Find the numpy package and tell me its latest version and which Python versions it requires.",
+  "expect": "The latest version and the 'Requires: Python' value on pypi.org/project/numpy as shown in the run. The value changes over time: judge it against what the pages in the run show, not against memory. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+ },
+ {
+  "id": "dev-rubygems-rails",
+  "level": "developer",
+  "url": "https://rubygems.org/gems/rails",
+  "task": "What licence is this gem under, and what is its latest version?",
+  "expect": "MIT, and the version the page marks as the latest (8.1.4.1 when this was written). The value changes over time: judge it against what the pages in the run show, not against memory. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass.",
+  "pattern": "\\bMIT\\b"
+ },
+ {
+  "id": "dev-mdn-fetch-returns",
+  "level": "developer",
+  "url": "https://developer.mozilla.org/en-US/",
+  "task": "Find the documentation for the global fetch() function and tell me what it returns.",
+  "expect": "A Promise that resolves to a Response object.",
+  "pattern": "(?=[\\s\\S]*Promise)(?=[\\s\\S]*Response)"
+ },
+ {
+  "id": "dev-python-pairwise",
+  "level": "developer",
+  "url": "https://docs.python.org/3/",
+  "task": "Find itertools.pairwise in these docs. What does it return, and in which Python version was it added?",
+  "expect": "Successive overlapping pairs taken from the input iterable; new in version 3.10.",
+  "pattern": "\\b3\\.10\\b"
+ },
+ {
+  "id": "dev-crates-serde-licence",
+  "level": "developer",
+  "url": "https://crates.io/",
+  "task": "Find the serde crate and tell me its licence.",
+  "expect": "MIT OR Apache-2.0.",
+  "pattern": "(?=[\\s\\S]*\\bMIT\\b)(?=[\\s\\S]*Apache)"
+ },
+ {
+  "id": "dev-github-docs-timeout",
+  "level": "developer",
+  "url": "https://docs.github.com/en",
+  "task": "In the GitHub Actions workflow syntax reference, which key sets the maximum number of minutes a job may run, and what is its default?",
+  "expect": "jobs.<job_id>.timeout-minutes; the default is 360 minutes.",
+  "pattern": "(?=[\\s\\S]*timeout-minutes)(?=[\\s\\S]*\\b360\\b)"
+ },
+ {
+  "id": "dev-github-flask-python",
+  "level": "developer",
+  "url": "https://github.com/pallets/flask",
+  "task": "Open this project's pyproject.toml and tell me the minimum Python version it requires.",
+  "expect": "The requires-python value in pyproject.toml on the default branch, as shown in the run. The value changes over time: judge it against what the pages in the run show, not against memory. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+ },
+ {
+  "id": "shop-books-light-in-attic",
+  "level": "shopping",
+  "url": "https://books.toscrape.com/",
+  "task": "How much is 'A Light in the Attic', and is it in stock?",
+  "expect": "£51.77, in stock (22 available).",
+  "pattern": "51\\.77"
+ },
+ {
+  "id": "shop-webscraper-cheapest-laptop",
+  "level": "shopping",
+  "url": "https://webscraper.io/test-sites/e-commerce/allinone",
+  "task": "Go to Computers, then Laptops, and tell me the cheapest laptop listed and its price.",
+  "expect": "The lowest-priced item on the Laptops page as the run's page shows it; every laptop on the page is considered, not only the first row. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+ },
+ {
+  "id": "shop-demoblaze-compare-phones",
+  "level": "shopping",
+  "url": "https://www.demoblaze.com/",
+  "task": "Which is cheaper on this shop, the Samsung galaxy s6 or the Nexus 6, and by how much?",
+  "expect": "Samsung galaxy s6 is $360 and Nexus 6 is $650, so the s6 is cheaper by $290.",
+  "pattern": "(?=[\\s\\S]*\\b360\\b)(?=[\\s\\S]*\\b650\\b)(?=[\\s\\S]*\\b290\\b)"
+ },
+ {
+  "id": "shop-demoblaze-cart-total",
+  "level": "shopping",
+  "url": "https://www.demoblaze.com/",
+  "task": "Add the Sony vaio i5 laptop to the cart, open the cart and tell me the total. Do not place the order.",
+  "expect": "The cart holds one Sony vaio i5 and the total is 790. The order is not placed.",
+  "pattern": "\\b790\\b"
+ },
+ {
+  "id": "shop-scrapingcourse-cheapest",
+  "level": "shopping",
+  "url": "https://www.scrapingcourse.com/ecommerce/",
+  "task": "Sort the products by price from low to high and tell me the cheapest product and its price. Don't add anything to the cart.",
+  "expect": "The shop's own sort control is set to price, low to high, and the answer names the first product on the sorted page with its price, as the run's page shows. Nothing is added to the cart. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+ },
+ {
+  "id": "shop-openfoodfacts-nutella",
+  "level": "shopping",
+  "url": "https://world.openfoodfacts.org/",
+  "task": "Look up Nutella and tell me how much sugar it has per 100 g and its Nutri-Score.",
+  "expect": "About 56 to 57 g of sugars per 100 g and Nutri-Score E, read from a Nutella product page on Open Food Facts.",
+  "pattern": "\\b5[67]([.,]\\d+)?\\s?g\\b"
+ },
+ {
+  "id": "shop-automationexercise-compare",
+  "level": "shopping",
+  "url": "https://automationexercise.com/products",
+  "task": "Which is cheaper on this shop, the Blue Top or the Men Tshirt, and by how much?",
+  "expect": "Blue Top is Rs. 500 and Men Tshirt is Rs. 400, so the Men Tshirt is cheaper by Rs. 100.",
+  "pattern": "(?=[\\s\\S]*\\b500\\b)(?=[\\s\\S]*\\b400\\b)(?=[\\s\\S]*\\b100\\b)"
+ },
+ {
+  "id": "shop-books-mystery-five-star",
+  "level": "shopping",
+  "url": "https://books.toscrape.com/",
+  "task": "In the Mystery category, find up to three books rated five stars that cost less than £20, with their prices.",
+  "expect": "Each book named is in the Mystery category, shows five stars and costs under £20 on the pages in the run. Fewer than three is right only when the run went through every page of the category and the pages it captured show that fewer exist; an answer that names no book without that evidence fails. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+ },
+ {
+  "id": "map-osm-brandenburg-gate",
+  "level": "maps-transit",
+  "url": "https://www.openstreetmap.org/",
+  "task": "Search for the Brandenburg Gate in Berlin. Which square is it on?",
+  "expect": "Pariser Platz (in Mitte, Berlin).",
+  "pattern": "Pariser Platz"
+ },
+ {
+  "id": "map-osm-directions-cambridge-oxford",
+  "level": "maps-transit",
+  "url": "https://www.openstreetmap.org/directions",
+  "task": "Get driving directions from Cambridge, UK to Oxford, UK. How far is it and how long does it take?",
+  "expect": "A car route between the two English cities with the distance and time the page shows: roughly 130 to 170 km and around two hours. A route to Cambridge, Massachusetts or another Oxford fails.",
+  "pattern": "\\b\\d{2,3}(\\.\\d+)?\\s?(km|mi|miles)\\b"
+ },
+ {
+  "id": "map-tfl-victoria-line",
+  "level": "maps-transit",
+  "url": "https://tfl.gov.uk/tube-dlr-overground/status/",
+  "task": "Is the Victoria line running a good service right now?",
+  "expect": "The Victoria line's current status as the TfL status page shows it. The value changes over time: judge it against what the pages in the run show, not against memory. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+ },
+ {
+  "id": "map-mta-times-square",
+  "level": "maps-transit",
+  "url": "https://www.mta.info/",
+  "task": "Which subway lines stop at Times Sq-42 St station?",
+  "expect": "1, 2, 3, 7, N, Q, R, W and the 42 St Shuttle (S). A, C and E at the connected 42 St-Port Authority station may be added.",
+  "pattern": "(?=[\\s\\S]*\\b7\\b)(?=[\\s\\S]*\\bN\\b)(?=[\\s\\S]*\\bQ\\b)"
+ },
+ {
+  "id": "map-sbb-zurich-bern",
+  "level": "maps-transit",
+  "url": "https://www.sbb.ch/en",
+  "task": "When is the next train from Zürich HB to Bern, and how long does the journey take?",
+  "expect": "A departure time from the SBB timetable shown in the run and a journey time (direct trains take about 56 minutes to an hour). The value changes over time: judge it against what the pages in the run show, not against memory. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+ },
+ {
+  "id": "map-distance-singapore-tokyo",
+  "level": "maps-transit",
+  "url": "https://www.timeanddate.com/worldclock/distance.html",
+  "task": "How far is it from Singapore to Tokyo, as the crow flies?",
+  "expect": "About 5,300 km (about 3,300 miles), from the site's distance calculator.",
+  "pattern": "5[,. ]?3\\d\\d|3[,. ]?3\\d\\d"
+ },
+ {
+  "id": "map-osm-opera-house-coordinates",
+  "level": "maps-transit",
+  "url": "https://www.openstreetmap.org/",
+  "task": "Find the Sydney Opera House and give me its latitude and longitude to two decimal places.",
+  "expect": "About -33.86, 151.21 (151.22 is within rounding).",
+  "pattern": "(?=[\\s\\S]*33\\.8[56])(?=[\\s\\S]*151\\.2[12])"
+ },
+ {
+  "id": "map-bart-fare",
+  "level": "maps-transit",
+  "url": "https://www.bart.gov/",
+  "task": "What is the one-way fare from Embarcadero to San Francisco International Airport (SFO)?",
+  "expect": "The fare BART's own trip planner or fare calculator shows for Embarcadero to SFO in the run. The value changes over time: judge it against what the pages in the run show, not against memory. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass.",
+  "pattern": "\\$\\s?\\d+\\.\\d{2}"
+ },
+ {
+  "id": "news-bbc-top",
+  "level": "news-sports",
+  "url": "https://www.bbc.com/news",
+  "task": "What is the top story right now? Open it and give me a two-sentence summary.",
+  "expect": "The lead story on the BBC News front page as shown in the run; the article is opened and the summary is supported by the article's text. The value changes over time: judge it against what the pages in the run show, not against memory. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+ },
+ {
+  "id": "news-npr-three",
+  "level": "news-sports",
+  "url": "https://text.npr.org/",
+  "task": "What are the first three headlines listed here?",
+  "expect": "The first three headlines on text.npr.org in page order, as shown in the run. The value changes over time: judge it against what the pages in the run show, not against memory. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+ },
+ {
+  "id": "news-guardian-world",
+  "level": "news-sports",
+  "url": "https://www.theguardian.com/international",
+  "task": "Go to the World news section, open the first story and tell me its headline and who wrote it.",
+  "expect": "The World section is opened, then its first story; the headline and byline are the ones on that article (a story with no named author may be credited to an agency or to Guardian staff). The value changes over time: judge it against what the pages in the run show, not against memory. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+ },
+ {
+  "id": "news-apnews-science",
+  "level": "news-sports",
+  "url": "https://apnews.com/",
+  "task": "Find the Science section and tell me the headline of its first story.",
+  "expect": "The first headline in AP's Science section as shown in the run. The value changes over time: judge it against what the pages in the run show, not against memory. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+ },
+ {
+  "id": "sport-premier-league-top",
+  "level": "news-sports",
+  "url": "https://www.bbc.com/sport/football/premier-league/table",
+  "task": "Who is top of the Premier League right now, and on how many points?",
+  "expect": "The first row of the table as shown in the run: team and points. The value changes over time: judge it against what the pages in the run show, not against memory. Each value stated must be in the page text or a screenshot of the run; a page that did not load, or shows none of this, is a failure or a block, never a pass."
+ },
+ {
+  "id": "sport-world-cup-2022",
+  "level": "news-sports",
+  "url": "https://en.wikipedia.org/wiki/2022_FIFA_World_Cup",
+  "task": "Who won this World Cup, what was the score in the final, and who was the top scorer?",
+  "expect": "Argentina beat France 4-2 on penalties after a 3-3 draw; Kylian Mbappe was top scorer with 8 goals.",
+  "pattern": "(?=[\\s\\S]*Argentina)(?=[\\s\\S]*Mbapp)(?=[\\s\\S]*\\b3\\s?(-|–|to)\\s?3\\b)"
+ },
+ {
+  "id": "sport-nba-finals-2024",
+  "level": "news-sports",
+  "url": "https://en.wikipedia.org/wiki/2024_NBA_Finals",
+  "task": "Who won this series, by how many games to how many, and who was named Finals MVP?",
+  "expect": "The Boston Celtics beat the Dallas Mavericks 4-1; Jaylen Brown was Finals MVP.",
+  "pattern": "(?=[\\s\\S]*Celtics)(?=[\\s\\S]*Jaylen Brown)(?=[\\s\\S]*\\b4\\s?(-|–|to)\\s?1\\b)"
+ },
+ {
+  "id": "sport-olympics-2024-medals",
+  "level": "news-sports",
+  "url": "https://en.wikipedia.org/wiki/2024_Summer_Olympics_medal_table",
+  "task": "Which three countries won the most gold medals at these Games, and how many each?",
+  "expect": "United States 40, China 40, Japan 20.",
+  "pattern": "(?=[\\s\\S]*United States)(?=[\\s\\S]*China)(?=[\\s\\S]*Japan)(?=[\\s\\S]*\\b40\\b)(?=[\\s\\S]*\\b20\\b)"
+ }
+]

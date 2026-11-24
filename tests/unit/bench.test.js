@@ -169,11 +169,13 @@ test("the judge is shown the final page and the last view of each page the run l
 
 test("the default judge is not a driver and sees screenshots; another model is text only unless told", () => {
   const C = require("../bench/judge-call.js");
-  const d = C.judgeConfig({ BENCH_API_KEY: "k" });
+  // The agent's key is the judge's too only when both are on one endpoint.
+  const d = C.judgeConfig({ BENCH_API_KEY: "k", BENCH_PROVIDER: "custom", BENCH_CUSTOM_URL: C.DEFAULT_JUDGE.url });
   assert.ok(!/gpt-oss-20b|nemotron-3-ultra/.test(d.model), "the judge is neither driver");
   assert.equal(d.vision, true);
   assert.equal(d.shots, 3);
   assert.equal(d.key, "k");
+  assert.equal(d.problem, "");
   assert.equal(C.judgeConfig({ BENCH_JUDGE_VISION: "0" }).vision, false);
   assert.equal(C.judgeConfig({ BENCH_JUDGE_MODEL: "some/text-model" }).vision, false);
   assert.equal(C.judgeConfig({ BENCH_JUDGE_MODEL: "some/vl-model", BENCH_JUDGE_VISION: "1", BENCH_JUDGE_SHOTS: "2" }).shots, 2);

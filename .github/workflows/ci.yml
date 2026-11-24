@@ -1,15 +1,16 @@
 name: CI
 
 # Release gates for 4.0. Every job below is one check from the release plan.
-# On pull requests and pushes to main and release-4.0 every gate runs; the
-# debugger-on suite runs nightly, the link check on release tags, and the
-# provider smoke test only by hand.
+# On pull requests and pushes to main and release-4.0 every gate runs, and on
+# pull requests to rel40-real-tasks too, so the trial work is checked before it
+# lands. The debugger-on suite runs nightly, the link check on release tags,
+# and the provider smoke test only by hand.
 on:
   push:
     branches: [main, release-4.0]
     tags: ["v*"]
   pull_request:
-    branches: [main, release-4.0]
+    branches: [main, release-4.0, rel40-real-tasks]
   schedule:
     - cron: "23 19 * * *"
   workflow_dispatch:
