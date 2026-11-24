@@ -20,7 +20,7 @@
 const path = require("node:path");
 const { createE2EServer } = require("./server.js");
 const TOOLS = require("../../extension/agentTools.js");
-const { engineTrace } = require("../helpers/engine-trace.js");
+const { engineTrace, watchViews } = require("../helpers/engine-trace.js");
 
 const PORT = parseInt(process.env.E2E_PORT || "8917", 10);
 // The local test server is granted, as after Allow on the site-access card.
@@ -64,6 +64,8 @@ async function main() {
     const workerTarget = await browser.waitForTarget((t) => t.type() === "service_worker" && t.url().includes("background.js"), { timeout: 20000 });
     const extensionId = new URL(workerTarget.url()).host;
     const worker = await workerTarget.worker();
+    // What each agent page is sent, followed from its first message (tests/helpers/engine-trace.js).
+    await watchViews(worker);
     // A debugger-on run without the debugger would quietly test the wrong build.
     if (DEBUGGER_ON && !(await worker.evaluate(() => !!chrome.debugger))) throw new Error("E2E_DEBUGGER is on but the extension under test has no chrome.debugger");
     await worker.evaluate((s) => new Promise((r) => chrome.storage.sync.set(s, r)), {

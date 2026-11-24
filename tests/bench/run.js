@@ -74,7 +74,7 @@ const J = require("./judge.js");
 const { summarise, normaliseTasks, sampleTasks, isInfra } = J;
 const { judgeConfig, judgeRun } = require("./judge-call.js");
 const BENCH_PROFILE_LIB = require("./profile.js");
-const { engineTrace } = require("../helpers/engine-trace.js");
+const { engineTrace, watchViews } = require("../helpers/engine-trace.js");
 
 // BENCH_EXTENSION runs another build of the extension (an older commit's
 // checkout) under this same harness, for before-and-after comparisons.
@@ -337,6 +337,8 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
     const workerTarget = await browser.waitForTarget((t) => t.type() === "service_worker" && t.url().includes("background.js"), { timeout: 20000 });
     const extensionId = new URL(workerTarget.url()).host;
     const worker = await workerTarget.worker();
+    // What each agent page is sent, followed from its first message (tests/helpers/engine-trace.js).
+    await watchViews(worker);
     await worker.evaluate((s) => new Promise((r) => chrome.storage.sync.set(s, r)), {
       agentActiveProvider: PROVIDER, agentModel: MODEL, agentHelperModel: HELPER_MODEL, showAgent: true, ...(CUSTOM_URL ? { agentCustomUrl: CUSTOM_URL } : {}), agentRiskConfirmation: true, agentDomainAllowlist: "", openingMode: "tab",
       // Each run is judged on its own: nothing learned in one may help the next,
