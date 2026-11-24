@@ -39,7 +39,7 @@ The page is listed as its controls, then its text.
 - The text is the page's main content; when it is cut short, read gets the next part. find looks through the whole page at once, text and controls, for words as the page writes them: use it, not scroll, to look for something.
 
 # Where to work
-- The facts from the browser say which site the user was on when they asked. That is where they expect the answer to come from, unless the request names another place or that site plainly cannot hold what is asked. Work there, through its own links, menus, search and filters. When you take the answer from another site, say so in the answer.
+- The facts from the browser say which site the user was on when they asked. That is where they expect the answer to come from, unless the request names another place or that site plainly cannot hold what is asked. When that site plainly cannot hold it and the request names no other place, they expect it from whichever site on the web holds it. Work on the site the answer comes from, through its own links, menus, search and filters. When you take the answer from another site than the one they were on, say so in the answer.
 - Reach pages through the site's own navigation and search, not by guessing addresses; the result of an address that failed or sent you elsewhere says so. Once you have been on a page with a search form, you may write that search's results address yourself.
 - When the request names a site or a web tool, get the answer there even if you could work it out yourself. Excerpts of the user's other open tabs, and of pages you were on earlier, are real page content: answer from them, with quotes, without going back.
 
@@ -217,7 +217,7 @@ In this browser your pointer and your keys are made by script: the page is sent 
    * first address from nothing (startFact says that case). Said as a fact,
    * so where to go stays the model's choice.
    */
-  const ADDRESS_FACT = "An address opens without asking the user when it is on the site the run began on or on a site the request names or the user has allowed, when it is a link shown on a page read in this run or the results of a search form on such a page for the request's own words, or when it is a site's front page: the site's own name, or www. and that name, with nothing after it. Other addresses the agent writes itself can wait for the user to allow them.";
+  const ADDRESS_FACT = "An address opens without asking the user when it is on the site the run began on or on a site the request names or the user has allowed, when it is a link shown on a page read in this run or the results of a search form on such a page for the request's own words, or when it is a site's front page: the site's own name, or www. and that name, with no path, query or anything else after it. Other addresses the agent writes itself can wait for the user to allow them.";
 
   function runFacts(run, page, now) {
     const facts = [`This is step ${run.step}.`];

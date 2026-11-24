@@ -356,6 +356,7 @@ test("the instructions name the site the user was on as the source, and tell the
     for (const scripted of [false, true]) {
       const system = CONTEXT.systemMessage({}, part, scripted);
       assert.match(system, /The facts from the browser say which site the user was on when they asked\. That is where they expect the answer to come from, unless the request names another place or that site plainly cannot hold what is asked\./);
+      assert.match(system, /When that site plainly cannot hold it and the request names no other place, they expect it from whichever site on the web holds it\./, "where the answer is expected from when the site cannot hold it");
       assert.doesNotMatch(system, /search engine/i, "the instructions name no search engine at all");
       for (const s of sentences(system)) assert.doesNotMatch(s, /\bopen\b[^.]*\bsearch\b[^.]*\bengine\b/i, `a sentence sends the model to a search engine: ${s}`);
     }
@@ -469,6 +470,8 @@ test("a run that began on a site is told which addresses open without asking, an
   for (const s of sentences(CONTEXT.ADDRESS_FACT)) assert.doesNotMatch(s, /\b(you must|do not|don't|never|should|try|instead|open a)\b/i, `the fact gives an order: ${s}`);
   assert.doesNotMatch(CONTEXT.ADDRESS_FACT, /\b[a-z0-9-]+\.(com|org|net|io|co|sg|uk)\b/i, "it names no site");
   const gate = (url) => POLICY_GATE.decide({ do: "navigate", url }, shopPage(), r, { riskConfirmation: true, allowlist: "" }, null).verdict;
+  assert.match(CONTEXT.ADDRESS_FACT, /front page: the site's own name, or www\. and that name, with no path, query or anything else after it\./);
+  assert.equal(gate("https://www.lang.example/en"), "confirm", "a front page with a path after it");
   // A site's front page, at its own name or www. and it, with nothing after it.
   assert.equal(gate("https://lang.example/"), "allow");
   assert.equal(gate("https://www.lang.example/"), "allow");
