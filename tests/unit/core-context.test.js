@@ -312,3 +312,144 @@ test("a site note is kept with the site of the step it is about, else with the r
   const out = L.applyLearned(M.empty(), r, { site_notes: [{ text: "Sizes are under the Size guide link", step: 2 }, "The search box is at the top"], lesson: "", about_user: [], drop: [] }, "other.example", flags, NOON);
   assert.deepEqual(out.store.entries.map((e) => [e.text, e.scope]).sort(), [["Sizes are under the Size guide link", "shop.example"], ["The search box is at the top", "google.com"]]);
 });
+
+// ------------------------------------------------- where the user asked from
+// The site the user was on when they asked is a fact the step and the answer
+// check are both told (core/context.js startSiteFact). No sentence sends the
+// model to a search engine: where to look is the model's to decide.
+
+const RUN = require("../../extension/core/run.js");
+const CONTEXT = require("../../extension/core/context.js");
+const JUDGE = require("../helpers/fake-judge.js");
+const advance = JUDGE.judging(RUN);
+
+const webPage = (url, title, innerText, elements) => ({ url, title, scrollY: 0, viewportHeight: 900, pageHeight: 900, visibleText: innerText.slice(0, 80), innerText, elements: elements || [], forms: [] });
+const shopPage = () => webPage("https://www.shop.example/", "Shop", "Welcome to the shop. Blue Widget $19.00 In stock.", [
+  { id: 3, tagName: "a", accName: "Blue Widget reviews", url: "https://reviews.example/blue-widget" },
+]);
+const reviewsPage = () => webPage("https://reviews.example/blue-widget", "Blue Widget review", "The Blue Widget weighs 240 grams and survived a two metre drop.");
+const stepEnv = (page) => ({ now: 1000, page, settings: { riskConfirmation: true, allowlist: "", verify: true }, extras: {} });
+const startOn = (task, page, more) => {
+  const r = RUN.newRun({ id: "r1", task, tabId: 7, startUrl: page.url, marker: "PAGE-abcd1234", now: 1, ...more });
+  advance(r, { type: "start" }, stepEnv(page));
+  return { run: r, fx: advance(r, { type: "observed", page }, stepEnv(page)) };
+};
+const stepReply = (r, page, actions) => advance(r, { type: "model_replied", reply: { memory: "", goal: "g", actions }, usage: {} }, stepEnv(page));
+// Sentences of a message, for asking what any one of them says.
+const sentences = (text) => String(text).split(/(?<=[.!?])\s+|\n+/).filter(Boolean);
+
+test("the step is told which site the user was on when they asked", () => {
+  const { run: r, fx } = startOn("how heavy is the blue widget?", shopPage());
+  assert.equal(fx[0].type, "model");
+  assert.equal(r.startSite, "shop.example");
+  const facts = fx[0].user.slice(fx[0].user.indexOf("Facts from the browser:"), fx[0].user.indexOf("PAGE-abcd1234 begins"));
+  assert.match(facts, /- The user was on shop\.example when they asked\./, "said as a fact from the browser, outside the page markers");
+  // And on every later step, as the run goes on.
+  stepReply(r, shopPage(), [{ do: "find", query: "weight" }]);
+  const later = advance(r, { type: "acted", result: { ok: true, message: "Found nothing.", pageChanged: false } }, stepEnv(shopPage()));
+  const next = later[0].type === "model" ? later : advance(r, { type: "observed", page: shopPage() }, stepEnv(shopPage()));
+  assert.match(next[0].user, /The user was on shop\.example when they asked\./);
+});
+
+test("the instructions name the site the user was on as the source, and tell the model to open no search engine", () => {
+  for (const part of [false, true]) {
+    for (const scripted of [false, true]) {
+      const system = CONTEXT.systemMessage({}, part, scripted);
+      assert.match(system, /The facts from the browser say which site the user was on when they asked\. That is where they expect the answer to come from, unless the request names another place or that site plainly cannot hold what is asked\./);
+      assert.doesNotMatch(system, /search engine/i, "the instructions name no search engine at all");
+      for (const s of sentences(system)) assert.doesNotMatch(s, /\bopen\b[^.]*\bsearch\b[^.]*\bengine\b/i, `a sentence sends the model to a search engine: ${s}`);
+    }
+  }
+  // Nor does any sentence of a step's own message, on a run that began on a site.
+  const { fx } = startOn("what is the population of Lisbon?", shopPage());
+  for (const s of sentences(fx[0].user)) assert.doesNotMatch(s, /search engine/i, `a sentence of the step names a search engine: ${s}`);
+});
+
+test("no start site is said for a run that began where no site was open, even after it reaches one, nor for a sub-task", () => {
+  const blank = { url: "chrome://newtab/", title: "New Tab", elements: [], innerText: "", visibleText: "", protectedPage: true };
+  const r = RUN.newRun({ id: "r2", task: "find a widget", tabId: 9, startUrl: "chrome://newtab/", marker: "PAGE-abcd1234", now: 1, fromNothing: { from: "newtab", url: "", title: "", reused: true } });
+  advance(r, { type: "start" }, stepEnv(blank));
+  let fx = advance(r, { type: "observed", page: blank }, stepEnv(blank));
+  assert.doesNotMatch(fx[0].user, /The user was on/);
+  // A run that began from nothing and has since reached a web page still had no start site.
+  const withStart = { ...r, startSite: "shop.example", fromNothing: { from: "newtab", left: true } };
+  assert.equal(CONTEXT.startSiteFact(withStart), "");
+  assert.doesNotMatch(CONTEXT.runFacts(withStart, shopPage(), 1000).join("\n"), /The user was on/);
+  const v = CONTEXT.verifierMessages(withStart, { success: true, answer: "x" }, [], shopPage(), 1000, {});
+  assert.doesNotMatch(v.user, /The user was on/);
+  assert.match(v.user, /The run began with no site open\./);
+  // A sub-task began in a tab of its own: where the user was is not its fact.
+  const sub = { ...RUN.newRun({ id: "r3", task: "part", startUrl: "https://shop.example/", sub: { parent: "r1", request: "whole" } }), step: 1 };
+  assert.equal(CONTEXT.startSiteFact(sub), "");
+  fx = CONTEXT.runFacts(sub, shopPage(), 1000);
+  assert.doesNotMatch(fx.join("\n"), /The user was on/);
+});
+
+test("the answer check is told where the user asked from and where the quotes were read, and is asked to say whether they match", () => {
+  const props = CONTEXT.VERDICT_TOOL.parameters.properties;
+  assert.equal(props.quotes_on_asked_site.type, "boolean", "a closed answer");
+  assert.ok(CONTEXT.VERDICT_TOOL.parameters.required.includes("quotes_on_asked_site"));
+  assert.match(CONTEXT.VERIFIER, /It is reported beside the verdict and does not decide it/);
+  const { run: r } = startOn("how much is the blue widget?", shopPage());
+  const fx = stepReply(r, shopPage(), [{ do: "done", success: true, answer: "It costs $19.00.", evidence: ["Blue Widget $19.00"] }]);
+  assert.equal(fx[0].purpose, "verify");
+  assert.match(fx[0].user, /The user was on shop\.example when they asked\./);
+  assert.match(fx[0].user, /The evidence quotes found on web pages were read on: shop\.example\./);
+  const facts = fx[0].user.slice(fx[0].user.indexOf("PAGE-abcd1234 ends"));
+  assert.match(facts, /The user was on shop\.example/, "the facts sit outside the page markers");
+  // A verdict that does not say, or says something else, gives no source.
+  assert.equal(CONTEXT.readVerdict({ pass: true, requirements: [] }).onAskedSite, null);
+  assert.equal(CONTEXT.readVerdict({ pass: true, requirements: [], quotes_on_asked_site: "maybe" }).onAskedSite, null);
+  assert.equal(CONTEXT.readVerdict({ pass: true, requirements: [], quotes_on_asked_site: false }).onAskedSite, false);
+});
+
+// A stand-in for the checking model: it reads the two facts from the check's
+// message and says whether every site the quotes were read on is the one the
+// user asked on or one the request names, as a model reading them would.
+function fakeVerifier(user) {
+  const start = (/The user was on (\S+) when they asked\./.exec(user) || [])[1] || "";
+  const read = ((/were read on: ([^\n]+)\./.exec(user) || [])[1] || "").split(", ").filter(Boolean);
+  const request = (/The user's request:\n"([^"]*)"/.exec(user) || [])[1] || "";
+  const asked = read.every((site) => site === start || request.includes(site));
+  return { requirements: [{ need: "the answer", met: true }], pass: true, reason: "Supported by the quotes.", speaks_to_ai: false, quotes_on_asked_site: asked };
+}
+
+test("an answer quoted from another site comes back flagged with its source, and still stands", () => {
+  const { run: r } = startOn("how heavy is the blue widget?", shopPage());
+  stepReply(r, shopPage(), [{ do: "click", ref: 3 }]);
+  advance(r, { type: "acted", result: { ok: true, message: "Clicked. The page changed.", pageChanged: true } }, stepEnv(reviewsPage()));
+  advance(r, { type: "observed", page: reviewsPage() }, stepEnv(reviewsPage()));
+  let fx = stepReply(r, reviewsPage(), [{ do: "done", success: true, answer: "It weighs 240 grams.", evidence: ["The Blue Widget weighs 240 grams"] }]);
+  assert.equal(fx[0].purpose, "verify");
+  assert.match(fx[0].user, /were read on: reviews\.example\./);
+  fx = advance(r, { type: "model_replied", purpose: "verify", reply: fakeVerifier(fx[0].user), usage: {} }, stepEnv(reviewsPage()));
+  assert.deepEqual(fx, [{ type: "end" }]);
+  assert.equal(r.outcome.state, "success", "the check reports the source; it does not fail the answer on it");
+  assert.equal(r.outcome.verified, true);
+  assert.deepEqual(r.outcome.source, { asked: false, start: "shop.example", sites: ["reviews.example"] });
+  assert.equal(r.outcome.note, "This answer comes from reviews.example, not from shop.example, the site you asked on.");
+});
+
+test("an answer quoted from the start site, or from a site the request names, is not flagged", () => {
+  const { run: r } = startOn("how much is the blue widget?", shopPage());
+  let fx = stepReply(r, shopPage(), [{ do: "done", success: true, answer: "It costs $19.00.", evidence: ["Blue Widget $19.00"] }]);
+  advance(r, { type: "model_replied", purpose: "verify", reply: fakeVerifier(fx[0].user), usage: {} }, stepEnv(shopPage()));
+  assert.deepEqual(r.outcome.source, { asked: true, start: "shop.example", sites: ["shop.example"] });
+  assert.equal(r.outcome.note, "");
+
+  const named = startOn("on reviews.example, how heavy is the blue widget?", shopPage()).run;
+  stepReply(named, shopPage(), [{ do: "click", ref: 3 }]);
+  advance(named, { type: "acted", result: { ok: true, message: "Clicked. The page changed.", pageChanged: true } }, stepEnv(reviewsPage()));
+  advance(named, { type: "observed", page: reviewsPage() }, stepEnv(reviewsPage()));
+  fx = stepReply(named, reviewsPage(), [{ do: "done", success: true, answer: "It weighs 240 grams.", evidence: ["The Blue Widget weighs 240 grams"] }]);
+  advance(named, { type: "model_replied", purpose: "verify", reply: fakeVerifier(fx[0].user), usage: {} }, stepEnv(reviewsPage()));
+  assert.equal(named.outcome.source.asked, true);
+  assert.equal(named.outcome.note, "");
+
+  // A check that says nothing about the source leaves the outcome without one.
+  const quiet = startOn("how much is the blue widget?", shopPage()).run;
+  stepReply(quiet, shopPage(), [{ do: "done", success: true, answer: "It costs $19.00.", evidence: ["Blue Widget $19.00"] }]);
+  advance(quiet, { type: "model_replied", purpose: "verify", reply: { requirements: [{ need: "price", met: true }], pass: true, reason: "ok" }, usage: {} }, stepEnv(shopPage()));
+  assert.equal(quiet.outcome.source, undefined);
+  assert.equal(quiet.outcome.verified, true);
+});
