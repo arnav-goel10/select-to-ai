@@ -1474,6 +1474,8 @@
     const role = String(el.role || "").toLowerCase();
     const type = String(el.inputType || "").toLowerCase();
     if (el.submits === true) return "submit";
+    // A label tied to a native box or choice presses that control.
+    if (el.controlKind === "radio" || el.controlKind === "checkbox") return el.controlKind;
     if (tag === "input") {
       if (type === "radio" || type === "checkbox") return type;
       if (type === "submit" || type === "image") return "submit";
