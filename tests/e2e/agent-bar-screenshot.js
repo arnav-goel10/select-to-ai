@@ -15,7 +15,7 @@ const puppeteer = require("puppeteer");
 
 const ROOT = path.join(__dirname, "..", "..");
 const EXT = path.join(ROOT, "extension");
-const OUT = path.join(ROOT, "docs", "screenshots", "agent-bar");
+const OUT = process.env.OUT ? path.resolve(process.env.OUT) : path.join(ROOT, "docs", "screenshots", "agent-bar");
 
 const LIGHT_PAGE = `<!doctype html><html><head><meta name=viewport content="width=device-width"></head><body style="font-family:Georgia,serif;margin:0;background:#fff;color:#111">
 <header style="background:#f3f4f6;padding:18px 28px;font-size:20px;font-weight:600">Fly Direct</header>
@@ -60,7 +60,8 @@ function stub(theme) {
 
 const STATES = {
   working: { show: true, state: "working", text: "Search for flights from Singapore to Tokyo on 14 November", ended: false },
-  needs: { show: true, state: "needs", text: "Waiting for you to sign in", ended: false },
+  needs: { show: true, state: "needs", text: "Waiting for you to sign in", onPage: true, ended: false },
+  asks: { show: true, state: "needs", text: "Waiting for your go-ahead", onPage: false, ended: false },
   done: { show: true, state: "done", text: "Done. The answer is on the agent page.", ended: true },
   failed: { show: true, state: "failed", text: "Could not finish. The agent page says why.", ended: true },
 };
@@ -101,7 +102,7 @@ async function shoot(browser, { name, html, theme, scheme = "light", width = 128
     await shoot(browser, { name: `${w}-dark-page-light-theme`, html: DARK_PAGE, theme: "light", scheme: "dark", width });
     await shoot(browser, { name: `${w}-dark-page-dark-theme`, html: DARK_PAGE, theme: "dark", scheme: "light", width });
   }
-  for (const state of ["needs", "done", "failed"]) {
+  for (const state of ["needs", "asks", "done", "failed"]) {
     await shoot(browser, { name: `state-${state}-light`, html: LIGHT_PAGE, theme: "light", state });
     await shoot(browser, { name: `state-${state}-dark`, html: DARK_PAGE, theme: "dark", state });
   }
