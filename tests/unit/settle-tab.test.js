@@ -164,6 +164,17 @@ for (const entry of ENTRIES) {
     assert.equal(r.tab.url, `${PAGE}/real`);
   });
 
+  test(`${entry}: a page that replaces itself in the same moment its load ends is followed`, async () => {
+    const r = await click(entry, (id, at, page) => {
+      // The next load is told in the same tick as the end of the first, so both carry one time.
+      at(100, () => { page.complete(id); page.loading(id, `${PAGE}/real`); });
+      at(2600, () => page.complete(id));
+    });
+    assert.ok(r.ended >= 2600, `read at ${r.ended} ms, before the page that took its place loaded`);
+    assert.equal(r.tab.status, "complete");
+    assert.equal(r.tab.url, `${PAGE}/real`);
+  });
+
   test(`${entry}: a page that keeps loading again gets exactly one more wait`, async () => {
     const r = await click(entry, (id, at, page) => {
       at(100, () => page.complete(id));

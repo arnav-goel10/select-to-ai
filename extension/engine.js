@@ -1142,7 +1142,11 @@
       await watchNet(await quiet(chrome.tabs.get(tabId)));
       const loaded = (await settled(tabId, startWindowMs, maxMs)) || events.seen.some((e) => e.status === "loading");
       if (!loaded && !opened) return { loading: false };
-      const loadedAt = Math.min(Date.now(), ...events.seen.filter((e) => e.status === "complete").map((e) => e.at).slice(-1));
+      // Where the first load ended in the tab's events. What comes after it is
+      // told by its place in that list, not its time: two events can share a millisecond.
+      const doneAt = events.seen.findLastIndex((e) => e.status === "complete");
+      const after = doneAt < 0 ? events.seen.length : doneAt + 1;
+      const loadedAt = doneAt < 0 ? Date.now() : Math.min(Date.now(), events.seen[doneAt].at);
       const deadline = Math.max(since + TOOLS.SETTLE.CEILING_MS, Date.now() + 2 * TOOLS.SETTLE.QUIET_MS);
       const first = (await quiet(chrome.tabs.get(tabId))) || {};
       await watchNet(first);
@@ -1151,13 +1155,14 @@
       if (waited.loading) return waited;
       // Another load, or another address, after the first load ended.
       const address = pageAddress(first.url);
-      const other = (e) => e.at > loadedAt && (e.status === "loading" || (e.url && pageAddress(e.url) !== address));
+      const other = (e, i) => i >= after && (e.status === "loading" || (e.url && pageAddress(e.url) !== address));
       const next = await events.first(other, Math.min(loadedAt + WATCH_MS, deadline));
       if (!next) return waited;
       // Once: the page that took its place is waited for, and not watched again.
       const now = (await quiet(chrome.tabs.get(tabId))) || {};
       if (next.status === "loading" || now.status === "loading") {
-        const done = await events.first((e) => e.at >= next.at && e.status === "complete", deadline);
+        const from = events.seen.indexOf(next);
+        const done = await events.first((e, i) => i > from && e.status === "complete", deadline);
         if (!done) return { loading: true, signs: [] };
         await sleep(Math.min(AFTER_LOAD_MS, Math.max(0, deadline - Date.now())));
       }
