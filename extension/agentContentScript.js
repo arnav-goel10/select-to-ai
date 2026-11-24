@@ -1399,16 +1399,19 @@
                 type: c.tagName === 'INPUT' ? (c.type || 'text').toLowerCase() : c.tagName.toLowerCase(),
             }));
         const hasSubmit = controls.some((c) => (c.tagName === 'BUTTON' && (c.getAttribute('type') || 'submit').toLowerCase() === 'submit') || (c.tagName === 'INPUT' && /^(submit|image)$/.test((c.type || '').toLowerCase())));
-        // One box for words or numbers and nothing else of the person's: no
-        // second box, no file, no tick box, no secret field, and a box whose
-        // autocomplete names none of their details. Such a form may ask the
-        // site something (a calculator, a translator, a tracking box) or post
-        // words for other people (a comment, a chat), and its structure
-        // cannot tell which. It is marked so the send it makes can be judged.
-        const oneBox = typed.length === 1
-            && /^(text|search|number|textarea|date|month|week|time|datetime-local)$/.test(kinds[0])
-            && /^(?:on|off)?$/.test((typed[0].getAttribute('autocomplete') || '').trim().toLowerCase())
-            && !controls.some((c) => sensitiveKind(c) || (c.tagName === 'INPUT' && /^(file|checkbox)$/.test((c.type || '').toLowerCase())));
+        // Plain: boxes for words, numbers or dates and nothing else of the
+        // person's, however many boxes there are: no file, no tick box, no
+        // secret field, and no box whose autocomplete names one of their
+        // details. Such a form may ask the site something (a calculator, a
+        // lookup, a tracking box) or post words for other people (a comment,
+        // a chat), and its structure cannot tell which. It is marked so the
+        // send it makes can be judged (agentTools.js judgedForm). oneBox is
+        // the same with a single box.
+        const nothingOfTheirs = !controls.some((c) => sensitiveKind(c) || (c.tagName === 'INPUT' && /^(file|checkbox)$/.test((c.type || '').toLowerCase())));
+        const plainBox = (c, i) => /^(text|search|number|textarea|date|month|week|time|datetime-local)$/.test(kinds[i])
+            && /^(?:on|off)?$/.test((c.getAttribute('autocomplete') || '').trim().toLowerCase());
+        const plain = typed.length > 0 && typed.every(plainBox) && nothingOfTheirs;
+        const oneBox = typed.length === 1 && plain;
         // Where the form goes, without its query: the same form on the same
         // page has the same address from one look at the page to the next.
         let action = '';
@@ -1422,6 +1425,7 @@
             hasSubmit,
             boxes,
             oneBox,
+            plain,
             action,
             fields: typed.length,
             filled: typed.filter((c) => c.value).length,
