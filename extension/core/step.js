@@ -181,6 +181,7 @@
               `Rarely needed: your whole notes, rewritten, to replace them. Only when something in them is wrong or they are full; leave it out otherwise. There is room for ${NOTES_ROOM} characters.`,
           },
           goal: { type: "string", description: "What this step is for, in a few words." },
+          leave_to_user: { type: "boolean", description: "Whether the user's own words for this task say to stop before anything that commits them (sending, submitting, posting, paying, booking, deleting) or to leave that step to them, in any wording or language. true holds every such step back until they say otherwise, whatever their settings; false when their words say nothing of the kind." },
           ...action,
           direction: { type: "string", enum: ["down", "up", "left", "right", "bottom", "top"], description: "scroll: one screen down, up, left or right, or all the way to the bottom or top. drag: which way to move it (down, up, left or right)." },
           ...(on("find") ? { query: { type: "string", description: "find: the words to look for, as the page would write them." } } : {}),
@@ -288,7 +289,7 @@
   }
 
   // Every field the step tool has, at the top level or in an action.
-  const FIELDS = Object.freeze(["note", "rewrite_notes", "memory", "goal", "do", "commits", "ref", "fx", "fy", "to_ref", "to_text", "place", "to_fx", "to_fy", "distance", "x", "y", "value", "from", "key", "times", "url", "direction", "query", "part", "op", "tab", "seconds", "scope", "kind", "question", "success", "answer", "evidence", "tasks", "then"]);
+  const FIELDS = Object.freeze(["note", "rewrite_notes", "memory", "goal", "leave_to_user", "do", "commits", "ref", "fx", "fy", "to_ref", "to_text", "place", "to_fx", "to_fy", "distance", "x", "y", "value", "from", "key", "times", "url", "direction", "query", "part", "op", "tab", "seconds", "scope", "kind", "question", "success", "answer", "evidence", "tasks", "then"]);
   const PARAM_TAG = /<parameter=\s*["']?([A-Za-z_]+)["']?\s*>/g;
 
   /**
@@ -595,6 +596,8 @@
     return {
       ...notesOf(reply),
       goal: clip(reply.goal || reply.next_goal || reply.thought || "", 200),
+      // What the step read in the user's words: that committing steps are theirs.
+      leaveToUser: reply.leave_to_user === true || reply.leave_to_user === "true",
       actions,
     };
   }

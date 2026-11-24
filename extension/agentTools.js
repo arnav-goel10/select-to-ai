@@ -2013,6 +2013,7 @@
     carriesDetail,
     pickContextTabs,
     actionRisk,
+    contentRisk,
     formatElementList,
     elementLabel,
     guardHumanCheck,
