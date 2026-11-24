@@ -299,7 +299,7 @@
   /** Whether a recorded run can be saved; when not, why, in words the user is shown. */
   function saveable(runId) {
     const r = recordings.get(runId);
-    if (!r) return { ok: false, why: GONE };
+    if (!r) return { ok: false, why: GONE, gone: true };
     if (r.saved) return { ok: false, why: SAVED, saved: r.saved };
     if (!r.ended) return { ok: false, why: "the run is still going", pending: true };
     if (r.broken) return { ok: false, why: r.broken };
@@ -354,9 +354,9 @@
 
   /** saveable(), for a run whose recording the worker no longer holds. */
   function fromDraft(d) {
-    if (!d) return { ok: false, why: GONE };
+    if (!d) return { ok: false, why: GONE, gone: true };
     if (d.saved) return { ok: false, why: SAVED, saved: d.saved };
-    if (d.why || !d.recipe) return { ok: false, why: d.why || GONE, ...(d.nothing ? { nothing: true } : {}) };
+    if (d.why || !d.recipe) return { ok: false, why: d.why || GONE, ...(d.nothing ? { nothing: true } : {}), ...(d.why ? {} : { gone: true }) };
     return { ok: true, steps: d.steps || d.recipe.steps.length };
   }
 
