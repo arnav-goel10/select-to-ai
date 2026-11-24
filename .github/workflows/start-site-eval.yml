@@ -1,0 +1,53 @@
+name: Start-site eval
+
+# Where the run looks first, on a live model: twenty start-site and request
+# pairs written for this check alone (tests/decisions/start-site-cases.js).
+# It runs on pull requests that change what the step or the answer check is
+# told, and by hand. The spend stops at the cap; the key comes from the
+# repository's Anthropic secret and is never printed.
+on:
+  pull_request:
+    branches: [main, release-4.0]
+    paths:
+      - extension/core/context.js
+      - extension/core/run.js
+      - extension/core/step.js
+      - tests/decisions/start-site-*.js
+      - .github/workflows/start-site-eval.yml
+  workflow_dispatch:
+    inputs:
+      model:
+        description: The agent's model
+        type: string
+        default: claude-haiku-5-5
+      cap:
+        description: Hard spend cap, in US dollars
+        type: string
+        default: "1.5"
+
+permissions:
+  contents: read
+
+jobs:
+  start-site-eval:
+    name: start-site-eval
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Start-site pairs on a live model
+        run: node tests/decisions/start-site-eval.js
+        env:
+          START_EVAL_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          START_EVAL_MODEL: ${{ inputs.model || 'claude-haiku-5-5' }}
+          START_EVAL_CAP_USD: ${{ inputs.cap || '1.5' }}
+          START_EVAL_REPORT: start-site-eval.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: start-site-eval
+          path: start-site-eval.json
+          if-no-files-found: ignore
