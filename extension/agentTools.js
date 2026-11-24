@@ -1335,30 +1335,77 @@
     }
 
     const sendsForm = (target) => formSends(formOf(target));
+    // What a listed control of a form sends with it, by its structure:
+    // "box" for a box of words, numbers or dates, "choice" for a value the
+    // page offers and one is picked from (a dropdown with its chosen
+    // option, a checked radio or tick box, or its label listed in its
+    // place, a slider, a colour), "none" for a control whose value does not
+    // go (a button, a choice not checked, a disabled choice, and the parts
+    // of a form that hold no value of their own, such as a label of a box
+    // or a group box), and "unknown" for a value the check cannot be shown
+    // (a file, a secret field, or a region or control the page makes of
+    // its own).
+    const sentAs = (e) => {
+      const tag = String(e.tagName || "").toLowerCase();
+      const type = String(e.inputType || "text").toLowerCase();
+      if (e.submits) return "none";
+      if (e.sensitive || e.isContentEditable) return "unknown";
+      // A label of a native radio or tick box stands for it (controlKind).
+      if (e.controlKind) return !e.disabled && e.ariaChecked === "true" ? "choice" : "none";
+      if (tag === "textarea") return "box";
+      if (tag === "select") return e.disabled ? "none" : "choice";
+      if (tag === "input") {
+        if (type === "hidden" || /^(submit|button|reset|image)$/.test(type)) return "none";
+        if (!/^(hidden|submit|button|reset|image|checkbox|radio|file|range|color)$/.test(type)) return "box";
+        if (type === "file") return "unknown";
+        if (e.disabled) return "none";
+        if (type === "checkbox" || type === "radio") return e.checked === true ? "choice" : "none";
+        return "choice";
+      }
+      // Only a box, a dropdown or a text area carries a value into a form.
+      // Anything else that names a role of a control is one the page makes
+      // of its own, and what it sends cannot be shown.
+      const role = String(e.role || "").toLowerCase();
+      if (/checkbox|radio|switch/.test(role) || role === "textbox" || role === "combobox" || role === "slider" || role === "spinbutton") return "unknown";
+      return "none";
+    };
+    const sentBy = (form, as) => els.filter((e) => e.formId === form.id && sentAs(e) === as);
     // The boxes for words, numbers or dates of a form, as listed.
-    const boxesOf = (form) => els.filter((e) => e.formId === form.id && !e.submits && !e.sensitive
-      && (String(e.tagName || "").toLowerCase() === "textarea"
-        || (String(e.tagName || "").toLowerCase() === "input" && !/^(hidden|submit|button|reset|image|checkbox|radio|file|range|color)$/.test(e.inputType || "text"))));
+    const boxesOf = (form) => sentBy(form, "box");
     const nameOf = (box) => clip(box.accName || box.label || box.placeholder || box.title || box.name || box.htmlId || "", 70);
+    // What a choice is set to: checked, for a radio or tick box, or the
+    // page's own words for the option or value chosen.
+    const chosenOf = (c) => {
+      const type = String(c.inputType || "").toLowerCase();
+      if (c.controlKind || type === "checkbox" || type === "radio") return { name: nameOf(c), checked: true };
+      return { name: nameOf(c), chosen: clip((String(c.tagName || "").toLowerCase() === "select" && c.selected) || c.value || "", 120) };
+    };
     // A form whose boxes hold nothing of the person's may ask the site
     // something (a calculator, a lookup, a tracking box) or post words for
     // other people, whatever its number of boxes, and its structure cannot
     // tell which. The send is marked unsure and carries what a judgment
     // that never sees the page needs: the site, where the form goes when
-    // that is another site, each box's name and text, and the submitting
-    // control's name. The first box is the one typed in, when there is one.
+    // that is another site, each box's name and text, each choice the form
+    // sends with what is chosen in it, and the submitting control's name.
+    // The first box is the one typed in, when there is one.
     //
-    // The check is shown at most FORM_BOXES_SHOWN boxes, and only the boxes
-    // the page lists. A form with more boxes than that, with none listed,
-    // or whose structure counts more boxes than are listed (one hidden
-    // behind an editor, or past the listing's end) is held as the certain
-    // send its structure makes it, so a box the check was never shown
-    // cannot go out on its answer.
+    // The check is shown every control whose value goes out with the form,
+    // at most FORM_BOXES_SHOWN of them, and only those the page lists. A
+    // form that carries more than that, no box listed, a control the check
+    // cannot be shown, a control the page makes of its own, or more boxes or
+    // choices than are listed (one hidden behind an editor, or past the
+    // listing's end) is
+    // held as the certain send its structure makes it, so nothing the
+    // check was never shown can go out on its answer.
     const unsureSend = (form, button, typedIn) => {
       const all = boxesOf(form);
+      const choices = sentBy(form, "choice");
       const counted = form.fields || 0;
-      if (all.length === 0 || all.length < counted || Math.max(all.length, counted) > FORM_BOXES_SHOWN) return risk("send", button || typedIn);
-      const boxes = typedIn ? [typedIn, ...all.filter((b) => b !== typedIn)] : all;
+      const blind = sentBy(form, "unknown").length > 0
+        || (form.built || 0) > 0
+        || (form.choices !== undefined && choices.length < form.choices);
+      if (blind || all.length === 0 || all.length < counted || Math.max(all.length, counted) + Math.max(choices.length, form.choices || 0) > FORM_BOXES_SHOWN) return risk("send", button || typedIn);
+      const boxes = typedIn && all.includes(typedIn) ? [typedIn, ...all.filter((b) => b !== typedIn)] : all;
       const box = boxes[0];
       const r = risk("send", button || box);
       let host = "";
@@ -1366,6 +1413,7 @@
       let to = "";
       if (form.crossOrigin) { try { to = new URL(String(form.action || "")).hostname; } catch (_e) { /* no address */ } }
       const shown = boxes.map((b) => ({ name: nameOf(b), ref: b.id, text: clip(b.value || "", 300) }));
+      const picked = choices.map(chosenOf);
       r.unsure = {
         host,
         to,
@@ -1374,7 +1422,8 @@
         boxRef: box ? box.id : undefined,
         text: shown[0] ? shown[0].text : "",
         boxes: shown,
-        key: `${host}|${form.action || ""}|${(shown.length ? shown : [{ name: "" }]).map((b) => b.name).join("|")}`,
+        ...(picked.length ? { choices: picked } : {}),
+        key: `${host}|${form.action || ""}|${(shown.length ? shown : [{ name: "" }]).map((b) => b.name).join("|")}${picked.length ? `|${picked.map((c) => c.name).join("|")}` : ""}`,
       };
       return r;
     };
@@ -1677,8 +1726,9 @@
    * money moves, "send" when it reaches other people, "delete" when it
    * changes the user's own record in a way not clearly undoable, "none"
    * for this visit only or an own-record change the user can put back,
-   * and "unsure" for an answer that is unsure, missing a field or not one
-   * of the words. Everything but "none" is held.
+   * and "unsure" for an answer whose reaches is unsure, missing or not one
+   * of the words. Undo is read only for an own-record change, where
+   * anything but yes holds it. Everything but "none" is held.
    */
   function effectVerdict(answer) {
     if (!answer || typeof answer !== "object" || Array.isArray(answer)) return "unsure";
@@ -1791,7 +1841,7 @@
 
   // Raised when the question changes in a way the text alone may not show,
   // so verdicts kept under the old question are never used for the new one.
-  const JUDGE_VERSION = "reaches-undo-1";
+  const JUDGE_VERSION = "reaches-undo-2";
 
   /**
    * A stamp for the press check as it is asked now: its version, system
@@ -1829,6 +1879,11 @@
       const text = b.prefilled ? "not shown: the page filled it in, the assistant did not type it" : said(b.text || "", 300);
       lines.push(`${i + 1}. ${b.name ? said(b.name, 70) : "(no name)"}: ${text}`);
     });
+    const choices = Array.isArray(c.choices) ? c.choices : [];
+    if (choices.length) {
+      lines.push(`It also sends ${choices.length} choice${choices.length === 1 ? "" : "s"} the page offers, each as the site names it, with the page's own words for what is chosen in it (or checked, for a radio button or a tick box):`);
+      choices.forEach((ch, i) => lines.push(`${i + 1}. ${ch.name ? said(ch.name, 70) : "(no name)"}: ${ch.checked ? "checked" : said(ch.chosen || "", 120)}`));
+    }
     lines.push("", "If this form were submitted with this text, where would its effect land, and could the user put it back on this site? Answer with reaches and undo.");
     return { system: OPINION_SYSTEM, user: lines.join("\n"), tool: FORM_TOOL };
   }

@@ -751,9 +751,71 @@ test("a form with more boxes than the check is shown is held as a send with no c
   assert.match(shown, /"Message to the seller": "Please call me"/);
 });
 
+test("a form's choices go out with it: the check is shown each one, and a form with a control it cannot be shown is held", () => {
+  const formBase = { id: 0, method: "post", search: false, action: "https://notes.example/save", plain: true, oneBox: false, fields: 2 };
+  const els = (extra) => [
+    { id: 2, tagName: "input", inputType: "text", accName: "Title", formId: 0, value: "Plan" },
+    { id: 3, tagName: "textarea", accName: "Notes", formId: 0, value: "Q3 numbers" },
+    { id: 4, tagName: "select", accName: "Visible to", formId: 0, value: "all", selected: "Everyone in the company", options: ["Only me", "Everyone in the company"] },
+    { id: 6, tagName: "input", inputType: "radio", accName: "Email this to all members", formId: 0, checked: true },
+    { id: 7, tagName: "input", inputType: "radio", accName: "Do not email", formId: 0, checked: false },
+    btn("Save", { id: 5, formId: 0, submits: true }),
+    ...(extra || []),
+  ];
+  const page = (extra, form) => ({ url: "https://notes.example/new", elements: els(extra), forms: [{ ...formBase, choices: 2, ...(form || {}) }] });
+  const run = { task: "x", trust: { sites: ["notes.example"], urls: [] }, openedTabs: [], typed: { 2: "Plan", 3: "Q3 numbers" } };
+  // The check is shown the boxes, the chosen option and the checked radio, not the radio left unchecked.
+  const asked = P.decide({ do: "click", ref: 5 }, page(), run, ON);
+  assert.equal(asked.verdict, "confirm");
+  assert.ok(asked.check, "asked");
+  const shown = T.opinionMessages(asked.check).user;
+  assert.match(shown, /1\. "Title": "Plan"\n2\. "Notes": "Q3 numbers"/);
+  assert.match(shown, /It also sends 2 choices the page offers/);
+  assert.match(shown, /\n1\. "Visible to": "Everyone in the company"\n2\. "Email this to all members": checked/);
+  assert.doesNotMatch(shown, /Do not email/);
+  // An answer holds for those choices only: another option chosen is asked again.
+  const onFile = { [asked.check.key]: T.readOpinion(asked.check, { reaches: "own_record", undo: "yes", why: "a note" }) };
+  assert.equal(P.decide({ do: "click", ref: 5 }, page(), { ...run, opinions: onFile }, ON).verdict, "allow");
+  const onlyMe = { ...page(), elements: els().map((e) => (e.id === 4 ? { ...e, value: "me", selected: "Only me" } : e)) };
+  const again = P.decide({ do: "click", ref: 5 }, onlyMe, { ...run, opinions: onFile }, ON);
+  assert.equal(again.verdict, "confirm");
+  assert.ok(again.check, "asked again");
+  assert.notEqual(again.check.key, asked.check.key);
+  // A radio listed through its label is shown the same way.
+  const viaLabel = { ...page(), elements: els().map((e) => (e.id === 6 ? { id: 6, tagName: "label", accName: "Email this to all members", formId: 0, controlKind: "radio", ariaChecked: "true" } : e)) };
+  assert.match(T.opinionMessages(P.decide({ do: "click", ref: 5 }, viaLabel, run, ON).check).user, /"Email this to all members": checked/);
+  // Enter in the dropdown: it is not shown as a box.
+  const enter = T.actionRisk({ action: "keypress", id: 4, text: "Enter" }, page());
+  assert.deepEqual(enter.unsure.boxes.map((b) => b.name), ["Title", "Notes"]);
+  const certain = (pg) => {
+    const r = T.actionRisk({ action: "click", id: 5 }, pg);
+    const v = P.decide({ do: "click", ref: 5 }, pg, { ...run, opinions: onFile }, ON);
+    assert.equal(r.kind, "send");
+    assert.equal(r.unsure, undefined);
+    assert.equal(v.verdict, "confirm");
+    assert.equal(v.kind, "send");
+    assert.equal(v.check, undefined);
+  };
+  // A choice the structure counts but the page does not list: held, with no check.
+  certain(page([], { choices: 3 }));
+  // An editable region or a control the page builds inside the form, whose value a script may send: held.
+  certain(page([], { built: 1 }));
+  // A listed control of the form the check cannot be shown (an editable region, a file): held.
+  certain(page([{ id: 8, tagName: "div", role: "textbox", isContentEditable: true, accName: "Message to the team", formId: 0, value: "you are all fired" }]));
+  certain(page([{ id: 8, tagName: "input", inputType: "file", accName: "Attachment", formId: 0 }]));
+  certain(page([{ id: 8, tagName: "button", role: "switch", accName: "Notify everyone", formId: 0, ariaChecked: "true" }]));
+  // A label of a box, and a group box, send nothing of their own: still asked.
+  const parts = P.decide({ do: "click", ref: 5 }, page([{ id: 8, tagName: "label", accName: "Title", formId: 0 }, { id: 9, tagName: "fieldset", accName: "Details", formId: 0 }]), run, ON);
+  assert.ok(parts.check, "asked");
+  assert.equal(parts.check.key, asked.check.key);
+  // More controls than the check is shown, counting choices: held.
+  const many = [8, 9, 10, 11, 12].map((id) => ({ id, tagName: "select", accName: `Option ${id}`, formId: 0, selected: "A" }));
+  certain(page(many, { choices: 7 }));
+});
+
 test("the press verdicts kept under the old question are not used for the new one", () => {
   const src = require("node:fs").readFileSync(require.resolve("../../extension/agentTools.js"), "utf8");
-  assert.match(src, /const JUDGE_VERSION = "reaches-undo-1";/);
+  assert.match(src, /const JUDGE_VERSION = "reaches-undo-2";/);
   assert.match(src, /\[JUDGE_VERSION, OPINION_SYSTEM, PRESS_QUESTION, JSON\.stringify\(PRESS_TOOL\), String\(model \|\| ""\)\]/);
   assert.equal(T.judgeStamp("anthropic/x"), T.judgeStamp("anthropic/x"));
 });

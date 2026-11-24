@@ -601,9 +601,12 @@
       };
       const listed = u.boxes && u.boxes.length ? u.boxes : [{ name: u.box, ref: u.boxRef, text: u.text }];
       const boxes = listed.map(typedIn);
-      // An answer is about this form sent by this control with this text:
-      // another button on it, or other words in its boxes, is asked again.
-      const key = `form|${u.key}|${u.button || ""}|${TOOLS.textStamp(JSON.stringify([boxes, listed.map((b) => b.text || "")]))}`;
+      // Each choice the form sends, with the page's words for what is chosen.
+      const choices = (u.choices || []).map((c) => (c.checked ? { name: c.name, checked: true } : { name: c.name, chosen: c.chosen || "" }));
+      // An answer is about this form sent by this control with this text
+      // and these choices: another button on it, other words in its boxes,
+      // or another option chosen, is asked again.
+      const key = `form|${u.key}|${u.button || ""}|${TOOLS.textStamp(JSON.stringify([boxes, listed.map((b) => b.text || ""), ...(choices.length ? [choices] : [])]))}`;
       const said = opinions[key];
       if (said && said.does === "none") {
         return { verdict: "allow", note: `Not held for approval: a check shown only the site, the names of the boxes and the button, and the text judged that this stays within this visit to ${u.to || u.host || "the site"} and reaches no one else${said.why ? ` (${said.why.replace(/[.\s]+$/, "")})` : ""}.` };
@@ -616,7 +619,7 @@
       }
       if (said && said.why && said.does !== "none") opinion = `from the site, the form's names and the text, ${said.why.replace(/[.\s]+$/, "")}`;
       if (!said) {
-        check = { kind: "form", key, host: u.host, to: u.to, box: boxes[0].name, button: u.button, text: boxes[0].text, prefilled: boxes[0].prefilled, boxes, task: requestOf(run) };
+        check = { kind: "form", key, host: u.host, to: u.to, box: boxes[0].name, button: u.button, text: boxes[0].text, prefilled: boxes[0].prefilled, boxes, ...(choices.length ? { choices } : {}), task: requestOf(run) };
       }
     }
     // The button that pays is pressed by the user: the agent fills the form,
