@@ -113,8 +113,8 @@ test("a run ended by the spend cap is lost, not failed, and the judge is told wh
 
 test("the dry check fails when a fixture run ends another way or a counter is missing", () => {
   const tasks = [{ id: "fx", level: "fixture", dry: "passed" }, { id: "held", level: "fixture", dry: "failed|timed out", dryHeld: 1 }];
-  // A row as run.js writes it now: the form controls read back, the grounding check, and the judge stub's counted call.
-  const row = (id, more) => ({ id, family: "fixture", steps: 1, seconds: 2, costUSD: 0, counters: { heldActions: 0 }, ending: "finished", history: [], formState: { controls: [], total: 0 }, grounding: { numbers: 0, found: 0, missing: [] }, judgeUsage: { calls: 1 }, judgeCostUSD: 0.001, ...more });
+  // A row as run.js writes it now: the form controls read back, the grounding check, the judge stub's counted call, and the picture the browser would give.
+  const row = (id, more) => ({ id, family: "fixture", steps: 1, seconds: 2, costUSD: 0, counters: { heldActions: 0 }, ending: "finished", history: [], formState: { controls: [], total: 0 }, grounding: { numbers: 0, found: 0, missing: [] }, judgeUsage: { calls: 1 }, judgeCostUSD: 0.001, picture: { granted: true }, ...more });
   const shards = [{ agent: { debuggerAvailable: false } }];
   assert.deepEqual(T.checkDry([row("fx", { success: true }), row("held", { success: false, ending: "timed out", counters: { heldActions: 3 } })], tasks, shards), []);
   assert.equal(T.checkDry([row("fx", { success: false }), row("held", { success: false, counters: { heldActions: 3 } })], tasks, shards).length, 1);
@@ -153,7 +153,7 @@ test("a provider's error text is saved without anything shaped like a key", () =
 
 test("the dry check wants the form read back and the judge stub counted", () => {
   const tasks = [{ id: "form", level: "fixture", dry: "failed", dryForm: "Ada Lovelace" }];
-  const row = (more) => ({ id: "form", family: "fixture", success: false, steps: 1, seconds: 2, costUSD: 0, counters: {}, ending: "asked the user", history: [], formState: { controls: [{ type: "text", label: "Name", value: "Ada Lovelace" }], total: 1 }, grounding: { numbers: 0, found: 0, missing: [] }, judgeUsage: { calls: 1 }, judgeCostUSD: 0.001, ...more });
+  const row = (more) => ({ id: "form", family: "fixture", success: false, steps: 1, seconds: 2, costUSD: 0, counters: {}, ending: "asked the user", history: [], formState: { controls: [{ type: "text", label: "Name", value: "Ada Lovelace" }], total: 1 }, grounding: { numbers: 0, found: 0, missing: [] }, judgeUsage: { calls: 1 }, judgeCostUSD: 0.001, picture: { granted: true }, ...more });
   const shards = [{ agent: { debuggerAvailable: false } }];
   assert.deepEqual(T.checkDry([row()], tasks, shards), []);
   assert.match(T.checkDry([row({ formState: { controls: [{ type: "text", label: "Name", value: "" }], total: 1 } })], tasks, shards)[0], /no form control of the final page holds "Ada Lovelace"/);

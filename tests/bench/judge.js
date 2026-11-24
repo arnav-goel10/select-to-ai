@@ -146,24 +146,81 @@ function engineReadingText(readings) {
   return `\nThe engine's reading of the pages visited (the page text the extension's own page reader extracted and showed the agent, which can hold what the captured page text lacks: a value carried by a class, title or label such as a star rating, a PDF's text, text inside components, the rest of a long page). Excerpts: each page's opening, then the text around the values the answer states:\n${pages.join("\n\n")}\n`;
 }
 
+// The page states the harness keeps for the judge (trial.js keepPageState):
+// at most `most` states, each capture cut to `chars` characters, so up to
+// most x chars in all. A state is dropped only past `most`, and then one of
+// an address that has another state kept, so at least `most` addresses are
+// kept before any address loses its last state.
+const PAGE_STATES = Object.freeze({ most: 30, chars: 60000 });
+// How many of the earlier states the judge is shown: the last ones, in the order first seen.
+const EARLIER_STATES_SHOWN = 10;
+// How an earlier state and the final page are cut down for the judge (excerptFor).
+const EXCERPT_EARLIER = Object.freeze({ opening: 600, windows: 3, size: 500 });
+const EXCERPT_FINAL = Object.freeze({ opening: 3000, windows: 6, size: 500 });
+const EXCERPT_GAP = "\n[...]\n";
+
+/** The most characters excerptFor can return with these bounds: the opening and up to three windows a window's worth (two for quotes, one for the task's words). */
+function excerptMostChars({ opening, windows, size }) {
+  return opening + 3 * windows * (size + EXCERPT_GAP.length);
+}
+
+/**
+ * The most characters the judge's message can hold for its page text: the
+ * earlier states it is shown, the final page, and the engine's readings
+ * (`readingChars`, trial.js READING.total), with `rest` for the task, the
+ * answer, the actions, the form and the fixed lines. What the batch reserve
+ * in run.js is priced on, so it covers the largest message judgeMessage sends.
+ */
+function judgeMessageMostChars(readingChars, { rest = 20000, header = 400 } = {}) {
+  return EARLIER_STATES_SHOWN * (excerptMostChars(EXCERPT_EARLIER) + header) + excerptMostChars(EXCERPT_FINAL) + readingChars + rest;
+}
+
+/**
+ * The page states a run saw before its final page, in the order first seen:
+ * every kept state except the final page itself (the state the harness saw
+ * last when it is at the final address, and any with the final page's text),
+ * which the message shows on its own.
+ */
+function earlierStates(run) {
+  const flat = (t) => String(t || "").replace(/\s+/g, " ").trim();
+  const final = flat(run.finalText);
+  const list = (run.pages || []).filter((p) => p && p.url);
+  // The state seen last (keepPageState's lastSeen; the list's end for a row without it) is the harness's last capture.
+  let last = list.length - 1;
+  list.forEach((p, i) => { if ((p.lastSeen || 0) > (list[last].lastSeen || 0)) last = i; });
+  if (last >= 0 && list[last].url !== run.finalUrl) last = -1;
+  return list.filter((p, i) => i !== last && !(p.url === run.finalUrl && flat(p.text) === final));
+}
+
 /** The judge's user message for one run. */
 function judgeMessage(run) {
   const actions = (run.history || [])
     .map((h) => `${h.step}. ${h.ok ? "ok  " : "FAIL"} ${h.action}${h.on ? ` on "${h.on}"` : ""} -> ${h.outcome}`)
     .join("\n");
-  const pages = run.pages || [];
   const quotes = quotesOf(run);
+  // The states of the pages the run was on before the final one, in the order first seen.
+  const before = earlierStates(run);
   // Where each quote of the agent's was found among the pages the harness captured.
-  const captured = [...pages.filter((p) => p.url !== run.finalUrl), { url: run.finalUrl, text: run.finalText }].filter((p) => p.url);
+  const captured = [...before, { url: run.finalUrl, text: run.finalText }].filter((p) => p.url);
   const located = quotes.map((q) => {
     const probe = fold(q);
     const where = [...new Set([...captured, ...(run.engineReadings || []).map((p) => ({ url: `${p.url} (engine's reading)`, text: p.text }))].filter((p) => fold(p.text).includes(probe)).map((p) => p.url))];
     return `- "${q}": ${where.length ? `on ${where.join(" and ")}` : "not in the captured page text"}`;
   });
-  // Pages visited before the last one, newest first: an answer read on an
-  // earlier page is evidence too.
-  const earlier = pages.filter((p) => p.url !== run.finalUrl).slice(-5).reverse()
-    .map((p) => `Page: ${p.title || ""} | ${p.url}\n${excerptFor(p.text, run.task, { quotes })}`);
+  // Each state of the pages before the final one, in the order the run saw
+  // them: an answer read on an earlier page, or on an earlier state of the
+  // same address (the first page of results, before the next was drawn in
+  // its place), is evidence too.
+  const total = new Map();
+  for (const p of before) total.set(p.url, (total.get(p.url) || 0) + 1);
+  const seen = new Map();
+  const labelled = before.map((p) => {
+    seen.set(p.url, (seen.get(p.url) || 0) + 1);
+    const n = total.get(p.url);
+    return `Page: ${p.title || ""} | ${p.url}${n > 1 ? ` (state ${seen.get(p.url)} of ${n} at this address)` : ""}\n${excerptFor(p.text, run.task, { ...EXCERPT_EARLIER, quotes })}`;
+  });
+  const earlier = labelled.slice(-EARLIER_STATES_SHOWN);
+  const leftOut = labelled.length - earlier.length;
   const shots = (run.screenshots || []).length;
   // A task across several sites names them itself (the task file's "sites").
   const named = [...new Set([siteOf(run.startUrl), ...(run.sites || []).map((s) => siteOf(/^https?:/.test(s) ? s : `https://${s}`))].filter(Boolean))];
@@ -178,11 +235,11 @@ function judgeMessage(run) {
     `How the run ended: ${run.ending}`,
     `Final answer given to the user:\n${run.answer || "(none)"}`,
     "",
-    located.length ? `Quoted passages in the answer, and the captured pages that contain them (the harness keeps the text of the last few pages only, so "not in the captured page text" is not proof the agent never saw it):\n${located.join("\n")}\n` : "",
-    earlier.length ? `Pages visited earlier in the run (excerpts):\n${earlier.join("\n\n")}\n` : "",
+    located.length ? `Quoted passages in the answer, and the captured pages that contain them (the harness keeps the text of up to ${PAGE_STATES.most} page states, the first ${PAGE_STATES.chars} characters of each, so "not in the captured page text" is not proof the agent never saw it):\n${located.join("\n")}\n` : "",
+    earlier.length ? `Pages visited earlier in the run, in the order first seen (excerpts; a page that changed without its address changing is shown once for each state, and a page seen again unchanged is shown once)${leftOut > 0 ? `; the ${leftOut} first-seen state(s) are left out here` : ""}:\n${earlier.join("\n\n")}\n` : "",
     `Final page address: ${run.finalUrl || "(unknown)"}`,
     `Final page title: ${run.finalTitle || ""}`,
-    `Final page text (excerpt):\n${excerptFor(run.finalText, run.task, { opening: 3000, windows: 6, size: 500, quotes }) || "(not captured)"}`,
+    `Final page text (excerpt):\n${excerptFor(run.finalText, run.task, { ...EXCERPT_FINAL, quotes }) || "(not captured)"}`,
     formStateText(run.formState) ? `\n${formStateText(run.formState)}` : "",
     engineReadingText(run.engineReadings),
     run.grounding && run.grounding.numbers ? `Numbers in the answer, checked by the harness against all the page text it captured and the engine's reading of the pages: ${run.grounding.found} of ${run.grounding.numbers} appear there${run.grounding.missing.length ? `; not found: ${run.grounding.missing.join(", ")}` : ""}. A number not found may still be right (an earlier page the harness no longer holds, or a sum the answer worked out), but an answer none of whose numbers is on any page needs the evidence to show them some other way.` : "",
@@ -357,6 +414,10 @@ function normaliseTasks(list) {
     ...(t.dryHeld ? { dryHeld: Number(t.dryHeld) } : {}),
     ...(t.dryScripted ? { dryScripted: Number(t.dryScripted) } : {}),
     ...(t.dryTyped ? { dryTyped: Number(t.dryTyped) } : {}),
+    // What the approver's dry stand-in answers (yes or no), and the fewest holds the run must allow on its yes or decline by kind.
+    ...(typeof t.dryApprove === "boolean" ? { dryApprove: t.dryApprove } : {}),
+    ...(t.dryApproved ? { dryApproved: Number(t.dryApproved) } : {}),
+    ...(t.dryRefused ? { dryRefused: Number(t.dryRefused) } : {}),
   })).filter((t) => t.task && /^https?:\/\//.test(t.url));
 }
 
@@ -390,4 +451,4 @@ function finalAnswer(trace, shown) {
   return String(shown || "").trim();
 }
 
-module.exports = { taskList, finalAnswer, JUDGE_SYSTEM, judgeMessage, formStateText, engineReadingText, pickScreenshots, taskTerms, quotesOf, siteOf, parseVerdict, summarise, normaliseTasks, sampleTasks, excerptFor, isInfra, hashUnit, splitTasks, samplePerGroup };
+module.exports = { taskList, finalAnswer, JUDGE_SYSTEM, judgeMessage, earlierStates, EARLIER_STATES_SHOWN, PAGE_STATES, EXCERPT_EARLIER, EXCERPT_FINAL, excerptMostChars, judgeMessageMostChars, formStateText, engineReadingText, pickScreenshots, taskTerms, quotesOf, siteOf, parseVerdict, summarise, normaliseTasks, sampleTasks, excerptFor, isInfra, hashUnit, splitTasks, samplePerGroup };
