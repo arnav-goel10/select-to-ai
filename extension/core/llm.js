@@ -303,8 +303,11 @@
    * - The Responses API (ChatGPT sign-in): input_tokens_details, the same
    *   two fields, inside input_tokens.
    * - DeepSeek: prompt_cache_hit_tokens, inside prompt_tokens.
-   * - Gemini's OpenAI-compatible endpoint and Together document no cached
-   *   count, so theirs stays 0.
+   * - Together: prompt_tokens_details.cached_tokens, or on some models
+   *   cached_tokens at the top level of usage, both inside prompt_tokens
+   *   (its prompt-caching page reads the one, then the other).
+   * - Gemini's OpenAI-compatible endpoint documents no cached count, so
+   *   its count stays 0.
    * @returns {{cached: number, cacheWrite: number, apart: boolean}}
    */
   function cacheOf(u) {
@@ -312,7 +315,7 @@
     const details = u.prompt_tokens_details || u.input_tokens_details || null;
     const apart = u.input_tokens !== undefined && u.prompt_tokens === undefined && !u.input_tokens_details;
     if (apart) return { cached: n(u.cache_read_input_tokens), cacheWrite: n(u.cache_creation_input_tokens), apart };
-    const cached = n(details && details.cached_tokens) || n(u.prompt_cache_hit_tokens);
+    const cached = n(details && details.cached_tokens) || n(u.prompt_cache_hit_tokens) || n(u.cached_tokens);
     return { cached, cacheWrite: n(details && details.cache_write_tokens), apart };
   }
 

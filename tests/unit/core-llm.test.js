@@ -332,6 +332,8 @@ for (const [name, provider, model, usage, cached, cacheWrite] of [
   ["xAI", "xai", "grok-4-6", { prompt_tokens: 32, prompt_tokens_details: { text_tokens: 32, audio_tokens: 0, image_tokens: 0, cached_tokens: 8 } }, 8, 0],
   ["DeepSeek", "deepseek", "deepseek-flash", { prompt_tokens: 1200, prompt_cache_hit_tokens: 1000, prompt_cache_miss_tokens: 200 }, 1000, 0],
   ["Mistral", "mistral", "mistral-small-latest", { prompt_tokens: 1013, prompt_tokens_details: { cached_tokens: 1008 } }, 1008, 0],
+  ["Together", "together", "openai/gpt-oss-120b", { prompt_tokens: 3417, prompt_tokens_details: { cached_tokens: 3327 } }, 3327, 0],
+  ["Together, top-level field", "together", "openai/gpt-oss-120b", { prompt_tokens: 1200, cached_tokens: 1000 }, 1000, 0],
 ]) {
   test(`${name}: cached prompt tokens are read from its own usage fields`, async () => {
     const out = await client([reply(200, cachedReply(usage))], []).call({ system: "s", user: "u", tool, tier: "pro" }, cfg({ provider, model, liteModel: model }));
@@ -351,8 +353,13 @@ test("DeepSeek's prompt_tokens_details copy of the hit count is read the same", 
   assert.equal(LLM.cacheOf({ prompt_tokens: 1200, prompt_tokens_details: { cached_tokens: 1000 }, prompt_cache_hit_tokens: 1000 }).cached, 1000);
 });
 
-test("a usage with no cached count, as Gemini's OpenAI endpoint and Together send it, reads as none cached", () => {
+test("a usage with no cached count, as Gemini's OpenAI endpoint sends it, reads as none cached", () => {
   assert.deepEqual(LLM.cacheOf({ prompt_tokens: 800, completion_tokens: 20, total_tokens: 820 }), { cached: 0, cacheWrite: 0, apart: false });
+});
+
+test("Together's nested count wins over its top-level one, as its own example reads them", () => {
+  assert.equal(LLM.cacheOf({ prompt_tokens: 1200, prompt_tokens_details: { cached_tokens: 900 }, cached_tokens: 1000 }).cached, 900);
+  assert.equal(LLM.cacheOf({ prompt_tokens: 1200, cached_tokens: 1000 }).cached, 1000);
 });
 
 test("Anthropic's cache fields stay counted apart from input_tokens", () => {
