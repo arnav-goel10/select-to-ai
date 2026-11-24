@@ -1440,6 +1440,20 @@
             && /^(?:on|off)?$/.test((c.getAttribute('autocomplete') || '').trim().toLowerCase());
         const plain = typed.length > 0 && typed.every(plainBox) && nothingOfTheirs;
         const oneBox = typed.length === 1 && plain;
+        // What else goes out with it that the page offers and one picks
+        // from: each dropdown, each checked radio or tick box, each slider
+        // and colour, shown or not. And the controls the page builds of its
+        // own inside it (an editable region, a dropdown, a tick box or a
+        // slider made of plain elements), whose value a script may send with
+        // it. The form check is shown the first as listed and never the
+        // second, so a form with a choice left out of the listing, or with a
+        // control of the page's own, is held (agentTools.js unsureSend).
+        const kindOf = (c) => (c.type || '').toLowerCase();
+        const choices = controls.filter((c) => !c.disabled && (c.tagName === 'SELECT'
+            || (c.tagName === 'INPUT' && /^(hidden|submit|button|reset|image|checkbox|radio|file|range|color)$/.test(kindOf(c))
+                && !/^(hidden|submit|button|reset|image)$/.test(kindOf(c)) && (c.checked || !/^(checkbox|radio)$/.test(kindOf(c)))))).length;
+        const built = Array.from(form.querySelectorAll('[contenteditable], [role="textbox"], [role="combobox"], [role="checkbox"], [role="radio"], [role="switch"], [role="slider"], [role="spinbutton"]'))
+            .filter((n) => !/^(INPUT|TEXTAREA|SELECT)$/.test(n.tagName) && (n.isContentEditable || !!n.getAttribute('role'))).length;
         // Where the form goes, without its query: the same form on the same
         // page has the same address from one look at the page to the next.
         let action = '';
@@ -1456,6 +1470,8 @@
             plain,
             action,
             fields: typed.length,
+            choices,
+            built,
             filled: typed.filter((c) => c.value).length,
             crossOrigin,
         };
