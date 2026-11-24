@@ -37,7 +37,8 @@
 
   // Per-provider fallback models used when the configured model is not valid
   // for the active provider. "lite" is the cheap default, "pro" the flagship.
-  // Catalog verified against the providers' live model lists on 28 Sep 2026.
+  // Catalog verified against the providers' live model lists on 28 Sep 2026,
+  // and again on 24 Nov 2026, when retired ids were taken out of the presets.
   // Provider endpoints and the storage key each provider's API key lives under.
   // "custom" is intentionally absent: its base URL comes from user settings.
   const PROVIDER_ENDPOINTS = Object.freeze({
@@ -67,17 +68,23 @@
       pro: "claude-sonnet-5-5",
     },
     openai: { lite: "gpt-5.4-mini", pro: "gpt-5.5" },
-    deepseek: { lite: "deepseek-chat", pro: "deepseek-reasoner" },
+    // DeepSeek retired the names deepseek-chat and deepseek-reasoner on
+    // 24 Jul 2026 (its API updates page, checked 24 Nov 2026).
+    deepseek: { lite: "deepseek-flash", pro: "deepseek-v4-pro" },
     gemini: { lite: "gemini-flash-latest", pro: "gemini-pro-latest" },
     // On Mistral's free plan (checked 1 Oct 2026) medium allows 1,000 requests a
     // minute and large 15, so an agent run uses medium.
     mistral: { lite: "mistral-small-latest", pro: "mistral-medium-latest" },
     groq: { lite: "openai/gpt-oss-20b", pro: "openai/gpt-oss-120b" },
+    // Together's serverless list (checked 24 Nov 2026) no longer has the
+    // Llama 3 Turbo models or DeepSeek-V3.
     together: {
-      lite: "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
-      pro: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+      lite: "openai/gpt-oss-120b",
+      pro: "deepseek-ai/DeepSeek-V4-Pro-0813",
     },
-    xai: { lite: "grok-4-1-fast-non-reasoning", pro: "grok-4-6" },
+    // xAI retired the grok-4-1-fast models on 15 May 2026 and sends their
+    // names to grok-4.3; its model list spells the flagship grok-4.6.
+    xai: { lite: "grok-4.3", pro: "grok-4.6" },
     // OpenCode Zen is a paid gateway from an extension: its "-free" models
     // answer "free tier can only be used from within OpenCode".
     opencode: {
@@ -98,10 +105,8 @@
   const MODEL_PRESETS = Object.freeze({
     openrouter: [
       "openrouter/free",
-      "nvidia/nemotron-3-super-120b-a12b:free",
       "nvidia/nemotron-3.5-lightning:free",
       "google/gemma-4-31b-it:free",
-      "qwen/qwen3.8-27b:free",
       "google/gemini-3.8-flash",
       "anthropic/claude-sonnet-5",
       "anthropic/claude-haiku-4.5",
@@ -125,14 +130,12 @@
       "claude-sonnet-4-6",
     ],
     openai: ["gpt-5.4-mini", "gpt-5.4", "gpt-5.4-nano", "gpt-5.5"],
-    deepseek: ["deepseek-chat", "deepseek-reasoner"],
+    deepseek: ["deepseek-flash", "deepseek-v4-pro"],
     gemini: [
       "gemini-flash-latest",
       "gemini-pro-latest",
-      "gemini-3.5-flash",
-      "gemini-3.1-pro",
-      "gemini-2.5-flash",
-      "gemini-2.5-pro",
+      "gemini-3.8-flash",
+      "gemini-3.1-pro-preview",
     ],
     mistral: [
       "mistral-small-latest",
@@ -140,13 +143,13 @@
       "mistral-large-latest",
       "codestral-latest",
     ],
-    groq: ["openai/gpt-oss-20b", "openai/gpt-oss-120b", "qwen/qwen3.6-27b"],
+    groq: ["openai/gpt-oss-20b", "openai/gpt-oss-120b", "qwen/qwen3.8-27b"],
     together: [
-      "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
-      "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-      "deepseek-ai/DeepSeek-V3",
+      "openai/gpt-oss-120b",
+      "deepseek-ai/DeepSeek-V4.1-Flash",
+      "deepseek-ai/DeepSeek-V4-Pro-0813",
     ],
-    xai: ["grok-4-1-fast-non-reasoning", "grok-4-1-fast-reasoning", "grok-4-6"],
+    xai: ["grok-4.3", "grok-4.6"],
     cerebras: ["qwen-3.8-27b", "gpt-oss-120b"],
     // Filled from the signed-in account's model list instead.
     chatgpt: [],
@@ -200,6 +203,9 @@
   // 2026 with tests/decisions: qwen3.8-27b and nemotron-3-super each made
   // 28 of 28 next-step decisions right. gemma-4-31b was rate limited for
   // most of the run, so it could not be scored and comes after them.
+  // On 24 Nov 2026 OpenRouter's public model list no longer had the first
+  // two. They stay here until a measured run picks what replaces them,
+  // since this chain decides which model the default free path acts with.
   const OPENROUTER_FREE_CHAIN = Object.freeze([
     "qwen/qwen3.8-27b:free",
     "nvidia/nemotron-3-super-120b-a12b:free",
@@ -249,21 +255,21 @@
     small: Object.freeze([
       "anthropic/claude-haiku-4.5", "claude-haiku-4-5", "claude-haiku-5-5", "gemini-3.1-flash-lite",
       "gemini-3.5-flash-lite", "gemini-flash-lite-latest", "google/gemma-4-31b-it:free", "gpt-5.4-mini", "gpt-5.4-nano",
-      "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo", "ministral-14b-latest", "mistral-small-latest",
-      "openai/gpt-5.4-mini", "openai/gpt-oss-20b", "openrouter/free", "qwen-3.8-27b", "qwen/qwen3.6-27b",
+      "ministral-14b-latest", "mistral-small-latest",
+      "openai/gpt-5.4-mini", "openai/gpt-oss-20b", "openrouter/free", "qwen-3.8-27b", "qwen/qwen3.8-27b",
       "qwen/qwen3.8-27b:free"
     ]),
     standard: Object.freeze([
-      "codestral-latest", "deepseek-ai/DeepSeek-V3", "deepseek-chat", "deepseek-reasoner", "deepseek-v4.1-flash",
-      "deepseek/deepseek-v4.1-flash", "gemini-2.5-flash", "gemini-3.5-flash", "gemini-3.8-flash", "gemini-flash-latest",
-      "google/gemini-3.8-flash", "gpt-oss-120b", "llama3", "meta-llama/Llama-3.3-70B-Instruct-Turbo", "mistral",
+      "codestral-latest", "deepseek-ai/DeepSeek-V4-Pro-0813", "deepseek-ai/DeepSeek-V4.1-Flash", "deepseek-flash",
+      "deepseek-v4-pro", "deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash", "gemini-3.8-flash", "gemini-flash-latest",
+      "google/gemini-3.8-flash", "gpt-oss-120b", "llama3", "mistral",
       "mistral-large-latest", "mistral-medium-latest", "nvidia/nemotron-3-super-120b-a12b:free",
       "nvidia/nemotron-3.5-lightning:free", "openai/gpt-oss-120b", "phi3", "qwen2.5-coder"
     ]),
     frontier: Object.freeze([
       "anthropic/claude-sonnet-4.6", "anthropic/claude-sonnet-5", "claude-opus-5-5", "claude-sonnet-4-6",
-      "claude-sonnet-5", "claude-sonnet-5-5", "gemini-2.5-pro", "gemini-3.1-pro", "gemini-pro-latest", "gpt-5.4",
-      "gpt-5.5", "gpt-6-luna", "gpt-6.1-sol", "grok-4-1-fast-non-reasoning", "grok-4-1-fast-reasoning", "grok-4-6",
+      "claude-sonnet-5", "claude-sonnet-5-5", "gemini-3.1-pro-preview", "gemini-pro-latest", "gpt-5.4",
+      "gpt-5.5", "gpt-6-luna", "gpt-6.1-sol", "grok-4.3", "grok-4.6",
       "openai/gpt-6-luna"
     ]),
   });
@@ -406,6 +412,9 @@
     "gpt-oss-20b": [0.0001, 0.0005],
     "gpt-oss-120b": [0.00015, 0.00075],
     // Google
+    // Gemini 3.8 Flash list price from 1 Jan 2027 (half that until then),
+    // Google's pricing page, 24 Nov 2026.
+    "gemini-3.8-flash": [0.0015, 0.0075],
     "gemini-3.5-flash": [0.0015, 0.009],
     "gemini-flash-latest": [0.0015, 0.009],
     "gemini-3.1-pro": [0.002, 0.012],
@@ -413,10 +422,15 @@
     "gemini-2.5-flash": [0.0003, 0.0025],
     "gemini-2.5-pro": [0.00125, 0.01],
     // DeepSeek
-    "deepseek-chat": [0.00028, 0.00042],
-    "deepseek-reasoner": [0.00028, 0.00042],
+    // Peak-hour list prices, cache miss (DeepSeek pricing page, 24 Nov 2026).
+    "deepseek-flash": [0.0003, 0.0012],
+    "deepseek-v4-pro": [0.00132, 0.00396],
     // xAI
-    "grok-4-1-fast": [0.0002, 0.0005],
+    // xAI's model list, 24 Nov 2026. A retired grok-4-1-fast name is
+    // answered and billed as grok-4.3.
+    "grok-4.3": [0.00125, 0.0025],
+    "grok-4-1-fast": [0.00125, 0.0025],
+    "grok-4.6": [0.002, 0.006],
     "grok-4-6": [0.002, 0.006],
     // Meta Llama (Together-hosted pricing)
     "llama-3.3-70b": [0.00088, 0.00088],
