@@ -5,19 +5,21 @@
 //
 // This test is there to make the next such patch fail CI in every shape a
 // careful reviewer would try. It is a static check, so code review stays
-// the backstop for what it cannot see (named below, in OUT_OF_REACH and in
-// the pull request). What decides a finding is what a literal is held
+// the backstop for what it cannot see (named below, in OUT_OF_REACH, in LIMITS
+// and in the pull request). What decides a finding is what a literal is held
 // against, never what a variable is called. Every file the extension ships
 // is parsed (tests/helpers/literal-scan.js), and a finding is:
 // - any string or regex literal compared with, tested against, searched in,
 //   switched on or looked up by a value read through a property named id,
-//   name, className, classList, dataset, tagName, title, host, hostname,
-//   origin, href, pathname or url (and their kin), on any receiver, followed
+//   name, className, classList, dataset, tagName, role, ariaLabel,
+//   placeholder, alt, rel, title, host, hostname, origin, href, pathname or
+//   url (and their kin), or through getAttribute, on any receiver, followed
 //   through destructuring, names, parameters, Sets, Maps, lists and
 //   callbacks;
 // - a literal passed as, or built into, an argument of a selector call
 //   (querySelector, matches, closest, getElementById, getAttribute and the
-//   rest) or a dataset read, with the selector parsed fully: classes, ids,
+//   rest) or a dataset read, a selector made by adding literals, or an
+//   element read as window["id"], with the selector parsed fully: classes, ids,
 //   every attribute by name, and what is inside :is(), :not(), :has() and
 //   :where();
 // - a literal used in includes, startsWith, endsWith, indexOf, match or test
@@ -31,7 +33,12 @@
 // tests/unit/hygiene-allowlist.json, and an entry is one file, one kind of
 // finding and one purpose: a host allowed for the welcome page is not
 // allowed in the agent, and a name allowed in text is not allowed when it
-// is held against an address.
+// is held against an address. A finding also carries what its literal is
+// held against (an id, a class, a tag name, a role or another attribute, a
+// host, a path, a query, an address, a title, the selector call it is
+// handed to, or text), and an entry lists which of those it allows: an
+// entry for a tag name or a role never covers an id or class test with the
+// same word.
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -39,7 +46,7 @@ const path = require("node:path");
 const acorn = require("acorn");
 const { readNames } = require("../helpers/literal-scan.js");
 const { renameIdentifiers, namesIn } = require("../helpers/rename-ids.js");
-const { FRESH, OUT_OF_REACH, INPLACE } = require("../hygiene/reviewer-shapes.js");
+const { FRESH, OUT_OF_REACH, INPLACE, INPLACE_SHARED, SHARED_WORDS, FIFTH_FOUND, LIMITS } = require("../hygiene/reviewer-shapes.js");
 
 const ROOT = path.join(__dirname, "../..");
 const EXT = path.join(ROOT, "extension");
@@ -50,8 +57,8 @@ const { scan, scanFor } = scanWith();
 const SHIPPED = filesIn(EXT, /\.js$/);
 const WHOLE_FILES = new Set(ALLOW.files.map((f) => f.file));
 
-/** The findings in one file that no entry for that file covers. */
-const covered = (file, f) => ALLOW.entries.some((e) => e.file === file && e.kind === f.kind && e.what.includes(f.what));
+/** The findings in one file that no entry for that file covers: same file, kind and what it is held against, and the literal listed. */
+const covered = (file, f) => ALLOW.entries.some((e) => e.file === file && e.kind === f.kind && e.against.includes(f.against) && e.what.includes(f.what));
 const gate = (file, found) => (WHOLE_FILES.has(file) ? [] : found.filter((f) => !covered(file, f)));
 
 // The fifteen shapes a reviewer wrote in the first round to get past the
@@ -209,14 +216,11 @@ test("every shape a reviewer tried fails the full gate, whichever shipped file i
     const found = scanFor(src);
     for (const file of SHIPPED) if (!WHOLE_FILES.has(file) && !gate(file, found(file)).length) passes.push(`${file}: ${src}`);
   }
-  // The one file whose own entry already allows the same read: the recipes'
-  // page script reads the data-testid attribute as a stable name for a
-  // control, so a shape that reads that attribute and nothing else is that
-  // read. Every other file lets neither through.
-  assert.deepEqual(passes, [
-    'recipes/vendor/page.js: if (el.attributes["data-testid"].value === "price") x();',
-    'recipes/vendor/page.js: document.querySelectorAll("[data-testid]")',
-  ], "shapes the gate lets through");
+  // No file lets one through. The recipes' page script reads the
+  // data-testid attribute by name as a stable name for a control, and its
+  // entry allows that read only: the same attribute in a selector call or
+  // a value held against a test id is a finding there too.
+  assert.deepEqual(passes, [], "shapes the gate lets through");
   // Written into the files whose entries come closest (the welcome page, the
   // provider list, the right-click menu, the search hosts) and scanned in
   // place, each shape still adds a finding the file's entries do not cover.
@@ -240,6 +244,62 @@ test("the removed rules, written into the content script's own functions, fail t
   assert.equal(INPLACE.length, 9);
 });
 
+test("an id or class test with a word the content script allows for a tag name or a role fails the gate", () => {
+  // footer, nav, search, banner, navigation, article, list, row, heading,
+  // group, tab and none: in pickMain and in the Markdown walk, held against
+  // an id and against a class. The same words held against a tag name or a
+  // role are allowed, so only what a literal is held against tells them apart.
+  assert.equal(SHARED_WORDS.length, 12);
+  assert.equal(INPLACE_SHARED.length, 48);
+  const file = "agentContentScript.js";
+  const base = fs.readFileSync(path.join(EXT, file), "utf8");
+  const before = gate(file, scan(base, file)).length;
+  for (const { anchor, line } of INPLACE_SHARED) {
+    assert.ok(base.includes(anchor), `the anchor is in ${file}: ${anchor}`);
+    const after = gate(file, scan(base.replace(anchor, `${anchor}\n${line}`), file));
+    assert.ok(after.length > before, `${file} lets through: ${line.trim()}`);
+    assert.ok(after.some((f) => /^(id|class)$/.test(f.against)), `the new finding is held against an id or a class: ${line.trim()}`);
+  }
+  // At least one of the words is allowed in this file for a tag name or a role, so the test is not empty.
+  const allowedElse = ALLOW.entries.filter((e) => e.file === file && e.kind === "markup test" && !e.against.some((a) => /^(id|class)$/.test(a)));
+  assert.ok(SHARED_WORDS.filter((w) => allowedElse.some((e) => e.what.some((x) => String(x).toLowerCase() === w))).length >= 6, "most of the words are allowed for a tag name or a role");
+});
+
+test("a selector made by adding literals is read whole", () => {
+  for (const src of ['doc.querySelector("#" + "nav");', 'document.querySelectorAll("." + "nav" + "box");', 'const id = "#" + "main"; el.closest(id);', 'const sel = "#" + "content";', 'document.getElementById("main" + "-content");']) {
+    assert.ok(scan(src).some((f) => f.kind === "selector"), src);
+  }
+  assert.ok(scan('doc.querySelector("#" + "nav");').some((f) => f.what === "#nav" && f.against === "selector"));
+  assert.ok(scan('const sel = "#" + "content";').some((f) => f.what === "#content" && f.against === "written"));
+});
+
+test("the fifth round's misses are found, apart from the limits the pull request names", () => {
+  for (const [src, against] of Object.entries(FIFTH_FOUND)) assert.ok(scan(src).some((f) => f.against === against), `${src} is found, held against ${against}`);
+  for (const [src, why] of Object.entries(LIMITS)) {
+    assert.deepEqual(scan(src), [], `${src} is a named limit, or it would be found`);
+    assert.ok(why.length > 40 && !why.includes("\n"), `${src} has a one-line reason`);
+  }
+  assert.equal(Object.keys(LIMITS).length, 3);
+  // The reserved-host limit is that and no more: a real host in the same pattern is found.
+  assert.ok(scan("chrome.tabs.query({ url: '*://*.reddit.com/*' }, cb);").some((f) => f.kind === "host" && f.what === "reddit.com"));
+  assert.ok(scan("chrome.tabs.query({ url: '*://*.smallshop.co.uk/*' }, cb);").some((f) => f.kind === "host" && f.what === "smallshop.co.uk"), "a host no list names");
+  // Each fifth-round shape fails the full gate in every shipped file.
+  const passes = [];
+  for (const src of Object.keys(FIFTH_FOUND)) { const found = scanFor(src); for (const file of SHIPPED) if (!WHOLE_FILES.has(file) && !gate(file, found(file)).length) passes.push(`${file}: ${src}`); }
+  assert.deepEqual(passes, []);
+});
+
+test("a literal held against an attribute property is found, by the attribute it reads", () => {
+  for (const [src, against] of [
+    ['if (el.placeholder === "Search products") x();', "placeholder"],
+    ['if (img.alt === "Company logo") x();', "alt"],
+    ['if (el.ariaLabel === "Close dialog") x();', "aria-label"],
+    ['if (el.role === "navigation") skip();', "role"],
+    ['if (a.rel === "nofollow sponsored") x();', "rel"],
+    ['if (el.getAttribute("aria-label") === "Basket") x();', "aria-label"],
+  ]) assert.ok(scan(src).some((f) => f.kind === "markup test" && f.against === against), `${src} is held against ${against}`);
+});
+
 test("an allowlist entry covers one file and one use", () => {
   // The welcome page's suggested sites and the provider hosts, used anywhere else.
   const elsewhere = (src, file) => gate(file, scan(src, file));
@@ -252,14 +312,18 @@ test("an allowlist entry covers one file and one use", () => {
   assert.notDeepEqual(elsewhere('if (url.startsWith("https://openrouter.ai")) x();', "defaults.js"), [], "the provider list may name its host, not test an address for it");
   // A name a script gives an element is not the extension's own: only its pages and styles say so.
   assert.notDeepEqual(scan('el.className = "navbox"; if (el.classList.contains("navbox")) x();'), []);
-  // Each entry: one file that ships, one kind, the literals, one reason.
+  // The same word held against a tag name and against an id are two uses.
+  assert.notDeepEqual(elsewhere('if (el.id === "FOOTER") x();', "agentContentScript.js"), [], "an id test is not a tag name test");
+  assert.notDeepEqual(elsewhere('if (el.className === "navigation") x();', "agentContentScript.js"), [], "a class test is not a role test");
+  // Each entry: one file that ships, one kind, what it is held against, the literals, one reason.
   const seen = new Map();
   for (const e of ALLOW.entries) {
     assert.ok(SHIPPED.includes(e.file), `${e.file} ships`);
     assert.ok(typeof e.kind === "string" && Array.isArray(e.what) && e.what.length, JSON.stringify(e));
+    assert.ok(Array.isArray(e.against) && e.against.length === 1 && typeof e.against[0] === "string", `${JSON.stringify(e)} names the one thing it is held against`);
     assert.ok(typeof e.why === "string" && e.why.trim() && !e.why.includes("\n"), `${JSON.stringify(e)} has a one-line reason`);
     for (const w of e.what) {
-      const k = `${e.file}|${e.kind}|${w}`;
+      const k = `${e.file}|${e.kind}|${e.against[0]}|${w}`;
       assert.ok(!seen.has(k), `${k} is listed for one purpose, not two`);
       seen.set(k, e.why);
     }
@@ -298,13 +362,13 @@ test("no file the extension ships holds a finding its allowlist entries do not c
   for (const file of SHIPPED) {
     if (WHOLE_FILES.has(file)) continue;
     for (const f of scan(fs.readFileSync(path.join(EXT, file), "utf8"), file)) {
-      if (covered(file, f)) { used.add(`${file}|${f.kind}|${f.what}`); continue; }
-      hits.push(`${file}:${f.line}: ${f.kind} ${f.what}`);
+      if (covered(file, f)) { used.add(`${file}|${f.kind}|${f.against}|${f.what}`); continue; }
+      hits.push(`${file}:${f.line}: ${f.kind} [${f.against}] ${f.what}`);
     }
   }
   assert.deepEqual(hits, []);
   // Every listed literal is still needed.
-  const stale = ALLOW.entries.flatMap((e) => e.what.map((w) => `${e.file}|${e.kind}|${w}`)).filter((k) => !used.has(k));
+  const stale = ALLOW.entries.flatMap((e) => e.what.map((w) => `${e.file}|${e.kind}|${e.against[0]}|${w}`)).filter((k) => !used.has(k));
   assert.deepEqual(stale, [], "allowlist literals nothing uses");
 });
 

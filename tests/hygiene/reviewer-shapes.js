@@ -216,4 +216,36 @@ const INPLACE = [
   { file: "agentContentScript.js", anchor: IN_PICK_MAIN, line: "        const rows = doc.querySelectorAll('[data-asin]'); if (rows.length > 8) return rows[0].parentElement;" },
 ];
 
-module.exports = { FRESH, OUT_OF_REACH, INPLACE };
+// The fifth round: an id test and a class test whose word is also a tag or
+// a role name the content script may hold a tag name or a role against.
+// An entry that allows the word for a tag name or a role must not excuse
+// it for an id or a class, so each of these, written in place, must fail
+// the full gate.
+const SHARED_WORDS = ["footer", "nav", "search", "banner", "navigation", "article", "list", "row", "heading", "group", "tab", "none"];
+const INPLACE_SHARED = SHARED_WORDS.flatMap((w) => [
+  { file: "agentContentScript.js", anchor: IN_PICK_MAIN, line: `        for (const k of doc.body.children) if (k.id === "${w}") return k;` },
+  { file: "agentContentScript.js", anchor: IN_PICK_MAIN, line: `        for (const k of doc.body.children) if (k.className === "${w}") return k;` },
+  { file: "agentContentScript.js", anchor: IN_WALK, line: `            if (el.id === "${w}") return;` },
+  { file: "agentContentScript.js", anchor: IN_WALK, line: `            if (el.className === "${w}") return;` },
+]);
+
+// The fifth round's misses. The first group the scan now finds, each by
+// what its literal is held against. LIMITS are the ones it still does not
+// find, each with the reason; the pull request names the same ones.
+const FIFTH_FOUND = {
+  'if (card.placeholder === "Search Shopdemo") go(card);': "placeholder",
+  'if (card.alt === "Sponsored") skip();': "alt",
+  'const label = part.ariaLabel; if (label === "Skip to main content") skip();': "aria-label",
+  'if (part.role === "feed") n++;': "role",
+  'if (c.rel === "next") go(c);': "rel",
+  'const part = window["mw-content-text"];': "window lookup",
+  'const part = doc.querySelector("#" + "nav");': "selector",
+  'c.closest("#" + "nav");': "selector",
+};
+const LIMITS = {
+  'if (part.value === "Shopdemo Search") go(part);': "A literal held with === against a control's value: the extension compares the values of its own controls and of the model's answers this way, so value is not one of the properties the scan follows.",
+  'if (c.textContent.trim() === "Next »") go(c);': "A literal held with === against a page's text (textContent, innerText, trimmed or not): page text is read for its words everywhere, and only a search call on it (includes, match, test and the rest) is a text test.",
+  "chrome.tabs.query({ url: '*://*.shopdemo.example/*' }, cb);": "A host under a reserved name (.example, .test, .invalid, localhost): those names are kept for examples and tests and are never a finding; the same pattern with a real host is found.",
+};
+
+module.exports = { FRESH, OUT_OF_REACH, INPLACE, INPLACE_SHARED, SHARED_WORDS, FIFTH_FOUND, LIMITS };

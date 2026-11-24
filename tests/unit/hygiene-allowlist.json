@@ -1,5 +1,5 @@
 {
-  "about": "What the shipped files may hold that the hygiene scan reports: each entry is one file, one kind of finding and one purpose, with the exact literals it covers. A literal allowed in one file is not allowed in any other, and an entry for a name in text does not cover the same name held against a page or an address. Reviewed by hand; tests/unit/hygiene-hosts.test.js fails on any finding no entry covers, and on any listed literal nothing uses.",
+  "about": "What the shipped files may hold that the hygiene scan reports: each entry is one file, one kind of finding, what the literal is held against (an id, a class, a tag name, a role, an attribute, a host, a path, a selector call, text and so on) and one purpose, with the exact literals it covers. A finding is covered only by an entry with the same file, kind and against, that lists its literal: an entry for a tag name or a role never covers an id or class test with the same word. A literal allowed in one file is not allowed in any other. Reviewed by hand; tests/unit/hygiene-hosts.test.js fails on any finding no entry covers, and on any listed literal nothing uses.",
   "files": [
     {
       "file": "publicSuffixes.js",
@@ -10,6 +10,21 @@
     {
       "file": "agent.js",
       "kind": "address test",
+      "against": [
+        "fragment"
+      ],
+      "what": [
+        "#memory",
+        "#recipes"
+      ],
+      "why": "The extension's own pages: their sections in the address fragment and the query parts they are opened with."
+    },
+    {
+      "file": "agent.js",
+      "kind": "address test",
+      "against": [
+        "host"
+      ],
       "what": [
         "/^www\\./"
       ],
@@ -18,10 +33,21 @@
     {
       "file": "agent.js",
       "kind": "address test",
+      "against": [
+        "path"
+      ],
       "what": [
-        "#memory",
-        "#recipes",
-        "/\\/sidepanel\\.html$/",
+        "/\\/sidepanel\\.html$/"
+      ],
+      "why": "The extension's own pages: their sections in the address fragment and the query parts they are opened with."
+    },
+    {
+      "file": "agent.js",
+      "kind": "address test",
+      "against": [
+        "query"
+      ],
+      "what": [
         "autostart",
         "fresh",
         "handoff",
@@ -33,6 +59,9 @@
     {
       "file": "agent.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "chatgpt.com",
         "claude.ai"
@@ -42,6 +71,9 @@
     {
       "file": "agent.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "cloud.cerebras.ai",
         "opencode.ai"
@@ -51,6 +83,9 @@
     {
       "file": "agent.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "www.w3.org"
       ],
@@ -59,6 +94,9 @@
     {
       "file": "agent.js",
       "kind": "markup test",
+      "against": [
+        "class"
+      ],
       "what": [
         "collapsed"
       ],
@@ -66,7 +104,45 @@
     },
     {
       "file": "agent.js",
+      "kind": "markup test",
+      "against": [
+        "placeholder"
+      ],
+      "what": [
+        "Ask about the selected text"
+      ],
+      "why": "The extension's own task box placeholder, which this script sets itself."
+    },
+    {
+      "file": "agent.js",
+      "kind": "markup test",
+      "against": [
+        "role"
+      ],
+      "what": [
+        "executor",
+        "user",
+        "validator"
+      ],
+      "why": "The roles of the agent's own log events and conversation turns, which the extension writes itself, not a page's markup."
+    },
+    {
+      "file": "agent.js",
       "kind": "selector",
+      "against": [
+        "getElementById"
+      ],
+      "what": [
+        "#recipesEmpty"
+      ],
+      "why": "The extension's own elements, which this script makes and styles itself."
+    },
+    {
+      "file": "agent.js",
+      "kind": "selector",
+      "against": [
+        "selector"
+      ],
       "what": [
         "[open]"
       ],
@@ -75,8 +151,10 @@
     {
       "file": "agent.js",
       "kind": "selector",
+      "against": [
+        "selector"
+      ],
       "what": [
-        "#recipesEmpty",
         ".assistant",
         ".confirmation-bubble",
         ".keep-answer-box",
@@ -88,6 +166,9 @@
     {
       "file": "agent.js",
       "kind": "selector",
+      "against": [
+        "written"
+      ],
       "what": [
         "select-to-ai-memory",
         "select-to-ai-memory.json"
@@ -97,6 +178,9 @@
     {
       "file": "agent.js",
       "kind": "site name",
+      "against": [
+        "code"
+      ],
       "what": [
         "chatgpt",
         "perplexity"
@@ -106,6 +190,37 @@
     {
       "file": "agent.js",
       "kind": "site name",
+      "against": [
+        "code"
+      ],
+      "what": [
+        "anthropic",
+        "deepseek",
+        "groq",
+        "mistral",
+        "openai",
+        "openrouter"
+      ],
+      "why": "Providers the user can pick for the agent: their ids, endpoints, key pages and model names."
+    },
+    {
+      "file": "agent.js",
+      "kind": "site name",
+      "against": [
+        "written"
+      ],
+      "what": [
+        "chatgpt",
+        "perplexity"
+      ],
+      "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
+    },
+    {
+      "file": "agent.js",
+      "kind": "site name",
+      "against": [
+        "written"
+      ],
       "what": [
         "anthropic",
         "deepseek",
@@ -120,6 +235,9 @@
     {
       "file": "agent.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^https?:$/"
       ],
@@ -128,6 +246,9 @@
     {
       "file": "agent.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(AIza|AQ\\.)/",
         "/^(oc_sk_|sk-)/",
@@ -143,6 +264,9 @@
     {
       "file": "agent.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(gpt-oss|qwen|llama|zai|glm)/",
         "/^(gpt-|o\\d|chatgpt-)/",
@@ -162,6 +286,9 @@
     {
       "file": "agent.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "ChatGPT",
         "Claude",
@@ -173,6 +300,9 @@
     {
       "file": "agent.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "agentAllowance",
         "agentDataConsent",
@@ -184,6 +314,9 @@
     {
       "file": "agent.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "approval",
         "pause"
@@ -193,6 +326,9 @@
     {
       "file": "agent.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "Done",
         "Not confirmed",
@@ -208,6 +344,9 @@
     {
       "file": "agent.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "\"\\s*:\\s*\"",
         "/\"answer\"\\s*:/",
@@ -224,6 +363,9 @@
     {
       "file": "agent.js",
       "kind": "title test",
+      "against": [
+        "title"
+      ],
       "what": [
         "/^Step (\\d+)$/",
         "Action",
@@ -257,6 +399,9 @@
     {
       "file": "agentBar.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "www.w3.org"
       ],
@@ -265,6 +410,9 @@
     {
       "file": "agentBar.js",
       "kind": "markup test",
+      "against": [
+        "tag name"
+      ],
       "what": [
         "IFRAME"
       ],
@@ -273,6 +421,9 @@
     {
       "file": "agentBar.js",
       "kind": "selector",
+      "against": [
+        "selector"
+      ],
       "what": [
         ".label"
       ],
@@ -281,6 +432,9 @@
     {
       "file": "agentContentScript.js",
       "kind": "address test",
+      "against": [
+        "address"
+      ],
       "what": [
         "/^(about|javascript):/i",
         "/^https?:/",
@@ -291,6 +445,9 @@
     {
       "file": "agentContentScript.js",
       "kind": "address test",
+      "against": [
+        "address"
+      ],
       "what": [
         "/^data:/"
       ],
@@ -299,6 +456,9 @@
     {
       "file": "agentContentScript.js",
       "kind": "address test",
+      "against": [
+        "address"
+      ],
       "what": [
         "A"
       ],
@@ -307,14 +467,9 @@
     {
       "file": "agentContentScript.js",
       "kind": "address test",
-      "what": [
-        "null"
+      "against": [
+        "host"
       ],
-      "why": "The origin a sandboxed frame reports, which names no site."
-    },
-    {
-      "file": "agentContentScript.js",
-      "kind": "address test",
       "what": [
         "/\\botp\\b|one.?time|verification.?code|\\b2fa\\b|passcode/",
         "/\\bssn\\b|social.?security|passport|national.?id/",
@@ -324,7 +479,21 @@
     },
     {
       "file": "agentContentScript.js",
+      "kind": "address test",
+      "against": [
+        "origin"
+      ],
+      "what": [
+        "null"
+      ],
+      "why": "The origin a sandboxed frame reports, which names no site."
+    },
+    {
+      "file": "agentContentScript.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "arkoselabs.com",
         "captcha-delivery.com",
@@ -336,6 +505,9 @@
     {
       "file": "agentContentScript.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "www.w3.org"
       ],
@@ -344,14 +516,305 @@
     {
       "file": "agentContentScript.js",
       "kind": "markup test",
-      "what": [
-        "/^data:/"
+      "against": [
+        "alt"
       ],
-      "why": "Image addresses that are inline data, never a site's."
+      "what": [
+        "/\\botp\\b|one.?time|verification.?code|\\b2fa\\b|passcode/",
+        "/\\bssn\\b|social.?security|passport|national.?id/",
+        "/card.?(number|num|no)\\b|\\bcc.?num|\\bcvv\\b|\\bcvc\\b|security.?code|card.?code|\\biban\\b|\\bexpir(y|es|ation)\\b|\\bexp\\.? ?(date|month|year)\\b|\\bmm ?\\/ ?yy/"
+      ],
+      "why": "Words that mark a field for a card, an identity number or a one-time code in any site's field names, so the agent never fills one."
     },
     {
       "file": "agentContentScript.js",
       "kind": "markup test",
+      "against": [
+        "aria-autocomplete"
+      ],
+      "what": [
+        "both"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "aria-autocomplete"
+      ],
+      "what": [
+        "list"
+      ],
+      "why": "WAI-ARIA role names, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "aria-checked"
+      ],
+      "what": [
+        "mixed",
+        "true"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "aria-current"
+      ],
+      "what": [
+        "false"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "aria-disabled"
+      ],
+      "what": [
+        "true"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "aria-expanded"
+      ],
+      "what": [
+        "true"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "aria-haspopup"
+      ],
+      "what": [
+        "/^(listbox|menu|true)$/",
+        "/^(listbox|true|tree|grid|menu)$/"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "aria-haspopup"
+      ],
+      "what": [
+        "listbox"
+      ],
+      "why": "WAI-ARIA role names, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "aria-hidden"
+      ],
+      "what": [
+        "true"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "aria-label"
+      ],
+      "what": [
+        "A"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "aria-label"
+      ],
+      "what": [
+        "/\\botp\\b|one.?time|verification.?code|\\b2fa\\b|passcode/",
+        "/\\bssn\\b|social.?security|passport|national.?id/",
+        "/card.?(number|num|no)\\b|\\bcc.?num|\\bcvv\\b|\\bcvc\\b|security.?code|card.?code|\\biban\\b|\\bexpir(y|es|ation)\\b|\\bexp\\.? ?(date|month|year)\\b|\\bmm ?\\/ ?yy/"
+      ],
+      "why": "Words that mark a field for a card, an identity number or a one-time code in any site's field names, so the agent never fills one."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "aria-modal"
+      ],
+      "what": [
+        "true"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "aria-pressed"
+      ],
+      "what": [
+        "true"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "aria-readonly"
+      ],
+      "what": [
+        "true"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "aria-required"
+      ],
+      "what": [
+        "true"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "aria-selected"
+      ],
+      "what": [
+        "true"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "autocomplete"
+      ],
+      "what": [
+        "one-time-code"
+      ],
+      "why": "Standard HTML autocomplete tokens, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "autocomplete"
+      ],
+      "what": [
+        "/password/"
+      ],
+      "why": "Standard HTML input types, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "autocomplete"
+      ],
+      "what": [
+        "/^(?:on|off)?$/"
+      ],
+      "why": "Standard autocomplete and form method values, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "autocomplete"
+      ],
+      "what": [
+        "/\\bcc-/"
+      ],
+      "why": "Words that mark a field or a value as a secret, a card or an identity number, so the agent never fills or keeps one."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "class"
+      ],
+      "what": [
+        "select-to-ai"
+      ],
+      "why": "The extension's own badge layer, bar and marks, which this script draws on the page."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "draggable"
+      ],
+      "what": [
+        "true"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "id"
+      ],
+      "what": [
+        "/^select-to-ai-/",
+        "select-to-ai-agent-bar",
+        "select-to-ai-overlay-container"
+      ],
+      "why": "The extension's own badge layer, bar and marks, which this script draws on the page."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "id"
+      ],
+      "what": [
+        "/\\botp\\b|one.?time|verification.?code|\\b2fa\\b|passcode/",
+        "/\\bssn\\b|social.?security|passport|national.?id/",
+        "/card.?(number|num|no)\\b|\\bcc.?num|\\bcvv\\b|\\bcvc\\b|security.?code|card.?code|\\biban\\b|\\bexpir(y|es|ation)\\b|\\bexp\\.? ?(date|month|year)\\b|\\bmm ?\\/ ?yy/"
+      ],
+      "why": "Words that mark a field for a card, an identity number or a one-time code in any site's field names, so the agent never fills one."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "method"
+      ],
+      "what": [
+        "get"
+      ],
+      "why": "Standard autocomplete and form method values, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "name"
+      ],
       "what": [
         "/^(chrome-extension|data):/"
       ],
@@ -360,6 +823,96 @@
     {
       "file": "agentContentScript.js",
       "kind": "markup test",
+      "against": [
+        "name"
+      ],
+      "what": [
+        "/\\botp\\b|one.?time|verification.?code|\\b2fa\\b|passcode/",
+        "/\\bssn\\b|social.?security|passport|national.?id/",
+        "/card.?(number|num|no)\\b|\\bcc.?num|\\bcvv\\b|\\bcvc\\b|security.?code|card.?code|\\biban\\b|\\bexpir(y|es|ation)\\b|\\bexp\\.? ?(date|month|year)\\b|\\bmm ?\\/ ?yy/"
+      ],
+      "why": "Words that mark a field for a card, an identity number or a one-time code in any site's field names, so the agent never fills one."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "placeholder"
+      ],
+      "what": [
+        "/\\botp\\b|one.?time|verification.?code|\\b2fa\\b|passcode/",
+        "/\\bssn\\b|social.?security|passport|national.?id/",
+        "/card.?(number|num|no)\\b|\\bcc.?num|\\bcvv\\b|\\bcvc\\b|security.?code|card.?code|\\biban\\b|\\bexpir(y|es|ation)\\b|\\bexp\\.? ?(date|month|year)\\b|\\bmm ?\\/ ?yy/"
+      ],
+      "why": "Words that mark a field for a card, an identity number or a one-time code in any site's field names, so the agent never fills one."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "role"
+      ],
+      "what": [
+        "article",
+        "button",
+        "dialog",
+        "form",
+        "link",
+        "option",
+        "search"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "role"
+      ],
+      "what": [
+        "/^(button|link|menuitem|tab|checkbox|radio|switch|option|textbox|combobox|slider)$/",
+        "/^(checkbox|radio|switch)$/",
+        "/^(combobox|listbox|searchbox)$/",
+        "/^(gridcell|option)$/",
+        "/^(slider|spinbutton|progressbar|meter|scrollbar)$/",
+        "/^(textbox|combobox|checkbox|radio|switch|spinbutton|slider)$/",
+        "/radio/",
+        "alertdialog",
+        "banner",
+        "checkbox",
+        "combobox",
+        "complementary",
+        "contentinfo",
+        "gridcell",
+        "group",
+        "heading",
+        "listbox",
+        "listitem",
+        "menuitem",
+        "menuitemcheckbox",
+        "menuitemradio",
+        "navigation",
+        "none",
+        "presentation",
+        "radio",
+        "radiogroup",
+        "row",
+        "searchbox",
+        "slider",
+        "spinbutton",
+        "switch",
+        "tab",
+        "textbox",
+        "treeitem"
+      ],
+      "why": "WAI-ARIA role names, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "tag name"
+      ],
       "what": [
         "/^(A|BUTTON|INPUT|SELECT|TEXTAREA|OPTION|LABEL|SUMMARY|IMG|VIDEO|CANVAS|SVG|IFRAME|PICTURE)$/i",
         "/^(BUTTON|A|INPUT|SELECT|TEXTAREA|SUMMARY|OPTION|LABEL)$/",
@@ -432,13 +985,10 @@
         "fieldset",
         "footer",
         "form",
-        "image",
         "input",
         "li",
-        "link",
         "nav",
         "option",
-        "search",
         "select",
         "svg",
         "textarea",
@@ -449,45 +999,9 @@
     {
       "file": "agentContentScript.js",
       "kind": "markup test",
-      "what": [
-        "one-time-code"
+      "against": [
+        "tag name"
       ],
-      "why": "Standard HTML autocomplete tokens, the same on every site."
-    },
-    {
-      "file": "agentContentScript.js",
-      "kind": "markup test",
-      "what": [
-        "/password/",
-        "submit"
-      ],
-      "why": "Standard HTML input types, the same on every site."
-    },
-    {
-      "file": "agentContentScript.js",
-      "kind": "markup test",
-      "what": [
-        "/^(listbox|menu|true)$/",
-        "/^(listbox|true|tree|grid|menu)$/",
-        "both",
-        "false",
-        "mixed",
-        "true"
-      ],
-      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
-    },
-    {
-      "file": "agentContentScript.js",
-      "kind": "markup test",
-      "what": [
-        "/^(?:on|off)?$/",
-        "get"
-      ],
-      "why": "Standard autocomplete and form method values, the same on every site."
-    },
-    {
-      "file": "agentContentScript.js",
-      "kind": "markup test",
       "what": [
         "/^(IMG|VIDEO|CANVAS|TABLE|PRE|UL|OL|LI|P|BLOCKQUOTE|FIGCAPTION|DT|DD|H[1-6])$/",
         "/^H[1-6]$/"
@@ -497,58 +1011,9 @@
     {
       "file": "agentContentScript.js",
       "kind": "markup test",
-      "what": [
-        "/^select-to-ai-/",
-        "select-to-ai",
-        "select-to-ai-agent-bar",
-        "select-to-ai-overlay-container"
+      "against": [
+        "title"
       ],
-      "why": "The extension's own badge layer, bar and marks, which this script draws on the page."
-    },
-    {
-      "file": "agentContentScript.js",
-      "kind": "markup test",
-      "what": [
-        "/^(button|link|menuitem|tab|checkbox|radio|switch|option|textbox|combobox|slider)$/",
-        "/^(checkbox|radio|switch)$/",
-        "/^(combobox|listbox|searchbox)$/",
-        "/^(gridcell|option)$/",
-        "/^(textbox|combobox|checkbox|radio|switch|spinbutton|slider)$/",
-        "/radio/",
-        "alertdialog",
-        "banner",
-        "checkbox",
-        "combobox",
-        "complementary",
-        "contentinfo",
-        "gridcell",
-        "group",
-        "heading",
-        "list",
-        "listbox",
-        "listitem",
-        "menuitem",
-        "menuitemcheckbox",
-        "menuitemradio",
-        "navigation",
-        "none",
-        "presentation",
-        "radio",
-        "radiogroup",
-        "row",
-        "searchbox",
-        "slider",
-        "spinbutton",
-        "switch",
-        "tab",
-        "textbox",
-        "treeitem"
-      ],
-      "why": "WAI-ARIA role names, the same on every site."
-    },
-    {
-      "file": "agentContentScript.js",
-      "kind": "markup test",
       "what": [
         "/\\botp\\b|one.?time|verification.?code|\\b2fa\\b|passcode/",
         "/\\bssn\\b|social.?security|passport|national.?id/",
@@ -559,14 +1024,149 @@
     {
       "file": "agentContentScript.js",
       "kind": "markup test",
-      "what": [
-        "/\\bcc-/"
+      "against": [
+        "type"
       ],
-      "why": "Words that mark a field or a value as a secret, a card or an identity number, so the agent never fills or keeps one."
+      "what": [
+        "image"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "type"
+      ],
+      "what": [
+        "submit"
+      ],
+      "why": "Standard HTML input types, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "against": [
+        "xlink:href"
+      ],
+      "what": [
+        "/^data:/"
+      ],
+      "why": "Image addresses that are inline data, never a site's."
     },
     {
       "file": "agentContentScript.js",
       "kind": "selector",
+      "against": [
+        "attribute name"
+      ],
+      "what": [
+        "[action]",
+        "[aria-activedescendant]",
+        "[aria-autocomplete]",
+        "[aria-checked]",
+        "[aria-controls]",
+        "[aria-current]",
+        "[aria-disabled]",
+        "[aria-expanded]",
+        "[aria-haspopup]",
+        "[aria-hidden]",
+        "[aria-label]",
+        "[aria-labelledby]",
+        "[aria-modal]",
+        "[aria-owns]",
+        "[aria-pressed]",
+        "[aria-readonly]",
+        "[aria-required]",
+        "[aria-selected]",
+        "[aria-valuemax]",
+        "[aria-valuemin]",
+        "[aria-valuenow]",
+        "[aria-valuetext]",
+        "[autocomplete]",
+        "[class]",
+        "[draggable]",
+        "[href]",
+        "[list]",
+        "[method]",
+        "[name]",
+        "[placeholder]",
+        "[popovertarget]",
+        "[role]",
+        "[src]",
+        "[tabindex]",
+        "[title]",
+        "[type]",
+        "[value]",
+        "[xlink:href]"
+      ],
+      "why": "Standard HTML and WAI-ARIA attributes and their standard values, read the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "selector",
+      "against": [
+        "attribute name"
+      ],
+      "what": [
+        "[xmlns]"
+      ],
+      "why": "Standard HTML, SVG and WAI-ARIA tags and attributes, read the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "selector",
+      "against": [
+        "attribute name"
+      ],
+      "what": [
+        "[data-icon]"
+      ],
+      "why": "The data-icon attribute icon sets put on an icon, read with its title as words for what it shows."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "selector",
+      "against": [
+        "dataset"
+      ],
+      "what": [
+        "data-select-to-ai-press"
+      ],
+      "why": "The extension's own badge layer, styles, rings and marks, which this script draws on the page."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "selector",
+      "against": [
+        "getElementById"
+      ],
+      "what": [
+        "#aria-controls",
+        "#aria-owns"
+      ],
+      "why": "Standard HTML, SVG and WAI-ARIA tags and attributes, read the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "selector",
+      "against": [
+        "getElementById"
+      ],
+      "what": [
+        "#select-to-ai-active-ring",
+        "#select-to-ai-agent-styles",
+        "#select-to-ai-badge-",
+        "#select-to-ai-overlay-container"
+      ],
+      "why": "The extension's own badge layer, styles, rings and marks, which this script draws on the page."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "selector",
+      "against": [
+        "selector"
+      ],
       "what": [
         "#px-captcha",
         ".cf-turnstile",
@@ -586,45 +1186,20 @@
     {
       "file": "agentContentScript.js",
       "kind": "selector",
+      "against": [
+        "selector"
+      ],
       "what": [
-        "[action]",
-        "[aria-activedescendant]",
-        "[aria-autocomplete]",
         "[aria-busy=true]",
-        "[aria-checked]",
-        "[aria-controls]",
-        "[aria-current]",
-        "[aria-disabled]",
-        "[aria-expanded]",
-        "[aria-haspopup]",
         "[aria-hidden=true]",
-        "[aria-hidden]",
         "[aria-label]",
         "[aria-labelledby]",
         "[aria-modal=true]",
-        "[aria-modal]",
-        "[aria-owns]",
-        "[aria-pressed]",
-        "[aria-readonly]",
-        "[aria-required]",
-        "[aria-selected]",
-        "[aria-valuemax]",
-        "[aria-valuemin]",
-        "[aria-valuenow]",
-        "[aria-valuetext]",
-        "[autocomplete]",
-        "[class]",
         "[contenteditable=false]",
         "[contenteditable=true]",
         "[contenteditable]",
         "[draggable]",
-        "[href]",
-        "[list]",
-        "[method]",
-        "[name]",
         "[onclick]",
-        "[placeholder]",
-        "[popovertarget]",
         "[role=alertdialog]",
         "[role=banner]",
         "[role=button]",
@@ -660,14 +1235,10 @@
         "[role=tooltip]",
         "[role=tree]",
         "[role=treeitem]",
-        "[role]",
-        "[src]",
         "[tabindex]",
         "[title]",
         "[type=hidden]",
         "[type]",
-        "[value]",
-        "[xlink:href]",
         "a[href]",
         "dialog[open]",
         "input[autocomplete~=cc-csc]",
@@ -695,11 +1266,11 @@
     {
       "file": "agentContentScript.js",
       "kind": "selector",
+      "against": [
+        "selector"
+      ],
       "what": [
-        "#aria-controls",
-        "#aria-owns",
         "[contenteditable=]",
-        "[xmlns]",
         "aria-controls",
         "aria-owns",
         "circle",
@@ -719,29 +1290,23 @@
     {
       "file": "agentContentScript.js",
       "kind": "selector",
-      "what": [
-        "[data-icon]"
+      "against": [
+        "selector"
       ],
-      "why": "The data-icon attribute icon sets put on an icon, read with its title as words for what it shows."
-    },
-    {
-      "file": "agentContentScript.js",
-      "kind": "selector",
       "what": [
-        "#select-to-ai-active-ring",
-        "#select-to-ai-agent-styles",
-        "#select-to-ai-badge-",
         "#select-to-ai-overlay-container",
         ".select-to-ai-badge",
         "[data-select-to-ai-press]",
-        "[data-select-to-ai-q]",
-        "data-select-to-ai-press"
+        "[data-select-to-ai-q]"
       ],
       "why": "The extension's own badge layer, styles, rings and marks, which this script draws on the page."
     },
     {
       "file": "agentContentScript.js",
       "kind": "selector",
+      "against": [
+        "selector"
+      ],
       "what": [
         ".active-target"
       ],
@@ -750,6 +1315,9 @@
     {
       "file": "agentContentScript.js",
       "kind": "selector",
+      "against": [
+        "written"
+      ],
       "what": [
         "#rrggbb"
       ],
@@ -758,6 +1326,9 @@
     {
       "file": "agentContentScript.js",
       "kind": "selector",
+      "against": [
+        "written"
+      ],
       "what": [
         "yyyy-mm-ddthh"
       ],
@@ -766,6 +1337,9 @@
     {
       "file": "agentContentScript.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^https?:$/",
         "/^https?:\\/\\//i"
@@ -775,6 +1349,9 @@
     {
       "file": "agentContentScript.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^_(self|parent|top)$/i",
         "confirm",
@@ -787,6 +1364,9 @@
     {
       "file": "agentContentScript.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/Mac|iPhone|iPad/i",
         "/^(enter|return|numpadenter| |space|spacebar)$/i"
@@ -796,6 +1376,9 @@
     {
       "file": "agentContentScript.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(move|linkMove)$/",
         "/^inline/",
@@ -816,6 +1399,9 @@
     {
       "file": "agentContentScript.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(drop|dragend)$/",
         "/^insert(Paragraph|LineBreak)$/"
@@ -825,6 +1411,9 @@
     {
       "file": "agentContentScript.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "search"
       ],
@@ -833,6 +1422,9 @@
     {
       "file": "agentContentScript.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(button|submit|reset)$/",
         "/^(button|submit|reset|image|checkbox|radio|file)$/",
@@ -854,6 +1446,9 @@
     {
       "file": "agentContentScript.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(text|search|number|textarea|date|month|week|time|datetime-local)$/"
       ],
@@ -862,6 +1457,9 @@
     {
       "file": "agentContentScript.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(click|press|double_click|right_click|hold|hover|drag)$/"
       ],
@@ -870,6 +1468,9 @@
     {
       "file": "agentContentScript.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^data-select-to-ai/",
         "data-select-to-ai"
@@ -879,6 +1480,9 @@
     {
       "file": "agentContentScript.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "request",
         "value"
@@ -888,6 +1492,9 @@
     {
       "file": "agentContentScript.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/secur|taint/i"
       ],
@@ -896,6 +1503,9 @@
     {
       "file": "agentContentScript.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(false|no|off|0|unchecked)$/i",
         "/^(off|false|no|0|unchecked|uncheck)$/i",
@@ -906,9 +1516,11 @@
     {
       "file": "agentContentScript.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(checkbox|radio)$/",
-        "/^(slider|spinbutton|progressbar|meter|scrollbar)$/",
         "alert"
       ],
       "why": "WAI-ARIA role names, the same on every site."
@@ -916,10 +1528,23 @@
     {
       "file": "agentTools.js",
       "kind": "address test",
+      "against": [
+        "address"
+      ],
       "what": [
         "/^(#|javascript:)/i",
         "/^https?:/",
-        "/^https?:\\/\\/(www\\.)?/",
+        "/^https?:\\/\\/(www\\.)?/"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "agentTools.js",
+      "kind": "address test",
+      "against": [
+        "host"
+      ],
+      "what": [
         "/^www\\./"
       ],
       "why": "An address's scheme and the www prefix, the same for every site."
@@ -927,6 +1552,9 @@
     {
       "file": "agentTools.js",
       "kind": "address test",
+      "against": [
+        "host"
+      ],
       "what": [
         "/\\.(?:local|localhost|localdomain|internal|intranet|lan|home\\.arpa|corp|private)$/"
       ],
@@ -935,6 +1563,9 @@
     {
       "file": "agentTools.js",
       "kind": "address test",
+      "against": [
+        "host"
+      ],
       "what": [
         "/^(?:(?:co|com)\\.)?[a-z]{2}$/"
       ],
@@ -943,6 +1574,9 @@
     {
       "file": "agentTools.js",
       "kind": "address test",
+      "against": [
+        "host"
+      ],
       "what": [
         "baidu.com",
         "bing.com",
@@ -964,13 +1598,64 @@
     {
       "file": "agentTools.js",
       "kind": "address test",
+      "against": [
+        "host"
+      ],
+      "what": [
+        "chrome.google.com",
+        "chromewebstore.google.com",
+        "microsoftedge.microsoft.com"
+      ],
+      "why": "The browsers' own add-on stores, where no extension may run (startPageKind)."
+    },
+    {
+      "file": "agentTools.js",
+      "kind": "address test",
+      "against": [
+        "path"
+      ],
+      "what": [
+        "do",
+        "html",
+        "search",
+        "sp",
+        "web"
+      ],
+      "why": "SEARCH_QUERY_PARAMS, SEARCH_EXTRA_PARAMS and SEARCH_PATH_PARTS: the parts of a search results address that hold the words searched for."
+    },
+    {
+      "file": "agentTools.js",
+      "kind": "address test",
+      "against": [
+        "path"
+      ],
+      "what": [
+        "s"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "agentTools.js",
+      "kind": "address test",
+      "against": [
+        "path"
+      ],
+      "what": [
+        "/^\\/webstore\\b/i"
+      ],
+      "why": "The browsers' own add-on stores, where no extension may run (startPageKind)."
+    },
+    {
+      "file": "agentTools.js",
+      "kind": "address test",
+      "against": [
+        "query"
+      ],
       "what": [
         "cc",
-        "do",
         "form",
         "gl",
         "hl",
-        "html",
         "ia",
         "iax",
         "ie",
@@ -980,40 +1665,21 @@
         "p",
         "q",
         "query",
-        "search",
         "setlang",
         "source",
-        "sp",
         "t",
         "tbm",
         "text",
-        "wd",
-        "web"
+        "wd"
       ],
       "why": "SEARCH_QUERY_PARAMS, SEARCH_EXTRA_PARAMS and SEARCH_PATH_PARTS: the parts of a search results address that hold the words searched for."
     },
     {
       "file": "agentTools.js",
-      "kind": "address test",
-      "what": [
-        "s"
-      ],
-      "why": "Standard HTML and SVG tag names, the same on every site."
-    },
-    {
-      "file": "agentTools.js",
-      "kind": "address test",
-      "what": [
-        "/^\\/webstore\\b/i",
-        "chrome.google.com",
-        "chromewebstore.google.com",
-        "microsoftedge.microsoft.com"
-      ],
-      "why": "The browsers' own add-on stores, where no extension may run (startPageKind)."
-    },
-    {
-      "file": "agentTools.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "bar.github.io",
         "foo.github.io"
@@ -1023,6 +1689,9 @@
     {
       "file": "agentTools.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "baidu.com",
         "bing.com",
@@ -1043,6 +1712,9 @@
     {
       "file": "agentTools.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "chromewebstore.google.com",
         "microsoftedge.microsoft.com"
@@ -1052,6 +1724,50 @@
     {
       "file": "agentTools.js",
       "kind": "markup test",
+      "against": [
+        "role"
+      ],
+      "what": [
+        "button",
+        "option"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "agentTools.js",
+      "kind": "markup test",
+      "against": [
+        "role"
+      ],
+      "what": [
+        "/checkbox|radio|switch/",
+        "checkbox",
+        "combobox",
+        "gridcell",
+        "link",
+        "menuitem",
+        "menuitemcheckbox",
+        "menuitemradio",
+        "meter",
+        "progressbar",
+        "radio",
+        "scrollbar",
+        "searchbox",
+        "slider",
+        "spinbutton",
+        "switch",
+        "tab",
+        "textbox",
+        "treeitem"
+      ],
+      "why": "WAI-ARIA role names, the same on every site."
+    },
+    {
+      "file": "agentTools.js",
+      "kind": "markup test",
+      "against": [
+        "tag name"
+      ],
       "what": [
         "/^(input|textarea|select)$/",
         "a",
@@ -1067,6 +1783,9 @@
     {
       "file": "agentTools.js",
       "kind": "markup test",
+      "against": [
+        "tag name"
+      ],
       "what": [
         "/^(P|LI|TD|TH|TR|DD|DT|BLOCKQUOTE|PRE|FIGCAPTION|CAPTION|H[1-6]|ARTICLE|SECTION|DIV|TABLE)$/"
       ],
@@ -1075,6 +1794,20 @@
     {
       "file": "agentTools.js",
       "kind": "selector",
+      "against": [
+        "selector"
+      ],
+      "what": [
+        "[role=heading]"
+      ],
+      "why": "Standard HTML and WAI-ARIA attributes and their standard values, read the same on every site."
+    },
+    {
+      "file": "agentTools.js",
+      "kind": "selector",
+      "against": [
+        "written"
+      ],
       "what": [
         "input.dispatchDragEvent",
         "input.dispatchMouseEvent",
@@ -1084,15 +1817,21 @@
     },
     {
       "file": "agentTools.js",
-      "kind": "selector",
-      "what": [
-        "[role=heading]"
+      "kind": "site name",
+      "against": [
+        "code"
       ],
-      "why": "Standard HTML and WAI-ARIA attributes and their standard values, read the same on every site."
+      "what": [
+        "anthropic"
+      ],
+      "why": "Providers the user can pick for the agent: their ids, endpoints, key pages and model names."
     },
     {
       "file": "agentTools.js",
       "kind": "site name",
+      "against": [
+        "written"
+      ],
       "what": [
         "chatgpt"
       ],
@@ -1101,6 +1840,9 @@
     {
       "file": "agentTools.js",
       "kind": "site name",
+      "against": [
+        "written"
+      ],
       "what": [
         "anthropic",
         "google",
@@ -1111,6 +1853,9 @@
     {
       "file": "agentTools.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/Left|Up/",
         "/Up|Down/",
@@ -1122,16 +1867,21 @@
     {
       "file": "agentTools.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "button",
-        "image",
-        "link"
+        "image"
       ],
       "why": "Standard HTML and SVG tag names, the same on every site."
     },
     {
       "file": "agentTools.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(hidden|submit|button|reset|image|checkbox|radio|file|range|color)$/",
         "/^(submit|button|reset|image)$/",
@@ -1147,6 +1897,9 @@
     {
       "file": "agentTools.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^enter$/i",
         "checkbox_toggle",
@@ -1161,6 +1914,9 @@
     {
       "file": "agentTools.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(?:chrome|edge|brave|opera|vivaldi):\\/\\/(?:newtab|new-tab-page|startpageshared)\\b/i",
         "/^about:(?:newtab|home)\\b/i",
@@ -1173,20 +1929,21 @@
     {
       "file": "agentTools.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
-        "/checkbox|radio|switch/",
         "checkbox",
-        "combobox",
-        "radio",
-        "searchbox",
-        "spinbutton",
-        "textbox"
+        "radio"
       ],
       "why": "WAI-ARIA role names, the same on every site."
     },
     {
       "file": "agentTools.js",
       "kind": "title test",
+      "against": [
+        "title"
+      ],
       "what": [
         "/\\b(i'?m not a robot|not a robot|captcha|recaptcha|hcaptcha|verify (?:that )?you(?:'re| are) (?:a )?human|verifying (?:that )?you(?:'re| are) (?:a )?human|human verification|are you a robot|press and hold|slide to verify|checking your browser|unusual traffic from your computer|verification successful\\. waiting for|checking if the site connection is secure)\\b/i",
         "/^(just a moment\\.*|attention required!?.*|one more step|are you a robot\\??|security check)$/i"
@@ -1196,8 +1953,33 @@
     {
       "file": "answerFormat.js",
       "kind": "address test",
+      "against": [
+        "address"
+      ],
       "what": [
-        "/^https?:\\/\\//i",
+        "/^https?:\\/\\//i"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "answerFormat.js",
+      "kind": "address test",
+      "against": [
+        "address"
+      ],
+      "what": [
+        "/%%STAI-CODE-(\\d+)%%/g",
+        "/\\[([^\\]]+)\\]\\((https?:\\/\\/[^\\s)]+)\\)/g"
+      ],
+      "why": "The Markdown link form and the extension's own code placeholder in an answer it renders."
+    },
+    {
+      "file": "answerFormat.js",
+      "kind": "address test",
+      "against": [
+        "host"
+      ],
+      "what": [
         "/^www\\./"
       ],
       "why": "An address's scheme and the www prefix, the same for every site."
@@ -1205,6 +1987,9 @@
     {
       "file": "answerFormat.js",
       "kind": "address test",
+      "against": [
+        "host"
+      ],
       "what": [
         "/%%STAI-CODE-(\\d+)%%/g",
         "/\\[([^\\]]+)\\]\\((https?:\\/\\/[^\\s)]+)\\)/g"
@@ -1214,6 +1999,9 @@
     {
       "file": "answerFormat.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^https?:\\/\\//i"
       ],
@@ -1222,6 +2010,9 @@
     {
       "file": "answerFormat.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "ol",
         "ul"
@@ -1231,6 +2022,9 @@
     {
       "file": "answerFormat.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "></li>"
       ],
@@ -1239,6 +2033,9 @@
     {
       "file": "background.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "chatgpt.com",
         "claude.ai",
@@ -1250,6 +2047,9 @@
     {
       "file": "background.js",
       "kind": "markup test",
+      "against": [
+        "name"
+      ],
       "what": [
         "openAgent",
         "openChatGPT",
@@ -1262,6 +2062,9 @@
     {
       "file": "background.js",
       "kind": "site name",
+      "against": [
+        "code"
+      ],
       "what": [
         "chatgpt",
         "perplexity"
@@ -1271,6 +2074,21 @@
     {
       "file": "background.js",
       "kind": "site name",
+      "against": [
+        "written"
+      ],
+      "what": [
+        "chatgpt",
+        "perplexity"
+      ],
+      "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
+    },
+    {
+      "file": "background.js",
+      "kind": "site name",
+      "against": [
+        "written"
+      ],
       "what": [
         "openai",
         "openrouter"
@@ -1280,6 +2098,9 @@
     {
       "file": "background.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/-free$/"
       ],
@@ -1288,6 +2109,9 @@
     {
       "file": "background.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "sessionUrl_"
       ],
@@ -1296,6 +2120,9 @@
     {
       "file": "background.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/<instructions>|browser_action|Select to AI/i"
       ],
@@ -1304,6 +2131,24 @@
     {
       "file": "background.js",
       "kind": "unseen data",
+      "against": [
+        "address"
+      ],
+      "what": [
+        "baseUrl.includes(CONFIG.HOSTS.AGENT)",
+        "baseUrl.includes(CONFIG.HOSTS.CHATGPT)",
+        "baseUrl.includes(CONFIG.HOSTS.CLAUDE)",
+        "baseUrl.includes(CONFIG.HOSTS.GEMINI)",
+        "baseUrl.includes(CONFIG.HOSTS.PERPLEXITY)"
+      ],
+      "why": "Names the extension's own config.js defines; the comparison runs on them, not on a page."
+    },
+    {
+      "file": "background.js",
+      "kind": "unseen data",
+      "against": [
+        "id"
+      ],
       "what": [
         "baseUrl.includes(CONFIG.HOSTS.AGENT)",
         "baseUrl.includes(CONFIG.HOSTS.CHATGPT)",
@@ -1316,8 +2161,21 @@
     {
       "file": "commandPalette.js",
       "kind": "selector",
+      "against": [
+        "getElementById"
+      ],
       "what": [
-        "#select-to-ai-command-palette",
+        "#select-to-ai-command-palette"
+      ],
+      "why": "The extension's own elements, which this script makes and styles itself."
+    },
+    {
+      "file": "commandPalette.js",
+      "kind": "selector",
+      "against": [
+        "selector"
+      ],
+      "what": [
         ".context",
         ".ctx-drop",
         ".ctx-text",
@@ -1332,6 +2190,9 @@
     {
       "file": "config.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "chatgpt.com",
         "claude.ai",
@@ -1344,6 +2205,9 @@
     {
       "file": "config.js",
       "kind": "selector",
+      "against": [
+        "written"
+      ],
       "what": [
         "[contenteditable=true]",
         "[role=textbox]",
@@ -1357,6 +2221,9 @@
     {
       "file": "config.js",
       "kind": "selector",
+      "against": [
+        "written"
+      ],
       "what": [
         "#ask-input",
         "#composer-submit-button",
@@ -1388,6 +2255,9 @@
     {
       "file": "config.js",
       "kind": "site name",
+      "against": [
+        "code"
+      ],
       "what": [
         "chatgpt",
         "perplexity"
@@ -1395,11 +2265,35 @@
       "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
     },
     {
+      "file": "config.js",
+      "kind": "site name",
+      "against": [
+        "written"
+      ],
+      "what": [
+        "chatgpt"
+      ],
+      "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
+    },
+    {
       "file": "contentScript.js",
       "kind": "address test",
+      "against": [
+        "address"
+      ],
       "what": [
         "/app/",
-        "/c/",
+        "/c/"
+      ],
+      "why": "The right-click menu: which assistant's chat page it is on, and that page's chat address."
+    },
+    {
+      "file": "contentScript.js",
+      "kind": "address test",
+      "against": [
+        "host"
+      ],
+      "what": [
         "chatgpt",
         "claude",
         "gemini",
@@ -1410,6 +2304,20 @@
     {
       "file": "contentScript.js",
       "kind": "markup test",
+      "against": [
+        "contenteditable"
+      ],
+      "what": [
+        "true"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "contentScript.js",
+      "kind": "markup test",
+      "against": [
+        "tag name"
+      ],
       "what": [
         "input",
         "textarea"
@@ -1418,23 +2326,10 @@
     },
     {
       "file": "contentScript.js",
-      "kind": "markup test",
-      "what": [
-        "true"
-      ],
-      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
-    },
-    {
-      "file": "contentScript.js",
       "kind": "selector",
-      "what": [
-        "pointer-events"
+      "against": [
+        "attribute name"
       ],
-      "why": "A CSS property name in the extension's own toast style, not a selector."
-    },
-    {
-      "file": "contentScript.js",
-      "kind": "selector",
       "what": [
         "[contenteditable]"
       ],
@@ -1443,6 +2338,9 @@
     {
       "file": "contentScript.js",
       "kind": "selector",
+      "against": [
+        "getElementById"
+      ],
       "what": [
         "#select-to-ai-toast"
       ],
@@ -1450,7 +2348,33 @@
     },
     {
       "file": "contentScript.js",
+      "kind": "selector",
+      "against": [
+        "written"
+      ],
+      "what": [
+        "pointer-events"
+      ],
+      "why": "A CSS property name in the extension's own toast style, not a selector."
+    },
+    {
+      "file": "contentScript.js",
       "kind": "site name",
+      "against": [
+        "code"
+      ],
+      "what": [
+        "chatgpt",
+        "perplexity"
+      ],
+      "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
+    },
+    {
+      "file": "contentScript.js",
+      "kind": "site name",
+      "against": [
+        "written"
+      ],
       "what": [
         "chatgpt",
         "perplexity"
@@ -1460,6 +2384,9 @@
     {
       "file": "contentScript.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/Mac|iPhone|iPad/i"
       ],
@@ -1468,14 +2395,9 @@
     {
       "file": "core/context.js",
       "kind": "address test",
-      "what": [
-        "/^www\\./"
+      "against": [
+        "address"
       ],
-      "why": "An address's scheme and the www prefix, the same for every site."
-    },
-    {
-      "file": "core/context.js",
-      "kind": "address test",
       "what": [
         "/PAGE-[0-9a-f]{4,16}/gi"
       ],
@@ -1483,7 +2405,21 @@
     },
     {
       "file": "core/context.js",
+      "kind": "address test",
+      "against": [
+        "host"
+      ],
+      "what": [
+        "/^www\\./"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "core/context.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "profile.email"
       ],
@@ -1492,6 +2428,9 @@
     {
       "file": "core/context.js",
       "kind": "markup test",
+      "against": [
+        "name"
+      ],
       "what": [
         "/PAGE-[0-9a-f]{4,16}/gi"
       ],
@@ -1499,7 +2438,21 @@
     },
     {
       "file": "core/context.js",
+      "kind": "markup test",
+      "against": [
+        "role"
+      ],
+      "what": [
+        "user"
+      ],
+      "why": "The role of a turn in the extension's own conversation record, not a page's markup."
+    },
+    {
+      "file": "core/context.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^PAGE-[0-9a-f]{4,16}$/"
       ],
@@ -1508,6 +2461,9 @@
     {
       "file": "core/context.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^pass/i"
       ],
@@ -1516,6 +2472,9 @@
     {
       "file": "core/context.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/all_urls|activeTab/i"
       ],
@@ -1524,6 +2483,9 @@
     {
       "file": "core/context.js",
       "kind": "title test",
+      "against": [
+        "title"
+      ],
       "what": [
         "/PAGE-[0-9a-f]{4,16}/gi"
       ],
@@ -1532,6 +2494,9 @@
     {
       "file": "core/grants.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "claude.ai",
         "perplexity.ai"
@@ -1541,6 +2506,9 @@
     {
       "file": "core/grants.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "api.openai.com"
       ],
@@ -1549,6 +2517,9 @@
     {
       "file": "core/grants.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "www.w3.org"
       ],
@@ -1557,6 +2528,9 @@
     {
       "file": "core/grants.js",
       "kind": "markup test",
+      "against": [
+        "id"
+      ],
       "what": [
         "select-to-ai-assistants"
       ],
@@ -1565,6 +2539,9 @@
     {
       "file": "core/grants.js",
       "kind": "site name",
+      "against": [
+        "code"
+      ],
       "what": [
         "perplexity"
       ],
@@ -1573,6 +2550,9 @@
     {
       "file": "core/grants.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "notifications"
       ],
@@ -1581,6 +2561,9 @@
     {
       "file": "core/grants.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(https?:|data:image\\/)/i"
       ],
@@ -1589,8 +2572,21 @@
     {
       "file": "core/learn.js",
       "kind": "address test",
+      "against": [
+        "address"
+      ],
       "what": [
-        "/^https?:/i",
+        "/^https?:/i"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "core/learn.js",
+      "kind": "address test",
+      "against": [
+        "host"
+      ],
+      "what": [
         "/^www\\./"
       ],
       "why": "An address's scheme and the www prefix, the same for every site."
@@ -1598,6 +2594,9 @@
     {
       "file": "core/learn.js",
       "kind": "address test",
+      "against": [
+        "query"
+      ],
       "what": [
         "/^(?:token|access_token|id_token|refresh_token|api_?key|key|secret|auth|session|session_?id|sid|code|password|passwd|sig|signature|state|csrf|nonce)$/i"
       ],
@@ -1605,7 +2604,21 @@
     },
     {
       "file": "core/learn.js",
+      "kind": "markup test",
+      "against": [
+        "role"
+      ],
+      "what": [
+        "user"
+      ],
+      "why": "The role of a turn in the extension's own conversation record, not a page's markup."
+    },
+    {
+      "file": "core/learn.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "add",
         "context",
@@ -1618,6 +2631,9 @@
     {
       "file": "core/learn.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/The user declined this step/",
         "/^press \"([^\"]+)\"$/",
@@ -1630,6 +2646,9 @@
     {
       "file": "core/llm.js",
       "kind": "selector",
+      "against": [
+        "written"
+      ],
       "what": [
         "[DONE]"
       ],
@@ -1638,6 +2657,9 @@
     {
       "file": "core/llm.js",
       "kind": "site name",
+      "against": [
+        "code"
+      ],
       "what": [
         "chatgpt"
       ],
@@ -1646,6 +2668,36 @@
     {
       "file": "core/llm.js",
       "kind": "site name",
+      "against": [
+        "code"
+      ],
+      "what": [
+        "anthropic",
+        "deepseek",
+        "groq",
+        "mistral",
+        "openai",
+        "openrouter"
+      ],
+      "why": "Providers the user can pick for the agent: their ids, endpoints, key pages and model names."
+    },
+    {
+      "file": "core/llm.js",
+      "kind": "site name",
+      "against": [
+        "written"
+      ],
+      "what": [
+        "chatgpt"
+      ],
+      "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
+    },
+    {
+      "file": "core/llm.js",
+      "kind": "site name",
+      "against": [
+        "written"
+      ],
       "what": [
         "anthropic",
         "deepseek",
@@ -1660,6 +2712,9 @@
     {
       "file": "core/llm.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(sk-or-v1-\\.\\.\\.|sk-proj-\\.\\.\\.|sk-ant-\\.\\.\\.|AIzaSy\\.\\.\\.|gsk_\\.\\.\\.|api key)$/i"
       ],
@@ -1668,6 +2723,9 @@
     {
       "file": "core/llm.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(gpt-oss|qwen|llama|zai|glm)/",
         "/^(gpt-|o\\d|chatgpt-)/",
@@ -1689,6 +2747,9 @@
     {
       "file": "core/llm.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^data:([^;]+);base64,(.+)$/",
         "/chat/completions",
@@ -1700,6 +2761,9 @@
     {
       "file": "core/llm.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^-?\\d+(?:\\.\\d+)?(?:e[+-]?\\d+)?/i",
         "/^chatpass_v2_/",
@@ -1723,6 +2787,9 @@
     {
       "file": "core/memory.js",
       "kind": "markup test",
+      "against": [
+        "id"
+      ],
       "what": [
         "/^www\\./"
       ],
@@ -1731,15 +2798,9 @@
     {
       "file": "core/memory.js",
       "kind": "markup test",
-      "what": [
-        "select",
-        "textarea"
+      "against": [
+        "id"
       ],
-      "why": "Standard HTML and SVG tag names, the same on every site."
-    },
-    {
-      "file": "core/memory.js",
-      "kind": "markup test",
       "what": [
         "context",
         "global",
@@ -1756,6 +2817,49 @@
     {
       "file": "core/memory.js",
       "kind": "markup test",
+      "against": [
+        "id"
+      ],
+      "what": [
+        "/\\b(api[_ -]?key|access token|secret key|private key)\\b/i",
+        "/\\b(password|passcode|passwd|pin code|cvv|cvc|security code|one[- ]time|otp|2fa code|verification code|passport (?:no|number)|social security|national id|nric)\\b/i",
+        "/\\b(sk-[a-z0-9-]{8,}|AIza[0-9A-Za-z_-]{10,}|gsk_[0-9A-Za-z]{10,}|xai-[0-9A-Za-z]{10,}|oc_sk_[0-9A-Za-z]{6,}|csk-[0-9a-z]{10,}|mstrl_[0-9A-Za-z_]{10,}|nvapi-[0-9A-Za-z_-]{10,})|\\bAQ\\.[0-9A-Za-z_-]{20,}/",
+        "/\\b(skip|bypass|disable|ignore|don'?t ask|without asking|no need to (?:ask|confirm))\\b[^.]{0,40}\\b(confirm|confirmation|approval|permission|captcha|verification|safety|rules?)\\b/i"
+      ],
+      "why": "Words that mark a field or a value as a secret, a card or an identity number, so the agent never fills or keeps one."
+    },
+    {
+      "file": "core/memory.js",
+      "kind": "markup test",
+      "against": [
+        "name"
+      ],
+      "what": [
+        "/^www\\./"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "core/memory.js",
+      "kind": "markup test",
+      "against": [
+        "name"
+      ],
+      "what": [
+        "context",
+        "global",
+        "preference",
+        "routine",
+        "site_note"
+      ],
+      "why": "The kinds, sources and scopes of the extension's own memory entries, which it writes itself."
+    },
+    {
+      "file": "core/memory.js",
+      "kind": "markup test",
+      "against": [
+        "name"
+      ],
       "what": [
         "/\\b(address[\\s_-]*(line)?[\\s_-]*2|apartment|apt|suite|unit|floor)\\b/i",
         "/\\b(city|town|suburb)\\b/i",
@@ -1807,6 +2911,9 @@
     {
       "file": "core/memory.js",
       "kind": "markup test",
+      "against": [
+        "name"
+      ],
       "what": [
         "/\\b(api[_ -]?key|access token|secret key|private key)\\b/i",
         "/\\b(password|passcode|passwd|pin code|cvv|cvc|security code|one[- ]time|otp|2fa code|verification code|passport (?:no|number)|social security|national id|nric)\\b/i",
@@ -1817,7 +2924,72 @@
     },
     {
       "file": "core/memory.js",
+      "kind": "markup test",
+      "against": [
+        "placeholder"
+      ],
+      "what": [
+        "/\\b(address[\\s_-]*(line)?[\\s_-]*2|apartment|apt|suite|unit|floor)\\b/i",
+        "/\\b(city|town|suburb)\\b/i",
+        "/\\b(company|organi[sz]ation|employer|school|university)\\b/i",
+        "/\\b(date of birth|birth ?date|birthday|dob)\\b/i",
+        "/\\b(first|given)[\\s_-]*name\\b|\\bforename\\b|\\bfname\\b/i",
+        "/\\b(full[\\s_-]*name|your name|name)\\b/i",
+        "/\\b(job[\\s_-]*title|position|role)\\b/i",
+        "/\\b(last|family)[\\s_-]*name\\b|\\bsurname\\b|\\blname\\b/i",
+        "/\\b(phone|mobile|telephone|tel|contact number|cell)\\b/i",
+        "/\\b(state|province|region|county)\\b/i",
+        "/\\b(street|address)\\b/i",
+        "/\\b(website|homepage|url)\\b/i",
+        "/\\b(zip|postal|post)[\\s_-]*(code)?\\b|\\bpostcode\\b/i",
+        "/\\bcountry\\b/i",
+        "/\\be-?mail\\b/i",
+        "address-level1",
+        "address-level2",
+        "address-line2",
+        "bday",
+        "country",
+        "email",
+        "family-name",
+        "given-name",
+        "job-title",
+        "organization",
+        "postal-code",
+        "street-address",
+        "tel",
+        "url"
+      ],
+      "why": "The profile fields the extension keeps for the user, by their standard autocomplete names and labels."
+    },
+    {
+      "file": "core/memory.js",
+      "kind": "markup test",
+      "against": [
+        "role"
+      ],
+      "what": [
+        "searchbox"
+      ],
+      "why": "WAI-ARIA role names, the same on every site."
+    },
+    {
+      "file": "core/memory.js",
+      "kind": "markup test",
+      "against": [
+        "tag name"
+      ],
+      "what": [
+        "select",
+        "textarea"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "core/memory.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(the|user|they|their|them|that|this|with|from|have|has|and|for|are|was|prefers?|likes?|wants?|always|usually)$/"
       ],
@@ -1826,6 +2998,9 @@
     {
       "file": "core/memory.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(checkbox|radio|file|submit|button|reset|image|hidden|range|color|search|password)$/"
       ],
@@ -1834,6 +3009,9 @@
     {
       "file": "core/memory.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(cc-|current-password|new-password|one-time-code|transaction-)/",
         "/^(shipping|billing|home|work|mobile|fax|pager)$/",
@@ -1844,6 +3022,9 @@
     {
       "file": "core/memory.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^custom:/",
         "/^open https?:/i",
@@ -1866,6 +3047,9 @@
     {
       "file": "core/observe.js",
       "kind": "markup test",
+      "against": [
+        "tag name"
+      ],
       "what": [
         "a"
       ],
@@ -1874,6 +3058,9 @@
     {
       "file": "core/policy.js",
       "kind": "address test",
+      "against": [
+        "address"
+      ],
       "what": [
         "/^https?:/i"
       ],
@@ -1882,10 +3069,34 @@
     {
       "file": "core/policy.js",
       "kind": "markup test",
+      "against": [
+        "id"
+      ],
+      "what": [
+        "div"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "core/policy.js",
+      "kind": "markup test",
+      "against": [
+        "role"
+      ],
+      "what": [
+        "/^(button|link|menuitem|menuitemcheckbox|menuitemradio|option|tab|checkbox|radio|switch)$/"
+      ],
+      "why": "WAI-ARIA role names, the same on every site."
+    },
+    {
+      "file": "core/policy.js",
+      "kind": "markup test",
+      "against": [
+        "tag name"
+      ],
       "what": [
         "a",
         "button",
-        "div",
         "input",
         "select",
         "summary",
@@ -1896,6 +3107,9 @@
     {
       "file": "core/policy.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/(^|\\+)\\s*(enter|return|numpadenter)$/i",
         "/(^|\\+)\\s*(space|spacebar| )$/i",
@@ -1907,6 +3121,9 @@
     {
       "file": "core/policy.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(submit|button|image|reset|checkbox|radio)$/"
       ],
@@ -1915,6 +3132,9 @@
     {
       "file": "core/policy.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "click",
         "double_click",
@@ -1926,6 +3146,9 @@
     {
       "file": "core/policy.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "decide",
         "delete",
@@ -1935,19 +3158,24 @@
       "why": "The kinds of commitment the page-blind check returns: pay, send, delete, decide."
     },
     {
-      "file": "core/policy.js",
-      "kind": "text test",
-      "what": [
-        "/^(button|link|menuitem|menuitemcheckbox|menuitemradio|option|tab|checkbox|radio|switch)$/"
+      "file": "core/run.js",
+      "kind": "address test",
+      "against": [
+        "address"
       ],
-      "why": "WAI-ARIA role names, the same on every site."
+      "what": [
+        "/^https?:/",
+        "/^https?:/i"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
     },
     {
       "file": "core/run.js",
       "kind": "address test",
+      "against": [
+        "host"
+      ],
       "what": [
-        "/^https?:/",
-        "/^https?:/i",
         "/^www\\./"
       ],
       "why": "An address's scheme and the www prefix, the same for every site."
@@ -1955,6 +3183,9 @@
     {
       "file": "core/run.js",
       "kind": "address test",
+      "against": [
+        "host"
+      ],
       "what": [
         "global"
       ],
@@ -1963,6 +3194,9 @@
     {
       "file": "core/run.js",
       "kind": "address test",
+      "against": [
+        "origin"
+      ],
       "what": [
         "null"
       ],
@@ -1970,7 +3204,21 @@
     },
     {
       "file": "core/run.js",
+      "kind": "address test",
+      "against": [
+        "query"
+      ],
+      "what": [
+        "/^https?:/i"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "core/run.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "agent-v4-status.md"
       ],
@@ -1978,7 +3226,32 @@
     },
     {
       "file": "core/run.js",
+      "kind": "markup test",
+      "against": [
+        "role"
+      ],
+      "what": [
+        "user"
+      ],
+      "why": "The role of a turn in the extension's own conversation record, not a page's markup."
+    },
+    {
+      "file": "core/run.js",
+      "kind": "markup test",
+      "against": [
+        "role"
+      ],
+      "what": [
+        "searchbox"
+      ],
+      "why": "WAI-ARIA role names, the same on every site."
+    },
+    {
+      "file": "core/run.js",
       "kind": "site name",
+      "against": [
+        "written"
+      ],
       "what": [
         "nvidia",
         "openrouter"
@@ -1988,6 +3261,9 @@
     {
       "file": "core/run.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^https?:/",
         "/^https?:/i"
@@ -1997,6 +3273,9 @@
     {
       "file": "core/run.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^enter$/i",
         "click",
@@ -2012,6 +3291,9 @@
     {
       "file": "core/run.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/The user declined this step/",
         "/^a redirect/"
@@ -2021,6 +3303,9 @@
     {
       "file": "core/run.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "approval",
         "check_in",
@@ -2032,7 +3317,22 @@
     },
     {
       "file": "core/runlog.js",
+      "kind": "markup test",
+      "against": [
+        "role"
+      ],
+      "what": [
+        "executor",
+        "validator"
+      ],
+      "why": "The roles of the agent's own log events, which the extension writes itself, not a page's markup."
+    },
+    {
+      "file": "core/runlog.js",
       "kind": "title test",
+      "against": [
+        "title"
+      ],
       "what": [
         "/^Step (\\d+)$/",
         "Action",
@@ -2044,6 +3344,9 @@
     {
       "file": "core/step.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "profile.email",
         "profile.name"
@@ -2053,6 +3356,9 @@
     {
       "file": "core/step.js",
       "kind": "markup test",
+      "against": [
+        "name"
+      ],
       "what": [
         "answer",
         "ask",
@@ -2123,6 +3429,9 @@
     {
       "file": "core/step.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "http:",
         "https:"
@@ -2132,6 +3441,9 @@
     {
       "file": "core/step.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/<parameter=\\s*[\"']?([A-Za-z_]+)[\"']?\\s*>/g",
         "<parameter=",
@@ -2206,6 +3518,9 @@
     {
       "file": "defaults.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "api.anthropic.com",
         "api.cerebras.ai",
@@ -2225,6 +3540,9 @@
     {
       "file": "defaults.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "github.com"
       ],
@@ -2233,6 +3551,9 @@
     {
       "file": "defaults.js",
       "kind": "site name",
+      "against": [
+        "code"
+      ],
       "what": [
         "chatgpt"
       ],
@@ -2241,6 +3562,36 @@
     {
       "file": "defaults.js",
       "kind": "site name",
+      "against": [
+        "code"
+      ],
+      "what": [
+        "anthropic",
+        "deepseek",
+        "groq",
+        "mistral",
+        "openai",
+        "openrouter"
+      ],
+      "why": "Providers the user can pick for the agent: their ids, endpoints, key pages and model names."
+    },
+    {
+      "file": "defaults.js",
+      "kind": "site name",
+      "against": [
+        "written"
+      ],
+      "what": [
+        "chatgpt"
+      ],
+      "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
+    },
+    {
+      "file": "defaults.js",
+      "kind": "site name",
+      "against": [
+        "written"
+      ],
       "what": [
         "anthropic",
         "deepseek",
@@ -2256,6 +3607,9 @@
     {
       "file": "defaults.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "-free",
         "/(?:^|[^a-z0-9.])(\\d+(?:\\.\\d+)?)b(?![a-z0-9])/gi",
@@ -2295,6 +3649,9 @@
     {
       "file": "engine.js",
       "kind": "address test",
+      "against": [
+        "address"
+      ],
       "what": [
         "/^https?:/",
         "/^https?:/i"
@@ -2304,6 +3661,9 @@
     {
       "file": "engine.js",
       "kind": "address test",
+      "against": [
+        "origin"
+      ],
       "what": [
         "null"
       ],
@@ -2312,6 +3672,9 @@
     {
       "file": "engine.js",
       "kind": "markup test",
+      "against": [
+        "name"
+      ],
       "what": [
         "agentHeartbeat",
         "agentHoldOver:",
@@ -2324,6 +3687,9 @@
     {
       "file": "engine.js",
       "kind": "selector",
+      "against": [
+        "written"
+      ],
       "what": [
         "input.dispatchKeyEvent",
         "input.dragIntercepted"
@@ -2333,6 +3699,20 @@
     {
       "file": "engine.js",
       "kind": "site name",
+      "against": [
+        "code"
+      ],
+      "what": [
+        "chatgpt"
+      ],
+      "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
+    },
+    {
+      "file": "engine.js",
+      "kind": "site name",
+      "against": [
+        "written"
+      ],
       "what": [
         "chatgpt"
       ],
@@ -2341,6 +3721,9 @@
     {
       "file": "engine.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^https?:$/"
       ],
@@ -2349,6 +3732,9 @@
     {
       "file": "engine.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^\\[related\\]/",
         "/^part /",
@@ -2364,6 +3750,9 @@
     {
       "file": "engine.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^agent(?:ActiveProvider|BackupProvider|Model|HelperModel|CustomUrl|[A-Za-z]+Key)$/",
         "/^agentBar/",
@@ -2375,6 +3764,9 @@
     {
       "file": "engine.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/:root\\s*\\{([\\s\\S]*?)\\n\\}/"
       ],
@@ -2383,6 +3775,9 @@
     {
       "file": "engine.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/already attached/i",
         "/error page/i",
@@ -2393,15 +3788,9 @@
     {
       "file": "keyGuard.js",
       "kind": "markup test",
-      "what": [
-        "INPUT",
-        "TEXTAREA"
+      "against": [
+        "role"
       ],
-      "why": "Standard HTML and SVG tag names, the same on every site."
-    },
-    {
-      "file": "keyGuard.js",
-      "kind": "markup test",
       "what": [
         "combobox",
         "searchbox",
@@ -2411,7 +3800,22 @@
     },
     {
       "file": "keyGuard.js",
+      "kind": "markup test",
+      "against": [
+        "tag name"
+      ],
+      "what": [
+        "INPUT",
+        "TEXTAREA"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "keyGuard.js",
       "kind": "selector",
+      "against": [
+        "attribute name"
+      ],
       "what": [
         "[role]"
       ],
@@ -2420,6 +3824,9 @@
     {
       "file": "omnibox.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "crbug.com"
       ],
@@ -2428,6 +3835,9 @@
     {
       "file": "options.js",
       "kind": "address test",
+      "against": [
+        "fragment"
+      ],
       "what": [
         "#backup"
       ],
@@ -2436,6 +3846,9 @@
     {
       "file": "options.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "claude.ai",
         "perplexity.ai",
@@ -2446,6 +3859,9 @@
     {
       "file": "options.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "aistudio.google.com",
         "api.anthropic.com",
@@ -2466,6 +3882,20 @@
     {
       "file": "options.js",
       "kind": "markup test",
+      "against": [
+        "id"
+      ],
+      "what": [
+        "/^models\\//"
+      ],
+      "why": "The prefix a provider's model list puts on its ids."
+    },
+    {
+      "file": "options.js",
+      "kind": "markup test",
+      "against": [
+        "name"
+      ],
       "what": [
         "open-palette"
       ],
@@ -2474,6 +3904,9 @@
     {
       "file": "options.js",
       "kind": "markup test",
+      "against": [
+        "name"
+      ],
       "what": [
         "/^models\\//"
       ],
@@ -2482,6 +3915,9 @@
     {
       "file": "options.js",
       "kind": "selector",
+      "against": [
+        "selector"
+      ],
       "what": [
         "input[name=openingMode]",
         "input[name=theme]",
@@ -2493,6 +3929,9 @@
     {
       "file": "options.js",
       "kind": "selector",
+      "against": [
+        "written"
+      ],
       "what": [
         "select-to-ai-settings",
         "select-to-ai-settings.json"
@@ -2502,6 +3941,9 @@
     {
       "file": "options.js",
       "kind": "site name",
+      "against": [
+        "code"
+      ],
       "what": [
         "chatgpt",
         "perplexity"
@@ -2511,6 +3953,36 @@
     {
       "file": "options.js",
       "kind": "site name",
+      "against": [
+        "code"
+      ],
+      "what": [
+        "anthropic",
+        "deepseek",
+        "groq",
+        "mistral",
+        "openai",
+        "openrouter"
+      ],
+      "why": "Providers the user can pick for the agent: their ids, endpoints, key pages and model names."
+    },
+    {
+      "file": "options.js",
+      "kind": "site name",
+      "against": [
+        "written"
+      ],
+      "what": [
+        "chatgpt"
+      ],
+      "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
+    },
+    {
+      "file": "options.js",
+      "kind": "site name",
+      "against": [
+        "written"
+      ],
       "what": [
         "anthropic",
         "deepseek",
@@ -2525,6 +3997,9 @@
     {
       "file": "options.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/\\/chat\\/completions$/"
       ],
@@ -2533,6 +4008,9 @@
     {
       "file": "options.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(showAgent|agentActiveProvider|agentModel|agentCustomUrl)$/",
         "sessionUrl_"
@@ -2542,6 +4020,9 @@
     {
       "file": "pdfText.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^application\\/pdf\\b/i",
         "/^https?:\\/\\//i"
@@ -2551,6 +4032,9 @@
     {
       "file": "pdfText.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^\\[No text content found\\]$/i"
       ],
@@ -2559,6 +4043,9 @@
     {
       "file": "pdfText.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/%PDF-/",
         "/(\\d+)[\\0\\t\\n\\f\\r ]+(\\d+)[\\0\\t\\n\\f\\r ]+obj\\b/g",
@@ -2581,6 +4068,9 @@
     {
       "file": "popup.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "claude.ai"
       ],
@@ -2589,6 +4079,9 @@
     {
       "file": "popup.js",
       "kind": "markup test",
+      "against": [
+        "name"
+      ],
       "what": [
         "open-palette",
         "open-sidebar"
@@ -2598,6 +4091,21 @@
     {
       "file": "popup.js",
       "kind": "site name",
+      "against": [
+        "code"
+      ],
+      "what": [
+        "chatgpt",
+        "perplexity"
+      ],
+      "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
+    },
+    {
+      "file": "popup.js",
+      "kind": "site name",
+      "against": [
+        "written"
+      ],
       "what": [
         "chatgpt",
         "perplexity"
@@ -2607,6 +4115,9 @@
     {
       "file": "popup.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/Mac/i"
       ],
@@ -2615,14 +4126,9 @@
     {
       "file": "recipes/driver.js",
       "kind": "markup test",
-      "what": [
-        "input"
+      "against": [
+        "aria-checked"
       ],
-      "why": "Standard HTML and SVG tag names, the same on every site."
-    },
-    {
-      "file": "recipes/driver.js",
-      "kind": "markup test",
       "what": [
         "true"
       ],
@@ -2630,7 +4136,21 @@
     },
     {
       "file": "recipes/driver.js",
+      "kind": "markup test",
+      "against": [
+        "tag name"
+      ],
+      "what": [
+        "input"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "recipes/driver.js",
       "kind": "selector",
+      "against": [
+        "attribute name"
+      ],
       "what": [
         "[aria-checked]",
         "[aria-label]",
@@ -2641,6 +4161,9 @@
     {
       "file": "recipes/driver.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "click",
         "fill",
@@ -2652,6 +4175,9 @@
     {
       "file": "recipes/driver.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^f0e(\\d+)$/"
       ],
@@ -2660,6 +4186,9 @@
     {
       "file": "recipes/driver.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "Document",
         "Fetch",
@@ -2673,6 +4202,9 @@
     {
       "file": "recipes/driver.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(off|false|unchecked|no)$/i",
         "/^(on|true|checked|yes)$/i"
@@ -2682,6 +4214,9 @@
     {
       "file": "recipes/service.js",
       "kind": "address test",
+      "against": [
+        "address"
+      ],
       "what": [
         "/^https?:/",
         "/^https?:/i"
@@ -2690,7 +4225,21 @@
     },
     {
       "file": "recipes/service.js",
+      "kind": "address test",
+      "against": [
+        "origin"
+      ],
+      "what": [
+        "/^https?:/"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "recipes/service.js",
       "kind": "markup test",
+      "against": [
+        "name"
+      ],
       "what": [
         "recipesView"
       ],
@@ -2699,6 +4248,9 @@
     {
       "file": "recipes/service.js",
       "kind": "site name",
+      "against": [
+        "code"
+      ],
       "what": [
         "chatgpt"
       ],
@@ -2707,6 +4259,9 @@
     {
       "file": "recipes/service.js",
       "kind": "site name",
+      "against": [
+        "written"
+      ],
       "what": [
         "openrouter"
       ],
@@ -2715,6 +4270,9 @@
     {
       "file": "recipes/service.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^( |space|spacebar)$/i",
         "/^enter$/i"
@@ -2724,6 +4282,9 @@
     {
       "file": "recipes/service.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/:free$/"
       ],
@@ -2732,6 +4293,9 @@
     {
       "file": "recipes/service.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(button|submit|reset|image)$/"
       ],
@@ -2740,6 +4304,9 @@
     {
       "file": "recipes/service.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(xhr|fetch|document)$/i"
       ],
@@ -2748,6 +4315,9 @@
     {
       "file": "recipes/service.js",
       "kind": "title test",
+      "against": [
+        "title"
+      ],
       "what": [
         "/^record: /"
       ],
@@ -2756,6 +4326,107 @@
     {
       "file": "recipes/vendor/page.js",
       "kind": "markup test",
+      "against": [
+        "aria-checked"
+      ],
+      "what": [
+        "true"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "recipes/vendor/page.js",
+      "kind": "markup test",
+      "against": [
+        "aria-disabled"
+      ],
+      "what": [
+        "true"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "recipes/vendor/page.js",
+      "kind": "markup test",
+      "against": [
+        "aria-modal"
+      ],
+      "what": [
+        "true"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "recipes/vendor/page.js",
+      "kind": "markup test",
+      "against": [
+        "autocomplete"
+      ],
+      "what": [
+        "/cc-number|cc-csc|cc-exp/",
+        "/current-password|new-password/",
+        "/one-time-code/"
+      ],
+      "why": "Standard HTML autocomplete tokens, the same on every site."
+    },
+    {
+      "file": "recipes/vendor/page.js",
+      "kind": "markup test",
+      "against": [
+        "role"
+      ],
+      "what": [
+        "button",
+        "dialog",
+        "link",
+        "menu",
+        "option",
+        "search"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "recipes/vendor/page.js",
+      "kind": "markup test",
+      "against": [
+        "role"
+      ],
+      "what": [
+        "alertdialog",
+        "checkbox",
+        "combobox",
+        "complementary",
+        "contentinfo",
+        "gridcell",
+        "group",
+        "heading",
+        "listbox",
+        "listitem",
+        "menuitem",
+        "menuitemcheckbox",
+        "menuitemradio",
+        "navigation",
+        "radio",
+        "radiogroup",
+        "row",
+        "searchbox",
+        "slider",
+        "spinbutton",
+        "switch",
+        "tab",
+        "tablist",
+        "textbox",
+        "tooltip",
+        "treeitem"
+      ],
+      "why": "WAI-ARIA role names, the same on every site."
+    },
+    {
+      "file": "recipes/vendor/page.js",
+      "kind": "markup test",
+      "against": [
+        "tag name"
+      ],
       "what": [
         "A",
         "ABBR",
@@ -2817,14 +4488,8 @@
         "U",
         "UL",
         "a",
-        "button",
-        "dialog",
         "input",
-        "link",
-        "menu",
-        "option",
         "path",
-        "search",
         "select",
         "svg",
         "textarea"
@@ -2834,32 +4499,9 @@
     {
       "file": "recipes/vendor/page.js",
       "kind": "markup test",
-      "what": [
-        "/cc-number|cc-csc|cc-exp/",
-        "/current-password|new-password/",
-        "/one-time-code/"
+      "against": [
+        "tag name"
       ],
-      "why": "Standard HTML autocomplete tokens, the same on every site."
-    },
-    {
-      "file": "recipes/vendor/page.js",
-      "kind": "markup test",
-      "what": [
-        "submit"
-      ],
-      "why": "Standard HTML input types, the same on every site."
-    },
-    {
-      "file": "recipes/vendor/page.js",
-      "kind": "markup test",
-      "what": [
-        "true"
-      ],
-      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
-    },
-    {
-      "file": "recipes/vendor/page.js",
-      "kind": "markup test",
       "what": [
         "/^H[1-3]$/",
         "/^H[1-6]$/"
@@ -2869,39 +4511,20 @@
     {
       "file": "recipes/vendor/page.js",
       "kind": "markup test",
-      "what": [
-        "alertdialog",
-        "checkbox",
-        "combobox",
-        "complementary",
-        "contentinfo",
-        "gridcell",
-        "group",
-        "heading",
-        "listbox",
-        "listitem",
-        "menuitem",
-        "menuitemcheckbox",
-        "menuitemradio",
-        "navigation",
-        "radio",
-        "radiogroup",
-        "row",
-        "searchbox",
-        "slider",
-        "spinbutton",
-        "switch",
-        "tab",
-        "tablist",
-        "textbox",
-        "tooltip",
-        "treeitem"
+      "against": [
+        "type"
       ],
-      "why": "WAI-ARIA role names, the same on every site."
+      "what": [
+        "submit"
+      ],
+      "why": "Standard HTML input types, the same on every site."
     },
     {
       "file": "recipes/vendor/page.js",
       "kind": "selector",
+      "against": [
+        "attribute name"
+      ],
       "what": [
         "[action]",
         "[alt]",
@@ -2911,40 +4534,27 @@
         "[aria-disabled]",
         "[aria-label]",
         "[aria-labelledby]",
-        "[aria-live=off]",
-        "[aria-live]",
         "[aria-modal]",
         "[autocomplete]",
-        "[contenteditable=true]",
         "[href]",
         "[name]",
         "[onclick]",
         "[placeholder]",
         "[popover]",
         "[rel]",
-        "[role=alert]",
-        "[role=button]",
-        "[role=cell]",
-        "[role=columnheader]",
-        "[role=grid]",
-        "[role=gridcell]",
-        "[role=heading]",
-        "[role=link]",
-        "[role=status]",
-        "[role=table]",
         "[role]",
         "[tabindex]",
         "[title]",
-        "[type]",
-        "a[href]",
-        "img[alt]",
-        "svg[aria-label]"
+        "[type]"
       ],
       "why": "Standard HTML and WAI-ARIA attributes and their standard values, read the same on every site."
     },
     {
       "file": "recipes/vendor/page.js",
       "kind": "selector",
+      "against": [
+        "attribute name"
+      ],
       "what": [
         "[data-cy]",
         "[data-qa]",
@@ -2955,7 +4565,37 @@
     },
     {
       "file": "recipes/vendor/page.js",
+      "kind": "selector",
+      "against": [
+        "selector"
+      ],
+      "what": [
+        "[aria-label]",
+        "[aria-live=off]",
+        "[aria-live]",
+        "[contenteditable=true]",
+        "[role=alert]",
+        "[role=button]",
+        "[role=cell]",
+        "[role=columnheader]",
+        "[role=grid]",
+        "[role=gridcell]",
+        "[role=heading]",
+        "[role=link]",
+        "[role=status]",
+        "[role=table]",
+        "a[href]",
+        "img[alt]",
+        "svg[aria-label]"
+      ],
+      "why": "Standard HTML and WAI-ARIA attributes and their standard values, read the same on every site."
+    },
+    {
+      "file": "recipes/vendor/page.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "button",
         "image"
@@ -2965,6 +4605,9 @@
     {
       "file": "recipes/vendor/page.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "reset",
         "submit"
@@ -2974,19 +4617,22 @@
     {
       "file": "recipes/vendor/recipes-core.js",
       "kind": "address test",
+      "against": [
+        "address"
+      ],
       "what": [
-        "/^https?:/",
-        "/^www\\./"
+        "/^https?:/"
       ],
       "why": "An address's scheme and the www prefix, the same for every site."
     },
     {
       "file": "recipes/vendor/recipes-core.js",
       "kind": "address test",
+      "against": [
+        "address"
+      ],
       "what": [
-        "/(token|secret|password|passwd|session|sid|auth|key|code|signature|sig|nonce|state)$/i",
         "/^(about|chrome|data):/",
-        "/^(utm_.*|gclid|fbclid|ref|spm|_ga|mc_.*)$/i",
         "/^\\s*(javascript|data|file|vbscript):/i"
       ],
       "why": "Query parameter names that carry a secret or a tracking mark, and schemes never replayed, dropped from a saved address."
@@ -2994,6 +4640,9 @@
     {
       "file": "recipes/vendor/recipes-core.js",
       "kind": "address test",
+      "against": [
+        "address"
+      ],
       "what": [
         "secret"
       ],
@@ -3002,6 +4651,80 @@
     {
       "file": "recipes/vendor/recipes-core.js",
       "kind": "address test",
+      "against": [
+        "address"
+      ],
+      "what": [
+        "/^(?:next|next page|more|load more|show more|see more|view more|older|older entries|[›»→>]|>>|next\\s*[›»→>]+|[›»→>]+\\s*next)$/i",
+        "/^(on|off|true|false)$/i",
+        "/^(on|true|checked|yes)$/i"
+      ],
+      "why": "Words for a relative time, an on or off value and a next-page link, which a recipe treats as changing or as paging."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "address test",
+      "against": [
+        "host"
+      ],
+      "what": [
+        "/^www\\./"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "address test",
+      "against": [
+        "path"
+      ],
+      "what": [
+        "secret"
+      ],
+      "why": "The variable type a recipe marks as secret, whose names are never sent."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "address test",
+      "against": [
+        "path"
+      ],
+      "what": [
+        "/^(?:next|next page|more|load more|show more|see more|view more|older|older entries|[›»→>]|>>|next\\s*[›»→>]+|[›»→>]+\\s*next)$/i",
+        "/^(on|off|true|false)$/i",
+        "/^(on|true|checked|yes)$/i"
+      ],
+      "why": "Words for a relative time, an on or off value and a next-page link, which a recipe treats as changing or as paging."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "address test",
+      "against": [
+        "query"
+      ],
+      "what": [
+        "/(token|secret|password|passwd|session|sid|auth|key|code|signature|sig|nonce|state)$/i",
+        "/^(utm_.*|gclid|fbclid|ref|spm|_ga|mc_.*)$/i"
+      ],
+      "why": "Query parameter names that carry a secret or a tracking mark, and schemes never replayed, dropped from a saved address."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "address test",
+      "against": [
+        "query"
+      ],
+      "what": [
+        "secret"
+      ],
+      "why": "The variable type a recipe marks as secret, whose names are never sent."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "address test",
+      "against": [
+        "query"
+      ],
       "what": [
         "/^(?:next|next page|more|load more|show more|see more|view more|older|older entries|[›»→>]|>>|next\\s*[›»→>]+|[›»→>]+\\s*next)$/i",
         "/^(on|off|true|false)$/i",
@@ -3012,6 +4735,9 @@
     {
       "file": "recipes/vendor/recipes-core.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "recipes-calibration.md"
       ],
@@ -3020,6 +4746,9 @@
     {
       "file": "recipes/vendor/recipes-core.js",
       "kind": "markup test",
+      "against": [
+        "id"
+      ],
       "what": [
         "abcdefghijklmnopqrstuvwxyz"
       ],
@@ -3028,6 +4757,9 @@
     {
       "file": "recipes/vendor/recipes-core.js",
       "kind": "markup test",
+      "against": [
+        "name"
+      ],
       "what": [
         "/^(on|off|true|false)$/i"
       ],
@@ -3036,6 +4768,9 @@
     {
       "file": "recipes/vendor/recipes-core.js",
       "kind": "markup test",
+      "against": [
+        "name"
+      ],
       "what": [
         "secret"
       ],
@@ -3044,6 +4779,9 @@
     {
       "file": "recipes/vendor/recipes-core.js",
       "kind": "markup test",
+      "against": [
+        "name"
+      ],
       "what": [
         "/\\b(ago|just now)\\b/i",
         "/^(?:next|next page|more|load more|show more|see more|view more|older|older entries|[›»→>]|>>|next\\s*[›»→>]+|[›»→>]+\\s*next)$/i",
@@ -3053,7 +4791,56 @@
     },
     {
       "file": "recipes/vendor/recipes-core.js",
+      "kind": "markup test",
+      "against": [
+        "placeholder"
+      ],
+      "what": [
+        "/^(on|off|true|false)$/i"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "markup test",
+      "against": [
+        "placeholder"
+      ],
+      "what": [
+        "secret"
+      ],
+      "why": "The variable type a recipe marks as secret, whose names are never sent."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "markup test",
+      "against": [
+        "placeholder"
+      ],
+      "what": [
+        "/\\b(ago|just now)\\b/i",
+        "/^(?:next|next page|more|load more|show more|see more|view more|older|older entries|[›»→>]|>>|next\\s*[›»→>]+|[›»→>]+\\s*next)$/i",
+        "/^(on|true|checked|yes)$/i"
+      ],
+      "why": "Words for a relative time, an on or off value and a next-page link, which a recipe treats as changing or as paging."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "markup test",
+      "against": [
+        "rel"
+      ],
+      "what": [
+        "/(^|\\s)next(\\s|$)/i"
+      ],
+      "why": "The standard link relation rel=next, which HTML defines the same on every site."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^today([+-]\\d+)?$/",
         "action",
@@ -3082,6 +4869,9 @@
     {
       "file": "recipes/vendor/recipes-core.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^https?:$/"
       ],
@@ -3090,6 +4880,9 @@
     {
       "file": "recipes/vendor/recipes-core.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(Escape|Tab|ArrowDown|ArrowUp|Enter|Space)$/"
       ],
@@ -3098,6 +4891,9 @@
     {
       "file": "recipes/vendor/recipes-core.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "button",
         "link"
@@ -3107,6 +4903,9 @@
     {
       "file": "recipes/vendor/recipes-core.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^(GET|HEAD|OPTIONS)$/i"
       ],
@@ -3115,6 +4914,9 @@
     {
       "file": "recipes/vendor/recipes-core.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^:r[0-9a-z]+:$/i"
       ],
@@ -3123,14 +4925,9 @@
     {
       "file": "recipes/vendor/recipes-core.js",
       "kind": "text test",
-      "what": [
-        "/(^|\\s)next(\\s|$)/i"
+      "against": [
+        "text"
       ],
-      "why": "The standard rel value of a next-page link."
-    },
-    {
-      "file": "recipes/vendor/recipes-core.js",
-      "kind": "text test",
       "what": [
         "checkbox",
         "radio",
@@ -3141,6 +4938,9 @@
     {
       "file": "recipes/vendor/recipes-core.js",
       "kind": "title test",
+      "against": [
+        "title"
+      ],
       "what": [
         "secret"
       ],
@@ -3149,6 +4949,9 @@
     {
       "file": "recipes/vendor/recipes-core.js",
       "kind": "title test",
+      "against": [
+        "title"
+      ],
       "what": [
         "/\\b(ago|just now)\\b/i",
         "/^(?:next|next page|more|load more|show more|see more|view more|older|older entries|[›»→>]|>>|next\\s*[›»→>]+|[›»→>]+\\s*next)$/i",
@@ -3160,6 +4963,9 @@
     {
       "file": "runWords.js",
       "kind": "address test",
+      "against": [
+        "host"
+      ],
       "what": [
         "/^www\\./"
       ],
@@ -3168,6 +4974,9 @@
     {
       "file": "runWords.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^https?:$/"
       ],
@@ -3176,6 +4985,9 @@
     {
       "file": "runWords.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/element/"
       ],
@@ -3184,6 +4996,31 @@
     {
       "file": "security.js",
       "kind": "address test",
+      "against": [
+        "address"
+      ],
+      "what": [
+        "chrome-extension://"
+      ],
+      "why": "The address scheme of the extension's own pages."
+    },
+    {
+      "file": "security.js",
+      "kind": "address test",
+      "against": [
+        "host"
+      ],
+      "what": [
+        "localhost"
+      ],
+      "why": "Provider endpoints the extension may send a key to, and a local model server the user may point it at."
+    },
+    {
+      "file": "security.js",
+      "kind": "address test",
+      "against": [
+        "origin"
+      ],
       "what": [
         "https://api.anthropic.com",
         "https://api.cerebras.ai",
@@ -3196,22 +5033,16 @@
         "https://auth.openai.com",
         "https://generativelanguage.googleapis.com",
         "https://opencode.ai",
-        "https://openrouter.ai",
-        "localhost"
+        "https://openrouter.ai"
       ],
       "why": "Provider endpoints the extension may send a key to, and a local model server the user may point it at."
     },
     {
       "file": "security.js",
-      "kind": "address test",
-      "what": [
-        "chrome-extension://"
-      ],
-      "why": "The address scheme of the extension's own pages."
-    },
-    {
-      "file": "security.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "api.anthropic.com",
         "api.cerebras.ai",
@@ -3231,6 +5062,9 @@
     {
       "file": "security.js",
       "kind": "site name",
+      "against": [
+        "written"
+      ],
       "what": [
         "chatgpt"
       ],
@@ -3239,6 +5073,9 @@
     {
       "file": "security.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "http:",
         "https:"
@@ -3248,6 +5085,9 @@
     {
       "file": "security.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "GET",
         "POST"
@@ -3257,6 +5097,9 @@
     {
       "file": "security.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "chrome-extension://"
       ],
@@ -3265,6 +5108,9 @@
     {
       "file": "setup.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "github.com"
       ],
@@ -3273,6 +5119,9 @@
     {
       "file": "setup.js",
       "kind": "markup test",
+      "against": [
+        "name"
+      ],
       "what": [
         "TimeoutError"
       ],
@@ -3281,6 +5130,9 @@
     {
       "file": "setup.js",
       "kind": "selector",
+      "against": [
+        "getElementById"
+      ],
       "what": [
         "#select-to-ai-consent-style"
       ],
@@ -3289,6 +5141,9 @@
     {
       "file": "setup.js",
       "kind": "site name",
+      "against": [
+        "code"
+      ],
       "what": [
         "chatgpt"
       ],
@@ -3297,6 +5152,36 @@
     {
       "file": "setup.js",
       "kind": "site name",
+      "against": [
+        "code"
+      ],
+      "what": [
+        "anthropic",
+        "deepseek",
+        "groq",
+        "mistral",
+        "openai",
+        "openrouter"
+      ],
+      "why": "Providers the user can pick for the agent: their ids, endpoints, key pages and model names."
+    },
+    {
+      "file": "setup.js",
+      "kind": "site name",
+      "against": [
+        "written"
+      ],
+      "what": [
+        "chatgpt"
+      ],
+      "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
+    },
+    {
+      "file": "setup.js",
+      "kind": "site name",
+      "against": [
+        "written"
+      ],
       "what": [
         "anthropic",
         "deepseek",
@@ -3311,6 +5196,9 @@
     {
       "file": "setup.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/^https?:$/"
       ],
@@ -3319,6 +5207,9 @@
     {
       "file": "setup.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/\\/chat\\/completions$/"
       ],
@@ -3327,6 +5218,9 @@
     {
       "file": "setup.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "privacy policy"
       ],
@@ -3335,6 +5229,9 @@
     {
       "file": "sidepanel.js",
       "kind": "address test",
+      "against": [
+        "address"
+      ],
       "what": [
         "about:blank"
       ],
@@ -3343,6 +5240,9 @@
     {
       "file": "sidepanel.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "claude.ai"
       ],
@@ -3351,6 +5251,9 @@
     {
       "file": "sidepanel.js",
       "kind": "selector",
+      "against": [
+        "attribute name"
+      ],
       "what": [
         "[src]"
       ],
@@ -3359,6 +5262,21 @@
     {
       "file": "sidepanel.js",
       "kind": "site name",
+      "against": [
+        "code"
+      ],
+      "what": [
+        "chatgpt",
+        "perplexity"
+      ],
+      "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
+    },
+    {
+      "file": "sidepanel.js",
+      "kind": "site name",
+      "against": [
+        "written"
+      ],
       "what": [
         "chatgpt",
         "perplexity"
@@ -3368,6 +5286,9 @@
     {
       "file": "usageLimits.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "openrouter.ai"
       ],
@@ -3376,6 +5297,26 @@
     {
       "file": "usageLimits.js",
       "kind": "site name",
+      "against": [
+        "code"
+      ],
+      "what": [
+        "anthropic",
+        "deepseek",
+        "google",
+        "groq",
+        "mistral",
+        "openai",
+        "openrouter"
+      ],
+      "why": "Providers the user can pick for the agent: their ids, endpoints, key pages and model names."
+    },
+    {
+      "file": "usageLimits.js",
+      "kind": "site name",
+      "against": [
+        "written"
+      ],
       "what": [
         "anthropic",
         "deepseek",
@@ -3390,6 +5331,9 @@
     {
       "file": "usageLimits.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/(\\d+(?:\\.\\d+)?)(ms|h|m|s)/g",
         "/free/i",
@@ -3404,6 +5348,9 @@
     {
       "file": "welcome.js",
       "kind": "address test",
+      "against": [
+        "query"
+      ],
       "what": [
         "code"
       ],
@@ -3412,6 +5359,9 @@
     {
       "file": "welcome.js",
       "kind": "address test",
+      "against": [
+        "query"
+      ],
       "what": [
         "connect",
         "step"
@@ -3421,6 +5371,9 @@
     {
       "file": "welcome.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "news.ycombinator.com",
         "wikipedia.org"
@@ -3430,6 +5383,9 @@
     {
       "file": "welcome.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "github.com"
       ],
@@ -3438,6 +5394,9 @@
     {
       "file": "welcome.js",
       "kind": "host",
+      "against": [
+        "written"
+      ],
       "what": [
         "openrouter.ai"
       ],
@@ -3446,6 +5405,20 @@
     {
       "file": "welcome.js",
       "kind": "markup test",
+      "against": [
+        "alt"
+      ],
+      "what": [
+        "chatgpt"
+      ],
+      "why": "The other provider a pasted key may belong to, held in a result field called alt, not an image's alt text."
+    },
+    {
+      "file": "welcome.js",
+      "kind": "markup test",
+      "against": [
+        "name"
+      ],
       "what": [
         "open-palette"
       ],
@@ -3454,6 +5427,9 @@
     {
       "file": "welcome.js",
       "kind": "markup test",
+      "against": [
+        "name"
+      ],
       "what": [
         "TimeoutError"
       ],
@@ -3462,6 +5438,9 @@
     {
       "file": "welcome.js",
       "kind": "site name",
+      "against": [
+        "written"
+      ],
       "what": [
         "chatgpt"
       ],
@@ -3470,6 +5449,9 @@
     {
       "file": "welcome.js",
       "kind": "site name",
+      "against": [
+        "written"
+      ],
       "what": [
         "github",
         "hackernews",
@@ -3480,6 +5462,9 @@
     {
       "file": "welcome.js",
       "kind": "site name",
+      "against": [
+        "written"
+      ],
       "what": [
         "openrouter"
       ],
@@ -3488,6 +5473,9 @@
     {
       "file": "welcome.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/Mac/i"
       ],
@@ -3496,6 +5484,9 @@
     {
       "file": "welcome.js",
       "kind": "text test",
+      "against": [
+        "text"
+      ],
       "what": [
         "/did not approve|cancel|closed/i"
       ],

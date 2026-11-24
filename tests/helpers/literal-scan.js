@@ -4,12 +4,20 @@
 // the patch is spelled. What decides a finding is what a literal is held
 // against, never what a variable or a function is called.
 //
-// Findings, each { kind, what, line }:
+// Findings, each { kind, what, line, against }. `against` is what the
+// literal is held against: the property or attribute read (id, class, tag
+// name, name, role, aria-label, placeholder, alt, rel, title, another
+// attribute by its name), the part of an address (host, origin, path,
+// query, fragment, address), the call a selector is handed to (selector,
+// getElementById, attribute name, dataset, xpath, a lookup), "written" for
+// a host, a name or a selector written anywhere, "code" for a name in code,
+// and "text" for a text search. An allowlist entry names the one it allows.
 // - "markup test": a string or regex literal compared with, tested against,
 //   searched in, switched on or looked up by a value read through a
 //   property named id, name, className, classList, dataset, tagName (or
-//   nodeName, localName, htmlFor), or an attribute's value (getAttribute),
-//   on any receiver whatever it is called.
+//   nodeName, localName, htmlFor), role, ariaLabel, placeholder, alt or
+//   rel, or an attribute's value (getAttribute), on any receiver whatever
+//   it is called.
 // - "address test": the same, for a property named host, hostname, origin,
 //   href, pathname, url (or URL, domain, search, hash, pendingUrl, baseURI,
 //   documentURI, referrer, searchParams), for the global location, and for
@@ -24,18 +32,22 @@
 //   built into, an argument of querySelector, querySelectorAll, matches,
 //   closest, getElementById, getElementsByClassName, getElementsByName,
 //   hasAttribute, getAttribute and their kin, or written anywhere as a whole
-//   selector. The selector is parsed fully: classes, ids, every attribute
-//   by name (and value), custom elements' tags, and everything inside
-//   :is(), :not(), :has(), :where() and the like. A dataset read
-//   (el.dataset.asin, "asin" in el.dataset) is the data attribute it reads.
-//   A form's or an attribute list's lookup by name (form.elements["q"],
-//   attributes.getNamedItem("id")) and an XPath given to evaluate() are too.
+//   selector. A selector made by adding literals ("#" + "nav", or a name
+//   bound to that) is read whole as well. The selector is parsed fully:
+//   classes, ids, every attribute by name (and value), custom elements'
+//   tags, and everything inside :is(), :not(), :has(), :where() and the
+//   like. A dataset read (el.dataset.asin, "asin" in el.dataset) is the
+//   data attribute it reads. A form's or an attribute list's lookup by name
+//   (form.elements["q"], attributes.getNamedItem("id")), an element read by
+//   its id as a name on the window or the document (window["main"]) and an
+//   XPath given to evaluate() are too.
 // - "text test": a literal used in includes, startsWith, endsWith, indexOf,
 //   lastIndexOf, match, matchAll, test, exec or search where the other side
 //   is not provably the extension's own text (a literal, or a name bound
 //   only to literals).
 // - "host": a dotted name ending in a real top-level domain (the Public
-//   Suffix List), in any literal or comment.
+//   Suffix List), in any literal or comment, also after a wildcard
+//   ("*.shop.co.uk").
 // - "site name": a name from the site-name dictionary
 //   (tests/hygiene/site-names.txt), as a word, as two words written apart
 //   ("Hacker News"), or as a name in code, in any literal or comment.
@@ -43,6 +55,10 @@
 //   meaning from.
 // - "unused data": a regex, or a list of strings, that nothing in the file
 //   reads, which is either dead or waiting to be used.
+// Not reached: a literal held with === against a control's value or a
+// page's text (textContent, innerText), an element read by its id as a
+// plain property of the window or the document (window.main), a name a
+// source never binds, and hosts under reserved names (.example, .test).
 // A literal with no letter in it (punctuation, digits, white space) spells
 // no name and is never a finding. The extension's own class, id and value
 // names count as its own only where its .html and .css files declare them
@@ -76,7 +92,8 @@ function readNames(file = path.join(ROOT, "tests/hygiene/site-names.txt")) {
 const RESERVED_HOST = /(?:^|\.)(?:example|test|invalid|localhost|local|internal|lan|onion|home\.arpa)$|(?:^|\.)example\.(?:com|net|org)$/;
 const HTML_TAGS = new Set("a abbr address area article aside audio b base bdi bdo blockquote body br button canvas caption cite code col colgroup data datalist dd del details dfn dialog div dl dt em embed fieldset figcaption figure footer form h1 h2 h3 h4 h5 h6 head header hgroup hr html i iframe img input ins kbd label legend li link main map mark menu meta meter nav noscript object ol optgroup option output p param picture pre progress q rp rt ruby s samp script section select slot small source span strong style sub summary sup svg table tbody td template textarea tfoot th thead time title tr track u ul var video wbr math".split(" "));
 
-const HOST_RE = /(?<![\w.@-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+([a-z]{2,63}))(?![\w-])/gi;
+// A host, also after a wildcard ("*.shop.co.uk" in a match pattern), never as the tail of a longer name.
+const HOST_RE = /(?<![\w@-]|(?<!\*)\.)((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+([a-z]{2,63}))(?![\w-])/gi;
 const words = (text) => String(text).toLowerCase().match(/[a-z0-9]+(?:-[a-z0-9]+)*/g) || [];
 const flatWords = (text) => String(text).toLowerCase().match(/[a-z0-9]+/g) || [];
 
@@ -284,10 +301,34 @@ const spellsNothing = (n) => {
 
 // What is compared, by the property it is read through, on any receiver.
 const PROPS = {
-  markup: new Set(["id", "name", "className", "classList", "dataset", "tagName", "nodeName", "localName", "htmlFor"]),
+  markup: new Set(["id", "name", "className", "classList", "dataset", "tagName", "nodeName", "localName", "htmlFor", "role", "ariaLabel", "placeholder", "alt", "rel"]),
   address: new Set(["host", "hostname", "origin", "href", "pathname", "url", "URL", "domain", "search", "hash", "pendingUrl", "baseURI", "documentURI", "referrer", "searchParams"]),
   title: new Set(["title"]),
 };
+// What a literal is held against, by the property read: a finding carries
+// it, and an allowlist entry names the ones it allows, so an entry for a
+// tag name or a role never excuses an id or a class test with the same word.
+const AGAINST = {
+  id: "id", name: "name", className: "class", classList: "class", dataset: "dataset", tagName: "tag name", nodeName: "tag name", localName: "tag name", htmlFor: "for",
+  role: "role", ariaLabel: "aria-label", placeholder: "placeholder", alt: "alt", rel: "rel",
+  host: "host", hostname: "host", domain: "host", origin: "origin", pathname: "path", search: "query", searchParams: "query", hash: "fragment",
+  href: "address", url: "address", URL: "address", pendingUrl: "address", baseURI: "address", documentURI: "address", referrer: "address",
+  title: "title",
+};
+// An attribute read by name is held against that attribute: class and id as
+// the properties are, any other by its own name.
+const attrAgainst = (name) => { const a = String(name).toLowerCase(); return a === "class" ? "class" : a; };
+const NONE = new Set();
+/** The labels of several sets together; NONE when there are none. */
+const join = (...sets) => {
+  const xs = sets.filter((s) => s && s.size);
+  if (!xs.length) return NONE;
+  if (xs.length === 1) return xs[0];
+  const out = new Set();
+  for (const s of xs) for (const l of s) out.add(l);
+  return out;
+};
+const one = (label) => new Set([label]);
 const KIND_NAME = { markup: "markup test", address: "address test", title: "title test" };
 const KINDS = Object.keys(PROPS);
 // Calls that hand back what a host is.
@@ -319,7 +360,7 @@ function findings(src, names = readNames(), own = () => false) {
   const all = nodesOf(ast);
   const out = [];
   const seen = new Set();
-  const report = (kind, what, line) => { const key = `${kind}|${what}|${line}`; if (!seen.has(key)) { seen.add(key); out.push({ kind, what, line }); } };
+  const report = (kind, what, line, against) => { const key = `${kind}|${what}|${line}|${against}`; if (!seen.has(key)) { seen.add(key); out.push({ kind, what, line, against }); } };
   // Names used in code before a dot ("profile.email", "chrome.tabs"): code, not a host, where a string or comment spells them.
   const objects = new Set(["chrome", "self", "window", "document", "globalThis", "location", "navigator"]);
   for (const n of all) if (n.type === "MemberExpression" && n.object.type === "Identifier") objects.add(n.object.name);
@@ -347,12 +388,12 @@ function findings(src, names = readNames(), own = () => false) {
   for (const n of literals) {
     const text = literalText(n);
     const line = n.loc.start.line;
-    for (const h of hostsIn(text)) report("host", h, line);
-    for (const w of namesIn(text)) report("site name", w, line);
+    for (const h of hostsIn(text)) report("host", h, line, "written");
+    for (const w of namesIn(text)) report("site name", w, line, "written");
   }
   for (const c of comments) {
-    for (const h of hostsIn(c.value)) report("host", h, c.loc.start.line);
-    for (const w of namesIn(c.value)) report("site name", w, c.loc.start.line);
+    for (const h of hostsIn(c.value)) report("host", h, c.loc.start.line, "written");
+    for (const w of namesIn(c.value)) report("site name", w, c.loc.start.line, "written");
   }
 
   // What each name is bound to, in the function that declares it (blocks
@@ -452,108 +493,128 @@ function findings(src, names = readNames(), own = () => false) {
   /** Whether a name is bound in the file (a global such as `location` is not). */
   const bound = (n) => !!binding(n) || [...functionsNamed.keys()].includes(n.name);
 
-  const holds = { markup: new Set(), address: new Set(), title: new Set() };
-  const held = (n, kind) => { const b = binding(n); return !!b && holds[kind].has(b.key); };
+  // What each binding holds, per kind: the set of what it was read through.
+  const holds = { markup: new Map(), address: new Map(), title: new Map() };
+  const held = (n, kind) => { const b = binding(n); return (b && holds[kind].get(b.key)) || NONE; };
   const ADDRESS_ATTR = /^(href|src|action|formaction|srcset|cite|data|poster|ping)$/i;
   const attrIsAddress = (n) => n.arguments[0] && n.arguments[0].type === "Literal" && ADDRESS_ATTR.test(String(n.arguments[0].value));
   /**
-   * Whether a value is read through one of the kind's properties, or is
-   * carried over from such a read.
+   * What a value is read through, of the kind's properties, or carried over
+   * from such a read: a set of labels (AGAINST), empty when it is neither.
    */
-  const carries = (n, kind, depth = 0) => {
-    if (!n || typeof n.type !== "string" || depth > 30) return false;
-    const deeper = (x) => carries(x, kind, depth + 1);
+  const carriesFrom = (n, kind, depth = 0) => {
+    if (!n || typeof n.type !== "string" || depth > 30) return NONE;
+    const deeper = (x) => carriesFrom(x, kind, depth + 1);
     switch (n.type) {
-      case "Identifier":
-        if (isPropertyKey(n)) return false;
-        if (held(n, kind)) return true;
+      case "Identifier": {
+        if (isPropertyKey(n)) return NONE;
+        const h = held(n, kind);
+        if (h.size) return h;
         // The page's own address, as a global.
-        return kind === "address" && n.name === "location" && !binding(n);
+        return kind === "address" && n.name === "location" && !binding(n) ? one("address") : NONE;
+      }
       case "ItemOf": case "KeyOf": return deeper(n.object);
       case "MemberExpression": {
-        if (PROPS[kind].has(propName(n)) && !(n.computed && n.property.type !== "Literal")) return true;
-        if (held(n, kind)) return true;
+        if (PROPS[kind].has(propName(n)) && !(n.computed && n.property.type !== "Literal")) return one(AGAINST[propName(n)]);
+        const h = held(n, kind);
+        if (h.size) return h;
         // An item of such a value, or its value itself (attr.value, classList.value), carries it on.
         if (n.computed || /^(value|nodeValue|baseVal|animVal|input|groups)$/.test(propName(n))) return deeper(n.object);
-        return false;
+        return NONE;
       }
       case "CallExpression": {
         const callee = calleeName(n);
-        if (n.callee.type === "MemberExpression" && ATTR_CALLS.has(callee) && /^get/.test(callee)) return kind === "address" ? attrIsAddress(n) : kind === "markup" && !attrIsAddress(n);
-        if (kind === "address" && HOST_CALLS.has(callee)) return true;
+        if (n.callee.type === "MemberExpression" && ATTR_CALLS.has(callee) && /^get/.test(callee)) {
+          if (kind === "address") return attrIsAddress(n) ? one("address") : NONE;
+          if (kind !== "markup" || attrIsAddress(n)) return NONE;
+          const a = callee.endsWith("NS") ? n.arguments[1] : n.arguments[0];
+          return one(a && a.type === "Literal" ? attrAgainst(a.value) : "attribute");
+        }
+        if (kind === "address" && HOST_CALLS.has(callee)) return one("host");
         if (n.callee.type === "Identifier" && CARRY_FUNCS.test(callee)) return deeper(n.arguments[0]);
-        if (n.callee.type === "MemberExpression" && n.callee.object.type === "Identifier" && /^(Object|Array|JSON|Reflect)$/.test(n.callee.object.name) && STATIC_CARRY.test(callee)) return n.arguments.some(deeper);
+        if (n.callee.type === "MemberExpression" && n.callee.object.type === "Identifier" && /^(Object|Array|JSON|Reflect)$/.test(n.callee.object.name) && STATIC_CARRY.test(callee)) return join(...n.arguments.map(deeper));
         if (n.callee.type === "MemberExpression" && callee === "exec") return deeper(n.arguments[0]);
         if (n.callee.type === "MemberExpression" && CARRY_METHODS.test(callee)) return deeper(n.callee.object);
-        if (n.callee.type === "MemberExpression" && /^(map|flatMap)$/.test(callee)) return isFn(n.arguments[0]) ? returns(n.arguments[0], kind, depth) : deeper(n.callee.object);
+        if (n.callee.type === "MemberExpression" && /^(map|flatMap)$/.test(callee)) return isFn(n.arguments[0]) ? returnsFrom(n.arguments[0], kind, depth) : deeper(n.callee.object);
         // CSS.escape(x), x.toString(): the value itself.
         if (n.callee.type === "MemberExpression" && /^(escape)$/.test(callee)) return deeper(n.arguments[0]);
         // A function of the file that hands back such a value.
-        if (n.callee.type === "Identifier" && functionsNamed.has(callee)) return functionsNamed.get(callee).some((fn) => returns(fn, kind, depth));
-        if (isFn(n.callee)) return returns(n.callee, kind, depth);
-        return false;
+        if (n.callee.type === "Identifier" && functionsNamed.has(callee)) return join(...functionsNamed.get(callee).map((fn) => returnsFrom(fn, kind, depth)));
+        if (isFn(n.callee)) return returnsFrom(n.callee, kind, depth);
+        return NONE;
       }
       case "NewExpression": {
         const c = n.callee.type === "Identifier" ? n.callee.name : "";
-        if (kind === "address" && /^(URL|URLSearchParams)$/.test(c)) return true;
-        if (/^(Set|Map|WeakSet|WeakMap|Array|String)$/.test(c)) return n.arguments.some(deeper);
-        return false;
+        if (kind === "address" && c === "URL") return one("address");
+        if (kind === "address" && c === "URLSearchParams") return one("query");
+        if (/^(Set|Map|WeakSet|WeakMap|Array|String)$/.test(c)) return join(...n.arguments.map(deeper));
+        return NONE;
       }
-      case "ConditionalExpression": return deeper(n.consequent) || deeper(n.alternate);
-      case "LogicalExpression": return deeper(n.left) || deeper(n.right);
-      case "BinaryExpression": return n.operator === "+" && (deeper(n.left) || deeper(n.right));
-      case "TemplateLiteral": return n.expressions.some(deeper);
+      case "ConditionalExpression": return join(deeper(n.consequent), deeper(n.alternate));
+      case "LogicalExpression": return join(deeper(n.left), deeper(n.right));
+      case "BinaryExpression": return n.operator === "+" ? join(deeper(n.left), deeper(n.right)) : NONE;
+      case "TemplateLiteral": return join(...n.expressions.map(deeper));
       case "TaggedTemplateExpression": return deeper(n.quasi);
       case "AwaitExpression": case "SpreadElement": case "ChainExpression": case "ParenthesizedExpression": return deeper(n.argument || n.expression);
-      case "ArrayExpression": return n.elements.some(deeper);
-      case "ObjectExpression": return n.properties.some((p) => (p.type === "SpreadElement" ? deeper(p.argument) : false));
+      case "ArrayExpression": return join(...n.elements.map(deeper));
+      case "ObjectExpression": return join(...n.properties.map((p) => (p.type === "SpreadElement" ? deeper(p.argument) : NONE)));
       case "AssignmentExpression": return deeper(n.right);
       case "SequenceExpression": return deeper(n.expressions[n.expressions.length - 1]);
-      default: return false;
+      default: return NONE;
     }
   };
+  const carries = (n, kind, depth = 0) => carriesFrom(n, kind, depth).size > 0;
   const returning = new Map();
-  /** Whether a function returns a value carrying the kind. */
-  const returns = (fn, kind, depth = 0) => {
-    const key = fn;
-    if (!returning.has(key)) returning.set(key, {});
-    const memo = returning.get(key);
+  /** What a function's returned values are read through, of the kind's properties. */
+  const returnsFrom = (fn, kind, depth = 0) => {
+    if (!returning.has(fn)) returning.set(fn, {});
+    const memo = returning.get(fn);
     if (kind in memo) return memo[kind];
-    memo[kind] = false;
-    let found = false;
-    if (fn.body.type !== "BlockStatement") found = carries(fn.body, kind, depth + 1);
+    memo[kind] = NONE;
+    let found = NONE;
+    if (fn.body.type !== "BlockStatement") found = carriesFrom(fn.body, kind, depth + 1);
     else {
       const stack = [fn.body];
-      while (stack.length && !found) {
+      while (stack.length) {
         const x = stack.pop();
         if (!x || typeof x.type !== "string" || (isFn(x) && x !== fn)) continue;
-        if (x.type === "ReturnStatement" && x.argument && carries(x.argument, kind, depth + 1)) found = true;
+        if (x.type === "ReturnStatement" && x.argument) found = join(found, carriesFrom(x.argument, kind, depth + 1));
         stack.push(...childrenOf(x));
       }
     }
     memo[kind] = found;
     return found;
   };
-  /** Whether a callback reads the kind anywhere in its body, or another value carries it. */
+  /** What a callback reads of the kind anywhere in its body, or another value carries. */
   const reads = (node, kind) => {
+    let found = NONE;
     const stack = [node];
     while (stack.length) {
       const x = stack.pop();
       if (!x || typeof x.type !== "string") continue;
       if (x.type === "UnaryExpression" && x.operator === "typeof") continue;
-      if ((x.type === "MemberExpression" || x.type === "Identifier" || x.type === "CallExpression" || x.type === "NewExpression") && carries(x, kind)) return true;
+      if (x.type === "MemberExpression" || x.type === "Identifier" || x.type === "CallExpression" || x.type === "NewExpression") {
+        const got = carriesFrom(x, kind);
+        if (got.size) { found = join(found, got); continue; }
+      }
       stack.push(...childrenOf(x));
     }
-    return false;
+    return found;
   };
-  const side = (n, kind) => (isFn(n) ? reads(n.body, kind) : carries(n, kind));
+  const side = (n, kind) => (isFn(n) ? reads(n.body, kind) : carriesFrom(n, kind));
 
   // Names that hold what such a read gave: `const cls = String(el.className)`.
   const allBindings = [...[...scopes.values()].flatMap((m) => [...m.values()]), ...constants.values()];
   for (let round = 0, grew = true; grew && round < 12; round++) {
     grew = false;
     returning.clear();
-    for (const values of allBindings) for (const kind of KINDS) if (!holds[kind].has(values) && values.some((v) => carries(v, kind))) { holds[kind].add(values); grew = true; }
+    for (const values of allBindings) {
+      for (const kind of KINDS) {
+        const had = holds[kind].get(values) || NONE;
+        const got = join(...values.map((v) => carriesFrom(v, kind)));
+        if ([...got].some((l) => !had.has(l))) { holds[kind].set(values, join(had, got)); grew = true; }
+      }
+    }
   }
   returning.clear();
 
@@ -672,39 +733,65 @@ function findings(src, names = readNames(), own = () => false) {
   // Literals held against an address: parts of an address, not selectors.
   const addressParts = new Set();
   const judged = new Set();
-  const judge = (kind, lits) => {
+  // Each literal is reported once for every property it is held against.
+  const judge = (kind, lits, against) => {
     for (const n of lits) {
       judged.add(n);
       if (spellsNothing(n)) continue;
       if (kind === "markup" && !n.regex && ownToken(literalText(n))) continue;
       if (kind === "address") addressParts.add(n);
-      report(KIND_NAME[kind], shown(n), n.loc.start.line);
+      for (const label of against) report(KIND_NAME[kind], shown(n), n.loc.start.line, label);
     }
   };
   // Data a page's value is held against that the file never shows: a name
   // bound nowhere in it (SKIP.test(cls), with SKIP from another script).
   const GLOBALS = /^(document|window|self|globalThis|location|navigator|chrome|console|undefined|NaN|Infinity|Set|Map|WeakSet|WeakMap|URL|URLSearchParams|RegExp|String|Object|Array|Number|Boolean|JSON|Math|CSS|Reflect|Symbol|Promise|Date|Error|Node|Element|HTMLElement|SVGElement|Intl|crypto|performance|history|screen|module|require|exports)$/;
   const rootName = (x) => { let r = x; while (r && (r.type === "MemberExpression" || r.type === "ChainExpression")) r = r.type === "ChainExpression" ? r.expression : r.object; return r && r.type === "Identifier" ? r : null; };
-  const unseen = (sides, at) => {
+  const unseen = (sides, at, against) => {
     for (const x of sides) {
       if (!x || isFn(x) || !(x.type === "Identifier" || x.type === "MemberExpression")) continue;
       const r = rootName(x);
       if (!r || GLOBALS.test(r.name) || binding(r) || functionsNamed.has(r.name) || (x.type === "MemberExpression" && binding(x))) continue;
-      report("unseen data", snippet(at), at.loc.start.line);
+      for (const label of against) report("unseen data", snippet(at), at.loc.start.line, label);
     }
   };
-  const selectorFinding = (name, line) => { if (name && !own(name)) report("selector", name, line); };
+  // A selector finding is held against the call it is handed to (or
+  // "written", for one written anywhere else).
+  const selectorFinding = (name, line, against) => { if (name && !own(name)) report("selector", name, line, against); };
   /** A literal handed to a selector call: every name it picks by, or, as a piece of a built one, its bare name. */
-  const selectorLiteral = (lit, built, bareTags) => {
+  const selectorLiteral = (lit, built, bareTags, against) => {
     judged.add(lit);
     const text = String(literalText(lit));
     const parsed = parseSelector(text, bareTags);
-    if (parsed) { for (const p of parsed) selectorFinding(p.name, lit.loc.start.line); return; }
+    if (parsed) { for (const p of parsed) selectorFinding(p.name, lit.loc.start.line, against); return; }
     if (built || !parsed) for (const piece of text.split(/[\s,>+~()[\]="'^$*|:]+/)) {
       const bare = piece.replace(/^[.#]/, "");
-      if (/\p{L}/u.test(bare) && !HTML_TAGS.has(bare.toLowerCase()) && !own(bare) && !own(piece)) selectorFinding(piece, lit.loc.start.line);
+      if (/\p{L}/u.test(bare) && !HTML_TAGS.has(bare.toLowerCase()) && !own(bare) && !own(piece)) selectorFinding(piece, lit.loc.start.line, against);
     }
   };
+  /**
+   * The text a value spells when it is built only from literals: a literal,
+   * literals added together ("#" + "nav"), a template of them, or a name
+   * bound once to such a value. null when any part is not known.
+   */
+  const foldText = (n, depth = 0) => {
+    if (!n || depth > 12) return null;
+    if (n.type === "Literal") return typeof n.value === "string" ? n.value : null;
+    if (n.type === "TemplateLiteral") {
+      let out = "";
+      for (let i = 0; i < n.quasis.length; i++) {
+        out += n.quasis[i].value.cooked || "";
+        if (i < n.expressions.length) { const e = foldText(n.expressions[i], depth + 1); if (e === null) return null; out += e; }
+      }
+      return out;
+    }
+    if (n.type === "BinaryExpression" && n.operator === "+") { const l = foldText(n.left, depth + 1); const r = l === null ? null : foldText(n.right, depth + 1); return l === null || r === null ? null : l + r; }
+    if (n.type === "Identifier") { const b = binding(n); return b && b.values.length === 1 ? foldText(b.values[0], depth + 1) : null; }
+    return null;
+  };
+  /** Whether a value is built from more than one piece: a sum or a template with expressions. */
+  const isBuilt = (n) => n && ((n.type === "BinaryExpression" && n.operator === "+") || (n.type === "TemplateLiteral" && n.expressions.length > 0));
+  const builtSelectors = new Set();
   const kebab = (s) => `data-${String(s).replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`;
   const isDataset = (n) => n && n.type === "MemberExpression" && propName(n) === "dataset";
 
@@ -715,17 +802,27 @@ function findings(src, names = readNames(), own = () => false) {
       if (SELECTOR_CALLS.has(method)) {
         for (const a of n.arguments) {
           const built = !(a.type === "Literal" || (a.type === "TemplateLiteral" && !a.expressions.length));
-          for (const lit of operandLiterals(a)) if (!lit.regex) selectorLiteral(lit, built, true);
+          for (const lit of operandLiterals(a)) if (!lit.regex) selectorLiteral(lit, built, true, "selector");
+          // A selector made by adding literals ("#" + "nav") is read whole, as the page gets it.
+          const whole = built ? foldText(a) : null;
+          if (whole !== null) { builtSelectors.add(a); for (const p of parseSelector(whole, true) || []) selectorFinding(p.name, a.loc.start.line, "selector"); }
         }
       }
-      if (NAME_CALLS.has(method)) for (const a of n.arguments) for (const lit of operandLiterals(a)) { judged.add(lit); if (!lit.regex) for (const t of String(literalText(lit)).split(/\s+/)) if (t && /\p{L}/u.test(t) && !own(t)) selectorFinding(method === "getElementById" ? `#${t}` : method === "getElementsByClassName" ? `.${t}` : `[name=${t}]`, lit.loc.start.line); }
-      if (method === "getElementsByTagName") for (const a of n.arguments) for (const lit of operandLiterals(a)) { judged.add(lit); if (customTag(literalText(lit), own)) selectorFinding(String(literalText(lit)).toLowerCase(), lit.loc.start.line); }
+      if (NAME_CALLS.has(method)) {
+        const named = (t, line) => { if (t && /\p{L}/u.test(t) && !own(t)) selectorFinding(method === "getElementById" ? `#${t}` : method === "getElementsByClassName" ? `.${t}` : `[name=${t}]`, line, method); };
+        for (const a of n.arguments) {
+          for (const lit of operandLiterals(a)) { judged.add(lit); if (!lit.regex) for (const t of String(literalText(lit)).split(/\s+/)) named(t, lit.loc.start.line); }
+          const whole = a.type !== "Literal" ? foldText(a) : null;
+          if (whole !== null) { builtSelectors.add(a); for (const t of whole.split(/\s+/)) named(t, a.loc.start.line); }
+        }
+      }
+      if (method === "getElementsByTagName") for (const a of n.arguments) for (const lit of operandLiterals(a)) { judged.add(lit); if (customTag(literalText(lit), own)) selectorFinding(String(literalText(lit)).toLowerCase(), lit.loc.start.line, method); }
       if (ATTR_CALLS.has(method) && n.arguments[0]) {
         const a = method.endsWith("NS") ? n.arguments[1] : n.arguments[0];
-        for (const lit of operandLiterals(a)) { judged.add(lit); if (!lit.regex && /\p{L}/u.test(String(literalText(lit))) && !own(String(literalText(lit)))) selectorFinding(method === "namedItem" ? `[name=${literalText(lit)}]` : `[${literalText(lit)}]`, lit.loc.start.line); }
+        for (const lit of operandLiterals(a)) { judged.add(lit); if (!lit.regex && /\p{L}/u.test(String(literalText(lit))) && !own(String(literalText(lit)))) selectorFinding(method === "namedItem" ? `[name=${literalText(lit)}]` : `[${literalText(lit)}]`, lit.loc.start.line, "attribute name"); }
       }
       // An XPath handed to the page.
-      if (method === "evaluate" && n.arguments[0]) for (const lit of operandLiterals(n.arguments[0])) { judged.add(lit); for (const m of String(literalText(lit)).matchAll(/@([\w-]+)\s*(?:=\s*["']([^"']*)["'])?|contains\(\s*@([\w-]+)\s*,\s*["']([^"']*)["']/g)) selectorFinding(`[${m[1] || m[3]}${m[2] || m[4] ? `=${m[2] || m[4]}` : ""}]`, lit.loc.start.line); }
+      if (method === "evaluate" && n.arguments[0]) for (const lit of operandLiterals(n.arguments[0])) { judged.add(lit); for (const m of String(literalText(lit)).matchAll(/@([\w-]+)\s*(?:=\s*["']([^"']*)["'])?|contains\(\s*@([\w-]+)\s*,\s*["']([^"']*)["']/g)) selectorFinding(`[${m[1] || m[3]}${m[2] || m[4] ? `=${m[2] || m[4]}` : ""}]`, lit.loc.start.line, "xpath"); }
       // One thing held against another: x.test(y), x.includes(y), SET.has(y), MAP.get(y), xs.some(cb).
       if (COMPARE.has(method)) {
         const sides = method === "replace" || method === "replaceAll" ? [n.callee.object, n.arguments[0]] : [n.callee.object, ...n.arguments];
@@ -734,65 +831,72 @@ function findings(src, names = readNames(), own = () => false) {
         const keyed = /^(has|get|hasOwnProperty)$/.test(method);
         for (const kind of KINDS) {
           if (keyed) {
-            if (n.arguments[0] && !isFn(n.arguments[0]) && carries(n.arguments[0], kind) && !carries(n.callee.object, kind)) { judge(kind, keyLiterals(n.callee.object)); unseen([n.callee.object], n); }
-            else if (carries(n.callee.object, kind) && n.arguments[0] && !isFn(n.arguments[0])) judge(kind, operandLiterals(n.arguments[0]));
+            const arg = n.arguments[0] && !isFn(n.arguments[0]) ? carriesFrom(n.arguments[0], kind) : NONE;
+            const obj = carriesFrom(n.callee.object, kind);
+            if (arg.size && !obj.size) { judge(kind, keyLiterals(n.callee.object), arg); unseen([n.callee.object], n, arg); }
+            else if (obj.size && n.arguments[0] && !isFn(n.arguments[0])) judge(kind, operandLiterals(n.arguments[0]), obj);
             continue;
           }
-          const tainted = sides.filter((s) => s && (isFn(s) ? judging && side(s, kind) : carries(s, kind)));
+          const got = sides.map((s) => (!s ? NONE : isFn(s) ? (judging ? reads(s.body, kind) : NONE) : carriesFrom(s, kind)));
+          const tainted = sides.filter((s, i) => got[i].size);
           if (!tainted.length) continue;
+          const against = join(...got);
           const others = sides.filter((s) => s && !tainted.includes(s) && (!isFn(s) || judging));
-          judge(kind, others.flatMap((s) => operandLiterals(s)));
-          unseen(others, n);
+          judge(kind, others.flatMap((s) => operandLiterals(s)), against);
+          unseen(others, n, against);
           // A callback's body holding the item against data: (c) => SKIP.has(c).
           for (const fn of sides.filter((s) => isFn(s) && judging)) {
             const stack = [fn.body];
-            while (stack.length) { const x = stack.pop(); if (!x || typeof x.type !== "string" || isFn(x)) continue; if (x.type === "CallExpression" && x.callee.type === "MemberExpression" && COMPARE.has(propName(x.callee))) unseen([x.callee.object, ...x.arguments].filter((y) => !carries(y, kind)), n); stack.push(...childrenOf(x)); }
+            while (stack.length) { const x = stack.pop(); if (!x || typeof x.type !== "string" || isFn(x)) continue; if (x.type === "CallExpression" && x.callee.type === "MemberExpression" && COMPARE.has(propName(x.callee))) unseen([x.callee.object, ...x.arguments].filter((y) => !carries(y, kind)), n, against); stack.push(...childrenOf(x)); }
           }
         }
       }
       // Object.hasOwn(T, x), Reflect.has(T, x).
       if (/^(hasOwn|has)$/.test(method) && n.callee.object.type === "Identifier" && /^(Object|Reflect)$/.test(n.callee.object.name) && n.arguments.length === 2) {
-        for (const kind of KINDS) if (carries(n.arguments[1], kind)) judge(kind, keyLiterals(n.arguments[0]));
-        for (const kind of KINDS) if (carries(n.arguments[0], kind)) judge(kind, operandLiterals(n.arguments[1]));
+        for (const kind of KINDS) { const g = carriesFrom(n.arguments[1], kind); if (g.size) judge(kind, keyLiterals(n.arguments[0]), g); }
+        for (const kind of KINDS) { const g = carriesFrom(n.arguments[0], kind); if (g.size) judge(kind, operandLiterals(n.arguments[1]), g); }
       }
     }
     if (n.type === "BinaryExpression" && /^[!=]==?$/.test(n.operator)) {
       for (const kind of KINDS) {
         for (const [a, b] of [[n.left, n.right], [n.right, n.left]]) {
-          if (!side(a, kind) || side(b, kind)) continue;
-          judge(kind, operandLiterals(b));
-          unseen([b], n);
+          const ga = side(a, kind);
+          if (!ga.size || side(b, kind).size) continue;
+          judge(kind, operandLiterals(b), ga);
+          unseen([b], n, ga);
         }
       }
     }
     if (n.type === "MemberExpression" && n.computed) {
       // M[c] with c such a value: the keys of M are what it is held against.
-      if (n.property.type !== "Literal") for (const kind of KINDS) if (carries(n.property, kind) && !carries(n.object, kind)) judge(kind, keyLiterals(n.object));
+      if (n.property.type !== "Literal") for (const kind of KINDS) { const g = carriesFrom(n.property, kind); if (g.size && !carries(n.object, kind)) judge(kind, keyLiterals(n.object), g); }
       // byId["main"], attrs["data-x"], form.elements["q"]: a lookup by a literal in such a value.
       if (n.property.type === "Literal" && typeof n.property.value === "string") {
-        if (/^(attributes|elements|all|forms|images|links|anchors|embeds|plugins|scripts)$/.test(propName(n.object)) && /\p{L}/u.test(n.property.value) && !own(n.property.value)) { judged.add(n.property); selectorFinding(propName(n.object) === "attributes" ? `[${n.property.value}]` : `[name=${n.property.value}]`, n.loc.start.line); }
-        for (const kind of KINDS) if (carries(n.object, kind) && !PROPS[kind].has(n.property.value)) judge(kind, [n.property]);
+        if (/^(attributes|elements|all|forms|images|links|anchors|embeds|plugins|scripts)$/.test(propName(n.object)) && /\p{L}/u.test(n.property.value) && !own(n.property.value)) { judged.add(n.property); selectorFinding(propName(n.object) === "attributes" ? `[${n.property.value}]` : `[name=${n.property.value}]`, n.loc.start.line, `${propName(n.object)} lookup`); }
+        for (const kind of KINDS) { const g = carriesFrom(n.object, kind); if (g.size && !PROPS[kind].has(n.property.value)) judge(kind, [n.property], g); }
+        // window["mw-content-text"]: an element read by its id as a name on the window or the document.
+        if (n.object.type === "Identifier" && /^(window|self|globalThis|document)$/.test(n.object.name) && !binding(n.object) && /\p{L}/u.test(n.property.value) && !own(n.property.value)) { judged.add(n.property); selectorFinding(`#${n.property.value}`, n.loc.start.line, `${n.object.name} lookup`); }
       }
     }
     // A dataset read is the data attribute it reads.
     if (n.type === "MemberExpression" && isDataset(n.object) && !(n.parent && n.parent.type === "AssignmentExpression" && n.parent.left === n)) {
       const key = n.computed ? (n.property.type === "Literal" ? String(n.property.value) : "") : n.property.name;
-      if (key) { if (n.computed) judged.add(n.property); selectorFinding(kebab(key), n.loc.start.line); }
-      else for (const lit of operandLiterals(n.property)) { judged.add(lit); selectorFinding(kebab(literalText(lit)), lit.loc.start.line); }
+      if (key) { if (n.computed) judged.add(n.property); selectorFinding(kebab(key), n.loc.start.line, "dataset"); }
+      else for (const lit of operandLiterals(n.property)) { judged.add(lit); selectorFinding(kebab(literalText(lit)), lit.loc.start.line, "dataset"); }
     }
-    if (n.type === "VariableDeclarator" && n.id.type === "ObjectPattern" && isDataset(n.init)) for (const p of n.id.properties) if (p.type === "Property" && !p.computed) selectorFinding(kebab(p.key.name || p.key.value), p.loc.start.line);
+    if (n.type === "VariableDeclarator" && n.id.type === "ObjectPattern" && isDataset(n.init)) for (const p of n.id.properties) if (p.type === "Property" && !p.computed) selectorFinding(kebab(p.key.name || p.key.value), p.loc.start.line, "dataset");
     // "navbox" in M, with the page's value on the left; "asin" in el.dataset.
     if (n.type === "BinaryExpression" && n.operator === "in") {
-      for (const kind of KINDS) if (carries(n.left, kind)) judge(kind, keyLiterals(n.right));
-      if (isDataset(n.right)) for (const lit of operandLiterals(n.left)) { judged.add(lit); selectorFinding(kebab(literalText(lit)), lit.loc.start.line); }
-      else for (const kind of KINDS) if (carries(n.right, kind)) judge(kind, operandLiterals(n.left));
+      for (const kind of KINDS) { const g = carriesFrom(n.left, kind); if (g.size) judge(kind, keyLiterals(n.right), g); }
+      if (isDataset(n.right)) for (const lit of operandLiterals(n.left)) { judged.add(lit); selectorFinding(kebab(literalText(lit)), lit.loc.start.line, "dataset"); }
+      else for (const kind of KINDS) { const g = carriesFrom(n.right, kind); if (g.size) judge(kind, operandLiterals(n.left), g); }
     }
     if (n.type === "SwitchStatement") {
-      for (const kind of KINDS) if (carries(n.discriminant, kind)) judge(kind, n.cases.filter((c) => c.test).flatMap((c) => operandLiterals(c.test)));
+      for (const kind of KINDS) { const g = carriesFrom(n.discriminant, kind); if (g.size) judge(kind, n.cases.filter((c) => c.test).flatMap((c) => operandLiterals(c.test)), g); }
     }
     // A page's class handed to a function of the file's own, to be read for a meaning.
     if (n.type === "CallExpression" && !BUILTIN_CALLS.has(calleeName(n)) && n.arguments.some((a) => isClassValue(a))) {
-      report("class test", snippet(n), n.loc.start.line);
+      report("class test", snippet(n), n.loc.start.line, "class");
     }
   }
 
@@ -805,7 +909,7 @@ function findings(src, names = readNames(), own = () => false) {
       if (!litSide || !other) continue;
       const lits = operandLiterals(litSide).filter((l) => !judged.has(l));
       if (!lits.length || ownTextValue(other)) continue;
-      for (const l of lits) { searched.add(l); if (!spellsNothing(l)) report("text test", shown(l), l.loc.start.line); }
+      for (const l of lits) { searched.add(l); if (!spellsNothing(l)) report("text test", shown(l), l.loc.start.line, "text"); }
     }
   }
 
@@ -816,19 +920,27 @@ function findings(src, names = readNames(), own = () => false) {
     if (n.type !== "VariableDeclarator" || n.id.type !== "Identifier" || !n.init || referenced.has(n.id.name)) continue;
     const init = n.init.type === "NewExpression" && n.init.arguments[0] ? n.init.arguments[0] : n.init;
     const data = (init.type === "Literal" && init.regex) || (init.type === "ArrayExpression" && init.elements.length >= 2 && init.elements.every((e) => e && e.type === "Literal" && (typeof e.value === "string" || e.regex)));
-    if (data) report("unused data", n.id.name, n.loc.start.line);
+    if (data) report("unused data", n.id.name, n.loc.start.line, "nothing");
   }
 
   // Names in code (a variable, a property, an object's key) that are a site's: { amazon: ..., github: ... }.
   for (const n of all) {
     if (n.type !== "Identifier" && !(n.type === "Literal" && n.parent && n.parent.type === "Property" && n.parent.key === n)) continue;
     const name = n.type === "Identifier" ? n.name : String(n.value);
-    for (const w of name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/)) if (names.names.has(w)) report("site name", w, n.loc.start.line);
+    for (const w of name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/)) if (names.names.has(w)) report("site name", w, n.loc.start.line, "code");
   }
   // A selector written anywhere, not only where it is handed to the page.
   // A string held against an address (location.hash === "#help") is part
   // of an address, not a selector.
-  for (const n of literals) if (!n.regex && !(n.type === "TemplateLiteral" && n.expressions.length) && !addressParts.has(n) && !judged.has(n) && !searched.has(n)) for (const s of selectorNames(literalText(n), own)) report("selector", s, n.loc.start.line);
+  const free = (n) => !addressParts.has(n) && !judged.has(n) && !searched.has(n);
+  for (const n of literals) if (!n.regex && !(n.type === "TemplateLiteral" && n.expressions.length) && free(n)) for (const s of selectorNames(literalText(n), own)) report("selector", s, n.loc.start.line, "written");
+  // The same for one made by adding literals: "#" + "nav" is the selector #nav.
+  for (const n of all) {
+    if (!isBuilt(n) || builtSelectors.has(n) || (n.parent && isBuilt(n.parent) && n.parent.type === "BinaryExpression")) continue;
+    if (operandLiterals(n).some((l) => !free(l))) continue;
+    const whole = foldText(n);
+    if (whole !== null) for (const s of selectorNames(whole, own)) report("selector", s, n.loc.start.line, "written");
+  }
   void bound; void isFnParam; void UNKNOWN;
   return out.sort((a, b) => a.line - b.line);
 }
