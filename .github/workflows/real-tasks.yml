@@ -1,0 +1,546 @@
+name: Real-task trial
+
+# The agent on many ordinary tasks, on live public sites, in the packed build.
+# Run by hand (Actions, "Real-task trial", Run workflow). How to run it and
+# how to read the results: docs/real-task-trial.md.
+#
+# Keys come from repository secrets only and are never printed. Each key goes
+# to its own provider and nowhere else:
+#   provider anthropic  ->  ANTHROPIC_API_KEY, sent to api.anthropic.com
+#   provider openai     ->  OPENAI_API_KEY, sent to api.openai.com
+#   the judge           ->  always ANTHROPIC_API_KEY, on api.anthropic.com
+# The plan job fails for any other provider, for a model that is not that
+# provider's, and for a real run whose key is missing. run.js checks the
+# pairing again (BENCH_KEY_PROVIDER) and refuses a judge on another host.
+#
+# Dry mode needs no model key: the scripted model in tests/e2e/server.js plays
+# the fixture tasks, a stub on the runner answers for the judge, and the same
+# artifacts and summary are produced. It runs when the dry box is ticked and
+# on every push to the branch this workflow was written on. A dry run reads no
+# agent or judge key. It reads one secret, HOLDOUT_KEY, in the plan job only,
+# and only on a push (where holdout-check runs) or when suite is holdout: it
+# decrypts the holdout tasks so they can be checked. No other event reads it.
+# A manual run without the dry box is a real run or a failed one, never a dry
+# one. Before a real run, a canary of three fixture tasks runs through the
+# same harness at no cost, and the run does not start if it fails.
+# Online-Mind2Web has a workflow of its own: om2w.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "everyday: 93 tasks. dev: 12 smoke tasks. learn: 12 tasks run twice and 6 pairs of neighbours, learning on (tests/bench/learn-tasks.json). widgets: 30 open practice tasks on interactive widgets, on sites no other suite uses (tests/bench/widgets-tasks.json). holdout: 50 held-out tasks on sites no other suite uses, reported as numbers only (tests/bench/README.md)"
+        type: choice
+        options: [everyday, dev, learn, widgets, holdout]
+        default: everyday
+      arm:
+        description: "shipped: the packed 4.0 build as it is (no debugger). debugger-on: the same build with the debugger permission added"
+        type: choice
+        options: [shipped, debugger-on]
+        default: shipped
+      provider:
+        description: "The agent's provider. Its key is the repository secret of the same name and goes to that provider only"
+        type: choice
+        options: [anthropic, openai]
+        default: anthropic
+      model:
+        description: "The agent's model id. Empty: the provider's cheap one (anthropic claude-haiku-5-5, openai gpt-5.4-mini)"
+        type: string
+        default: ""
+      judge_model:
+        description: The judge's model, a Claude model on Anthropic (a different one from the agent's)
+        type: string
+        default: claude-sonnet-5-5
+      learning:
+        description: "Learning on: tasks run one after another in one browser profile and keep what they learn. The learn suite is always on"
+        type: boolean
+        default: false
+      runs:
+        description: Runs per task (1 to 5). In the learn suite, runs per pair
+        type: string
+        default: "1"
+      recipes:
+        description: Save each passed run as a recipe and replay it once
+        type: boolean
+        default: false
+      shards:
+        description: Browsers in parallel, one job each (1 to 12)
+        type: string
+        default: "6"
+      limit:
+        description: "How many tasks, spread evenly over the families (all, or a number)"
+        type: string
+        default: all
+      max_usd:
+        description: Hard spend cap in US dollars, agent and judge together
+        type: string
+        default: "5"
+      dry:
+        description: Dry mode (scripted model, fixture pages, no keys, no spend)
+        type: boolean
+        default: false
+  push:
+    branches: [main, om2w-trial]
+    paths: [".github/workflows/real-tasks.yml", "tests/bench/**", "tests/e2e/server.js"]
+
+permissions:
+  contents: read
+
+# With pipefail, so a failed check behind a pipe fails its step.
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: real-tasks-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      dry: ${{ steps.plan.outputs.dry }}
+      suite: ${{ steps.plan.outputs.suite }}
+      arm: ${{ steps.plan.outputs.arm }}
+      provider: ${{ steps.plan.outputs.provider }}
+      model: ${{ steps.plan.outputs.model }}
+      judge_model: ${{ steps.plan.outputs.judge_model }}
+      learn: ${{ steps.plan.outputs.learn }}
+      runs: ${{ steps.plan.outputs.runs }}
+      recipes: ${{ steps.plan.outputs.recipes }}
+      tasks: ${{ steps.plan.outputs.tasks }}
+      sample: ${{ steps.plan.outputs.sample }}
+      shards: ${{ steps.plan.outputs.shards }}
+      shard_count: ${{ steps.plan.outputs.shard_count }}
+      cap_per_shard: ${{ steps.plan.outputs.cap_per_shard }}
+      sealed: ${{ steps.plan.outputs.sealed }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # The holdout tasks are committed encrypted. HOLDOUT_KEY decrypts them to the
+      # git-ignored plain path; the key is never printed and nothing else reads it.
+      # Only a push (holdout-check runs) or a holdout run reads it here.
+      - name: Decrypt the holdout tasks
+        if: ${{ github.event_name == 'push' || inputs.suite == 'holdout' }}
+        env:
+          HOLDOUT_KEY: ${{ secrets.HOLDOUT_KEY }}
+        run: |
+          if [ -z "$HOLDOUT_KEY" ]; then echo "::error::The repository has no HOLDOUT_KEY secret, so the holdout tasks cannot be decrypted (tests/bench/README.md)."; exit 1; fi
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 -in tests/bench/holdout-tasks.json.enc -out tests/bench/holdout-tasks.json -pass env:HOLDOUT_KEY
+      - id: plan
+        name: Work out what to run
+        # Inputs reach the script as environment values, never as script text.
+        env:
+          EVENT: ${{ github.event_name }}
+          IN_DRY: ${{ inputs.dry }}
+          IN_SUITE: ${{ inputs.suite }}
+          IN_ARM: ${{ inputs.arm }}
+          IN_PROVIDER: ${{ inputs.provider }}
+          IN_MODEL: ${{ inputs.model }}
+          IN_JUDGE_MODEL: ${{ inputs.judge_model }}
+          IN_LEARNING: ${{ inputs.learning }}
+          IN_RUNS: ${{ inputs.runs }}
+          IN_RECIPES: ${{ inputs.recipes }}
+          IN_SHARDS: ${{ inputs.shards }}
+          IN_LIMIT: ${{ inputs.limit }}
+          IN_MAX_USD: ${{ inputs.max_usd }}
+          # Only asked whether each is set; no value is used in this job.
+          HAS_ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          HAS_OPENAI_KEY: ${{ secrets.OPENAI_API_KEY != '' }}
+        run: |
+          fail() { echo "::error::$1"; echo "$1" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          dry=false
+          why=""
+          if [ "$EVENT" != "workflow_dispatch" ]; then dry=true; why="a push runs dry mode only"; fi
+          if [ "$IN_DRY" = "true" ]; then dry=true; why="the dry box was ticked"; fi
+
+          suite="${IN_SUITE:-everyday}"
+          arm="${IN_ARM:-shipped}"
+          provider="${IN_PROVIDER:-anthropic}"
+          judge_model="${IN_JUDGE_MODEL:-claude-sonnet-5-5}"
+          runs="${IN_RUNS:-1}"
+          shards="${IN_SHARDS:-6}"
+          limit="${IN_LIMIT:-all}"
+          cap="${IN_MAX_USD:-5}"
+          learn=""
+          # A sealed suite is reported as numbers only, and its per-task files are kept apart.
+          sealed=false
+          case "$suite" in
+            everyday) tasks=tests/bench/everyday-tasks.json ;;
+            dev) tasks=tests/bench/smoke-tasks.json ;;
+            learn) tasks=tests/bench/learn-tasks.json; learn=pairs ;;
+            widgets) tasks=tests/bench/widgets-tasks.json ;;
+            holdout) tasks=tests/bench/holdout-tasks.json; sealed=true ;;
+            *) fail "suite must be everyday, dev, learn, widgets or holdout" ;;
+          esac
+          if [ -z "$learn" ] && [ "$IN_LEARNING" = "true" ]; then learn=on; fi
+          if [ "$sealed" = "true" ] && [ -n "$learn" ]; then fail "the holdout suite runs without learning: the learning loop's log names tasks"; fi
+          recipes=false
+          if [ "$IN_RECIPES" = "true" ]; then recipes=true; fi
+          case "$arm" in shipped|debugger-on) ;; *) fail "arm must be shipped or debugger-on" ;; esac
+
+          # The pairing of provider, key and endpoint is written out here and nowhere guessed.
+          case "$provider" in
+            anthropic) has_agent_key="$HAS_ANTHROPIC_KEY"; key_name=ANTHROPIC_API_KEY; cheap=claude-haiku-5-5; fits='^claude-' ;;
+            openai) has_agent_key="$HAS_OPENAI_KEY"; key_name=OPENAI_API_KEY; cheap=gpt-5.4-mini; fits='^(gpt-|o[0-9])' ;;
+            *) fail "provider must be anthropic or openai: no other provider has a key paired with it in this workflow" ;;
+          esac
+          model="${IN_MODEL:-$cheap}"
+          echo "$model" | grep -Eq '^[A-Za-z0-9._:/-]+$' || fail "model must be a model id"
+          echo "$model" | grep -Eq "$fits" || fail "model $model is not a model of provider $provider: the $provider key would be sent with another provider's model id"
+          echo "$judge_model" | grep -Eq '^claude-[A-Za-z0-9._-]+$' || fail "judge_model must be a Claude model: the judge always runs on Anthropic with ANTHROPIC_API_KEY"
+          if [ "$judge_model" = "$model" ]; then fail "the judge must be a different model from the agent's"; fi
+
+          # A manual run that is not dry is a real run. With a key missing it fails; it never turns into a dry run.
+          if [ "$dry" = "false" ]; then
+            if [ "$has_agent_key" != "true" ]; then fail "the repository has no $key_name secret, which provider $provider needs. Nothing was run. Tick dry for a dry run."; fi
+            if [ "$HAS_ANTHROPIC_KEY" != "true" ]; then fail "the repository has no ANTHROPIC_API_KEY secret, which the judge needs. Nothing was run. Tick dry for a dry run."; fi
+          fi
+
+          echo "$shards" | grep -Eq '^[0-9]+$' || fail "shards must be a whole number"
+          if [ "$shards" -lt 1 ] || [ "$shards" -gt 12 ]; then fail "shards must be 1 to 12"; fi
+          echo "$runs" | grep -Eq '^[1-5]$' || fail "runs must be 1 to 5"
+          echo "$cap" | grep -Eq '^[0-9]+(\.[0-9]+)?$' || fail "max_usd must be a number of US dollars"
+          awk "BEGIN { exit !($cap > 0) }" || fail "max_usd must be more than 0: a real run always has a cap"
+          sample=0
+          if [ "$limit" != "all" ]; then
+            echo "$limit" | grep -Eq '^[1-9][0-9]*$' || fail "limit must be all or a whole number"
+            sample="$limit"
+          fi
+
+          if [ "$dry" = "true" ]; then
+            suite=fixture
+            tasks=tests/bench/fixture-tasks.json
+            sealed=false
+            learn=""
+            recipes=false
+            runs=1
+            shards=2
+            sample=0
+            cap=2
+          fi
+          if [ "$sealed" = "true" ] && [ "$sample" -gt 0 ] && [ "$sample" -lt 3 ]; then fail "a holdout run needs a limit of 3 or more: a smaller one would show one or two tasks' own results"; fi
+          if [ "$sealed" = "true" ] && [ ! -f "$tasks" ]; then fail "$tasks is not there: the step before this one decrypts it from tests/bench/holdout-tasks.json.enc with HOLDOUT_KEY"; fi
+          # A learn run is counted in pairs: the task that starts each one.
+          total=$(node -e "const T = require('./tests/bench/trial.js'); const all = require('./tests/bench/judge.js').normaliseTasks(require('./' + process.argv[1])); console.log(process.argv[2] === 'pairs' ? T.learnPlan(all).length : all.length)" "$tasks" "$learn")
+          count="$total"
+          if [ "$sample" -gt 0 ] && [ "$sample" -lt "$total" ]; then count="$sample"; fi
+          if [ "$shards" -gt "$count" ]; then shards="$count"; fi
+          list=$(node -e "console.log(JSON.stringify(Array.from({ length: Number(process.argv[1]) }, (_, i) => i + 1)))" "$shards")
+          per=$(awk "BEGIN { printf \"%.4f\", $cap / $shards }")
+
+          {
+            echo "dry=$dry"
+            echo "suite=$suite"
+            echo "arm=$arm"
+            echo "provider=$provider"
+            echo "model=$model"
+            echo "judge_model=$judge_model"
+            echo "learn=$learn"
+            echo "runs=$runs"
+            echo "recipes=$recipes"
+            echo "tasks=$tasks"
+            echo "sample=$sample"
+            echo "shards=$list"
+            echo "shard_count=$shards"
+            echo "cap_per_shard=$per"
+            echo "sealed=$sealed"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Plan"
+            echo ""
+            if [ "$dry" = "true" ]; then
+              echo "Dry mode ($why): scripted model, fixture pages, a stub for the judge. No key is read and nothing is spent."
+            else
+              echo "Real run. Agent: \`$provider\` / \`$model\`, key \`$key_name\`, sent to $provider only. Judge: \`$judge_model\` on Anthropic, key \`ANTHROPIC_API_KEY\`."
+            fi
+            echo "$count $([ "$learn" = "pairs" ] && echo "pair(s)" || echo "task(s)") from \`$tasks\`, $runs run(s) each, arm \`$arm\`, learning \`${learn:-off}\`, recipes \`$recipes\`, $shards shard(s), spend cap \$$cap (\$$per per shard)."
+            if [ "$sealed" = "true" ]; then echo "Sealed: the summary shows numbers only, and the per-task files go to artifacts named holdout-SEALED-per-task-do-not-open, kept one day."; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: The task files are sound
+        run: |
+          for f in everyday-tasks learn-tasks widgets-tasks fixture-tasks fixture-learn-tasks; do node tests/bench/trial.js validate "tests/bench/$f.json"; done
+          # The widgets practice set: its shape, and no site shared with another suite (the holdout's too when it was decrypted above).
+          node tests/bench/trial.js suite-check widgets
+      # The decrypted holdout file: sound, shaped as its rule says, and on no site another suite uses. Counts only.
+      - name: The holdout tasks are sound
+        if: ${{ github.event_name == 'push' || inputs.suite == 'holdout' }}
+        run: node tests/bench/trial.js holdout-check
+
+  # The packed 4.0 zip, built and checked the way ci.yml's package-integrity job does it.
+  build:
+    name: build the packed zip
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      artifact: ${{ steps.meta.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: node scripts/package-extension.mjs
+      - id: meta
+        run: |
+          version=$(node -p "require('./extension/manifest.json').version")
+          artifact="select-to-ai-${version}.zip"
+          cp dist/select-to-ai-extension.zip "dist/${artifact}"
+          echo "artifact=${artifact}" >> "$GITHUB_OUTPUT"
+      - run: node scripts/check-package.mjs "dist/${{ steps.meta.outputs.artifact }}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.meta.outputs.artifact }}
+          path: dist/${{ steps.meta.outputs.artifact }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # Before any paid run: three fixture tasks through the same harness, the
+  # batch judge (its local stand-in) and a headful browser under xvfb. A
+  # failure here stops the run before a cent is spent.
+  canary:
+    name: canary (three fixture tasks)
+    needs: [plan, build]
+    if: ${{ needs.plan.outputs.dry != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - run: npx puppeteer browsers install chrome
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: command -v xvfb-run || { sudo apt-get update && sudo apt-get install -y xvfb; }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+      - run: mkdir -p build && unzip -q "${{ needs.build.outputs.artifact }}" -d build
+      - name: Run the canary
+        env:
+          BENCH_DRY: "1"
+          BENCH_EXTENSION: build
+          BENCH_TASKS: tests/bench/fixture-canary-tasks.json
+          BENCH_OUT: tests/bench/out/canary
+          BENCH_COUNTS_OUT: tests/bench/out/canary
+          BENCH_MAX_USD: "2"
+          BENCH_TIMEOUT_S: "60"
+          BENCH_JUDGE_BATCH: "1"
+          BENCH_HEADFUL: "1"
+          BENCH_DISGUISE: "off"
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" node tests/bench/run.js
+      - name: The canary ended as it must
+        run: |
+          node tests/bench/trial.js summary tests/bench/out/canary --tasks tests/bench/fixture-canary-tasks.json --suite "canary" --arm shipped --shards 1 --commit "$GITHUB_SHA" --check-dry | tee -a "$GITHUB_STEP_SUMMARY"
+          node tests/bench/om2w.js summary tests/bench/out/canary --part fixture --planned 3 --arm shipped --shards 1 --commit "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  run:
+    name: tasks (shard ${{ matrix.shard }} of ${{ needs.plan.outputs.shard_count }})
+    needs: [plan, build, canary]
+    # A real run only after its canary passed; a dry run has none.
+    if: ${{ always() && needs.plan.result == 'success' && needs.build.result == 'success' && (needs.canary.result == 'success' || (needs.canary.result == 'skipped' && needs.plan.outputs.dry == 'true')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - run: npx puppeteer browsers install chrome
+      # Ubuntu 24.04 blocks the unprivileged user namespaces Chrome's sandbox needs.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+      - run: mkdir -p build && unzip -q "${{ needs.build.outputs.artifact }}" -d build
+      # The holdout tasks are committed encrypted. HOLDOUT_KEY decrypts them to the
+      # git-ignored plain path; the key is never printed and nothing else reads it.
+      - name: Decrypt the holdout tasks
+        if: ${{ needs.plan.outputs.sealed == 'true' }}
+        env:
+          HOLDOUT_KEY: ${{ secrets.HOLDOUT_KEY }}
+        run: |
+          if [ -z "$HOLDOUT_KEY" ]; then echo "::error::The repository has no HOLDOUT_KEY secret, so the holdout tasks cannot be decrypted (tests/bench/README.md)."; exit 1; fi
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 -in tests/bench/holdout-tasks.json.enc -out tests/bench/holdout-tasks.json -pass env:HOLDOUT_KEY
+      - name: Run the tasks
+        env:
+          BENCH_DRY: ${{ needs.plan.outputs.dry == 'true' && '1' || '' }}
+          BENCH_EXTENSION: build
+          BENCH_TASKS: ${{ needs.plan.outputs.tasks }}
+          BENCH_SAMPLE: ${{ needs.plan.outputs.sample }}
+          BENCH_SHARD: ${{ matrix.shard }}/${{ needs.plan.outputs.shard_count }}
+          BENCH_OUT: tests/bench/out/trial
+          BENCH_DEBUGGER: ${{ needs.plan.outputs.arm == 'debugger-on' && 'on' || '' }}
+          BENCH_MAX_USD: ${{ needs.plan.outputs.cap_per_shard }}
+          BENCH_TIMEOUT_S: ${{ needs.plan.outputs.dry == 'true' && '40' || '300' }}
+          BENCH_LEARN: ${{ needs.plan.outputs.learn }}
+          BENCH_RUNS: ${{ needs.plan.outputs.runs }}
+          BENCH_RECIPES: ${{ needs.plan.outputs.recipes == 'true' && '1' || '' }}
+          # A sealed suite's log names no task and says nothing of how one went.
+          BENCH_QUIET: ${{ needs.plan.outputs.sealed == 'true' && 'sealed' || '' }}
+          # The browser says what it is. A site that refuses an automated visit shows as blocked and leaves the task file.
+          BENCH_DISGUISE: "off"
+          BENCH_PROVIDER: ${{ needs.plan.outputs.provider }}
+          BENCH_MODEL: ${{ needs.plan.outputs.model }}
+          # The agent's key is the secret of its own provider, and run.js is told which provider that is.
+          BENCH_KEY_PROVIDER: ${{ needs.plan.outputs.provider }}
+          BENCH_API_KEY: ${{ needs.plan.outputs.dry != 'true' && (needs.plan.outputs.provider == 'anthropic' && secrets.ANTHROPIC_API_KEY || needs.plan.outputs.provider == 'openai' && secrets.OPENAI_API_KEY) || '' }}
+          # The judge: always Anthropic's endpoint with Anthropic's key. Dry mode is given no key at all.
+          BENCH_JUDGE_MODEL: ${{ needs.plan.outputs.judge_model }}
+          BENCH_JUDGE_URL: https://api.anthropic.com/v1/messages
+          BENCH_JUDGE_KEY: ${{ needs.plan.outputs.dry != 'true' && secrets.ANTHROPIC_API_KEY || '' }}
+        run: node tests/bench/run.js
+      # Per task: run.json (steps, outcome, verdict, cost, time, failure, counters, form state), log.txt and the screenshots.
+      # A sealed suite's go to an artifact named so nobody opens it while working on the agent, kept one day: the summary job needs it, nothing else does.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: ${{ needs.plan.outputs.sealed == 'true' && format('holdout-SEALED-per-task-do-not-open-shard-{0}', matrix.shard) || format('trial-shard-{0}', matrix.shard) }}
+          path: tests/bench/out/trial
+          if-no-files-found: warn
+          retention-days: ${{ needs.plan.outputs.sealed == 'true' && 1 || 30 }}
+
+  summary:
+    name: summary
+    needs: [plan, run]
+    if: ${{ always() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: ${{ needs.plan.outputs.sealed == 'true' && 'holdout-SEALED-per-task-do-not-open-shard-*' || 'trial-shard-*' }}
+          path: tests/bench/out/trial
+          merge-multiple: true
+      # The holdout tasks are committed encrypted. HOLDOUT_KEY decrypts them to the
+      # git-ignored plain path; the key is never printed and nothing else reads it.
+      - name: Decrypt the holdout tasks
+        if: ${{ needs.plan.outputs.sealed == 'true' }}
+        env:
+          HOLDOUT_KEY: ${{ secrets.HOLDOUT_KEY }}
+        run: |
+          if [ -z "$HOLDOUT_KEY" ]; then echo "::error::The repository has no HOLDOUT_KEY secret, so the holdout tasks cannot be decrypted (tests/bench/README.md)."; exit 1; fi
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 -in tests/bench/holdout-tasks.json.enc -out tests/bench/holdout-tasks.json -pass env:HOLDOUT_KEY
+      - name: Table by family
+        env:
+          TASKS: ${{ needs.plan.outputs.tasks }}
+          SAMPLE: ${{ needs.plan.outputs.sample }}
+          SUITE: ${{ needs.plan.outputs.suite }}
+          ARM: ${{ needs.plan.outputs.arm }}
+          DRY: ${{ needs.plan.outputs.dry }}
+          LEARN: ${{ needs.plan.outputs.learn }}
+          RUNS: ${{ needs.plan.outputs.runs }}
+          SHARDS: ${{ needs.plan.outputs.shard_count }}
+          SEALED: ${{ needs.plan.outputs.sealed }}
+        run: |
+          mkdir -p tests/bench/out/trial
+          check=""
+          if [ "$DRY" = "true" ]; then check="--check-dry"; fi
+          # Sealed: totals, rates, time, spend and counts by family and difficulty, and nothing that names a task.
+          if [ "$SEALED" = "true" ]; then check="$check --sealed"; fi
+          # Fails when a shard's build is not the arm's, a shard left no results file, or the shipped arm made a real input event.
+          node tests/bench/trial.js summary tests/bench/out/trial --tasks "$TASKS" --sample "$SAMPLE" --suite "$SUITE" --arm "$ARM" --runs "$RUNS" --learn "$LEARN" --shards "$SHARDS" --commit "$GITHUB_SHA" $check | tee -a "$GITHUB_STEP_SUMMARY"
+      # In a sealed run trial-summary.json holds the numbers only.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: trial-summary
+          path: tests/bench/out/trial/trial-summary.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  # Dry mode only: the paths the plain dry run does not reach. Each leg runs
+  # the fixtures one more way and fails unless that way left its mark.
+  dry-legs:
+    name: dry leg (${{ matrix.leg }})
+    needs: [plan, build]
+    if: ${{ needs.plan.outputs.dry == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The same build with the debugger permission: every shard must report chrome.debugger.
+          - { leg: debugger-on, arm: debugger-on, debugger: "on", tasks: tests/bench/fixture-tasks.json, cap: "2", learn: "", recipes: "", check: "" }
+          # A cap far below one run's priced tokens: the run must stop for it.
+          - { leg: spend-cap, arm: shipped, debugger: "", tasks: tests/bench/fixture-tasks.json, cap: "0.0005", learn: "", recipes: "", check: cap }
+          # Learning on, one task twice and one pair of neighbours in one profile each.
+          - { leg: learn, arm: shipped, debugger: "", tasks: tests/bench/fixture-learn-tasks.json, cap: "2", learn: pairs, recipes: "", check: learn }
+          # Each passed run saved as a recipe by the extension and replayed once.
+          - { leg: recipes, arm: shipped, debugger: "", tasks: tests/bench/fixture-tasks.json, cap: "2", learn: "", recipes: "1", check: recipes }
+          # The holdout suite's sealed path: its log and its summary name no task.
+          - { leg: sealed, arm: shipped, debugger: "", tasks: tests/bench/fixture-tasks.json, cap: "2", learn: "", recipes: "", check: sealed, quiet: sealed }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - run: npx puppeteer browsers install chrome
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+      - run: mkdir -p build && unzip -q "${{ needs.build.outputs.artifact }}" -d build
+      - name: Run the fixtures this way
+        env:
+          BENCH_DRY: "1"
+          BENCH_EXTENSION: build
+          BENCH_TASKS: ${{ matrix.tasks }}
+          BENCH_OUT: tests/bench/out/leg
+          BENCH_DEBUGGER: ${{ matrix.debugger }}
+          BENCH_MAX_USD: ${{ matrix.cap }}
+          BENCH_TIMEOUT_S: "40"
+          BENCH_LEARN: ${{ matrix.learn }}
+          BENCH_RECIPES: ${{ matrix.recipes }}
+          BENCH_QUIET: ${{ matrix.quiet }}
+          BENCH_DISGUISE: "off"
+        run: |
+          mkdir -p tests/bench/out
+          node tests/bench/run.js | tee tests/bench/out/leg-run.log
+      - name: Check what it left
+        if: always()
+        env:
+          TASKS: ${{ matrix.tasks }}
+          ARM: ${{ matrix.arm }}
+          LEARN: ${{ matrix.learn }}
+          CHECK: ${{ matrix.check }}
+          LEG: ${{ matrix.leg }}
+        run: |
+          mkdir -p tests/bench/out/leg
+          check=""
+          if [ -n "$CHECK" ]; then check="--check $CHECK"; fi
+          if [ "$LEG" = "sealed" ]; then check="$check --sealed"; fi
+          node tests/bench/trial.js summary tests/bench/out/leg --tasks "$TASKS" --suite "fixture, dry leg $LEG" --arm "$ARM" --learn "$LEARN" --commit "$GITHUB_SHA" $check | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$LEG" = "sealed" ]; then
+            # The shard's log, as a sealed run's would be seen in the Actions page, names no task.
+            node tests/bench/trial.js leaks tests/bench/out/leg-run.log --tasks "$TASKS"
+            # Nor does the summary file the summary artifact would hold.
+            node tests/bench/trial.js leaks tests/bench/out/leg/trial-summary.json --tasks "$TASKS"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: trial-dry-leg-${{ matrix.leg }}
+          path: tests/bench/out/leg
+          if-no-files-found: warn
+          retention-days: 7

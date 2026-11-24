@@ -1,0 +1,76 @@
+{
+  "rule": "Online-Mind2Web is fetched at run time from the pinned revision below with the HF_TOKEN secret, and is never committed, uploaded or printed. Its 300 tasks are split by registrable domain, so one site never spans two parts. Only dev is ever read: its transcripts, screenshots and judge reasons are saved. Gate and vault write counts only, and reserve is never run. Nothing in this file is changed per task, and nothing is changed after a result has been seen.",
+  "dataset": {
+    "repo": "osunlp/Online-Mind2Web",
+    "revision": "dad834da5ab5058193b9490371173cec7a41f53c",
+    "file": "Online_Mind2Web.json",
+    "size": 88481,
+    "gitBlobSha1": "8254efb1aac0ef8eb98a3775bf55a7ee3981f9af"
+  },
+  "split": {
+    "seed": "om2w-split-v1",
+    "targets": { "dev": 60, "gate": 100, "vault": 100, "reserve": 40 },
+    "cuts": [
+      ["dev", 0.2],
+      ["gate", 0.5333],
+      ["vault", 0.8667],
+      ["reserve", 1]
+    ],
+    "digest": "",
+    "sealedShardMinTasks": 5,
+    "sealedReportMinTasks": 10,
+    "sealedParts": ["gate", "vault", "reserve"],
+    "runnableParts": ["dev", "gate", "vault"],
+    "order": [
+      "1. A site that a read suite uses (every open task file the workflow knows, the reading checks, and the WebVoyager sites below) goes to dev.",
+      "2. A site that the sealed holdout suite uses goes to a sealed part, chosen by a second hash of the seed and the site against the sealed parts' share of the cuts. CI checks this and prints a count only. This rule wins over rule 1.",
+      "3. Every other site goes by a hash of the seed and the site alone: the first part whose cut is above it. No site's part depends on any other site.",
+      "The digest is a keyed hash (HMAC-SHA256, keyed from the HOLDOUT_KEY secret) of the whole site-to-part map. Every job that splits checks it against this value and fails if it differs. Empty means not pinned yet: only a census with bootstrap_split ticked may run then, and it prints the value to commit here."
+    ],
+    "webvoyagerSites": [
+      "allrecipes.com",
+      "amazon.com",
+      "apple.com",
+      "arxiv.org",
+      "bbc.com",
+      "bbc.co.uk",
+      "booking.com",
+      "cambridge.org",
+      "coursera.org",
+      "espn.com",
+      "github.com",
+      "google.com",
+      "huggingface.co",
+      "wolframalpha.com"
+    ]
+  },
+  "baseline": {
+    "arm": "shipped",
+    "agentProvider": "anthropic",
+    "agentModel": "claude-haiku-5-5",
+    "agentTier": "whatever the shipped build gives the agent model (defaults.js modelProfile), printed in every summary",
+    "judgeModel": "claude-sonnet-5-5",
+    "judgeMode": "batch",
+    "timeoutS": 600,
+    "stepCap": "the engine's own, unchanged",
+    "allow": "site,address",
+    "runs": { "dev": 3, "gate": 2, "vault": 3 },
+    "runRoomUSD": 0.3
+  },
+  "neverSend": {
+    "rule": "Tasks that send something to a real person, business or office, or that need a real payment, taken from the upstream issues below by id (the first 32 characters of each task's id). They are left out of every part before anything runs, and the summary reports them as excluded.",
+    "issues": [
+      "https://github.com/OSU-NLP-Group/Online-Mind2Web/issues/21",
+      "https://github.com/OSU-NLP-Group/Online-Mind2Web/issues/25",
+      "https://github.com/OSU-NLP-Group/Online-Mind2Web/issues/31",
+      "https://github.com/OSU-NLP-Group/Online-Mind2Web/issues/34"
+    ],
+    "ids": [
+      "34992feb69eb8e788faa06868b365c49",
+      "59b7b990b4828bc305ab0d7ed6071b55",
+      "c43a7dccf5c44f7b45a821e712dd1970",
+      "9af05e392cf3f5a8ff17aa764ba5bda6",
+      "199be0b54a436daee74247971fc684ee"
+    ]
+  }
+}

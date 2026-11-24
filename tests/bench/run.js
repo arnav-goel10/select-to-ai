@@ -21,11 +21,16 @@
  *   BENCH_API_KEY      key for it
  *   BENCH_CUSTOM_URL   with BENCH_PROVIDER=custom: an OpenAI-compatible base URL
  *                      (NVIDIA NIM: https://integrate.api.nvidia.com/v1)
+ *   BENCH_KEY_PROVIDER the provider BENCH_API_KEY belongs to, when the caller
+ *                      knows (the trial workflow always says). The run is
+ *                      refused when it is not BENCH_PROVIDER, so a key never
+ *                      reaches another provider's endpoint.
  *   BENCH_JUDGE_URL, BENCH_JUDGE_MODEL, BENCH_JUDGE_KEY, BENCH_JUDGE_VISION,
  *   BENCH_JUDGE_SHOTS  the judge: see judge-call.js. The default is a vision
  *                      model on NVIDIA's endpoint that drives no run here, so
  *                      BENCH_JUDGE_KEY must be an NVIDIA key when the agent
- *                      runs on another provider.
+ *                      runs on another provider. The agent's key is used for
+ *                      the judge only when both are on the same endpoint.
  *   BENCH_TASKS        task file (default tests/bench/smoke-tasks.json)
  *   BENCH_SAMPLE       use this many tasks, spread across difficulty levels
  *   BENCH_SEED         which sample (default 1)
@@ -48,7 +53,9 @@
  *                      the run's working time.
  *   BENCH_SHARD        "2/4": the second of four equal parts of the tasks
  *   BENCH_QUIET        1 for a held-out set: prints how each run ended and
- *                      the totals, never the judge's reasons
+ *                      the totals, never the judge's reasons. "sealed" (the
+ *                      holdout suite) prints no task at all: one line per
+ *                      finished run with its number, and the totals
  *   BENCH_HEADFUL      1 to watch
  *   BENCH_PROFILE      a browser profile signed in to ChatGPT with
  *                      chatgpt-profile.js (npm run bench:chatgpt-login). The
@@ -63,17 +70,84 @@
  *                      task file from the same site instead, to see whether
  *                      what was learned carries over to another request.
  *                      Prints pass, steps and seconds for A against B, and
- *                      what was known and shown at the start of B. Unset,
- *                      learning is off and every run stands alone.
+ *                      what was known and shown at the start of B. "pairs"
+ *                      takes the pairs from the task file itself (a task's
+ *                      "then" names the task to run second; a task with none
+ *                      runs twice: tests/bench/learn-tasks.json). "on" only
+ *                      turns learning on: the tasks run one after another in
+ *                      the same browser profile, so each starts with what
+ *                      the earlier ones left. Unset, learning is off and
+ *                      every run stands alone.
+ *   BENCH_RECIPES      1 saves each run the extension calls saveable as a
+ *                      recipe (its own recipes service, in the worker) and,
+ *                      when the judge passed the run, replays it once. Each
+ *                      row records whether it was saveable, why not, how the
+ *                      replay ended and how many model calls it made.
+ *   BENCH_DISGUISE     "off" lets the headless browser say what it is (no
+ *                      changed user agent, no hidden automation flag). A
+ *                      site that then refuses the visit shows as blocked.
+ *   BENCH_DEBUGGER     "on" adds the debugger permission to the loaded copy,
+ *                      so the agent presses and types with real input events
+ *                      (4.0 ships without it); "off" tells the engine not to
+ *                      use it. Unset, the build runs as it is.
+ *   BENCH_MAX_USD      stop when the model spend of this process (the agent's
+ *                      runs and the judge's calls, at the list prices in
+ *                      defaults.js) reaches this many US dollars (set, it must
+ *                      be above 0; "0.0000" is an error). Each run is
+ *                      also given what is left as its own cost budget, so no
+ *                      single run can pass the cap. Counted: every attempt
+ *                      at a run, lost ones too; every call to the judge;
+ *                      the higher price of long prompts where a model has
+ *                      one; a recipe replay's repairs; and, with learning
+ *                      on, an allowance for the calls made after a run.
+ *   BENCH_JUDGE_BATCH  1 judges through Anthropic's Message Batches API at half
+ *                      price, the judge's instructions in a one-hour cache
+ *                      block. Runs are judged in batches as they finish, and
+ *                      the run waits at its end for the last verdicts
+ *                      (BENCH_JUDGE_WAIT_S, default 5400). Until a verdict is
+ *                      in, the most its call can cost is held against
+ *                      BENCH_MAX_USD, so the cap is never passed. A run is
+ *                      not refused for holds alone: the shard waits for the
+ *                      verdicts first and decides on what they really cost.
+ *   BENCH_NO_FILES     1 for a sealed part (needs BENCH_QUIET=sealed): no file
+ *                      of any run is written, screenshots are kept in memory
+ *                      for the judge only, and no results file is written.
+ *                      BENCH_COUNTS_OUT is then the only output, and the log
+ *                      shows no numbers of the shard. A shard of fewer than
+ *                      BENCH_SEALED_MIN_TASKS tasks (default 5) is refused,
+ *                      and so are BENCH_SAMPLE and BENCH_ONLY: a sealed part
+ *                      runs whole. A shard that did not record every run it
+ *                      planned writes no counts and exits 1.
+ *   BENCH_RUN_ROOM_USD with BENCH_JUDGE_BATCH and BENCH_MAX_USD: before a run,
+ *                      the verdicts still out are waited for if what they
+ *                      hold would leave less than this for the run. The cap
+ *                      is only judged reached once they are in.
+ *   BENCH_COUNTS_OUT   a folder for om2w-counts-<shard>.json: counts of the
+ *                      outcomes, histograms, tokens and spend (om2w.js
+ *                      countsOf), and nothing that names or orders a task
+ *   BENCH_DRY          1 runs without any key: the model is the scripted one
+ *                      in tests/e2e/server.js, the pages are its fixtures
+ *                      (tests/bench/fixture-tasks.json), and the judge is a
+ *                      stub on this machine that answers with the verdict
+ *                      of the task's pattern, so the judge's own code path
+ *                      and its cost count run too. Proves the plumbing,
+ *                      says nothing about the agent.
  */
 "use strict";
 
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const J = require("./judge.js");
 const { summarise, normaliseTasks, sampleTasks, isInfra } = J;
-const { judgeConfig, judgeRun } = require("./judge-call.js");
+const { judgeConfig, judgeRun, JudgeBatch, waitForHolds } = require("./judge-call.js");
+const OM2W = require("./om2w.js");
 const BENCH_PROFILE_LIB = require("./profile.js");
+const TRIAL = require("./trial.js");
+// A sealed run (the holdout suite): before anything can print, the log is
+// limited to run counts and the numbers table. Any other line, an error's
+// text included, is withheld (TRIAL.sealedLogText says which lines pass).
+if (process.env.BENCH_QUIET === "sealed") TRIAL.sealConsole();
 
 // BENCH_EXTENSION runs another build of the extension (an older commit's
 // checkout) under this same harness, for before-and-after comparisons.
@@ -81,18 +155,33 @@ const EXT = process.env.BENCH_EXTENSION ? path.resolve(process.env.BENCH_EXTENSI
 // BENCH_PROFILE: the owner's ChatGPT plan, from a profile he signed in to (profile.js).
 let CHATGPT = null;
 try { CHATGPT = BENCH_PROFILE_LIB.profileEnv(process.env); } catch (e) { console.error(e.message); process.exit(1); }
-const PROVIDER = CHATGPT ? CHATGPT.provider : process.env.BENCH_PROVIDER || "openrouter";
-const MODEL = CHATGPT ? CHATGPT.model : process.env.BENCH_MODEL || "openrouter/free";
-const HELPER_MODEL = CHATGPT ? CHATGPT.helperModel : process.env.BENCH_HELPER_MODEL || "";
-const KEY = process.env.BENCH_API_KEY || "";
-const JUDGE = judgeConfig();
-const CUSTOM_URL = process.env.BENCH_CUSTOM_URL || "";
+// BENCH_DRY: the scripted model and its fixture pages, no key and no judge.
+const DRY = process.env.BENCH_DRY === "1" && !CHATGPT;
+const DRY_BASE = DRY ? `http://127.0.0.1:${TRIAL.DRY_PORT}` : "";
+const PROVIDER = DRY ? "custom" : CHATGPT ? CHATGPT.provider : process.env.BENCH_PROVIDER || "openrouter";
+const MODEL = DRY ? "e2e-scripted-model" : CHATGPT ? CHATGPT.model : process.env.BENCH_MODEL || "openrouter/free";
+const HELPER_MODEL = DRY ? "" : CHATGPT ? CHATGPT.helperModel : process.env.BENCH_HELPER_MODEL || "";
+const KEY = DRY ? "" : process.env.BENCH_API_KEY || "";
+// Dry mode: a stub on this machine, called through judgeRun like any judge. No key, and nothing leaves the runner.
+const JUDGE_STUB_PORT = TRIAL.DRY_PORT + 1;
+const JUDGE = DRY ? { model: "dry-judge-stub", url: `http://127.0.0.1:${JUDGE_STUB_PORT}/v1/messages`, key: "", isAnthropic: true, vision: true, shots: 3, retryMs: 200, problem: "" } : judgeConfig();
+const CUSTOM_URL = DRY ? `${DRY_BASE}/v1` : process.env.BENCH_CUSTOM_URL || "";
+const DEBUGGER = process.env.BENCH_DEBUGGER || "";
+// A fixed sentence on stderr, past the sealed filter: it names nothing but the setting.
+const refuse = (why) => { process.stderr.write(`${why}\n`); process.exit(1); };
+// Set, the cap must be an amount: "0.0000" (a cap split over too many shards) is an error, never "no cap".
+const MAX_USD_SET = (process.env.BENCH_MAX_USD || "").trim() !== "";
+const MAX_USD = MAX_USD_SET ? parseFloat(process.env.BENCH_MAX_USD) : 0;
+if (MAX_USD_SET && !(Number.isFinite(MAX_USD) && MAX_USD > 0)) refuse("BENCH_MAX_USD is set but is not an amount above 0: a cap that rounds to nothing is refused, not read as no cap.");
+// BENCH_RUN_ROOM_USD: before a run starts, verdicts still out are waited for when what they hold leaves the run less than this.
+const RUN_ROOM_USD = Math.max(0, parseFloat(process.env.BENCH_RUN_ROOM_USD || "0") || 0);
 const RUNS = Math.max(1, parseInt(process.env.BENCH_RUNS || "1", 10));
 const TIMEOUT_MS = Math.max(30, parseInt(process.env.BENCH_TIMEOUT_S || "300", 10)) * 1000;
 const ALLOW = new Set((process.env.BENCH_ALLOW || "site,address").split(",").map((s) => s.trim()).filter(Boolean));
 const ONLY = (process.env.BENCH_ONLY || "").split(",").filter(Boolean);
 const OUT = process.env.BENCH_OUT || path.join(__dirname, "out", new Date().toISOString().replace(/[:.]/g, "-"));
 const QUIET = !!process.env.BENCH_QUIET;
+const SEALED = process.env.BENCH_QUIET === "sealed";
 const SHARD = (process.env.BENCH_SHARD || "").match(/^(\d+)\/(\d+)$/);
 // The browser went away under the harness: nothing to do with the agent.
 const BROWSER_GONE = /Connection closed|Target closed|Session closed|detached Frame|Protocol error|browser has disconnected|Navigating frame was detached/i;
@@ -105,7 +194,23 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const HEADFUL = !!process.env.BENCH_HEADFUL;
 const LEARN = process.env.BENCH_LEARN || "";
-if (LEARN && !["1", "near"].includes(LEARN)) { console.error('BENCH_LEARN is "1" or "near".'); process.exit(1); }
+if (LEARN && !["1", "near", "pairs", "on"].includes(LEARN)) { console.error('BENCH_LEARN is "1", "near", "pairs" or "on".'); process.exit(1); }
+// The learning loop's log names tasks and pairs: a sealed run has none of it.
+if (SEALED && LEARN) { console.error("A sealed run takes no learning."); process.exit(1); }
+// Runs in pairs, each pair in a fresh browser; "on" is learning with the ordinary loop.
+const PAIRED = ["1", "near", "pairs"].includes(LEARN);
+const RECIPES = process.env.BENCH_RECIPES === "1";
+const DISGUISE = process.env.BENCH_DISGUISE !== "off";
+// A sealed part of Online-Mind2Web: counts only, and no file of any run.
+const NO_FILES = process.env.BENCH_NO_FILES === "1";
+if (NO_FILES && !SEALED) { console.error("BENCH_NO_FILES needs BENCH_QUIET=sealed."); process.exit(1); }
+// A sealed shard runs at least this many tasks, so nothing about a shard (its time, how it ended) is one task's own.
+const SEALED_MIN_TASKS = Math.max(1, parseInt(process.env.BENCH_SEALED_MIN_TASKS || "5", 10) || 5);
+const JUDGE_BATCH = process.env.BENCH_JUDGE_BATCH === "1";
+// A batch verdict comes after the run has moved on: nothing may wait on it.
+if (JUDGE_BATCH && (LEARN || RECIPES)) { console.error("The batch judge takes no learning and no recipes: both act on a verdict straight away."); process.exit(1); }
+const JUDGE_WAIT_MS = Math.max(60, parseInt(process.env.BENCH_JUDGE_WAIT_S || "5400", 10)) * 1000;
+const COUNTS_OUT = process.env.BENCH_COUNTS_OUT || "";
 
 /** Chrome's id for the tab showing `url`, asked of the extension itself. */
 async function tabIdOf(browser, extensionId, agentPage, url) {
@@ -126,8 +231,38 @@ async function tabIdOf(browser, extensionId, agentPage, url) {
   }
 }
 
-async function runTask(browser, extensionId, task, runIndex, dir) {
-  fs.mkdirSync(dir, { recursive: true });
+/** Runs in the worker: saves a finished run as a recipe when the extension's own recipes service says it can be. */
+async function saveRecipeInWorker(runId) {
+  const R = self.SELECT_TO_AI_RECIPES;
+  if (!R) return { saveable: false, why: "this build has no recipes service" };
+  // The answer is shown a moment before the run is wound up (as the panel's own "can_save" waits).
+  for (let i = 0; i < 40 && R._recordings.has(runId) && !R._recordings.get(runId).ended; i++) await new Promise((r) => setTimeout(r, 100));
+  const can = R.saveable(runId);
+  if (!can.ok) return { saveable: false, why: can.why };
+  const saved = await R.saveRun(chrome, runId);
+  return saved.ok ? { saveable: true, steps: can.steps, id: saved.id } : { saveable: false, why: saved.why };
+}
+
+/** Runs in the worker: one replay of a saved recipe, with the values the run itself typed. */
+async function replayRecipeInWorker(id) {
+  const R = self.SELECT_TO_AI_RECIPES;
+  const entry = (await R.load(chrome)).recipes.find((e) => e.recipe.id === id);
+  if (!entry) return { ok: false, why: "the saved recipe is gone" };
+  const vars = {};
+  for (const v of entry.recipe.variables || []) if (v.type !== "secret" && v.type !== "profile") vars[v.name] = v.example || "";
+  const out = await R.runRecipe(chrome, id, vars, {});
+  if (!out.ok) return { ok: false, why: out.why };
+  const rc = out.receipt;
+  return { ok: true, state: rc.end.state, why: rc.end.why || "", modelCalls: rc.cost.modelCalls, usd: rc.cost.usd, tokens: rc.cost.promptTokens + rc.cost.completionTokens, steps: rc.steps.length, repairs: rc.repairs.length, healed: !!rc.healed };
+}
+
+async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
+  if (!NO_FILES) fs.mkdirSync(dir, { recursive: true });
+  // Dry mode: the scripted model plays this task's scenario.
+  if (DRY) {
+    const set = await fetch(`${DRY_BASE}/control/scenario`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: task.scenario }) }).then((r) => r.json());
+    if (set.error || !set.task) throw new Error(`fixture task ${task.id}: scenario "${task.scenario}" is not in tests/e2e/server.js`);
+  }
   // One ordinary tab, as when a person opens the agent on the page they are
   // looking at: the browser's first tab is reused, and no blank tab is left
   // beside it for the agent to mistake for the current one.
@@ -164,6 +299,20 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
   // The text of each page the agent was on, newest last: what it could have
   // read, for the judge.
   const seenPages = new Map();
+  // The engine's own reading of each page (run.seen in core/run.js), asked of
+  // the worker as the run goes: what the model was shown of the page, which
+  // innerText lacks in places (values carried by a class or a label, a PDF's
+  // text, shadow roots, the rest of a long page).
+  const readings = new Map();
+  let worker = null;
+  const readEngine = async (runId) => {
+    if (!runId) return;
+    try {
+      if (!worker) worker = await BENCH_PROFILE_LIB.workerOf(browser, extensionId);
+      const known = Object.fromEntries([...readings.values()].map((p) => [p.url, p.text.length]));
+      TRIAL.mergeReadings(readings, await worker.evaluate(TRIAL.engineReadingsInWorker, runId, known));
+    } catch (_e) { worker = null; /* a worker that restarted: asked again at the next step */ }
+  };
   const held = [];
   let lastStep = -1;
   let sawRunning = false;
@@ -173,8 +322,10 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
     const pages = (await browser.pages()).filter((p) => /^https?:/.test(p.url()));
     const page = pages[pages.length - 1];
     if (!page) return;
-    const file = path.join(dir, `${String(screenshots.length).padStart(2, "0")}-${label}.jpg`);
-    try { await page.screenshot({ path: file, type: "jpeg", quality: 60 }); screenshots.push(file); } catch (_e) { /* a closing tab */ }
+    const name = `${String(screenshots.length).padStart(2, "0")}-${label}.jpg`;
+    // BENCH_NO_FILES: the shot is kept in memory for the judge and never written.
+    if (NO_FILES) { try { screenshots.push({ name, data: await page.screenshot({ type: "jpeg", quality: 60 }) }); } catch (_e) { /* a closing tab */ } }
+    else { const file = path.join(dir, name); try { await page.screenshot({ path: file, type: "jpeg", quality: 60 }); screenshots.push(file); } catch (_e) { /* a closing tab */ } }
     const seen = await page.evaluate(() => ({ url: location.href, title: document.title, text: (document.body ? document.body.innerText : "").slice(0, 60000) })).catch(() => null);
     if (seen && seen.url) { seenPages.delete(seen.url); seenPages.set(seen.url, seen); }
   };
@@ -203,11 +354,15 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
       // A run at a check-in, or paused for its provider, is still under way.
       const held = !!keep || !!(trace && trace.waitingForUser && ["check_in", "pause"].includes(trace.waitKind));
       const running = held || document.getElementById("actionBtn").classList.contains("stop-btn");
-      return { asked, running, steps: trace ? trace.steps : 0 };
+      return { asked, running, runId: trace ? trace.id || "" : "", steps: trace ? trace.steps : 0, costUSD: trace ? trace.costUSD || 0 : 0, tokens: trace ? trace.tokens : null };
     }, [...ALLOW]);
+    // What the run has spent so far, kept outside this function: a run lost to the browser still cost it.
+    live.costUSD = Math.max(live.costUSD || 0, state.costUSD || 0);
+    if (state.tokens) live.tokens = state.tokens;
+    live.steps = state.steps;
     if (state.asked) held.push(state.asked);
     if (state.running) sawRunning = true;
-    if (state.steps !== lastStep) { lastStep = state.steps; if (state.steps > 0) await shot(`step${state.steps}`); }
+    if (state.steps !== lastStep) { lastStep = state.steps; if (state.steps > 0) { await shot(`step${state.steps}`); await readEngine(state.runId); } }
     if (sawRunning && !state.running) { ending = "finished"; break; }
     // A question answered without starting a run ends when its answer stops changing.
     if (!sawRunning && Date.now() - t0 > 20000) {
@@ -222,9 +377,12 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
   const shown = await agentPage.evaluate(() => { const b = [...document.querySelectorAll(".final-answer-box")].filter((x) => getComputedStyle(x).display !== "none").pop(); return b ? (b.innerText || "").trim() : ""; }).catch(() => "");
   // The final answer, from the trace: never one shown while it was being checked.
   const answer = J.finalAnswer(trace, shown);
+  if (trace && trace.id) await readEngine(trace.id);
   const log = await agentPage.evaluate(() => [...document.querySelectorAll(".log-item")].map((i) => i.textContent).join("\n")).catch(() => "");
   if (ending === "timed out") await agentPage.evaluate(() => { const b = document.getElementById("actionBtn"); if (b.classList.contains("stop-btn")) b.click(); }).catch(() => {});
-  if (trace && trace.waitingForUser && trace.waitKind === "pause") ending = "provider limit (paused, still waiting at the timeout)";
+  // BENCH_MAX_USD: the run's own budget was what was left under the cap.
+  if (MAX_USD && trace && trace.stopState === "error" && /^Cost budget reached/.test(answer)) ending = "spend cap reached";
+  else if (trace && trace.waitingForUser && trace.waitKind === "pause") ending = "provider limit (paused, still waiting at the timeout)";
   else if (trace && trace.waitingForUser) ending = "asked the user";
   else if (/aborted by user safety confirmation/i.test(answer)) ending = `stopped at a confirmation (${(held.find((h) => !h.allowed) || {}).kind || "refused"})`;
   else if (/I ran out of steps/i.test(answer)) ending = "ran out of steps";
@@ -241,14 +399,37 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
   const final = finalPage
     ? await finalPage.evaluate(() => ({ url: location.href, title: document.title, text: (document.body ? document.body.innerText : "").slice(0, 60000) })).catch(() => ({}))
     : {};
+  // What every form control of the final page holds, read from the page itself,
+  // frames included: a fill the agent's action reported as done is only done if it is here.
+  const formState = { controls: [], total: 0, read: false };
+  if (finalPage) {
+    for (const frame of finalPage.frames()) {
+      const got = await frame.evaluate(TRIAL.readFormControls).catch(() => null);
+      if (!got) continue;
+      formState.read = true;
+      formState.total += got.total;
+      const inFrame = frame !== finalPage.mainFrame();
+      for (const c of got.controls) if (formState.controls.length < 400) formState.controls.push(inFrame ? { ...c, frame: frame.url().slice(0, 200) } : c);
+    }
+  }
+  // BENCH_RECIPES: the extension's own answer to "can this run be saved", asked while the worker still holds the recording.
+  let recipe;
+  if (RECIPES && trace && trace.id) {
+    recipe = await BENCH_PROFILE_LIB.workerOf(browser, extensionId).then((w) => w.evaluate(saveRecipeInWorker, trace.id)).catch((e) => ({ saveable: false, why: `the harness could not ask the extension (${String(e.message).slice(0, 100)})` }));
+  } else if (RECIPES) recipe = { saveable: false, why: "the run left no trace to save from" };
 
   const run = {
     id: task.id,
     level: task.level,
+    family: task.level,
     run: runIndex,
     task: task.task,
     startUrl: task.url,
+    ...(task.expect ? { expect: task.expect } : {}),
+    ...(task.sites ? { sites: task.sites } : {}),
     ending,
+    // What the run was waiting on the user for when it ended (a human check, a sign-in, a question), or "".
+    waitKind: trace && trace.waitingForUser ? trace.waitKind || "" : "",
     answer,
     history: trace ? trace.history : [],
     steps: trace ? trace.steps : 0,
@@ -271,12 +452,18 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
     finalUrl: final.url,
     finalTitle: final.title,
     finalText: final.text,
-    pages: [...seenPages.values()].slice(-6),
+    formState,
+    pages: [...seenPages.values()].slice(-10),
+    // The engine's reading of the pages, cut to the parts that bear on the answer (TRIAL.engineExcerpts).
+    engineReadings: TRIAL.engineExcerpts([...readings.values()], answer),
     screenshots,
+    ...(recipe ? { recipe } : {}),
   };
+  // Grounded against the whole of each reading, not only the excerpts.
+  run.grounding = TRIAL.answerGrounding({ ...run, readings: [...readings.values()] });
   // What the user would be looking at in the agent's panel when the run ended.
   const panel = await agentPage.evaluate(() => (document.body.innerText || "").replace(/\n{2,}/g, "\n").slice(-1500)).catch(() => "");
-  fs.writeFileSync(path.join(dir, "log.txt"), `${log}\n\n--- panel at the end ---\n${panel}`);
+  if (!NO_FILES) fs.writeFileSync(path.join(dir, "log.txt"), `${log}\n\n--- panel at the end ---\n${panel}`);
   await agentPage.close().catch(() => {});
   // Close what this task opened; the next task starts its own tab.
   const left = (await browser.pages()).filter((p) => !p.url().startsWith("chrome-extension://"));
@@ -285,15 +472,24 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
 }
 
 (async () => {
-  if (!KEY && !CHATGPT) { console.error("Set BENCH_API_KEY."); process.exit(1); }
+  if (!KEY && !CHATGPT && !DRY) { console.error("Set BENCH_API_KEY."); process.exit(1); }
+  // A key goes to its own provider only.
+  const keyOf = process.env.BENCH_KEY_PROVIDER || "";
+  if (KEY && keyOf && keyOf !== PROVIDER) { console.error(`BENCH_API_KEY is a ${keyOf} key and the agent runs on ${PROVIDER}: refused, a key is never sent to another provider.`); process.exit(1); }
+  if (!DRY && JUDGE.problem) { console.error(JUDGE.problem); process.exit(1); }
   const profileMeta = CHATGPT ? BENCH_PROFILE_LIB.readMeta(CHATGPT.profile) : null;
   if (CHATGPT && !profileMeta) { console.error(`${CHATGPT.profile} is not a profile made by chatgpt-profile.js. ${BENCH_PROFILE_LIB.LOGIN_HINT}`); process.exit(1); }
-  const file = process.env.BENCH_TASKS || path.join(__dirname, "smoke-tasks.json");
-  let tasks = normaliseTasks(JSON.parse(fs.readFileSync(file, "utf8")));
+  const file = process.env.BENCH_TASKS || path.join(__dirname, DRY ? "fixture-tasks.json" : "smoke-tasks.json");
+  // A sealed part runs whole: a sample or a pick of it could be differenced against another to read one task.
+  if (NO_FILES && (parseInt(process.env.BENCH_SAMPLE || "0", 10) > 0 || ONLY.length)) refuse("A sealed part runs whole: BENCH_SAMPLE and BENCH_ONLY are refused. Nothing was run.");
+  const allTasks = normaliseTasks(JSON.parse(fs.readFileSync(file, "utf8")));
+  // BENCH_LEARN=pairs: the task that starts each pair; its second run is found from it.
+  let tasks = LEARN === "pairs" ? TRIAL.learnPlan(allTasks).map((p) => p.a) : allTasks;
   if (ONLY.length) tasks = tasks.filter((t) => ONLY.includes(t.id));
   tasks = sampleTasks(tasks, parseInt(process.env.BENCH_SAMPLE || "0", 10), parseInt(process.env.BENCH_SEED || "1", 10));
   if (SHARD) tasks = tasks.filter((_, i) => i % Number(SHARD[2]) === Number(SHARD[1]) - 1);
   if (!tasks.length) { console.error("No tasks to run."); process.exit(1); }
+  if (NO_FILES && tasks.length < SEALED_MIN_TASKS) refuse(`A sealed shard needs ${SEALED_MIN_TASKS} tasks or more and this one has ${tasks.length}: use fewer shards. Nothing was run.`);
   fs.mkdirSync(OUT, { recursive: true });
   console.log(`Benchmark: ${tasks.length} task(s) x ${RUNS} run(s), agent ${PROVIDER} / ${MODEL}, judge ${JUDGE.model}${JUDGE.vision ? ` with the last ${JUDGE.shots} screenshots` : ""}\nOutput: ${OUT}\n`);
 
@@ -303,11 +499,14 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
   // user who chose "allow on all sites".
   // One copy per process: a run stopped while another starts in the same
   // folder deleted the new run's copy on its way out.
-  const loaded = path.join(OUT, `.extension-${process.pid}`);
+  // Outside the output folder, which is uploaded as an artifact.
+  const loaded = fs.mkdtempSync(path.join(os.tmpdir(), `bench-extension-${process.pid}-`));
   fs.cpSync(EXT, loaded, { recursive: true });
   const manifestPath = path.join(loaded, "manifest.json");
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   manifest.host_permissions = [...new Set([...(manifest.host_permissions || []), "https://*/*", "http://*/*"])];
+  // BENCH_DEBUGGER=on: the same build with the one permission 4.0 leaves out.
+  if (DEBUGGER === "on") manifest.permissions = [...new Set([...(manifest.permissions || []), "debugger"])];
   // On a ChatGPT profile, the profile's key: the extension gets the id its sign-in is stored under.
   if (profileMeta) manifest.key = profileMeta.key;
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
@@ -315,7 +514,54 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
   const profileCopy = CHATGPT ? BENCH_PROFILE_LIB.copyProfile(CHATGPT.profile) : "";
 
   const puppeteer = require("puppeteer");
-  const { PROVIDER_ENDPOINTS } = require(path.join(EXT, "defaults.js"));
+  const { PROVIDER_ENDPOINTS, findModelRates } = require(path.join(EXT, "defaults.js"));
+  // Dry mode: the scripted model and the fixture pages, on this machine only.
+  const dryServer = DRY ? require("../e2e/server.js").createE2EServer(TRIAL.DRY_PORT) : null;
+  if (dryServer) await dryServer.listen();
+  // The judge's stand-in in dry mode: answers in the judge's own format with
+  // the verdict the task's pattern gives, and reports token counts as a provider does.
+  // With BENCH_JUDGE_BATCH it also plays the Message Batches endpoints: the verdict of each request is the one set under its custom id.
+  const judgeStub = { verdict: null, verdicts: new Map(), batches: new Map(), cached: false, calls: 0, server: null };
+  if (DRY) {
+    const stubAnswer = (params, v) => {
+      judgeStub.calls++;
+      let words = 0;
+      let images = 0;
+      for (const m of (params && params.messages) || []) for (const part of Array.isArray(m.content) ? m.content : [{ type: "text", text: m.content }]) { if (part.type === "text") words += String(part.text || "").length; else images++; }
+      // The fixed instructions, when sent as a cache block: written once, read after.
+      const sys = Array.isArray(params && params.system) && params.system.some((b) => b.cache_control) ? Math.ceil(params.system.map((b) => b.text).join("").length / 4) : 0;
+      const usage = { input_tokens: Math.ceil(words / 4) + images * 1000, output_tokens: 0, cache_creation_input_tokens: sys && !judgeStub.cached ? sys : 0, cache_read_input_tokens: sys && judgeStub.cached ? sys : 0 };
+      if (sys) judgeStub.cached = true;
+      const verdict = v || { success: false, blocked: false, reason: "the harness set no verdict for the stub" };
+      const text = JSON.stringify({ key_points: ["the run ends as the fixture task's pattern says"], met: [!!verdict.success], success: !!verdict.success, blocked: !!verdict.blocked, reason: verdict.reason });
+      usage.output_tokens = Math.ceil(text.length / 4);
+      return { content: [{ type: "text", text }], usage };
+    };
+    judgeStub.server = require("node:http").createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => { body += c; });
+      req.on("end", () => {
+        const send = (obj, type = "application/json") => { res.writeHead(200, { "content-type": type }); res.end(typeof obj === "string" ? obj : JSON.stringify(obj)); };
+        let parsed = {};
+        try { parsed = body ? JSON.parse(body) : {}; } catch (_e) { /* counted as nothing */ }
+        const at = String(req.url || "");
+        const results = /^\/v1\/messages\/batches\/([\w-]+)\/results$/.exec(at);
+        const one = /^\/v1\/messages\/batches\/([\w-]+)$/.exec(at);
+        if (req.method === "POST" && at === "/v1/messages/batches") {
+          const id = `stub_batch_${judgeStub.batches.size + 1}`;
+          judgeStub.batches.set(id, (parsed.requests || []).map((r) => ({ custom_id: r.custom_id, result: { type: "succeeded", message: stubAnswer(r.params, judgeStub.verdicts.get(r.custom_id)) } })));
+          return send({ id, processing_status: "in_progress" });
+        }
+        if (req.method === "GET" && results) return send((judgeStub.batches.get(results[1]) || []).map((r) => JSON.stringify(r)).join("\n"), "application/x-jsonl");
+        if (req.method === "GET" && one) return send({ id: one[1], processing_status: "ended", results_url: `http://127.0.0.1:${JUDGE_STUB_PORT}/v1/messages/batches/${one[1]}/results` });
+        send(stubAnswer(parsed, judgeStub.verdict));
+      });
+    });
+    await new Promise((resolve, reject) => { judgeStub.server.once("error", reject); judgeStub.server.listen(JUDGE_STUB_PORT, "127.0.0.1", resolve); });
+  }
+  // The user's yes to what the agent sends to its provider (setup.js consent): without it a run waits at the consent card.
+  const consentIds = [PROVIDER === "custom" ? `custom ${(() => { try { return new URL(CUSTOM_URL).origin; } catch (_e) { return ""; } })()}` : PROVIDER];
+  let debuggerAvailable = null;
   /** A browser with the extension loaded and set up for this benchmark. */
   const launch = async () => {
     const browser = await puppeteer.launch({
@@ -329,8 +575,9 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
       // changes Allrecipes, Google search and Booking load as they do for people.
       // BENCH_EXTRA_EXTENSION: another unpacked extension loaded beside the
       // agent's, for measuring what it changes (an ad blocker, say).
+      // BENCH_DISGUISE=off: neither change is made, and the browser says what it is.
       args: [`--disable-extensions-except=${[loaded, process.env.BENCH_EXTRA_EXTENSION].filter(Boolean).join(",")}`, `--load-extension=${[loaded, process.env.BENCH_EXTRA_EXTENSION].filter(Boolean).join(",")}`, "--no-first-run", "--disable-features=DialMediaRouteProvider",
-        "--disable-blink-features=AutomationControlled",
+        ...(DISGUISE ? ["--disable-blink-features=AutomationControlled"] : []),
         // A window on a desktop can be covered by another one, and Chrome stops drawing a covered window.
         ...(HEADFUL ? ["--window-position=0,0", "--window-size=1060,900", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"] : [])],
     });
@@ -340,23 +587,28 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
       const page = await target.page().catch(() => null);
       if (page) await page.setUserAgent(userAgent).catch(() => {});
     };
-    browser.on("targetcreated", dressed);
-    for (const target of browser.targets()) await dressed(target);
+    if (DISGUISE) {
+      browser.on("targetcreated", dressed);
+      for (const target of browser.targets()) await dressed(target);
+    }
     const workerTarget = await browser.waitForTarget((t) => t.type() === "service_worker" && t.url().includes("background.js"), { timeout: 20000 });
     const extensionId = new URL(workerTarget.url()).host;
     const worker = await workerTarget.worker();
-    await worker.evaluate((s) => new Promise((r) => chrome.storage.sync.set(s, r)), {
+    await worker.evaluate((st) => new Promise((r) => chrome.storage.sync.set(st, r)), {
       agentActiveProvider: PROVIDER, agentModel: MODEL, agentHelperModel: HELPER_MODEL, showAgent: true, ...(CUSTOM_URL ? { agentCustomUrl: CUSTOM_URL } : {}), agentRiskConfirmation: true, agentDomainAllowlist: "", openingMode: "tab",
       // Each run is judged on its own: nothing learned in one may help the next,
       // except under BENCH_LEARN, which measures exactly that.
       agentLearning: !!LEARN,
       agentEngine: process.env.BENCH_ENGINE || "v4",
+      ...(DEBUGGER === "off" ? { agentDebuggerMode: "off" } : {}),
       // Switches for measuring one design choice against another.
       ...(process.env.BENCH_OBSERVE ? { agentObserve: process.env.BENCH_OBSERVE } : {}),
       ...(process.env.BENCH_PRESSABLES ? { agentPressables: process.env.BENCH_PRESSABLES } : {}),
     });
     // ChatGPT has no key: the profile's sign-in is used.
-    await worker.evaluate((e) => new Promise((r) => chrome.storage.local.set(e, r)), { onboardingComplete: true, ...(CHATGPT ? { agentProviderPause: null } : { [PROVIDER === "custom" ? "agentCustomKey" : PROVIDER_ENDPOINTS[PROVIDER].keyName]: KEY }) });
+    await worker.evaluate((e) => new Promise((r) => chrome.storage.local.set(e, r)), { onboardingComplete: true, agentDataConsent: Object.fromEntries(consentIds.map((id) => [id, Date.now()])), ...(CHATGPT ? { agentProviderPause: null } : { [PROVIDER === "custom" ? "agentCustomKey" : PROVIDER_ENDPOINTS[PROVIDER].keyName]: KEY }) });
+    // Whether this build can use real input events at all: false for the shipped 4.0 build.
+    debuggerAvailable = await worker.evaluate(() => typeof chrome.debugger !== "undefined").catch(() => null);
     return { browser, extensionId };
   };
 
@@ -372,7 +624,7 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
     if (session) await session.browser.close().catch(() => {});
     fs.rmSync(loaded, { recursive: true, force: true });
     if (profileCopy) fs.rmSync(profileCopy, { recursive: true, force: true });
-    console.error(e.message || e);
+    console.error(SEALED ? "The harness stopped with an error; a sealed run withholds the detail." : e.message || e);
     process.exit(1);
   }
   // Before each ChatGPT run: the shared sign-in, renewed under the lock if it
@@ -406,66 +658,184 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
     return { count: entries.length, kinds, entries: entries.map((e) => ({ kind: e.kind, scope: e.scope, source: e.source, text: String(e.text).slice(0, 300), helped: e.helped || 0, hurt: e.hurt || 0 })) };
   };
 
-  /** Runs each task twice in one fresh browser, or a task and the next one from its site. */
+  let lostInARow = 0;
+  let stoppedEarly = "";
+  // BENCH_MAX_USD: what this process has spent on models: the agent's runs (lost ones too), the judge's calls, replays.
+  let spent = 0;
+  let capReached = false;
+  // BENCH_JUDGE_BATCH: verdicts that are still out hold the most their calls can cost.
+  const batch = JUDGE_BATCH ? new JudgeBatch(JUDGE, { ratesFor: findModelRates, pollMs: DRY ? 300 : 30000 }) : null;
+  // Kept back from each run's own budget for its batch judge call, so the run leaves room for it.
+  const judgeRoom = batch ? batch.estimateUSD({ max_tokens: 8000, messages: [{ content: [{ type: "text", text: "x".repeat(60000) }, ...Array.from({ length: JUDGE.shots }, () => ({ type: "image" }))] }] }) : 0;
+  /** What the cap is measured against: spent, and the most the verdicts still out can cost. */
+  const committed = () => spent + (batch ? batch.reservedUSD : 0);
+  /**
+   * Before the cap is judged reached, or a run is cramped by what verdicts
+   * still out hold: wait for those verdicts. A hold is the most a verdict can
+   * cost and its real price is far less, so a shard never stops, or starts a
+   * run with too little, for holds alone. `need` is what must fit after.
+   */
+  async function settleHolds(need) {
+    if (!batch || !waitForHolds({ capUSD: MAX_USD, committedUSD: committed(), needUSD: need, runRoomUSD: RUN_ROOM_USD, waiting: batch.waiting })) return;
+    for (const x of await batch.drain(JUDGE_WAIT_MS)) recordJudged(x.id, x.verdict);
+  }
+  const capStop = () => { capReached = true; stoppedEarly = `the spend cap of $${MAX_USD >= 0.01 ? MAX_USD.toFixed(2) : MAX_USD.toFixed(4)} was reached ($${spent.toFixed(4)} spent${batch && batch.reservedUSD ? `, $${batch.reservedUSD.toFixed(4)} held for verdicts still out` : ""}); the remaining tasks were not started.`; };
+  /** Gives the next run what is left under the cap as its own cost budget. */
+  const setRunBudget = async (left) => {
+    const worker = await BENCH_PROFILE_LIB.workerOf(session.browser, session.extensionId);
+    await worker.evaluate((v) => new Promise((r) => chrome.storage.sync.set({ agentCostBudget: v }, r)), Math.max(0, left).toFixed(4));
+  };
+  // A run the harness lost still spent what its model calls cost up to then (`live`, kept by runTask as it goes).
+  const lostRun = (task, r, why, live = {}) => ({ id: task.id, level: task.level, family: task.level, run: r, task: task.task, startUrl: task.url, ending: `harness error: ${String(why).slice(0, 120)}`, answer: "", history: [], steps: live.steps || 0, helperSteps: 0, seconds: 0, costUSD: live.costUSD || 0, tokens: live.tokens || {}, screenshots: [], held: [] });
+
+  /**
+   * One run of a task under the cap. Each attempt gets what is left as its
+   * budget, and an attempt lost to the browser is paid for before the next
+   * one starts. Null when nothing is left to start a run with.
+   */
+  async function attemptRun(task, r, dir, { retry = true, already = 0 } = {}) {
+    let run = null;
+    // `already`: what an earlier, lost recording of this run spent. `earlier`: what the attempts before `run` spent.
+    let earlier = 0;
+    for (let attempt = 0; attempt < (retry ? 2 : 1); attempt++) {
+      if (MAX_USD) {
+        const used = committed() + already + earlier + (run ? run.costUSD || 0 : 0);
+        if (used + judgeRoom >= MAX_USD) break;
+        await setRunBudget(MAX_USD - used - judgeRoom).catch(() => {});
+      }
+      if (run) earlier += run.costUSD || 0;
+      if (attempt && CHATGPT) { const again = await chatgptNotReady(); if (again) { run = lostRun(task, r, again); break; } }
+      const live = {};
+      try { run = await runTask(session.browser, session.extensionId, task, r, dir, live); } catch (e) { run = lostRun(task, r, e.message, live); }
+      const gone = /^harness error/.test(run.ending) && (BROWSER_GONE.test(run.ending) || !session.browser.connected);
+      if (!gone || !retry) break;
+      // The browser died: start another and give the task one more go.
+      await session.browser.close().catch(() => {});
+      session = await launch();
+    }
+    if (run && earlier) run.lostAttemptsUSD = earlier;
+    return run;
+  }
+
+  /** One replay of the recipe saved from a passed run, in a tab of its own. */
+  async function replayRecipe(id) {
+    const t0 = Date.now();
+    let timer;
+    const late = new Promise((resolve) => { timer = setTimeout(() => resolve({ ok: false, why: "the replay did not end within 240 seconds" }), 240000); });
+    const out = await Promise.race([
+      BENCH_PROFILE_LIB.workerOf(session.browser, session.extensionId).then((w) => w.evaluate(replayRecipeInWorker, id)).catch((e) => ({ ok: false, why: `the harness lost the replay (${String(e.message).slice(0, 100)})` })),
+      late,
+    ]);
+    clearTimeout(timer);
+    // Close the replay's tab, which also ends a replay that ran past its time.
+    for (const p of (await session.browser.pages().catch(() => [])).filter((x) => !x.url().startsWith("chrome-extension://"))) await p.close().catch(() => {});
+    return { ...out, seconds: Math.round((Date.now() - t0) / 1000) };
+  }
+
+  /** A run with its verdict, and what the report needs beside it, before any spend is counted. */
+  function rowOf(task, run, verdict, carriedUSD = 0) {
+    const lost = isInfra(run);
+    const row = { ...run, success: verdict.success, blocked: !!verdict.blocked, reason: verdict.reason, keyPoints: verdict.keyPoints, met: verdict.met, judgeFailed: !!verdict.judgeFailed, judgeReply: verdict.judgeReply, judgeUsage: verdict.judgeUsage };
+    if (carriedUSD) row.lostAttemptsUSD = (row.lostAttemptsUSD || 0) + carriedUSD;
+    // The task's own answer pattern beside the judge, what the judge cost, and what the run did by script or had held.
+    row.patternMatch = TRIAL.patternMatch(task, run.answer);
+    row.judgeCostUSD = TRIAL.judgeCostUSD(verdict.judgeUsage, findModelRates);
+    row.longPromptUSD = TRIAL.longPromptSurchargeUSD(run.modelCalls, findModelRates);
+    // With learning on, up to three model calls follow a run and are in no trace: charged at the run's own mean call price.
+    if (LEARN && !lost && run.calls) row.learnAllowanceUSD = 3 * ((run.costUSD || 0) + row.longPromptUSD) / run.calls;
+    row.counters = TRIAL.countersOf(run);
+    return row;
+  }
+
+  /** The verdict on a run and everything the report needs beside it. `carriedUSD` is the spend of an earlier, lost recording of the same run. */
+  async function settle(task, run, carriedUSD = 0) {
+    const lost = isInfra(run);
+    let verdict;
+    if (lost) verdict = { success: false, reason: "not judged: the run was lost before the agent could act" };
+    else {
+      if (DRY) judgeStub.verdict = TRIAL.patternVerdict(task, run);
+      const runUSD = (run.costUSD || 0) + (run.lostAttemptsUSD || 0) + carriedUSD;
+      // Under the cap the judge is asked again only while there is room for it.
+      verdict = await judgeRun(run, { ...JUDGE, ...(MAX_USD ? { stopRetry: (usage) => committed() + runUSD + TRIAL.judgeCostUSD(usage, findModelRates) >= MAX_USD } : {}) });
+    }
+    const row = rowOf(task, run, verdict, carriedUSD);
+    // BENCH_RECIPES: a run the judge passed, and the extension saved, is replayed once.
+    if (row.recipe && row.recipe.saveable && row.recipe.id && row.success && !(MAX_USD && committed() + TRIAL.spendOf(row) >= MAX_USD)) row.recipe = { ...row.recipe, replay: await replayRecipe(row.recipe.id) };
+    row.failure = TRIAL.failureOf(row);
+    spent += TRIAL.spendOf(row);
+    if (row.ending === "spend cap reached") capReached = true;
+    return row;
+  }
+
+  const saveRow = (row, dir) => {
+    if (NO_FILES) return;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "run.json"), JSON.stringify({ ...row, pages: (row.pages || []).map((p) => ({ ...p, text: String(p.text || "").slice(0, 20000) })), screenshots: (row.screenshots || []).map((x) => path.basename(x)) }, null, 2));
+  };
+  const markOf = (row) => (row.success ? "PASS" : row.blocked ? "BLOCK" : isInfra(row) || row.judgeFailed ? "LOST" : "FAIL");
+  const readSaved = (d) => { if (NO_FILES) return null; const f = path.join(d, "run.json"); try { return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : null; } catch (_e) { return null; } };
+
+  /** Runs each task twice in one fresh browser, or a task and the next one from its site, or the pairs the task file names. */
   async function learnPairs() {
-    const all = normaliseTasks(JSON.parse(fs.readFileSync(file, "utf8")));
     const siteKey = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch (_e) { return ""; } };
     const pairs = [];
     for (const a of tasks) {
       let b = a;
+      if (LEARN === "pairs") b = a.then ? allTasks.find((t) => t.id === a.then) : a;
       if (LEARN === "near") {
-        const i = all.findIndex((t) => t.id === a.id);
-        b = [...all.slice(i + 1), ...all.slice(0, Math.max(0, i))].find((t) => t.id !== a.id && siteKey(t.url) === siteKey(a.url));
-        if (!b) { console.log(`skip  ${a.id}: no other task from ${siteKey(a.url)} in ${path.basename(file)}`); continue; }
+        const i = allTasks.findIndex((t) => t.id === a.id);
+        b = [...allTasks.slice(i + 1), ...allTasks.slice(0, Math.max(0, i))].find((t) => t.id !== a.id && siteKey(t.url) === siteKey(a.url));
       }
+      if (!b) { console.log(`skip  ${a.id}: no other task from ${siteKey(a.url)} in ${path.basename(file)}`); continue; }
       pairs.push({ a, b });
     }
-    console.log(`Learning, ${LEARN === "near" ? "a task then the next one from its site" : "each task twice"}: ${pairs.length} pair(s) x ${RUNS}\n`);
+    console.log(`Learning, ${LEARN === "pairs" ? "the pairs the task file names" : LEARN === "near" ? "a task then the next one from its site" : "each task twice"}: ${pairs.length} pair(s) x ${RUNS}\n`);
     const done = [];
-    const judged = async (run) => {
-      const lost = isInfra(run);
-      const verdict = lost ? { success: false, reason: "not judged: the run was lost before the agent could act" } : await judgeRun(run, JUDGE);
-      return { ...run, success: verdict.success, blocked: !!verdict.blocked, reason: verdict.reason, keyPoints: verdict.keyPoints, met: verdict.met, judgeFailed: !!verdict.judgeFailed, judgeReply: verdict.judgeReply };
-    };
-    const save = (row, dir) => fs.writeFileSync(path.join(dir, "run.json"), JSON.stringify({ ...row, pages: (row.pages || []).map((p) => ({ ...p, text: p.text.slice(0, 20000) })), screenshots: (row.screenshots || []).map((x) => path.basename(x)) }, null, 2));
     for (const { a, b } of pairs) {
       for (let r = 1; r <= RUNS; r++) {
         const base = path.join(OUT, a.id, `learn${r}`);
         const dirA = path.join(base, "A");
         const dirB = path.join(base, "B");
-        const read = (d) => { const f = path.join(d, "run.json"); return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : null; };
-        const priorA = read(dirA);
-        const priorB = read(dirB);
+        const priorA = readSaved(dirA);
+        const priorB = readSaved(dirB);
         // A pair recorded earlier stands only whole: B means nothing without the A before it.
-        if (priorA && priorB && !isInfra(priorA) && !isInfra(priorB)) { done.push({ a: priorA, b: priorB }); console.log(`pair  ${a.id} run ${r}  (recorded earlier)`); continue; }
+        if (priorA && priorB && !isInfra(priorA) && !isInfra(priorB)) { spent += TRIAL.spendOf(priorA) + TRIAL.spendOf(priorB); rows.push(priorA, priorB); done.push({ a: priorA, b: priorB }); console.log(`pair  ${a.id} run ${r}  (recorded earlier)`); continue; }
+        // A pair that is run again still cost what its lost recording spent.
+        const carried = [priorA, priorB].filter(Boolean).reduce((n, x) => n + TRIAL.spendOf(x), 0);
+        if (MAX_USD && spent + carried >= MAX_USD) { spent += carried; capStop(); return done; }
         // A fresh browser, so the pair starts knowing nothing.
         await session.browser.close().catch(() => {});
         session = await launch();
         const start = describeMemory((await memoryState() || {}).store);
-        let runA;
-        try { runA = await runTask(session.browser, session.extensionId, a, r, dirA); } catch (e) { runA = lostRun(a, r, e.message); }
+        const runA = (await attemptRun(a, r, dirA, { retry: false, already: carried })) || lostRun(a, r, "nothing was left under the spend cap");
         // What A teaches is written after it ends, by one model call: B waits for it, as a person starting the next task a minute later would.
         const t0 = Date.now();
         let state = await memoryState();
         while (state && state.learning > 0 && Date.now() - t0 < 240000) { await sleep(2000); state = await memoryState(); }
         const learnSeconds = Math.round((Date.now() - t0) / 1000);
         const atB = describeMemory(state && state.store);
+        const rowA = { ...(await settle(a, runA, carried)), slot: `${a.id}#${r}#A`, learn: { phase: "A", mode: LEARN, pair: a.id, pairOf: b.id, memoryAtStart: start } };
+        saveRow(rowA, dirA);
         let runB;
         if (isInfra(runA) || !session.browser.connected) runB = lostRun(b, r, "run A was lost, so B was not run");
-        else { try { runB = await runTask(session.browser, session.extensionId, b, r, dirB); } catch (e) { runB = lostRun(b, r, e.message); } }
+        else {
+          runB = await attemptRun(b, r, dirB, { retry: false });
+          if (!runB) { runB = { ...lostRun(b, r, ""), ending: "spend cap reached" }; }
+        }
         const after = describeMemory(((await memoryState()) || {}).store);
-        const rowA = { ...(await judged(runA)), learn: { phase: "A", mode: LEARN, pairOf: b.id, memoryAtStart: start } };
         const shown = (runB.known && runB.known.first) || null;
-        const rowB = { ...(await judged(runB)), learn: { phase: "B", mode: LEARN, pairOf: a.id, memoryAtStart: atB, waitedForLearningSeconds: learnSeconds, shownAtFirstStep: shown, memoryAfter: after } };
-        save(rowA, dirA);
-        save(rowB, dirB);
+        const rowB = { ...(await settle(b, runB)), slot: `${a.id}#${r}#B`, learn: { phase: "B", mode: LEARN, pair: a.id, pairOf: a.id, memoryAtStart: atB, waitedForLearningSeconds: learnSeconds, shownAtFirstStep: shown, memoryAfter: after } };
+        saveRow(rowB, dirB);
+        rows.push(rowA, rowB);
         done.push({ a: rowA, b: rowB });
-        const mark = (row) => (row.success ? "PASS" : row.blocked ? "BLOCK" : isInfra(row) || row.judgeFailed ? "LOST" : "FAIL");
-        console.log(`${mark(rowA).padEnd(5)} ${a.id.padEnd(28)} A  ${String(rowA.steps).padStart(2)} steps ${String(rowA.seconds).padStart(3)}s  ${rowA.ending}`);
-        console.log(`${mark(rowB).padEnd(5)} ${b.id.padEnd(28)} B  ${String(rowB.steps).padStart(2)} steps ${String(rowB.seconds).padStart(3)}s  ${rowB.ending}  | known at start: ${atB.count} (${Object.entries(atB.kinds).map(([k, v]) => `${k} ${v}`).join(", ") || "nothing"}), shown at first step: ${shown && shown.ids.length ? shown.kinds.join(", ") : "nothing"}`);
+        console.log(`${markOf(rowA).padEnd(5)} ${a.id.padEnd(28)} A  ${String(rowA.steps).padStart(2)} steps ${String(rowA.seconds).padStart(3)}s  ${rowA.ending}`);
+        console.log(`${markOf(rowB).padEnd(5)} ${b.id.padEnd(28)} B  ${String(rowB.steps).padStart(2)} steps ${String(rowB.seconds).padStart(3)}s  ${rowB.ending}  | known at start: ${atB.count} (${Object.entries(atB.kinds).map(([k, v]) => `${k} ${v}`).join(", ") || "nothing"}), shown at first step: ${shown && shown.ids && shown.ids.length ? (shown.kinds || []).join(", ") : "nothing"}`);
+        lostInARow = isInfra(rowA) && isInfra(rowB) ? lostInARow + 1 : 0;
+        if (capReached) { if (!stoppedEarly) capStop(); return done; }
+        if (lostInARow >= MAX_LOST_IN_A_ROW) { stoppedEarly = `${lostInARow} pairs in a row were lost (${rowA.ending}); stopping so the rest are not wasted.`; return done; }
       }
     }
-    learnSummary(done);
+    return done;
   }
 
   function learnSummary(done) {
@@ -487,76 +857,118 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
     fs.writeFileSync(path.join(OUT, `learn-results${SHARD ? `-${SHARD[1]}of${SHARD[2]}` : ""}.json`), JSON.stringify({ mode: LEARN, agent: { provider: PROVIDER, model: MODEL, helperModel: HELPER_MODEL || undefined }, judge: { model: JUDGE.model }, pairs: done.map((p) => ({ a: { id: p.a.id, success: p.a.success, steps: p.a.steps, seconds: p.a.seconds, calls: p.a.calls, tokens: p.a.tokens, ending: p.a.ending, reason: p.a.reason }, b: { id: p.b.id, success: p.b.success, steps: p.b.steps, seconds: p.b.seconds, calls: p.b.calls, tokens: p.b.tokens, ending: p.b.ending, reason: p.b.reason, learn: p.b.learn } })) }, null, 2));
   }
 
-  let lostInARow = 0;
-  let stoppedEarly = "";
-  const lostRun = (task, r, why) => ({ id: task.id, level: task.level, run: r, task: task.task, startUrl: task.url, ending: `harness error: ${String(why).slice(0, 120)}`, answer: "", history: [], steps: 0, helperSteps: 0, seconds: 0, costUSD: 0, screenshots: [], held: [] });
-  // BENCH_LEARN: pairs of runs in fresh browsers, instead of the loop below.
-  if (LEARN) {
-    try { await learnPairs(); } finally {
-      await session.browser.close().catch(() => {});
-      fs.rmSync(loaded, { recursive: true, force: true });
-      if (profileCopy) fs.rmSync(profileCopy, { recursive: true, force: true });
+  /** A finished row: kept, saved (not under BENCH_NO_FILES) and printed. */
+  function record(row, task, r, dir) {
+    row.slot = `${task.id}#${r}`;
+    // Under BENCH_NO_FILES nothing of the run outlives its counts: the shots in memory go too.
+    if (NO_FILES) row.screenshots = [];
+    rows.push(row);
+    saveRow(row, dir);
+    if (!QUIET && row.problems && row.problems.length) console.log(`  [page errors] ${row.problems.slice(0, 3).join(" | ")}`);
+    // Sealed: which run this was and nothing about how it went.
+    if (SEALED) console.log(`run ${rows.length} of ${tasks.length * RUNS} done`);
+    else console.log(`${markOf(row).padEnd(5)} ${task.id.padEnd(28)} run ${r}  ${String(row.steps).padStart(2)} steps ${String(row.seconds).padStart(3)}s  ${row.ending}${QUIET ? "" : `  | ${String(row.reason).slice(0, 110)}`}`);
+    if (row.recipe && !QUIET) console.log(`      recipe: ${row.recipe.saveable ? `saved (${row.recipe.steps} steps)${row.recipe.replay ? `, replay ${row.recipe.replay.state || `did not run: ${row.recipe.replay.why}`}, ${row.recipe.replay.modelCalls || 0} model call(s), ${row.recipe.replay.seconds}s` : ", not replayed"}` : `not saveable: ${row.recipe.why}`}`);
+  }
+
+  // BENCH_JUDGE_BATCH: runs waiting for their verdict, by the batch request's id (which names no task).
+  const awaiting = new Map();
+  let requestSeq = 0;
+  /** Counts a finished run's own spend now and queues its judging; its row is recorded when the verdict comes. */
+  async function queueJudging(task, run, carried, dir, r) {
+    spent += (run.costUSD || 0) + (run.lostAttemptsUSD || 0) + carried + TRIAL.longPromptSurchargeUSD(run.modelCalls, findModelRates);
+    const id = `r${++requestSeq}`;
+    if (DRY) judgeStub.verdicts.set(id, TRIAL.patternVerdict(task, run));
+    const hold = batch.estimateUSD({ max_tokens: 8000, messages: [{ content: [{ type: "text", text: J.judgeMessage(run) }, ...Array.from({ length: Math.min(JUDGE.shots, (run.screenshots || []).length) }, () => ({ type: "image" }))] }] });
+    // No room left under the cap for this verdict once the others are in: the run is not judged, and nothing more starts.
+    if (MAX_USD && committed() + hold > MAX_USD && batch.waiting) for (const x of await batch.drain(JUDGE_WAIT_MS)) recordJudged(x.id, x.verdict);
+    if (MAX_USD && committed() + hold > MAX_USD) {
+      capReached = true;
+      record({ ...rowOf(task, run, { success: false, reason: "not judged: the spend cap left no room for the judge", judgeFailed: true }, carried), failure: "not judged: the spend cap left no room for the judge" }, task, r, dir);
+      return;
     }
-    return;
+    batch.add(id, run);
+    awaiting.set(id, { task, run, carried, dir, r });
+  }
+  /** A verdict from the batch judge: the run's row, with only the judge's cost still to count. */
+  function recordJudged(id, verdict) {
+    const w = awaiting.get(id);
+    if (!w) return;
+    awaiting.delete(id);
+    const row = rowOf(w.task, w.run, verdict, w.carried);
+    row.failure = TRIAL.failureOf(row);
+    spent += row.judgeCostUSD;
+    record(row, w.task, w.r, w.dir);
   }
 
   try {
-    for (const task of tasks) {
-      for (let r = 1; r <= RUNS; r++) {
-        const dir = path.join(OUT, task.id, `run${r}`);
-        const saved = path.join(dir, "run.json");
-        // A run recorded earlier stands, unless it was lost to the browser,
-        // the provider or the judge.
-        if (fs.existsSync(saved)) {
-          const prior = JSON.parse(fs.readFileSync(saved, "utf8"));
-          if (!isInfra(prior)) { rows.push({ ...prior, screenshots: prior.screenshots || [] }); console.log(`${prior.success ? "PASS" : "FAIL"}  ${task.id.padEnd(28)} run ${r}  (recorded earlier)  ${prior.ending}`); continue; }
+    if (PAIRED) learnSummary(await learnPairs());
+    else {
+      for (const task of tasks) {
+        for (let r = 1; r <= RUNS; r++) {
+          const dir = path.join(OUT, task.id, `run${r}`);
+          // A run recorded earlier stands, unless it was lost to the browser,
+          // the provider or the judge. A lost one is run again, and what it spent still counts.
+          const prior = readSaved(dir);
+          if (prior && !isInfra(prior)) { spent += TRIAL.spendOf(prior); rows.push({ ...prior, screenshots: prior.screenshots || [] }); console.log(SEALED ? `run ${rows.length} of ${tasks.length * RUNS} recorded earlier` : `${prior.success ? "PASS" : "FAIL"}  ${task.id.padEnd(28)} run ${r}  (recorded earlier)  ${prior.ending}`); continue; }
+          const carried = prior ? TRIAL.spendOf(prior) : 0;
+          await settleHolds(carried + judgeRoom);
+          if (MAX_USD && committed() + carried >= MAX_USD) { spent += carried; capStop(); break; }
+          const notReady = await chatgptNotReady();
+          if (notReady) { stoppedEarly = notReady; break; }
+          const run = await attemptRun(task, r, dir, { already: carried });
+          if (!run) { spent += carried; capStop(); break; }
+          const lost = isInfra(run);
+          if (batch && !lost) await queueJudging(task, run, carried, dir, r);
+          else record(await settle(task, run, carried), task, r, dir);
+          if (batch) for (const x of await batch.tick()) recordJudged(x.id, x.verdict);
+          lostInARow = lost ? lostInARow + 1 : 0;
+          // The plan says its usage is used up: every later run would end the same way.
+          if (CHATGPT && BENCH_PROFILE_LIB.isPlanLimit(run.ending)) { stoppedEarly = "the ChatGPT plan's usage limit was reached; run again when it has room (Manage usage at chatgpt.com/settings/usage)."; break; }
+          if (lostInARow >= MAX_LOST_IN_A_ROW) { stoppedEarly = `${lostInARow} runs in a row were lost (${run.ending}); stopping so the rest are not wasted.`; break; }
+          if (capReached) { if (!stoppedEarly) capStop(); break; }
         }
-        let run;
-        const notReady = await chatgptNotReady();
-        if (notReady) { stoppedEarly = notReady; break; }
-        for (let attempt = 0; attempt < 2; attempt++) {
-          if (attempt && CHATGPT) { const again = await chatgptNotReady(); if (again) { run = lostRun(task, r, again); break; } }
-          try { run = await runTask(session.browser, session.extensionId, task, r, dir); } catch (e) { run = lostRun(task, r, e.message); }
-          const gone = /^harness error/.test(run.ending) && (BROWSER_GONE.test(run.ending) || !session.browser.connected);
-          if (!gone) break;
-          // The browser died: start another and give the task one more go.
-          await session.browser.close().catch(() => {});
-          session = await launch();
-        }
-        const lost = isInfra(run);
-        const verdict = lost ? { success: false, reason: "not judged: the run was lost before the agent could act" } : await judgeRun(run, JUDGE);
-        const row = { ...run, success: verdict.success, blocked: !!verdict.blocked, reason: verdict.reason, keyPoints: verdict.keyPoints, met: verdict.met, judgeFailed: !!verdict.judgeFailed, judgeReply: verdict.judgeReply, judgeUsage: verdict.judgeUsage };
-        rows.push(row);
-        fs.writeFileSync(saved, JSON.stringify({ ...row, pages: (row.pages || []).map((p) => ({ ...p, text: p.text.slice(0, 20000) })), screenshots: row.screenshots.map((s) => path.basename(s)) }, null, 2));
-        if (!QUIET && row.problems && row.problems.length) console.log(`  [page errors] ${row.problems.slice(0, 3).join(" | ")}`);
-        const mark = row.success ? "PASS" : row.blocked ? "BLOCK" : lost || row.judgeFailed ? "LOST" : "FAIL";
-        console.log(`${mark.padEnd(5)} ${task.id.padEnd(28)} run ${r}  ${String(row.steps).padStart(2)} steps ${String(row.seconds).padStart(3)}s  ${row.ending}${QUIET ? "" : `  | ${String(row.reason).slice(0, 110)}`}`);
-        lostInARow = lost ? lostInARow + 1 : 0;
-        // The plan says its usage is used up: every later run would end the same way.
-        if (CHATGPT && BENCH_PROFILE_LIB.isPlanLimit(row.ending)) { stoppedEarly = "the ChatGPT plan's usage limit was reached; run again when it has room (Manage usage at chatgpt.com/settings/usage)."; break; }
-        if (lostInARow >= MAX_LOST_IN_A_ROW) { stoppedEarly = `${lostInARow} runs in a row were lost (${row.ending}); stopping so the rest are not wasted.`; break; }
+        if (stoppedEarly) break;
       }
-      if (stoppedEarly) break;
+      // The last verdicts of the batch judge. The browser is not needed for them.
+      if (batch && batch.waiting) for (const x of await batch.drain(JUDGE_WAIT_MS)) recordJudged(x.id, x.verdict);
     }
   } finally {
     await session.browser.close().catch(() => {});
     fs.rmSync(loaded, { recursive: true, force: true });
     if (profileCopy) fs.rmSync(profileCopy, { recursive: true, force: true });
+    if (dryServer) await dryServer.close().catch(() => {});
+    if (judgeStub.server) await new Promise((resolve) => judgeStub.server.close(resolve));
   }
 
   const s = summarise(rows);
   const pct = (x) => `${(100 * x).toFixed(1)}%`;
-  console.log(`\n| scored tasks | runs each | passed | success | success, blocked and lost as failures | solved at least once | solved every time | median steps (passed) | steps spent finding | median seconds | blocked by site | lost |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |`);
-  console.log(`| ${s.tasks} | ${s.runsPerTask} | ${s.passed} | ${pct(s.success)} ± ${pct(s.standardError)} | ${pct(s.successAllRuns)} of ${s.tasksAllRuns} tasks | ${pct(s.solvedOnce)} | ${pct(s.solvedEveryTime)} | ${s.medianSteps} (${s.medianStepsPassed}) | ${pct(s.findingShare)} | ${s.medianSeconds} | ${s.blocked} | ${s.lost} |`);
-  console.log(`\nHow runs ended: ${Object.entries(s.endings).map(([k, v]) => `${k} ${v}`).join(", ")}`);
-  if (HELPER_MODEL) {
+  // A sealed part (BENCH_NO_FILES) shows no numbers of a shard: its counts go only to BENCH_COUNTS_OUT, and the summary reports the part whole.
+  if (!NO_FILES) console.log(`\n| scored tasks | runs each | passed | success | success, blocked and lost as failures | solved at least once | solved every time | median steps (passed) | steps spent finding | median seconds | blocked by site | lost |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |`);
+  if (!NO_FILES) console.log(`| ${s.tasks} | ${s.runsPerTask} | ${s.passed} | ${pct(s.success)} ± ${pct(s.standardError)} | ${pct(s.successAllRuns)} of ${s.tasksAllRuns} tasks | ${pct(s.solvedOnce)} | ${pct(s.solvedEveryTime)} | ${s.medianSteps} (${s.medianStepsPassed}) | ${pct(s.findingShare)} | ${s.medianSeconds} | ${s.blocked} | ${s.lost} |`);
+  // An ending can carry an error's text: a sealed log shows the counts above only.
+  if (!SEALED) console.log(`\nHow runs ended: ${Object.entries(s.endings).map(([k, v]) => `${k} ${v}`).join(", ")}`);
+  if (HELPER_MODEL && !NO_FILES) {
     const all = rows.reduce((n, r) => n + (r.steps || 0), 0);
     const helped = rows.reduce((n, r) => n + (r.helperSteps || 0), 0);
     console.log(`Steps taken by the helper (${HELPER_MODEL}): ${helped} of ${all}${all ? ` (${pct(helped / all)})` : ""}.`);
   }
-  if (s.lost) console.log(`${s.lost} run(s) were lost to the browser, the provider or the judge and are left out of the rate.`);
-  if (s.blocked || s.lost) console.log(`Success with the ${s.blocked} blocked and ${s.lost} lost run(s) counted as failures: ${pct(s.successAllRuns)}.`);
-  if (stoppedEarly) console.log(`Stopped early: ${stoppedEarly}`);
-  fs.writeFileSync(path.join(OUT, `results${SHARD ? `-${SHARD[1]}of${SHARD[2]}` : ""}.json`), JSON.stringify({ agent: { provider: PROVIDER, model: MODEL, helperModel: HELPER_MODEL || undefined, url: CUSTOM_URL || undefined, extension: EXT, profile: CHATGPT ? CHATGPT.profile : undefined }, judge: { model: JUDGE.model, url: JUDGE.url, vision: JUDGE.vision, shots: JUDGE.vision ? JUDGE.shots : 0 }, summary: s, stoppedEarly, rows: rows.map((r) => ({ ...r, finalText: undefined, pages: undefined, screenshots: (r.screenshots || []).length })) }, null, 2));
-  if (stoppedEarly) process.exitCode = 2;
-})().catch((e) => { console.error(e); process.exit(1); });
+  if (s.lost && !NO_FILES) console.log(`${s.lost} run(s) were lost to the browser, the provider or the judge and are left out of the rate.`);
+  if ((s.blocked || s.lost) && !NO_FILES) console.log(`Success with the ${s.blocked} blocked and ${s.lost} lost run(s) counted as failures: ${pct(s.successAllRuns)}.`);
+  // Why a shard stopped can hold a lost run's error text: a sealed log says only that it did.
+  if (stoppedEarly) console.log(SEALED ? "Stopped early: a shard stopped early." : `Stopped early: ${stoppedEarly}`);
+  // BENCH_COUNTS_OUT: the counts of this shard, the only output of a sealed part.
+  // A sealed shard that did not record every run it planned (the cap, a crash, lost runs in a row) writes no counts.
+  const sealedUnfinished = NO_FILES && !OM2W.sealedShardComplete(rows, tasks.length * RUNS);
+  if (sealedUnfinished) console.log("A sealed shard that did not finish every run writes no counts: nothing of it is reported.");
+  if (COUNTS_OUT && !sealedUnfinished) {
+    fs.mkdirSync(COUNTS_OUT, { recursive: true });
+    let tier = "";
+    try { const p = require(path.join(EXT, "defaults.js")).modelProfile(MODEL); tier = `${p.tier}, ${p.pageBudget} characters of page text`; } catch (_e) { tier = "unknown"; }
+    fs.writeFileSync(path.join(COUNTS_OUT, `om2w-counts-${SHARD ? `${SHARD[1]}of${SHARD[2]}` : "1of1"}.json`), JSON.stringify({ dry: DRY, sealed: SEALED, agent: `${PROVIDER} / ${MODEL}`, tier, judge: `${JUDGE.model}${batch ? ", batch" : ""}`, debuggerAvailable, capUSD: MAX_USD, spentUSD: spent, capReached, stoppedEarly: !!stoppedEarly, counts: OM2W.countsOf(rows) }, null, 2));
+  }
+  if (!NO_FILES) fs.writeFileSync(path.join(OUT, `results${SHARD ? `-${SHARD[1]}of${SHARD[2]}` : ""}.json`), JSON.stringify({ agent: { provider: PROVIDER, model: MODEL, helperModel: HELPER_MODEL || undefined, url: CUSTOM_URL || undefined, extension: EXT, profile: CHATGPT ? CHATGPT.profile : undefined, debugger: DEBUGGER || "as built", debuggerAvailable, learning: LEARN || "off", recipes: RECIPES, disguise: DISGUISE }, shard: SHARD ? `shard ${SHARD[1]} of ${SHARD[2]}` : "", judge: { model: JUDGE.model, url: JUDGE.url, vision: JUDGE.vision, shots: JUDGE.vision ? JUDGE.shots : 0, stubCalls: DRY ? judgeStub.calls : undefined }, dry: DRY, spentUSD: spent, capUSD: MAX_USD, capReached, runsPerTask: RUNS, planned: tasks.map((t) => t.id), summary: s, stoppedEarly, rows: rows.map((r) => ({ ...r, finalText: undefined, pages: undefined, engineReadings: undefined, screenshots: (r.screenshots || []).length })) }, null, 2));
+  // The spend cap doing its job is not a failure of the run.
+  if (stoppedEarly && !capReached) process.exitCode = 2;
+  if (sealedUnfinished) process.exitCode = 1;
+})().catch((e) => { console.error(SEALED ? "The harness stopped with an error; a sealed run withholds the detail." : e); process.exit(1); });
