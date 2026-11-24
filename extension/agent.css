@@ -48,7 +48,6 @@ body {
   background: var(--surface-sunken);
   border-right: 1px solid var(--border);
   z-index: 50;
-  view-transition-name: tasks-drawer;
   transition: transform var(--dur-3) var(--ease-out), visibility 0s;
 }
 
@@ -61,23 +60,16 @@ body {
   transition: transform var(--dur-3) var(--ease-out), visibility 0s linear var(--dur-3);
 }
 
-/* On a wide page the drawer pushes the run aside. The script runs that as a
-   view transition, so the browser slides two pictures instead of laying the
-   run out on every frame; the drawer itself does not transition there. */
+/* On a wide page the drawer pushes the run aside. The script applies the
+   new layout at once and slides the drawer and the run from where they were
+   by transform (setSidebar in agent.js), so nothing here transitions and no
+   frame lays the run out again. */
 @media (min-width: 769px) {
   .sidebar-container { transition: none; }
   .sidebar-container.collapsed { transition: none; box-shadow: none; }
-  .main-container { view-transition-name: run-view; }
 }
-::view-transition-group(tasks-drawer),
-::view-transition-group(run-view) {
-  animation-duration: var(--dur-3);
-  animation-timing-function: var(--ease-out);
-}
-::view-transition-new(tasks-drawer):only-child { animation: drawer-in var(--dur-3) var(--ease-out) both; }
-::view-transition-old(tasks-drawer):only-child { animation: drawer-out var(--dur-2) var(--ease-in) both; }
-@keyframes drawer-in { from { transform: translateX(-100%); } }
-@keyframes drawer-out { to { transform: translateX(-100%); } }
+/* A view transition never holds up a click: the overlay lets it through. */
+::view-transition { pointer-events: none; }
 
 .sidebar-header {
   height: var(--topbar-h);

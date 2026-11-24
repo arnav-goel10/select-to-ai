@@ -52,9 +52,8 @@
         .row:has(> .switch) { flex-direction: row; align-items: flex-start; gap: 16px; }
         .row:has(> .switch) > .switch { margin-top: 2px; }
       }
-      /* A panel that opens or closes in a section is a view change: it
-         cross-fades with the View Transitions API where Chrome has it. */
-      ::view-transition-group(*) { animation-duration: var(--dur-2); animation-timing-function: var(--ease-out); }
+      /* A panel that opens in a section slides and fades in. */
+      .sub:not([hidden]) { animation: ui-enter var(--dur-2) var(--ease-out) both; }
     </style>
   </head>
   <body>

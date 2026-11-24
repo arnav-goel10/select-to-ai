@@ -348,14 +348,22 @@
   let sidebarRestored = false;
   function setSidebar(open, remember) {
     if (!sidebar) return;
-    // On a wide page the drawer pushes the run aside: the browser moves the
-    // two as pictures (a view transition) instead of laying the run out on
-    // every frame. In the side panel it slides over the run by transform.
-    if (remember && !isNarrow() && sidebar.classList.contains("collapsed") === open) {
-      viewChange(() => applySidebar(open, remember));
-      return;
-    }
+    // On a wide page the drawer pushes the run aside. The new layout is
+    // applied at once (one layout, so a click right after lands where it
+    // should), then the drawer and the run slide from where they were by
+    // transform alone. In the side panel the drawer slides over the run.
+    const moving = remember && !isNarrow() && !reduceMotion() && sidebar.classList.contains("collapsed") === open;
+    const main = moving ? document.querySelector(".main-container") : null;
+    const from = main ? main.getBoundingClientRect().left : 0;
     applySidebar(open, remember);
+    if (!main || !main.animate) return;
+    const by = from - main.getBoundingClientRect().left;
+    const timing = { duration: 240, easing: "cubic-bezier(0.22, 1, 0.36, 1)" };
+    main.animate([{ transform: `translateX(${by}px)` }, { transform: "none" }], timing);
+    const width = sidebar.offsetWidth || 264;
+    sidebar.animate(open
+      ? [{ transform: `translateX(${-width}px)` }, { transform: "none" }]
+      : [{ transform: `translateX(${width}px)`, visibility: "visible" }, { transform: "none", visibility: "visible" }], timing);
   }
   function applySidebar(open, remember) {
     sidebar.classList.toggle("collapsed", !open);
