@@ -130,3 +130,10 @@ test("the agent page never moves focus onto a card, guards each card's buttons, 
   const html = fs.readFileSync(path.resolve(__dirname, "../../extension/agent.html"), "utf8");
   assert.ok(html.indexOf('src="keyGuard.js"') > 0 && html.indexOf('src="keyGuard.js"') < html.indexOf('src="agent.js"'), "the guard loads before the page");
 });
+
+test("a box turned off while the user types in it gets the cursor back when it is on again", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../../extension/agent.js"), "utf8");
+  const controls = src.slice(src.indexOf("  function engineControls("), src.indexOf("    composer.dataset.mode"));
+  assert.match(controls, /if \(off && !taskInput\.disabled && document\.activeElement === taskInput\) composerLostFocus = true;/);
+  assert.match(controls, /if \(free && !modalOpen\(\)\) taskInput\.focus\(\{ preventScroll: true \}\);/);
+});

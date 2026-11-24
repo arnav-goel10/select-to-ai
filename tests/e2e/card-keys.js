@@ -90,14 +90,27 @@ async function main() {
       await page.keyboard.type("also check the");
       await deliver(page, askEntries("w1"));
       await sleep(250);
-      const where = await page.evaluate(() => ({ id: document.activeElement && document.activeElement.id, said: document.getElementById("liveAnnounce").textContent }));
-      assert.equal(where.id, "taskInput", `focus moved to ${where.id}`);
+      // The box is turned off while an approval waits, so focus may leave it
+      // for the page itself; it never lands on the card.
+      const where = await page.evaluate(() => {
+        const a = document.activeElement;
+        return { id: a && a.id, onCard: !!(a && a.closest && a.closest(".confirmation-bubble")), onPage: a === document.body || a === document.getElementById("taskInput"), said: document.getElementById("liveAnnounce").textContent };
+      });
+      assert.equal(where.onCard, false, "focus moved onto the card");
+      assert.ok(where.onPage, `focus moved to ${where.id}`);
       assert.match(where.said, /Allow this step\?/, "the card is said to screen readers");
       await page.keyboard.press("Enter");
       await page.keyboard.press(" ");
       await sleep(300);
       assert.deepEqual(await answers(page), [], "a key typed in the box answered the card");
       assert.ok(await page.$(".confirmation-bubble .confirm-risk-btn"), "the card is still waiting");
+      // Once the card is answered, the cursor is back in the box with what was typed.
+      await page.click(".confirmation-bubble .confirm-risk-btn");
+      await deliver(page, { type: "entries", runId: "run-1", status: "running", trace: trace({}), entries: [{ k: "ask_done", id: "w1", how: "approved" }, log("system", "Allowed", "You allowed this step.")] });
+      await sleep(200);
+      const back = await page.evaluate(() => ({ id: document.activeElement && document.activeElement.id, value: document.getElementById("taskInput").value }));
+      assert.equal(back.id, "taskInput", "the cursor is back in the box");
+      assert.match(back.value, /also check the/);
       await page.close();
     });
 

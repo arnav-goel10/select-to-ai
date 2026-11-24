@@ -2430,6 +2430,7 @@
   /** The composer and buttons, for where the run is. */
   let controlsMode = "";
   let hintMode = "";
+  let composerLostFocus = false;
   function engineControls() {
     const working = engineBusy();
     isRunning = working;
@@ -2448,7 +2449,17 @@
     const subAsks = engineStatus === "running" && engineWait && engineWait.sub && !["approval", "pause"].includes(engineWait.kind);
     const steering = engineStatus === "running" && !subAsks;
     const asking = (engineStatus === "waiting" || subAsks) && engineWait && engineWait.kind !== "approval";
-    taskInput.disabled = working && !steering && !subAsks;
+    // A box that is turned off while the user types in it (an approval came)
+    // gets their cursor back when it is on again, unless they went elsewhere.
+    const off = working && !steering && !subAsks;
+    if (off && !taskInput.disabled && document.activeElement === taskInput) composerLostFocus = true;
+    taskInput.disabled = off;
+    if (!off && composerLostFocus) {
+      composerLostFocus = false;
+      const at = document.activeElement;
+      const free = !at || at === document.body || !!(at.closest && at.closest(".card-leaving"));
+      if (free && !modalOpen()) taskInput.focus({ preventScroll: true });
+    }
     composer.dataset.mode = steering ? "steer" : "";
     const kind = (engineStatus === "waiting" || subAsks) && engineWait ? engineWait.kind : "";
     taskInput.placeholder = steering
