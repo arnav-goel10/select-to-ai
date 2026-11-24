@@ -50,7 +50,7 @@ Requirements: Chrome 120+ and Node.js 20+ for development checks.
 2. Run `npm ci && npm run check`.
 3. Open `chrome://extensions` and enable **Developer mode**.
 4. Choose **Load unpacked** and select the repository's `extension/` directory.
-5. The welcome page opens. Click **Continue with OpenRouter (free)** or paste an API key to turn on the agent.
+5. The welcome page opens. Pick a provider (OpenRouter is free to start) or paste an API key to turn on the agent.
 
 No build step is required. The checked-in JavaScript is the extension source Chrome loads.
 
@@ -75,7 +75,7 @@ Open the **agent** (`Alt+A`, or `Control+Shift+G` on macOS, the popup button, th
 
 The run lives in the service worker, so closing the side panel loses nothing; reopen it and the run is still there. It asks you when it needs you (a sign-in, a human check, a choice only you can make) and carries on once that is done, and it says plainly what it could not do instead of making a result up. While a run works you can send it a message that it reads before its next step, save the run's steps as Markdown, and stop it at any time.
 
-New installs open a short welcome page. Highlight-to-ask works straight away; to turn the agent on, click **Continue with OpenRouter (free)** (sign in, and a key is created for you) or paste any provider key, which is recognised from its prefix and tested before it is saved. The default model is OpenRouter's free router (`openrouter/free`), so the agent works without a card. The first time the agent needs a website, choose **Allow on all sites** (one prompt, ever) or **Only** followed by that site's name. Before the first request to a provider, the agent shows once what it sends and to whom, and waits for your yes. Keep **Ask before purchases, payments and deletions** on.
+New installs open a short welcome page. Highlight-to-ask works straight away; to turn the agent on, pick a provider from the list (OpenRouter, Anthropic, OpenAI, Google Gemini, and under More providers DeepSeek, Mistral, Groq, xAI, Together AI, Cerebras, OpenCode Zen or your own server) or paste any provider key, which is recognised from its prefix and tested before it is saved. OpenRouter needs no key to paste: **Sign in with OpenRouter** creates one, then you choose its free models or, on an account with credit, Claude Haiku 5.5. For every other provider setup preselects its main model with its price, and offers its stronger model for hard steps as an option. The default model is OpenRouter's free router (`openrouter/free`), so the agent works without a card. The first time the agent needs a website, choose **Allow on all sites** (one prompt, ever) or **Only** followed by that site's name. Before the first request to a provider, the agent shows once what it sends and to whom, and waits for your yes. Keep **Ask before purchases, payments and deletions** on.
 
 ### Use the quick box
 
