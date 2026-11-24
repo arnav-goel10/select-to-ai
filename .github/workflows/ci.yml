@@ -43,6 +43,10 @@ on:
         description: Hard spend cap for the press check eval, in US dollars
         type: string
         default: "1"
+      decision_eval:
+        description: "Decision eval runs, as provider@model@cap separated by ; (providers: anthropic, openai, nim; model list on nim prints its ids)"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -403,6 +407,58 @@ jobs:
           XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+
+  # The step decisions of tests/decisions on live models, by hand only, to
+  # compare default models. Each run stops at its own spend cap and writes
+  # its report. Keys come from the repository's secrets and are never
+  # printed. NVIDIA's host is free credits, so its runs are priced at zero.
+  decision-eval:
+    name: decision-eval
+    if: github.event_name == 'workflow_dispatch' && inputs.decision_eval != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Decision eval on each model asked for
+        run: |
+          mkdir -p decision-reports
+          IFS=';' read -ra RUNS <<< "$DECISION_RUNS"
+          for run in "${RUNS[@]}"; do
+            IFS='@' read -r provider model cap <<< "$(echo "$run" | xargs)"
+            [ -z "$provider" ] && continue
+            price=""
+            wait_ms=2000
+            case "$provider" in
+              anthropic) base="https://api.anthropic.com"; key="$ANTHROPIC_KEY" ;;
+              openai) base="https://api.openai.com/v1"; key="$OPENAI_KEY" ;;
+              nim) base="https://integrate.api.nvidia.com/v1"; key="$NIM_API_KEY"; price="0,0"; wait_ms=6000 ;;
+              *) echo "Unknown provider $provider"; exit 1 ;;
+            esac
+            if [ "$model" = "list" ]; then
+              echo "== $provider model ids"
+              curl -s -H "Authorization: Bearer $key" "$base/models" | node -e 'let t="";process.stdin.on("data",(c)=>t+=c).on("end",()=>{const d=JSON.parse(t);for(const m of d.data||[])console.log(m.id)})' | grep -i -E "nemotron|gemma|mistral-large" || true
+              continue
+            fi
+            echo "== $provider $model, cap \$$cap"
+            DECISION_BASE_URL="$base" DECISION_API_KEY="$key" DECISION_MODEL="$model" DECISION_CAP_USD="$cap" \
+              DECISION_PRICE="$price" DECISION_WAIT_MS="$wait_ms" DECISION_SKIP_MISSING=1 \
+              DECISION_REPORT="decision-reports/${provider}-${model//\//_}.json" \
+              node tests/decisions/run-v4.js || echo "run failed: $provider $model"
+          done
+        env:
+          DECISION_RUNS: ${{ inputs.decision_eval }}
+          ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
+          NIM_API_KEY: ${{ secrets.NIM_KEY }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: decision-reports
+          path: decision-reports
+          if-no-files-found: ignore
 
   # The page-blind press check (agentTools.js labelsMessages) on a live
   # model, by hand only: per-control verdicts, false and missed holds, the
