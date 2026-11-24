@@ -152,6 +152,18 @@ for (const entry of ENTRIES) {
     console.log(`  ${entry}, ordinary page: load ended at 150 ms, read at ${r.ended} ms`);
   });
 
+  test(`${entry}: a first load that is over before the wait begins is still followed when the page replaces itself`, async () => {
+    const r = await click(entry, (id, at, page) => {
+      // A fast page: loaded and complete while the click is still answering.
+      page.loading(id);
+      page.complete(id);
+      at(600, () => page.loading(id, `${PAGE}/real`));
+      at(900, () => page.complete(id));
+    });
+    assert.ok(r.ended >= 900, `read at ${r.ended} ms, before the page that took its place loaded`);
+    assert.equal(r.tab.url, `${PAGE}/real`);
+  });
+
   test(`${entry}: a page that keeps loading again gets exactly one more wait`, async () => {
     const r = await click(entry, (id, at, page) => {
       at(100, () => page.complete(id));
