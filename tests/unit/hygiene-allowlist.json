@@ -916,6 +916,7 @@
       "what": [
         "/^(A|BUTTON|INPUT|SELECT|TEXTAREA|OPTION|LABEL|SUMMARY|IMG|VIDEO|CANVAS|SVG|IFRAME|PICTURE)$/i",
         "/^(BUTTON|A|INPUT|SELECT|TEXTAREA|SUMMARY|OPTION|LABEL)$/",
+        "/^(IFRAME|OBJECT|EMBED|FRAME)$/",
         "/^(IMG|INPUT|HR|SVG|VIDEO|CANVAS|IFRAME)$/i",
         "/^(INPUT|TEXTAREA)$/",
         "/^(INPUT|TEXTAREA|SELECT)$/",
@@ -1771,6 +1772,7 @@
         "tag name"
       ],
       "what": [
+        "/^(iframe|object|embed|frame)$/",
         "/^(input|textarea|select)$/",
         "a",
         "button",
