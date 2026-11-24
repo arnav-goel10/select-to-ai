@@ -105,14 +105,7 @@ test("elements that appeared since the last step are starred", () => {
   assert.ok(T.formatElementLine({ id: 3, tagName: "button", accName: "Go" }).startsWith("[3]"));
 });
 
-test("a task that says not to send never submits, whatever the model chose", () => {
-  const page = { elements: [{ id: 9, tagName: "button", accName: "Send message" }, { id: 4, tagName: "a", accName: "Help" }] };
-  const task = "Fill in the contact form with my details. Don't send it yet, I want to check it first.";
-  const ff = T.guardNoSubmit({ action: "fill_form", fields: [{ id: 1, text: "Ada" }], submitId: 9 }, task, page);
-  assert.equal(ff.action.submitId, undefined);
-  assert.equal(T.guardNoSubmit({ action: "type", id: 1, text: "x", submit: true }, task, page).action.submit, false);
-  assert.equal(T.guardNoSubmit({ action: "click", id: 9 }, task, page).action.action, "finish");
-  assert.equal(T.guardNoSubmit({ action: "click", id: 4 }, task, page), null, "other clicks are untouched");
-  assert.equal(T.guardNoSubmit({ action: "fill_form", fields: [], submitId: 9 }, "Sign me up for the newsletter", page), null, "a normal task submits");
-  assert.equal(T.guardNoSubmit({ action: "click", id: 9 }, "Send the message without any typos", page), null, "'without' must be about sending");
+test("a task that says not to send is the model's to read: no guard rewrites its action from the request's words", () => {
+  assert.equal(T.guardNoSubmit, undefined);
+  assert.equal(T.saysNotToSubmit, undefined);
 });

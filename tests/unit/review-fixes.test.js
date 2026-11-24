@@ -43,17 +43,19 @@ test("Space, Enter and Return on a button are judged as a click on it", () => {
   assert.equal(POLICY.decide({ do: "press", key: "Escape", ref: 4 }, contact(), keyRun(sendTask), on).verdict, "allow");
 });
 
-test("Space on a form's send button is held when the user said not to submit", () => {
-  const v = POLICY.decide({ do: "press", key: "Space", ref: 3 }, contact(), keyRun(noSubmit), on);
-  assert.equal(v.verdict, "refuse");
-  assert.match(v.message, /Send message/);
+test("Space on a form's send button is held for the user's approval, whatever the request says about sending", () => {
+  for (const task of [noSubmit, sendTask]) {
+    const v = POLICY.decide({ do: "press", key: "Space", ref: 3 }, contact(), keyRun(task), on);
+    assert.equal(v.verdict, "confirm", task);
+    assert.equal(v.kind, "send", task);
+  }
 });
 
 test("a key with no ref is judged where the focus is: reported by the page, or left by the step", () => {
-  // The page says the message box has the focus.
-  assert.equal(POLICY.decide({ do: "press", key: "Enter" }, contact(1), keyRun(noSubmit), on).verdict, "refuse");
+  // The page says the message box has the focus: Enter there sends the form, and is held.
+  assert.equal(POLICY.decide({ do: "press", key: "Enter" }, contact(1), keyRun(noSubmit), on).verdict, "confirm");
   // The step filled the message box and presses Enter next, before the page is read again.
-  assert.equal(POLICY.decide({ do: "press", key: "Enter" }, contact(), keyRun(noSubmit, 1), on).verdict, "refuse");
+  assert.equal(POLICY.decide({ do: "press", key: "Enter" }, contact(), keyRun(noSubmit, 1), on).verdict, "confirm");
   assert.equal(POLICY.decide({ do: "press", key: "Enter" }, contact(), keyRun(sendTask, 2), on).kind, "send");
   // The focus is on a pay button.
   assert.equal(POLICY.decide({ do: "press", key: "Space" }, contact(4), keyRun(sendTask), on).kind, "pay");
@@ -74,11 +76,14 @@ test("the run remembers the control a step left the focus on, and the press carr
   let fx = advance(run, { type: "model_replied", reply: { note: "", goal: "fill", do: "fill", ref: 1, value: "Hello", then: [{ do: "press", key: "Enter" }] }, usage: { prompt: 1, completion: 1, cost: 0, model: "m" } }, env);
   assert.equal(fx.find((f) => f.type === "act").action.do, "fill");
   fx = advance(run, { type: "acted", result: { ok: true, message: "Typed." } }, env);
-  // Enter would go to the message box the fill left the focus in: refused, not pressed.
+  // Enter would go to the message box the fill left the focus in, which sends the form: the user is asked first.
   assert.equal(fx.some((f) => f.type === "act"), false);
-  const refused = run.history[run.history.length - 1].actions.find((x) => x.do === "press");
-  assert.match(refused.result, /not sent/);
-  assert.equal(run.focusRef, null);
+  const wait = fx.find((f) => f.type === "attention");
+  assert.ok(wait, JSON.stringify(fx));
+  assert.equal(wait.wait.kind, "approval");
+  assert.equal(wait.wait.risk, "send");
+  assert.deepEqual(wait.wait.action.landsOn, [1], "the press carries the control it would land on");
+  assert.equal(run.focusRef, 1);
 });
 
 // ------------------------------------------------------------ sub-tasks

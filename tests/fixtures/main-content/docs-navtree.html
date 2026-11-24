@@ -1,0 +1,74 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>queue.drain() - Tasklet 3 documentation</title>
+</head>
+<body>
+<div class="bar"><a href="/">Tasklet</a> <a href="/docs/3">Docs</a> <a href="/api/3">API</a> <a href="/blog">Blog</a> <a href="/changelog">Changelog</a> <span>Version 3.2</span></div>
+<div class="layout">
+  <div class="tree">
+    <ul>
+      <li><a href="/docs/3/start">Getting started</a>
+        <ul>
+          <li><a href="/docs/3/install">Installing</a></li>
+          <li><a href="/docs/3/first-queue">Your first queue</a></li>
+          <li><a href="/docs/3/config">Configuration file</a></li>
+        </ul>
+      </li>
+      <li><a href="/docs/3/guides">Guides</a>
+        <ul>
+          <li><a href="/docs/3/retries">Retries and back-off</a></li>
+          <li><a href="/docs/3/priorities">Priorities</a></li>
+          <li><a href="/docs/3/scheduling">Scheduled tasks</a></li>
+          <li><a href="/docs/3/testing">Testing with a fake broker</a></li>
+          <li><a href="/docs/3/shutdown">Graceful shutdown</a></li>
+        </ul>
+      </li>
+      <li><a href="/docs/3/reference">Reference</a>
+        <ul>
+          <li><a href="/docs/3/queue">Queue</a>
+            <ul>
+              <li><a href="/docs/3/queue.add">queue.add()</a></li>
+              <li><a href="/docs/3/queue.drain">queue.drain()</a></li>
+              <li><a href="/docs/3/queue.pause">queue.pause()</a></li>
+              <li><a href="/docs/3/queue.resume">queue.resume()</a></li>
+              <li><a href="/docs/3/queue.size">queue.size</a></li>
+            </ul>
+          </li>
+          <li><a href="/docs/3/worker">Worker</a></li>
+          <li><a href="/docs/3/broker">Broker</a></li>
+          <li><a href="/docs/3/errors">Error codes</a></li>
+        </ul>
+      </li>
+      <li><a href="/docs/3/migrating">Migrating from version 2</a></li>
+    </ul>
+  </div>
+
+  <div class="doc">
+    <div class="onpage">On this page: <a href="#syntax">Syntax</a> <a href="#options">Options</a> <a href="#example">Example</a></div>
+    <h1>queue.drain()</h1>
+    <p>Waits until every task already in the queue has finished, then resolves. Tasks added while the queue is draining are run too, so the promise settles only when the queue is empty and no worker is busy.</p>
+    <h2 id="syntax">Syntax</h2>
+    <pre><code>await queue.drain({ timeout: 30000, rejectOnError: false });</code></pre>
+    <h2 id="options">Options</h2>
+    <table>
+      <tr><th>Name</th><th>Type</th><th>Default</th><th>Meaning</th></tr>
+      <tr><td><code>timeout</code></td><td>number</td><td>none</td><td>Milliseconds to wait before rejecting with a timeout error.</td></tr>
+      <tr><td><code>rejectOnError</code></td><td>boolean</td><td>false</td><td>Reject as soon as one task fails instead of waiting for the rest.</td></tr>
+      <tr><td><code>pause</code></td><td>boolean</td><td>false</td><td>Stop taking new tasks while draining, so the queue ends empty.</td></tr>
+    </table>
+    <h2 id="example">Example</h2>
+    <p>Drain the queue before the process exits, so a deploy does not cut a task off halfway:</p>
+    <pre><code>process.on("SIGTERM", async () => {
+  await queue.drain({ timeout: 10000, pause: true });
+  process.exit(0);
+});</code></pre>
+    <p>If the timeout passes first, the tasks still running are left to finish on their own and the promise rejects with <code>E_DRAIN_TIMEOUT</code>.</p>
+    <div class="pager"><a href="/docs/3/queue.add">Previous: queue.add()</a> <a href="/docs/3/queue.pause">Next: queue.pause()</a></div>
+    <div class="edit"><a href="/edit/queue.drain">Edit this page</a></div>
+  </div>
+</div>
+<div class="legal">Tasklet is open source under the MIT licence. <a href="/licence">Licence</a> <a href="/conduct">Code of conduct</a></div>
+</body>
+</html>

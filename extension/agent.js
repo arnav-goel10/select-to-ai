@@ -17,10 +17,6 @@
 
   // True while the engine's run is under way; set by engineControls().
   let isRunning = false;
-  // What a run did, as facts: each action with what it acted on and what
-  // happened. The benchmark harness (tests/bench) judges runs from this.
-  globalThis.__selectToAiTrace = () => engineTrace;
-
   // Token and cost totals of the run on screen, from the engine's trace.
   let totalPromptTokens = 0;
   let totalCompletionTokens = 0;

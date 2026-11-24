@@ -588,9 +588,10 @@
     if (!text) return { store, change: null, why: "empty" };
     if (target) return bump(target, same(target.text, text) ? "confirmed" : "updated");
     // Said again, in other words: the same fact, not a second one. It is
-    // the same only when it names nothing the kept one does not ("Uses
-    // Outlook for work" is not "Uses Gmail for email" said again, however
-    // many words they share); it is a fuller wording only when it keeps
+    // the same only when it names nothing the kept one does not ("Keeps
+    // work meetings in the office calendar" is not "Keeps dates in the
+    // shared calendar" said again, however many words they share); it is
+    // a fuller wording only when it keeps
     // every word of the kept one, so nothing kept is lost without the
     // user's words saying so.
     const named = (op.values || []).map(plain).filter((v) => v && plain(text).includes(v));

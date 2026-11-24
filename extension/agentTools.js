@@ -716,8 +716,8 @@
   /**
    * The element list, with controls that belong together listed under the
    * card, form or dialog they share:
-   *   item "Sony WH-1000XM5 $348 ★4.7":
-   *     [14] a "Sony WH-1000XM5" → /p/123
+   *   item "Aster wireless headphones $348 ★4.7":
+   *     [14] a "Aster wireless headphones" → /p/123
    *     [15] button "Add to cart"
    * A control alone in its card or dialog says so on its own line.
    */
@@ -746,7 +746,6 @@
     return lines.join("\n");
   }
 
-  const STOPWORDS = new Set("a an and are as at be by can do does for from get give has have how i in into is it its me my of on or please show tell than that the their them then there these this to today up us was we what when where which who why will with you your find page site open go look search current now right about some any also just like two three one sentence sentences summary summarize summarise bullet bullets points point briefly brief short list lines line words word".split(" "));
 
   /** Words from the task worth looking for on the page. */
 
@@ -769,8 +768,11 @@
   const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}]/u;
 
   /**
-   * The words of a task worth looking for on a page, in any script. Text
-   * written without spaces (Chinese, Japanese, Thai) is matched by pairs of
+   * The words of a task to look for on a page, in any script: every word
+   * of three letters or more, and no list of words to skip in any one
+   * language. Which of them matter is measured on the page itself
+   * (relevantPassages weighs each by how rare it is there). Text written
+   * without spaces (Chinese, Japanese, Thai) is matched by pairs of
    * characters, since a whole sentence never appears verbatim on a page.
    */
   function taskKeywords(task) {
@@ -782,11 +784,11 @@
         const chars = [...w];
         if (chars.length <= 2) out.push(w);
         else for (let i = 0; i + 1 < chars.length; i++) out.push(chars[i] + chars[i + 1]);
-      } else if (w.length >= 3 && !STOPWORDS.has(w)) {
+      } else if (w.length >= 3) {
         out.push(w);
       }
     }
-    return [...new Set(out)].slice(0, 24);
+    return [...new Set(out)].slice(0, 40);
   }
 
   /**
@@ -813,21 +815,26 @@
       if (last && last.text.length < 200) last.text += " | " + line;
       else blocks.push({ text: line, start });
     }
-    // A word that appears in most blocks (the page's own subject, like
-    // "singapore" on the Singapore article) says little; a rare one
-    // ("population") pinpoints the passage. Weight each word by rarity.
+    // A word that appears in most blocks (a word of the language like "the"
+    // or "der", or the page's own subject, like "singapore" on the
+    // Singapore article) says little; a rare one ("population") pinpoints
+    // the passage. Each word is weighed by how rare it is on this page, and
+    // on a page of several blocks a block is a match only through a word
+    // that is in at most half of them.
     const lowered = blocks.map((b) => b.text.toLowerCase());
     const weight = {};
+    const telling = new Set();
     for (const w of words) {
       const df = lowered.filter((t) => t.includes(w)).length;
       weight[w] = df ? Math.log(1 + blocks.length / df) : 0;
+      if (df && (blocks.length < 4 || df <= blocks.length / 2)) telling.add(w);
     }
     return blocks
       .filter((b) => b.start >= o.skipPrefixChars)
       .map((b, i) => {
         const lower = lowered[i];
         const hits = words.filter((w) => lower.includes(w));
-        return { i, text: b.text, hits: hits.length, score: hits.reduce((t, w) => t + weight[w], 0) };
+        return { i, text: b.text, hits: hits.filter((w) => telling.has(w)).length, score: hits.reduce((t, w) => t + weight[w], 0) };
       })
       .filter((b) => b.hits > 0)
       .sort((a, b) => b.score - a.score || a.i - b.i)
@@ -837,16 +844,22 @@
   }
 
   const HUMAN_CHECK = /\b(i'?m not a robot|not a robot|captcha|recaptcha|hcaptcha|verify (?:that )?you(?:'re| are) (?:a )?human|verifying (?:that )?you(?:'re| are) (?:a )?human|human verification|are you a robot|press and hold|slide to verify|checking your browser|unusual traffic from your computer|verification successful\. waiting for|checking if the site connection is secure)\b/i;
-  // Interstitial challenge titles (Cloudflare, Google's "sorry" page).
+  // Titles the verification services give the page they put in front of a site.
   const CHALLENGE_TITLE = /^(just a moment\.*|attention required!?.*|one more step|are you a robot\??|security check)$/i;
 
-  /** True for a page whose only purpose is checking that a person is visiting. */
+  /**
+   * True for a page whose only purpose is checking that a person is
+   * visiting: a nearly empty page (a line or two and a few controls) that
+   * holds a verification widget (`page.widget`, found by the content
+   * script from where the widget is served), or whose title or opening
+   * words are a verification service's. Where the page lives plays no part.
+   */
   function isChallengePage(page) {
     if (!page) return false;
     const text = String(page.innerText || "");
     const title = String(page.title || "").trim();
     if (text.length > 1500 || ((page.elements || []).length > 12)) return false;
-    return CHALLENGE_TITLE.test(title) || HUMAN_CHECK.test(`${title} ${text.slice(0, 600)}`) || /\/sorry\/index/.test(String(page.url || ""));
+    return page.widget === true || CHALLENGE_TITLE.test(title) || HUMAN_CHECK.test(`${title} ${text.slice(0, 600)}`);
   }
 
   /**
@@ -875,48 +888,7 @@
     };
   }
 
-  /**
-   * The user said not to send or submit ("fill it in but don't send it",
-   * "without submitting"). A hard guard, not a prompt rule: submits are
-   * removed from the action whatever the model chose, and a click on the
-   * form's send button becomes a finish that says it stopped there.
-   */
-  const SEND_VERB = "(?:send|submit|post|book|place|pay|confirm|publish|order|checkout|check out)(?:ing|ting)?";
-  const NO_SUBMIT = new RegExp(
-    `\\b(?:don'?t|do not|without|never|not yet|no need to|stop (?:before|short of)|hold off on)\\b[^.!?\\n]{0,25}\\b${SEND_VERB}\\b`
-    + `|\\b(?:just|only) fill\\b`
-    + `|\\b(?:i'?ll|i will|let me)\\b[^.!?\\n]{0,20}\\b(?:${SEND_VERB}|review|check|look (?:it )?over)\\b[^.!?\\n]{0,20}\\b(?:myself|first|before|it)\\b`
-    + `|\\bleave (?:it|that|the (?:rest|form|submit\\w*|send\\w*))\\b[^.!?\\n]{0,20}\\b(?:to|for) me\\b`,
-    "i",
-  );
-  const SUBMIT_LABEL = /\b(send|submit|post|publish|book|place order|pay|confirm|register|sign up|continue to payment)\b/i;
-  /** True when the task tells the agent to prepare something and leave the sending to the user. */
-  function saysNotToSubmit(task) {
-    return NO_SUBMIT.test(String(task || "").replace(/[\u2018\u2019\u02BC]/g, "'"));
-  }
-  function guardNoSubmit(action, task, page) {
-    if (!action || !saysNotToSubmit(task)) return null;
-    if (action.action === "fill_form" && action.submitId !== undefined) {
-      const { submitId, ...rest } = action;
-      return { action: rest, note: "You asked not to send, so the form is filled but not submitted." };
-    }
-    if (action.action === "type" && action.submit === true) {
-      return { action: { ...action, submit: false }, note: "You asked not to send, so the text is typed without pressing Enter." };
-    }
-    if (action.action === "click") {
-      const el = ((page && page.elements) || []).find((e) => e.id === action.id);
-      const label = el ? [el.accName, el.text, el.label, el.value].join(" ") : "";
-      const isSubmit = el && (SUBMIT_LABEL.test(label) || el.inputType === "submit" || el.submits === true);
-      if (isSubmit) {
-        const name = String(el.accName || el.text || "Send").trim().slice(0, 40);
-        return {
-          action: { action: "finish", answer: `I filled it in and stopped before pressing "${name}", as you asked. Check it and press it yourself when you're ready.`, evidence: "The form fields hold the values entered." },
-          note: `Stopped before "${name}" because you asked not to send.`,
-        };
-      }
-    }
-    return null;
-  }
+
 
   // =========================================================================
   // Actions the user confirms first
@@ -988,92 +960,6 @@
     if (labels.length < 2) return host;
     const keep = suffixLength(labels) + 1;
     return labels.length <= keep ? host : labels.slice(-keep).join(".");
-  }
-
-  // Sites people call by a bare name ("github", "amazon"). A request that
-  // names one makes that site part of the request: the run may open it
-  // without asking first (engine.js).
-  const KNOWN_SITES = {
-    google: "https://www.google.com",
-    youtube: "https://www.youtube.com",
-    gmail: "https://mail.google.com",
-    github: "https://github.com",
-    reddit: "https://www.reddit.com",
-    twitter: "https://x.com",
-    x: "https://x.com",
-    linkedin: "https://www.linkedin.com",
-    facebook: "https://www.facebook.com",
-    instagram: "https://www.instagram.com",
-    netflix: "https://www.netflix.com",
-    amazon: "https://www.amazon.com",
-    spotify: "https://open.spotify.com",
-    chatgpt: "https://chatgpt.com",
-    claude: "https://claude.ai",
-    gemini: "https://gemini.google.com",
-    perplexity: "https://www.perplexity.ai",
-    wikipedia: "https://www.wikipedia.org",
-    stackoverflow: "https://stackoverflow.com",
-    maps: "https://maps.google.com",
-    drive: "https://drive.google.com",
-    docs: "https://docs.google.com",
-    sheets: "https://sheets.google.com",
-    calendar: "https://calendar.google.com",
-    notion: "https://www.notion.so",
-    figma: "https://www.figma.com",
-    twitch: "https://www.twitch.tv",
-    ebay: "https://www.ebay.com",
-    shopee: "https://shopee.sg",
-    lazada: "https://www.lazada.sg",
-    carousell: "https://www.carousell.sg",
-    grab: "https://www.grab.com",
-    foodpanda: "https://www.foodpanda.sg",
-    booking: "https://www.booking.com",
-    agoda: "https://www.agoda.com",
-    airbnb: "https://www.airbnb.com",
-    tripadvisor: "https://www.tripadvisor.com",
-    whatsapp: "https://web.whatsapp.com",
-    telegram: "https://web.telegram.org",
-    discord: "https://discord.com",
-    slack: "https://slack.com",
-    zoom: "https://zoom.us",
-    teams: "https://teams.microsoft.com",
-    outlook: "https://outlook.live.com",
-    office: "https://www.office.com",
-    onedrive: "https://onedrive.live.com",
-    dropbox: "https://www.dropbox.com",
-    icloud: "https://www.icloud.com",
-    apple: "https://www.apple.com",
-    hackernews: "https://news.ycombinator.com",
-    yt: "https://www.youtube.com",
-    fb: "https://www.facebook.com",
-    ig: "https://www.instagram.com",
-    insta: "https://www.instagram.com",
-    hn: "https://news.ycombinator.com",
-    medium: "https://medium.com",
-    substack: "https://substack.com",
-    quora: "https://www.quora.com",
-    pinterest: "https://www.pinterest.com",
-    tiktok: "https://www.tiktok.com",
-    coursera: "https://www.coursera.org",
-    udemy: "https://www.udemy.com",
-    kaggle: "https://www.kaggle.com",
-    leetcode: "https://leetcode.com",
-    huggingface: "https://huggingface.co",
-    arxiv: "https://arxiv.org",
-    scholar: "https://scholar.google.com",
-    canva: "https://www.canva.com",
-    vercel: "https://vercel.com",
-    cloudflare: "https://dash.cloudflare.com",
-    aws: "https://console.aws.amazon.com",
-    chess: "https://www.chess.com",
-    duolingo: "https://www.duolingo.com",
-    luma: "https://lu.ma",
-    nus: "https://www.nus.edu.sg",
-  };
-
-  /** The address of a site named by a bare word, or null. */
-  function knownSiteUrl(word) {
-    return KNOWN_SITES[String(word || "").toLowerCase()] || null;
   }
 
   /** The sites a request names: every domain written in it. */
@@ -1201,8 +1087,28 @@
     return "";
   }
 
-  // Search engines whose results address is a person typing into their box.
-  const SEARCH_HOST = /(?:^|\.)(?:google|bing|duckduckgo|ecosia|startpage|kagi|baidu|yandex|qwant|mojeek)\.[a-z.]{2,}$|^search\.(?:brave\.com|yahoo\.com)$/i;
+  // Search engines whose results address is a person typing into their box,
+  // by the whole host they answer on (a "www." in front is the same host).
+  // A reviewed list: tests/unit/hygiene-allowlist.json says why each is here.
+  const SEARCH_HOSTS = Object.freeze(["google.com", "bing.com", "duckduckgo.com", "ecosia.org", "startpage.com", "kagi.com", "baidu.com", "yandex.com", "yandex.ru", "qwant.com", "mojeek.com", "search.brave.com", "search.yahoo.com"]);
+  // An engine that answers on its country domains too (ending in .de, .co.uk, .com.sg and so on).
+  const COUNTRY_SEARCH = Object.freeze(["google"]);
+
+  /**
+   * True for a search engine's own host. The host is compared whole, and a
+   * country domain by its registrable domain (siteOf), so a name that only
+   * starts like an engine's ("google.example.com", "bing.com.example.net")
+   * is not one.
+   */
+  function isSearchHost(hostname) {
+    const host = String(hostname || "").toLowerCase().replace(/\.$/, "").replace(/^www\./, "");
+    if (!host || SEARCH_HOSTS.includes(host)) return !!host;
+    const site = siteOf(`https://${host}/`);
+    if (site !== host) return false;
+    const label = site.split(".")[0];
+    const suffix = site.slice(label.length + 1);
+    return COUNTRY_SEARCH.includes(label) && /^(?:(?:co|com)\.)?[a-z]{2}$/.test(suffix);
+  }
   // The parts of a results address that hold the words searched for.
   const SEARCH_QUERY_PARAMS = new Set(["q", "p", "query", "wd", "text"]);
   // Other parts a results address may carry: a language, a tab of results.
@@ -1227,7 +1133,7 @@
     let u;
     try { u = new URL(String(url || "")); } catch (_e) { return false; }
     if (u.protocol !== "https:" || u.username || u.password || u.port) return false;
-    if (!SEARCH_HOST.test(u.hostname)) return false;
+    if (!isSearchHost(u.hostname)) return false;
     if (u.hash && u.hash !== "#") return false;
     if (!u.pathname.split("/").every((part) => SEARCH_PATH_PARTS.has(part.toLowerCase()))) return false;
     const fromRequest = wordFrom(new Set(wordsOf(task)));
@@ -1273,34 +1179,21 @@
   }
 
   /**
-   * Which of the user's other tabs a request is about, from their titles
-   * and addresses alone: nothing is read from a tab that is not picked.
-   * A tab is picked when the request names something in its title or site,
-   * or points at several things ("these", "both", "compare") and the tab is
-   * like the current one. "My tabs" with no closer match means all of them.
+   * Which of the user's other tabs are read ahead of the run, from their
+   * addresses alone: a tab on a site the request writes out ("the tab on
+   * shop.example"). No other tab is read. The run is shown the list of the
+   * user's tabs, their titles and addresses, and the model asks to move to
+   * the one it needs, which the user allows once per site. Which tab a
+   * request means ("these two", "my other tab") is the model's to read, in
+   * whatever language the request is in.
    */
   function pickContextTabs(task, current, others, max) {
-    const limit = max || 4;
-    const text = String(task || "");
-    const explicit = /\b(tabs?|windows?|open pages?|other (?:page|site|one)s?)\b/i.test(text);
-    const several = /\b(these|those|both|them|all of them|compare|comparison|vs\.?|versus|which (?:one|is))\b/i.test(text);
-    const words = taskKeywords(text);
-    const titleWords = (t) => taskKeywords(`${t.title || ""} ${siteOf(t.url || "").split(".")[0]}`);
-    const here = current ? new Set(titleWords(current)) : new Set();
-    const hereSite = current ? siteOf(current.url || "") : "";
-    const scored = (others || []).map((t) => {
-      const tw = titleWords(t);
-      const hay = `${String(t.title || "").toLowerCase()} ${siteOf(t.url || "")}`;
-      const named = words.filter((w) => hay.includes(w)).length;
-      const alike = (hereSite && siteOf(t.url || "") === hereSite) || tw.filter((w) => here.has(w)).length >= 2;
-      return { tab: t, named, alike };
-    });
-    let picked = scored.filter((x) => x.named > 0 || (several && x.alike));
-    if (!picked.length && explicit) picked = scored;
-    return picked
-      .sort((a, b) => b.named - a.named || Number(b.alike) - Number(a.alike) || (b.tab.lastAccessed || 0) - (a.tab.lastAccessed || 0))
-      .slice(0, limit)
-      .map((x) => x.tab);
+    const named = sitesNamedIn(task);
+    if (!named.size) return [];
+    return (others || [])
+      .filter((t) => named.has(siteOf(t.url || "")))
+      .sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))
+      .slice(0, max || 4);
   }
 
   /**
@@ -2132,23 +2025,22 @@
     RISK_TEXT,
     siteOf,
     sitesNamedIn,
-    knownSiteUrl,
     addressOrigin,
     isPrivateHost,
     isMessageBox,
     wordsKnownHere,
     startPageKind,
     searchOfRequest,
+    isSearchHost,
     carriesDetail,
     pickContextTabs,
     actionRisk,
+    contentRisk,
     formatElementList,
     elementLabel,
     controlName,
     takesTyping,
-    saysNotToSubmit,
     guardHumanCheck,
-    guardNoSubmit,
     formatElementLine,
     colourName,
     parseKeyCombo,

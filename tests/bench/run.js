@@ -92,9 +92,6 @@
  *                      when the judge passed the run, replays it once. Each
  *                      row records whether it was saveable, why not, how the
  *                      replay ended and how many model calls it made.
- *   BENCH_DISGUISE     "off" lets the headless browser say what it is (no
- *                      changed user agent, no hidden automation flag). A
- *                      site that then refuses the visit shows as blocked.
  *   BENCH_DEBUGGER     "on" adds the debugger permission to the loaded copy,
  *                      so the agent presses and types with real input events
  *                      (4.0 ships without it); "off" tells the engine not to
@@ -153,6 +150,7 @@ const { judgeConfig, judgeRun, JudgeBatch, waitForHolds } = require("./judge-cal
 const APPROVAL = require("./approver.js");
 const OM2W = require("./om2w.js");
 const BENCH_PROFILE_LIB = require("./profile.js");
+const { engineTrace, watchViews } = require("../helpers/engine-trace.js");
 const TRIAL = require("./trial.js");
 // A sealed run (the holdout suite): before anything can print, the log is
 // limited to run counts and the numbers table. Any other line, an error's
@@ -212,7 +210,6 @@ if (SEALED && LEARN) { console.error("A sealed run takes no learning."); process
 // Runs in pairs, each pair in a fresh browser; "on" is learning with the ordinary loop.
 const PAIRED = ["1", "near", "pairs"].includes(LEARN);
 const RECIPES = process.env.BENCH_RECIPES === "1";
-const DISGUISE = process.env.BENCH_DISGUISE !== "off";
 // A sealed part of Online-Mind2Web: counts only, and no file of any run.
 const NO_FILES = process.env.BENCH_NO_FILES === "1";
 if (NO_FILES && !SEALED) { console.error("BENCH_NO_FILES needs BENCH_QUIET=sealed."); process.exit(1); }
@@ -400,7 +397,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
       await agentPage.evaluate(APPROVAL.answerHoldInPage, yes).catch(() => false);
       held.push({ kind: card.kind, allowed: yes, by: answer && !answer.skipped ? "approver" : "declined", text: card.text, step: card.step, ...(answer ? { approver: { asks: !!answer.asks, reason: answer.reason || "", model: answer.model || "", usd: answer.usd || 0, ...(answer.noAnswer ? { noAnswer: true } : {}), ...(answer.skipped ? { skipped: true } : {}) } } : {}) });
     } else if (card) held.push(card);
-    const state = await agentPage.evaluate(() => {
+    const state = await agentPage.evaluate((trace) => {
       // At a check-in the user says to keep going: the harness's own timeout is the limit.
       const keep = document.querySelector('.confirmation-bubble[data-wait-kind="check_in"] .checkin-keep-btn');
       if (keep) keep.click();
@@ -408,12 +405,11 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
       // busy) is ended with what it has, as it ended by itself before holds.
       const holdStop = document.querySelector(".confirmation-bubble[data-hold] .hold-stop-btn");
       if (holdStop) holdStop.click();
-      const trace = globalThis.__selectToAiTrace ? globalThis.__selectToAiTrace() : null;
       // A run at a check-in, or paused for its provider, is still under way.
       const held = !!keep || !!(trace && trace.waitingForUser && ["check_in", "pause"].includes(trace.waitKind));
       const running = held || document.getElementById("actionBtn").classList.contains("stop-btn");
       return { running, runId: trace ? trace.id || "" : "", steps: trace ? trace.steps : 0, costUSD: trace ? trace.costUSD || 0 : 0, tokens: trace ? trace.tokens : null };
-    });
+    }, await engineTrace(browser, agentPage));
     // What the run has spent so far, kept outside this function: a run lost to the browser still cost it.
     live.costUSD = Math.max(live.costUSD || 0, state.costUSD || 0);
     if (state.tokens) live.tokens = state.tokens;
@@ -430,7 +426,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
   }
   await shot("final");
 
-  const trace = await agentPage.evaluate(() => (globalThis.__selectToAiTrace ? globalThis.__selectToAiTrace() : null)).catch(() => null);
+  const trace = await engineTrace(browser, agentPage);
   const shown = await agentPage.evaluate(() => { const b = [...document.querySelectorAll(".final-answer-box")].filter((x) => getComputedStyle(x).display !== "none").pop(); return b ? (b.innerText || "").trim() : ""; }).catch(() => "");
   // The final answer, from the trace: never one shown while it was being checked.
   const answer = J.finalAnswer(trace, shown);
@@ -641,31 +637,22 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
       // Watched by a person: the page in a window of its own size, on the left.
       ...(HEADFUL ? { defaultViewport: null } : {}),
       ...(profileCopy ? { userDataDir: profileCopy } : {}),
-      // A headless browser that says so is turned away by many sites (Cloudflare
-      // challenges that never clear, Google's "unusual traffic" page), which
-      // a person's own Chrome never sees. Measured 1 Oct 2026: with these two
-      // changes Allrecipes, Google search and Booking load as they do for people.
+      // The browser says what it is: an automated, headless browser with its
+      // own user agent and automation flag. A site that turns it away is
+      // counted as blocked by the site, never passed as a person. To see what
+      // a visible browser gets, run with BENCH_HEADFUL=1 (under xvfb on a
+      // machine with no screen).
       // BENCH_EXTRA_EXTENSION: another unpacked extension loaded beside the
       // agent's, for measuring what it changes (an ad blocker, say).
-      // BENCH_DISGUISE=off: neither change is made, and the browser says what it is.
       args: [`--disable-extensions-except=${[loaded, process.env.BENCH_EXTRA_EXTENSION].filter(Boolean).join(",")}`, `--load-extension=${[loaded, process.env.BENCH_EXTRA_EXTENSION].filter(Boolean).join(",")}`, "--enable-unsafe-extension-debugging", "--no-first-run", "--disable-features=DialMediaRouteProvider",
-        ...(DISGUISE ? ["--disable-blink-features=AutomationControlled"] : []),
         // A window on a desktop can be covered by another one, and Chrome stops drawing a covered window.
         ...(HEADFUL ? ["--window-position=0,0", "--window-size=1060,900", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"] : [])],
     });
-    const userAgent = (await browser.userAgent()).replace("HeadlessChrome", "Chrome");
-    const dressed = async (target) => {
-      if (target.type() !== "page") return;
-      const page = await target.page().catch(() => null);
-      if (page) await page.setUserAgent(userAgent).catch(() => {});
-    };
-    if (DISGUISE) {
-      browser.on("targetcreated", dressed);
-      for (const target of browser.targets()) await dressed(target);
-    }
     const workerTarget = await browser.waitForTarget((t) => t.type() === "service_worker" && t.url().includes("background.js"), { timeout: 20000 });
     const extensionId = new URL(workerTarget.url()).host;
     const worker = await workerTarget.worker();
+    // What each agent page is sent, followed from its first message (tests/helpers/engine-trace.js).
+    await watchViews(worker);
     await worker.evaluate((st) => new Promise((r) => chrome.storage.sync.set(st, r)), {
       agentActiveProvider: PROVIDER, agentModel: MODEL, agentHelperModel: HELPER_MODEL, showAgent: true, ...(CUSTOM_URL ? { agentCustomUrl: CUSTOM_URL } : {}), agentRiskConfirmation: true, agentDomainAllowlist: "", openingMode: "tab",
       // Each run is judged on its own: nothing learned in one may help the next,
@@ -674,8 +661,6 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
       agentEngine: process.env.BENCH_ENGINE || "v4",
       ...(DEBUGGER === "off" ? { agentDebuggerMode: "off" } : {}),
       // Switches for measuring one design choice against another.
-      ...(process.env.BENCH_OBSERVE ? { agentObserve: process.env.BENCH_OBSERVE } : {}),
-      ...(process.env.BENCH_PRESSABLES ? { agentPressables: process.env.BENCH_PRESSABLES } : {}),
     });
     // ChatGPT has no key: the profile's sign-in is used.
     await worker.evaluate((e) => new Promise((r) => chrome.storage.local.set(e, r)), { onboardingComplete: true, agentDataConsent: Object.fromEntries(consentIds.map((id) => [id, Date.now()])), ...(CHATGPT ? { agentProviderPause: null } : { [PROVIDER === "custom" ? "agentCustomKey" : PROVIDER_ENDPOINTS[PROVIDER].keyName]: KEY }) });
@@ -1059,7 +1044,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
     try { const p = require(path.join(EXT, "defaults.js")).modelProfile(MODEL); tier = `${p.tier}, ${p.pageBudget} characters of page text`; } catch (_e) { tier = "unknown"; }
     fs.writeFileSync(path.join(COUNTS_OUT, `om2w-counts-${SHARD ? `${SHARD[1]}of${SHARD[2]}` : "1of1"}.json`), JSON.stringify({ dry: DRY, sealed: SEALED, agent: `${PROVIDER} / ${MODEL}`, tier, judge: `${JUDGE.model}${batch ? ", batch" : ""}`, approver: APPROVER.enabled ? APPROVER.model : "off", debuggerAvailable, capUSD: MAX_USD, spentUSD: spent, capReached, stoppedEarly: !!stoppedEarly, counts: OM2W.countsOf(rows) }, null, 2));
   }
-  if (!NO_FILES) fs.writeFileSync(path.join(OUT, `results${SHARD ? `-${SHARD[1]}of${SHARD[2]}` : ""}.json`), JSON.stringify({ agent: { provider: PROVIDER, model: MODEL, helperModel: HELPER_MODEL || undefined, url: CUSTOM_URL || undefined, extension: EXT, profile: CHATGPT ? CHATGPT.profile : undefined, debugger: DEBUGGER || "as built", debuggerAvailable, learning: LEARN || "off", recipes: RECIPES, disguise: DISGUISE }, shard: SHARD ? `shard ${SHARD[1]} of ${SHARD[2]}` : "", judge: { model: JUDGE.model, url: JUDGE.url, vision: JUDGE.vision, shots: JUDGE.vision ? JUDGE.shots : 0, stubCalls: DRY ? judgeStub.calls : undefined }, approver: { enabled: APPROVER.enabled, model: APPROVER.model, maxCalls: APPROVER.maxCalls, ...approvals, stubCalls: DRY ? judgeStub.approverCalls : undefined }, dry: DRY, spentUSD: spent, capUSD: MAX_USD, capReached, runsPerTask: RUNS, planned: tasks.map((t) => t.id), summary: s, summaryAllDeclined: allDeclined, stoppedEarly, rows: rows.map((r) => ({ ...r, finalText: undefined, pages: undefined, engineReadings: undefined, screenshots: (r.screenshots || []).length })) }, null, 2));
+  if (!NO_FILES) fs.writeFileSync(path.join(OUT, `results${SHARD ? `-${SHARD[1]}of${SHARD[2]}` : ""}.json`), JSON.stringify({ agent: { provider: PROVIDER, model: MODEL, tier: require(path.join(EXT, "defaults.js")).modelProfile(MODEL).tier, helperModel: HELPER_MODEL || undefined, url: CUSTOM_URL || undefined, extension: EXT, profile: CHATGPT ? CHATGPT.profile : undefined, debugger: DEBUGGER || "as built", debuggerAvailable, learning: LEARN || "off", recipes: RECIPES, disguise: false }, shard: SHARD ? `shard ${SHARD[1]} of ${SHARD[2]}` : "", judge: { model: JUDGE.model, url: JUDGE.url, vision: JUDGE.vision, shots: JUDGE.vision ? JUDGE.shots : 0, stubCalls: DRY ? judgeStub.calls : undefined }, approver: { enabled: APPROVER.enabled, model: APPROVER.model, maxCalls: APPROVER.maxCalls, ...approvals, stubCalls: DRY ? judgeStub.approverCalls : undefined }, dry: DRY, spentUSD: spent, capUSD: MAX_USD, capReached, runsPerTask: RUNS, planned: tasks.map((t) => t.id), summary: s, summaryAllDeclined: allDeclined, stoppedEarly, rows: rows.map((r) => ({ ...r, finalText: undefined, pages: undefined, engineReadings: undefined, screenshots: (r.screenshots || []).length })) }, null, 2));
   // The spend cap doing its job is not a failure of the run.
   if (stoppedEarly && !capReached) process.exitCode = 2;
   if (sealedUnfinished) process.exitCode = 1;

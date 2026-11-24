@@ -402,3 +402,23 @@ test("an overloaded model hands over to a sibling from the same provider, each o
   assert.equal(defaults.siblingModel("gemini", "gemini-pro-latest", []), "", "a model the user picked outside the chain is never swapped");
   assert.equal(defaults.siblingModel("openai", "gpt-5.5", []), "");
 });
+
+test("every model the extension lists has a tier set for it, and no tier is guessed from a name", () => {
+  const listed = new Set();
+  for (const pair of Object.values(defaults.PROVIDER_FALLBACK_MODELS)) for (const id of Object.values(pair)) listed.add(id);
+  for (const ids of Object.values(defaults.MODEL_PRESETS)) for (const id of ids) listed.add(id);
+  for (const b of defaults.FREE_BACKUPS) listed.add(b.model);
+  for (const id of defaults.OPENROUTER_FREE_CHAIN) listed.add(id);
+  for (const ids of Object.values(defaults.MODEL_SIBLINGS)) for (const id of ids) listed.add(id);
+  const tiers = defaults.MODEL_TIERS;
+  assert.deepEqual(Object.keys(tiers).sort(), ["frontier", "small", "standard"]);
+  const placed = Object.values(tiers).flat();
+  assert.equal(placed.length, new Set(placed).size, "no model is in two tiers");
+  for (const id of listed) assert.ok(placed.includes(id), `${id} has no tier set`);
+  for (const [tier, ids] of Object.entries(tiers)) for (const id of ids) assert.equal(defaults.modelProfile(id).tier, tier, id);
+  // The tier comes from the table: the function that picks it has no pattern to test a name with.
+  const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "../../extension/defaults.js"), "utf8");
+  const pick = src.slice(src.indexOf("function limitsFor("), src.indexOf("\n  }\n", src.indexOf("function limitsFor(")));
+  assert.ok(pick.length > 20);
+  assert.doesNotMatch(pick, /\/[^/\n]+\/[gimsuy]*\.test\(|\.match\(|\.includes\(/, "limitsFor tests no pattern against the name");
+});

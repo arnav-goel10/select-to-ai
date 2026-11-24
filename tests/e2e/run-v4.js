@@ -20,6 +20,7 @@
 const path = require("node:path");
 const { createE2EServer } = require("./server.js");
 const TOOLS = require("../../extension/agentTools.js");
+const { engineTrace, watchViews } = require("../helpers/engine-trace.js");
 
 const PORT = parseInt(process.env.E2E_PORT || "8917", 10);
 // The local test server is granted, as after Allow on the site-access card.
@@ -34,10 +35,10 @@ const TIMEOUT_MS = 60000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** What the panel shows, and what the run did. */
-const look = (page) => page.evaluate(() => {
+const look = async (page) => page.evaluate((trace) => {
   const boxes = [...document.querySelectorAll(".final-answer-box")].filter((b) => getComputedStyle(b).display !== "none" && (b.innerText || "").trim());
   return {
-    trace: globalThis.__selectToAiTrace ? globalThis.__selectToAiTrace() : null,
+    trace,
     answer: boxes.length ? boxes[boxes.length - 1].innerText.trim() : "",
     cards: [...document.querySelectorAll(".confirmation-bubble")].map((c) => ({ kind: c.dataset.waitKind || "", risk: c.dataset.riskKind || "", text: (c.innerText || "").replace(/\s+/g, " ") })),
     bubbles: document.querySelectorAll(".agent-run-status").length,
@@ -46,7 +47,7 @@ const look = (page) => page.evaluate(() => {
     inputDisabled: document.getElementById("taskInput").disabled,
     subRows: document.querySelectorAll(".tl-sub").length,
   };
-}).catch(() => null);
+}, await engineTrace(page.browser(), page)).catch(() => null);
 
 const click = (page, selector) => page.evaluate((s) => { const b = document.querySelector(s); if (b) b.click(); return !!b; }, selector);
 
@@ -63,6 +64,8 @@ async function main() {
     const workerTarget = await browser.waitForTarget((t) => t.type() === "service_worker" && t.url().includes("background.js"), { timeout: 20000 });
     const extensionId = new URL(workerTarget.url()).host;
     const worker = await workerTarget.worker();
+    // What each agent page is sent, followed from its first message (tests/helpers/engine-trace.js).
+    await watchViews(worker);
     // A debugger-on run without the debugger would quietly test the wrong build.
     if (DEBUGGER_ON && !(await worker.evaluate(() => !!chrome.debugger))) throw new Error("E2E_DEBUGGER is on but the extension under test has no chrome.debugger");
     await worker.evaluate((s) => new Promise((r) => chrome.storage.sync.set(s, r)), {
@@ -141,7 +144,8 @@ async function main() {
             if (handled) seen.acted.add(key);
           }
           if (!state.cards.length) await user({ card: null, agent, fixture, state, seen, reopen: async () => { await agent.close(); await sleep(400); agent = await browser.newPage(); await agent.goto(agentUrl(""), { waitUntil: "load" }); return agent; } });
-          if (state.trace && state.trace.id) seen.runIds.add(state.trace.id);
+          // The run the last scenario ended on, shown for a moment before this page's reset, is not one of this scenario's runs.
+          if (state.trace && state.trace.id && state.trace.id !== lastFinishedRun) seen.runIds.add(state.trace.id);
           if (state.trace && state.trace.stopState && state.answer && state.trace.id !== lastFinishedRun) break;
         }
         if (Date.now() - t0 > ((opts && opts.timeoutMs) || TIMEOUT_MS)) { state = (await look(agent)) || state; state.timedOut = true; break; }
@@ -1104,10 +1108,6 @@ async function main() {
       // A form filled from the user's details: they are asked once, the
       // values never reach the model, and the one detail not on file is asked for.
       ["profileForm", "/signup", async ({ card, agent, seen }) => {
-        if (!seen.seeded) {
-          seen.seeded = true;
-          await setMemory([{ op: "wipe" }, { op: "field", key: "name", value: "Ada Lovelace" }, { op: "field", key: "email", value: "ada@example.com" }, { op: "field", key: "organization", value: "Analytical Engines Ltd" }]);
-        }
         if (!card) return false;
         if (card.kind === "approval" && card.risk === "share") { seen.share = card.text; await click(agent, ".confirm-risk-btn"); return true; }
         if (card.kind === "approval") { seen.confirms++; await click(agent, ".confirm-risk-btn"); return true; }
@@ -1123,7 +1123,7 @@ async function main() {
         if (!r.chips.some((c) => /your email/.test(c))) return `no "Used" chips: ${JSON.stringify(r.chips)}`;
         if (!r.answer.includes("Ada Lovelace")) return `answer: ${JSON.stringify(r.answer)}`;
         return null;
-      }],
+      }, null, { before: async () => { await setMemory([{ op: "wipe" }, { op: "field", key: "name", value: "Ada Lovelace" }, { op: "field", key: "email", value: "ada@example.com" }, { op: "field", key: "organization", value: "Analytical Engines Ltd" }]); } }],
       ["rememberSaid", "/home", async ({ seen }) => { if (!seen.seeded) { seen.seeded = true; await setMemory([{ op: "wipe" }]); } return false; }, async (r) => {
         const store = await memory();
         const kept = store.entries.find((e) => /prices in SGD/i.test(e.text));
@@ -1497,6 +1497,8 @@ async function main() {
       let detail;
       try {
         const r = opts && opts.custom ? await opts.custom() : await play(name, startPath, user, opts);
+        // A scenario that drives its own run (not through play) ends on a run too, and the next page may show it.
+        if (r && r.trace && r.trace.id) lastFinishedRun = r.trace.id;
         detail = r.timedOut ? `timed out. answer: ${JSON.stringify(r.answer)} cards: ${JSON.stringify(r.seen.cards)}\n${r.log}` : await check(r);
       } catch (e) { detail = `harness error: ${e.message}`; }
       results.push({ title, detail });

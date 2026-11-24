@@ -78,8 +78,8 @@
    * Dialogs (o.dialogs): a browser alert, confirm or prompt stops the page
    * until someone closes it, and the extension cannot see or close one, so
    * a step that set one off waited on the page for the rest of the run
-   * (shop-demoblaze-cart-total, 17 Nov 2026: 1021 s, stopped after two
-   * steps). Each is said first, with its words. While the agent is working
+   * (seen 17 Nov 2026: 1021 s, stopped after two steps). Each is said
+   * first, with its words. While the agent is working
    * on the page the content script answers that it has it (the event is
    * cancelled), and the page is given what closing the dialog gives: OK
    * for an alert, Cancel for a confirm or a prompt. Otherwise the page's

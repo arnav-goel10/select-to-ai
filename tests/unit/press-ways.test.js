@@ -430,7 +430,7 @@ test("a key follows a click only where the engine found the key allowed on that 
 // ------------------------------------------------------ what the model is told
 
 test("the result names the way that worked", () => {
-  assert.equal(CONTEXT.waysNote({ tried: ["pointer", "Enter"], by: "Enter", seen: true }, 5), "No change was seen after pointer events on it. It was then pressed with the Enter key with the focus on it, and the page changed: check that the change is the one you wanted.");
+  assert.equal(CONTEXT.waysNote({ tried: ["pointer", "Enter"], by: "Enter", seen: true }, 5), "No change was seen after pointer events on it. It was then pressed with the Enter key with the focus on it, and the page changed. The key went to the page as well as to the control, so the change may not be the press's.");
 });
 
 test("a control with no change seen after any way is said as that, not as ignoring scripted input, with the user's press as a way on", () => {
@@ -439,8 +439,8 @@ test("a control with no change seen after any way is said as that, not as ignori
   // What was seen is all that is claimed: the three things it can mean are left to the model.
   assert.match(said, /It may have nothing to do here, it may have done something that cannot be seen from here, or it may take only a real press\./);
   assert.ok(!/ignores scripted input/.test(said));
-  assert.match(said, /Do not press it again by script\./);
-  assert.match(said, /the user can press it once for you: ask_user with kind "press" and ref 12\.$/);
+  assert.match(said, /Another press by script is made the same ways\./);
+  assert.match(said, /The user can press it once: ask_user with kind "press" and ref 12 hands it to them\.$/);
 });
 
 test("a field's new value after a press is said, where nothing else on the page changed", () => {

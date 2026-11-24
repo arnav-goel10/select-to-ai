@@ -182,12 +182,15 @@ const firstStep = (run, page) => {
   return RUN.advance(run, { type: "observed", page }, { now: 1000, page, settings, extras: {} });
 };
 
-test("the model is told as a fact that no site is open, and where to go", () => {
+test("the model is told as a fact that no site is open, and which addresses open without asking", () => {
   const run = fromNothing("find the cheapest flight to Rome in May");
   const fx = firstStep(run, blank());
   assert.equal(fx[0].type, "model");
-  assert.match(fx[0].user, /No site is open yet\. The run began on the new-tab page, and works in that same tab\. Go where the request needs/);
+  assert.match(fx[0].user, /No site is open yet\. The run began on the new-tab page, and works in that same tab\. Two kinds of address open without asking the user: a site the request names, and a search engine's results for the request's own words\./);
   assert.doesNotMatch(fx[0].user, /cannot be read or acted on by extensions/);
+  // No engine is named and no address is given as an example.
+  const fact = fx[0].user.slice(fx[0].user.indexOf("No site is open yet"), fx[0].user.indexOf("\n", fx[0].user.indexOf("No site is open yet")));
+  assert.doesNotMatch(fact, /https?:|\?q=|\b[a-z0-9-]+\.(?:com|org|net|io)\b/i);
 });
 
 test("a run moved off a page it cannot use says the user's tab was left as it was", () => {
@@ -265,6 +268,23 @@ test("a run that began on a web page is not changed", () => {
   const run = RUN.newRun({ id: "r1", task: "flight rome", tabId: 4, startUrl: "https://shop.example/", marker: "PAGE-abcd1234", now: 1 });
   assert.equal(run.fromNothing, null);
   assert.equal(POLICY.decide({ do: "navigate", url: "https://www.bing.com/search?q=flight+rome" }, { url: "https://shop.example/", elements: [] }, run, settings, KNOWN.empty()).verdict, "confirm");
+});
+
+test("a host that only looks like a search engine's is not one, and its results address is held", () => {
+  for (const host of ["google.com", "www.google.com", "google.de", "www.google.co.uk", "google.com.sg", "search.brave.com", "duckduckgo.com", "www.bing.com"]) {
+    assert.equal(TOOLS.isSearchHost(host), true, host);
+  }
+  for (const host of ["google.evil.com", "www.google.evil.com", "bing.com.evil.net", "duckduckgo.co.uk.attacker.example", "google.xyz", "google.example",
+    "googlesearch.com", "evilgoogle.com", "brave.com", "search.brave.com.evil.io", "yahoo.com", "maps.google.evil.co.uk", "search.evil.com", ""]) {
+    assert.equal(TOOLS.isSearchHost(host), false, host);
+  }
+  const run = RUN.newRun({ id: "r2", task: "rome flights", tabId: 4, startUrl: "", marker: "PAGE-abcd1234", now: 1, fromNothing: { from: "newtab" } });
+  for (const url of ["https://google.evil.com/search?q=rome+flights", "https://www.bing.com.evil.net/search?q=rome", "https://duckduckgo.attacker.example/?q=rome"]) {
+    assert.equal(TOOLS.searchOfRequest(url, "rome flights"), false, url);
+    assert.equal(POLICY.firstAddress({ do: "navigate", url }, run, KNOWN.empty()), null, `${url} is left to the usual rules`);
+  }
+  assert.equal(POLICY.firstAddress({ do: "navigate", url: "https://duckduckgo.com/?q=rome+flights" }, run, KNOWN.empty()).verdict, "allow");
+  assert.equal(TOOLS.searchOfRequest("https://www.google.co.uk/search?q=rome+flights", "rome flights"), true);
 });
 
 test("searchOfRequest and carriesDetail on their own", () => {

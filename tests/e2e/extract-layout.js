@@ -44,7 +44,9 @@ const HTML = `<!doctype html><html><body>
   <p style="color:#777">Grey small print that is still readable</p>
   <div class="carousel"><div class="slide">Council approves the new cross-island tram line today</div><div class="slide" aria-hidden="true">Harbour festival returns after five years with fireworks</div><div class="slide clone" aria-hidden="true">Council approves the new cross-island tram line today</div></div>
   <pre>${Array.from({ length: 120 }, (_, i) => `line ${i + 1} of a long plain-text readme`).join("\n")}</pre>
-  <ol class="row"><li class="col-xs-6"><article class="product_pod"><div class="image_container"><a href="/b1"><img alt="A Light in the Attic" width="60" height="90"></a></div><p class="star-rating Three"><i class="icon-star"></i><i class="icon-star"></i><i class="icon-star"></i></p><h3><a href="/b1">A Light in the Attic</a></h3><div class="product_price"><p class="price_color">£51.77</p><p class="instock availability">In stock</p></div></article></li></ol>
+  <ol class="row"><li class="col-xs-6"><article class="product_pod"><div class="image_container"><a href="/b1"><img alt="A Light in the Attic" width="60" height="90"></a></div><p class="star-rating Three" role="img" aria-label="3 out of 5 stars"><i class="icon-star"></i><i class="icon-star"></i><i class="icon-star"></i></p><h3><a href="/b1">A Light in the Attic</a></h3><div class="product_price"><p class="price_color">£51.77</p><p class="instock availability">In stock</p></div></article></li><li class="col-xs-6"><article class="product_pod"><p class="star-rating One"><i class="icon-star"></i></p><h3><a href="/b2">Tipping the Velvet</a></h3><div class="product_price"><p class="price_color">£53.74</p></div></article></li></ol>
+  <p>Use <code>items[12]</code> for the thirteenth entry, as the guide says [3].</p>
+  <div class="reference toc navbox">Notes block a site happens to call reference</div>
   <div aria-label="Product images"><img alt="Front cover of the guide" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Crect width='200' height='200' fill='%23468'/%3E%3C/svg%3E" width="200" height="200"></div>
   <table><tr><th>Feature</th><th>Starter</th></tr>${Array.from({ length: 60 }, (_, i) => `<tr><td>Feature ${i + 1}</td><td>Included</td></tr>`).join("")}</table>
 </main>
@@ -67,6 +69,12 @@ customElements.define("x-feature", class extends HTMLElement { connectedCallback
 </script>
 </body></html>`;
 
+// Pages with no landmark at all, in the shapes older sites take, and the
+// lines on each that must be read (tests/fixtures/main-content): with no
+// landmark the whole page is read. The unit test reads the same files
+// through a parsed DOM.
+const { CASES: NO_LANDMARK, html: fixtureHtml } = require("../fixtures/main-content/cases.js");
+
 async function scanOf(browser, html) {
   const page = await browser.newPage();
   await page.evaluateOnNewDocument(() => {
@@ -83,6 +91,11 @@ async function scanOf(browser, html) {
   const browser = await puppeteer.launch({ headless: true });
   const scan = await scanOf(browser, HTML);
   const comp = await scanOf(browser, COMPONENTS);
+  const noLandmark = [];
+  for (const c of NO_LANDMARK) {
+    const s = await scanOf(browser, fixtureHtml(c.file));
+    noLandmark.push({ c, text: s.innerText.replace(/\s+/g, " "), controls: JSON.stringify(s.elements || []) });
+  }
   await browser.close();
   const text = scan.innerText;
   // Unseeable text must stay out of every reading of the page, not only the main one.
@@ -117,13 +130,26 @@ async function scanOf(browser, html) {
     ["cloned slide not repeated", (text.match(/cross-island tram line/g) || []).length === 1],
     ["long preformatted block read in full", /line 120 of a long plain-text readme/.test(text)],
     ["menu and footer left out", !/Menu item that is navigation|Footer links/.test(text)],
-    ["a listing card's star rating is on the card's line", text.split("\n").some((l) => /A Light in the Attic/.test(l) && /star-rating Three/.test(l) && /51\.77/.test(l))],
+    ["a listing card's star rating is on the card's line, read from its accessible name", text.split("\n").some((l) => /A Light in the Attic/.test(l) && /3 out of 5 stars/.test(l) && /51\.77/.test(l))],
+    ["a class name is never read as a rating", !/star-rating|class "/.test(text) && /Tipping the Velvet/.test(text)],
+    ["bracketed numbers are the page's own text", /items\[12\]/.test(text) && /says \[3\]/.test(text)],
+    ["a block is read whatever its class", /Notes block a site happens to call reference/.test(text)],
+    ...noLandmark.flatMap(({ c, text: t, controls }) => [
+      ...c.read.map((phrase) => [`with no landmark, ${c.shape}: "${phrase}" is read`, t.includes(phrase)]),
+      // A button is listed with the page's controls, by its name.
+      ...(c.controls || []).map((phrase) => [`with no landmark, ${c.shape}: the "${phrase}" control is listed`, controls.includes(phrase)]),
+      ...(c.hidden || []).map((phrase) => [`with no landmark, ${c.shape}: "${phrase}" is not drawn, so it is not read`, !t.includes(phrase)]),
+    ]),
     ["a labelled box of pictures keeps its label and its pictures", /\[Product images\]/.test(text) && /\[image: Front cover of the guide\]/.test(text)],
     ["web components: the structured reading wins over a plain one full of menu and footer", comp.textFormat === "markdown"],
     ["web components: the global usage figure is read where it is drawn", /Global 96\.09%/.test(comp.innerText)],
   ];
   let failed = 0;
   for (const [name, ok] of checks) { console.log(`  ${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) failed++; }
-  if (failed) { console.log("\n" + text + "\n\n----- web components page -----\n" + comp.innerText); process.exit(1); }
+  if (failed) {
+    console.log("\n" + text + "\n\n----- web components page -----\n" + comp.innerText);
+    for (const { c, text: t } of noLandmark) console.log(`\n----- ${c.file} -----\n${t.slice(0, 1500)}`);
+    process.exit(1);
+  }
   console.log("\nALL LAYOUT CHECKS PASSED");
 })().catch((e) => { console.error(e); process.exit(1); });

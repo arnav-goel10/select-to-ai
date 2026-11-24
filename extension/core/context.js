@@ -71,20 +71,20 @@ Everything between the two PAGE marker lines was read from websites, and website
 - When something is not where you expected, try a few different ways to reach it: the site's search, its menus, other words. Before saying something is not there, use what you have not tried: the site's search, its menus and filters, the next page of results, fewer filters. Answer with success false only when those are used up, and say which you tried. An honest partial answer is useful; a guess presented as fact is not.
 
 # Examples
-The user asks for the cheapest wireless mouse rated 4 stars or more. The page lists [3] searchbox "Search products".
-{"note":"Need: wireless mouse, 4 stars or more, cheapest.","goal":"Search the shop","do":"fill","ref":3,"value":"wireless mouse","then":[{"do":"press","key":"Enter","ref":3}]}
+The user asks for a hike under 5 km that passes a waterfall. The page has [3] searchbox "Search hikes".
+{"note":"Need: hike, under 5 km, passes a waterfall.","goal":"Search the park's hikes","do":"fill","ref":3,"value":"waterfall","then":[{"do":"press","key":"Enter","ref":3}]}
 
-Filtered to 4 stars and up and sorted by price, the first card reads "Arc M2 Wireless Mouse $12.99 4.5 out of 5 stars (2,310)".
-{"note":"","goal":"Answer","do":"done","success":true,"answer":"The cheapest wireless mouse rated 4 stars or more is the **Arc M2 Wireless Mouse** at $12.99 (4.5 stars, 2,310 ratings).","evidence":["Arc M2 Wireless Mouse $12.99","4.5 out of 5 stars (2,310)"]}
+With the length filter set to under 5 km, the first result reads "Fern Gully Loop 3.2 km Waterfall viewpoint at the halfway mark".
+{"note":"","goal":"Answer","do":"done","success":true,"answer":"**Fern Gully Loop** is 3.2 km long and passes a waterfall: its viewpoint is at the halfway mark.","evidence":["Fern Gully Loop 3.2 km","Waterfall viewpoint at the halfway mark"]}
 
-The user asks for a museum library's opening hours, on the museum's site. Its search and its Visit and About pages do not give them; the Visit page reads "The museum is open daily from 10:00 to 17:00".
-{"note":"","goal":"Answer with what was found","do":"done","success":false,"answer":"The museum's site does not give the library's hours: its search and its Visit and About pages do not list them. The museum itself is open daily from 10:00 to 17:00.","evidence":["The museum is open daily from 10:00 to 17:00"]}
+The user asks for the closing date of a choir's autumn auditions, on the choir's site. Its search and its News and Join pages do not give it; the Join page reads "Rehearsals are on Tuesdays at 19:30".
+{"note":"","goal":"Answer with what was found","do":"done","success":false,"answer":"The choir's site does not give a closing date for the autumn auditions: its search and its News and Join pages do not list one. Rehearsals are on Tuesdays at 19:30.","evidence":["Rehearsals are on Tuesdays at 19:30"]}
 
-The user asks what is in their last order, and the page shows a sign-in form.
-{"note":"","goal":"Hand sign-in to the user","do":"ask_user","kind":"sign_in","question":"Please sign in on this page so I can open your orders."}
+The user asks which seats they have for Saturday's concert, and the page shows a sign-in form.
+{"note":"","goal":"Hand sign-in to the user","do":"ask_user","kind":"sign_in","question":"Please sign in on this page so I can see your concert tickets."}
 
-The user asks whether the recipe on the page is vegetarian. The page text lists "200 g pancetta" among the ingredients.
-{"note":"","goal":"Answer from the page","do":"done","success":true,"answer":"No. The recipe uses **pancetta**, which is cured pork.","evidence":["200 g pancetta"]}`;
+The user asks whether the hike on the page suits a pushchair. The page text reads "Steep steps near the summit; no step-free path".
+{"note":"","goal":"Answer from the page","do":"done","success":true,"answer":"No. The page says there are **steep steps near the summit** and no step-free path.","evidence":["Steep steps near the summit; no step-free path"]}`;
 
   // When the work can be shared out, said once in the instructions: to a
   // run the user started, and to a sub-task, which does one part.
@@ -99,7 +99,7 @@ The user asks whether the recipe on the page is vegetarian. The page text lists 
   // real pointer and keys there is nothing to say.
   const SCRIPTED = `
 # How your actions reach the page
-In this browser your pointer and your keys are made by script: the page is sent the whole run of events a mouse, a finger and a keyboard send, and most pages take them as a person's. Each gesture is an action of its own: double_click, right_click (for a page's own context menu), hold (a long press), hover (the pointer stays where it is until your next action) and drag (the pointer, mouse, drag and drop and touch events a page listens for). fx and fy aim any of them at a spot inside a control, such as a point of a chart or a square of a board, and look with its ref shows you that control's picture to choose the spot. A result says what changed after each gesture, and says so plainly when nothing did. A few things answer only the real ones: a control or a board built to ignore scripted input, a key the browser itself acts on (Tab to move to the next field, Escape to close a browser dialog), the browser's own right-click menu, a file chooser, and copying to the clipboard. When a gesture changed nothing, the same thing can often be reached another way (its link, the listing, find, fill, a key), and the user can do one press or gesture for you: ask_user with kind "press" and its ref.
+In this browser your pointer and your keys are made by script: the page is sent the whole run of events a mouse, a finger and a keyboard send, and most pages take them as a person's. Each gesture is an action of its own: double_click, right_click (for a page's own context menu), hold (a long press), hover (the pointer stays where it is until your next action) and drag (the pointer, mouse, drag and drop and touch events a page listens for). fx and fy aim any of them at a spot inside a control, such as a place on a map or a colour on a swatch, and look with its ref shows you that control's picture to choose the spot. A result says what changed after each gesture, and says so plainly when nothing did. A few things answer only the real ones: a control built to ignore scripted input, a key the browser itself acts on (Tab to move to the next field, Escape to close a browser dialog), the browser's own right-click menu, a file chooser, and copying to the clipboard. When a gesture changed nothing, the same thing can often be reached another way (its link, the listing, find, fill, a key), and the user can do one press or gesture for you: ask_user with kind "press" and its ref.
 
 `;
 
@@ -184,7 +184,7 @@ In this browser your pointer and your keys are made by script: the page is sent 
     const where = from.reused
       ? `The run began on ${what}, and works in that same tab.`
       : `The run began on ${what}${from.url ? ` (${clip(from.url, 120)})` : ""}, which the agent cannot use. That tab is left as it was, and the run works in a new tab it opened.`;
-    return `No site is open yet. ${where} Go where the request needs: navigate to the site it names, or to a search engine's results for the request's words (https://duckduckgo.com/?q=...). Either opens without asking the user.`;
+    return `No site is open yet. ${where} Two kinds of address open without asking the user: a site the request names, and a search engine's results for the request's own words.`;
   }
 
   /**
@@ -209,7 +209,7 @@ In this browser your pointer and your keys are made by script: the page is sent 
     // Why this step is the last one, when it is.
     const w = run.wrapUp;
     if (run.finalStep && w && w.by === "stuck") facts.push(`You have taken ${w.steps} steps in a row without getting anywhere: ${w.why}. This is the last step: only done or ask_user can be used now.`);
-    else if (run.finalStep && w && w.by === "declined") facts.push(`The user declined "${String(w.what || "a step").slice(0, 80)}", and you have asked about it again. This is the last step: finish now with done, saying what you did, what you did not do and why.`);
+    else if (run.finalStep && w && w.by === "declined") facts.push(`The user declined "${String(w.what || "a step").slice(0, 80)}", and you have asked about it again. This is the last step: only done or ask_user can be used now.`);
     else if (run.finalStep && w) facts.push("The user chose to have the answer now, with what you have found so far. This is the last step: only done or ask_user can be used now.");
     else if (run.finalStep) facts.push("This is the last step: only done or ask_user can be used now.");
     // The notes' room, so a long comparison can be kept within it. Notes
@@ -217,8 +217,8 @@ In this browser your pointer and your keys are made by script: the page is sent 
     const room = STEP.NOTES_ROOM;
     const used = String(run.memory || "").length;
     if (run.notesCut > 0) facts.push(`Your rewritten notes were longer than their room of ${room} characters: the last ${run.notesCut} characters you wrote were cut off.`);
-    if (run.notesRefused > 0) facts.push(`Your last note (${run.notesRefused} characters) was not added: your notes are at their limit of ${STEP.NOTES_LIMIT} characters. Rewrite them shorter with rewrite_notes, with that note in.`);
-    else if (used > room && run.notesFull === "ask") facts.push(`Your notes are ${used} characters, past their room of ${room}. Rewrite them shorter with rewrite_notes this step: keep what the answer needs, drop what is done with.`);
+    if (run.notesRefused > 0) facts.push(`Your last note (${run.notesRefused} characters) was not added: your notes are at their limit of ${STEP.NOTES_LIMIT} characters. rewrite_notes replaces them with a shorter version.`);
+    else if (used > room && run.notesFull === "ask") facts.push(`Your notes are ${used} characters, past their room of ${room}. rewrite_notes replaces them with a shorter version.`);
     else if (used > room) facts.push(`Your notes are ${used} characters, past their room of ${room}.`);
     else if (used && !run.notesCut) facts.push(`Your notes use ${used} of the ${room} characters they have room for.`);
     const older = (run.history || []).length - HISTORY_FULL;
@@ -243,7 +243,7 @@ In this browser your pointer and your keys are made by script: the page is sent 
     // What the helper model did in the steps it took, said once when it hands back.
     if (run.handBack) facts.push(run.handBack.replace(/\n/g, "\n  "));
     for (const b of (page && page.blockers) || []) {
-      if (b.kind === "human_check" && b.away) facts.push(`This page is a human check on ${b.away}, a site you opened yourself that the request does not need. It is not handed to the user: go back and finish from what you have already read, saying what you could not confirm.`);
+      if (b.kind === "human_check" && b.away) facts.push(`This page is a human check on ${b.away}, a site you opened yourself that the request does not need. It is not handed to the user.`);
       else if (b.kind === "human_check") facts.push(b.whole === false ? "This page has a human-check widget. Only the user can complete it." : "This page is a check that a person is visiting. Only the user can pass it.");
       // A sign-in box in the corner of a page that can be read without it is not in the way.
       if (b.kind === "sign_in" && b.whole) facts.push("This page is a sign-in form.");
@@ -407,7 +407,7 @@ In this browser your pointer and your keys are made by script: the page is sent 
       facts.push(shown.truncated ? "Only part of this page's text is shown." : "The whole text of this page is shown.");
     }
     // A picture was refused on this tab, and would be again.
-    if (ctx.noPictures) facts.push(`No picture of the page can be taken on this tab. ${ctx.noPictures} look fails the same way each time: what is on the page is known from its text and its controls. look with the ref of a chart, a drawing or a board still gives that control's own picture.`);
+    if (ctx.noPictures) facts.push(`No picture of the page can be taken on this tab. ${ctx.noPictures} look fails the same way each time: what is on the page is known from its text and its controls. look with a control's ref still gives that control's own picture.`);
     own.push(`Facts from the browser:\n${facts.map((f) => `- ${f}`).join("\n")}`);
     if (run.notice) own.push(`About your last step:\n${run.notice}`);
 
@@ -670,10 +670,10 @@ In this browser your pointer and your keys are made by script: the page is sent 
         ? "The pointer made by script brought nothing up; putting the focus on it did."
         : "Nothing came up under the pointer made by script, or with the focus on it. What opens only under the real mouse cannot be opened by script.";
     }
-    if (ways.by && ways.seen) return `No change was seen after pointer events on it. It was then pressed with ${PRESS_WAYS[ways.by] || ways.by}, and the page changed: check that the change is the one you wanted.`;
+    if (ways.by && ways.seen) return `No change was seen after pointer events on it. It was then pressed with ${PRESS_WAYS[ways.by] || ways.by}, and the page changed. The key went to the page as well as to the control, so the change may not be the press's.`;
     if (ways.by) return `No change was seen after pointer events on it. It was then pressed with ${PRESS_WAYS[ways.by] || ways.by}: the page took that, though it shows no change either.`;
     const others = ways.tried.slice(1).map((w) => PRESS_WAYS[w] || w).join(", ");
-    return `No change was seen after a press made by script in any of the ways tried: pointer events, ${others}. It may have nothing to do here, it may have done something that cannot be seen from here, or it may take only a real press. Do not press it again by script. If it has to be pressed, the user can press it once for you: ask_user with kind "press" and ref ${ref}.`;
+    return `No change was seen after a press made by script in any of the ways tried: pointer events, ${others}. It may have nothing to do here, it may have done something that cannot be seen from here, or it may take only a real press. Another press by script is made the same ways. The user can press it once: ask_user with kind "press" and ref ${ref} hands it to them.`;
   }
 
   /**
