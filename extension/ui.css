@@ -428,6 +428,8 @@ details[open] > summary .chev { transform: rotate(180deg); }
   box-shadow: var(--shadow-lg);
   animation: ui-pop var(--dur-3) var(--ease-out) both;
 }
+.modal-sheet:focus { outline: none; }
+.modal.ui-leaving { animation: ui-fade var(--dur-1) var(--ease-in) reverse both !important; }
 .modal.ui-leaving .modal-sheet { animation: ui-leave var(--dur-1) var(--ease-in) both; }
 
 /* ------------------------------------------------------------- toast */

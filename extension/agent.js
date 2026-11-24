@@ -484,6 +484,13 @@
     modal.hidden = false;
     if (appContainer) appContainer.inert = true;
   }
+  /** A dialog takes focus on itself, so Tab starts inside it without a ring on its close button. */
+  function focusSheet(modal) {
+    const sheet = modal.querySelector(".modal-sheet");
+    if (!sheet) return;
+    sheet.tabIndex = -1;
+    sheet.focus({ preventScroll: true });
+  }
   function hideModal(modal) {
     if (appContainer) appContainer.inert = false;
     if (reduceMotion()) { modal.hidden = true; return; }
@@ -496,8 +503,7 @@
     enginePost({ type: "memory_get" });
     renderKnown();
     showModal(memoryModal);
-    const close = document.getElementById("memoryClose");
-    if (close) close.focus();
+    focusSheet(memoryModal);
   }
   function closeMemoryModal() {
     if (!memoryModal) return;
@@ -788,8 +794,7 @@
     recipesOpener = document.activeElement;
     showModal(recipesModal);
     renderRecipes();
-    const close = document.getElementById("recipesClose");
-    if (close) close.focus();
+    focusSheet(recipesModal);
   }
   function closeRecipesModal() {
     if (!recipesModal) return;
