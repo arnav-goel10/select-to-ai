@@ -1608,7 +1608,7 @@ function buildStepPolicies(baseUrl) {
       const purple = named(ctx, /^Remove Purple$/);
       if (purple) return step("Take Purple out of the colours", [{ do: "click", ref: purple.id }]);
       if (/Not asked: the user has just declined/.test(ctx.userText)) {
-        const told = /what you did not do and why/.test(ctx.userText) && /do not try to get the same result another way/.test(ctx.userText);
+        const told = /what you did not do and why/.test(ctx.userText) && /do not bring about the result they declined in some other way/.test(ctx.userText);
         return done(told ? "I took Purple out of your colours. I did not remove the saved address at 12 Harbour Road, because you declined that step." : "policy error: the decline did not say how to go on", [], told);
       }
       const declined = (ctx.userText.match(/The user declined this step/g) || []).length;
@@ -1926,10 +1926,11 @@ function createE2EServer(port = 8907) {
   scenarios.followRead = { task: scenarios.article.task, stepDelayMs: 300 };
   policies.followBar = policies.search;
   policies.followRead = policies.article;
-  // What the second opinion says in these scenarios. Elsewhere a form of one
-  // box sends and a button does nothing of note.
-  scenarios.calcAsks = { task: "What is 17 times 23? Use the calculator on this page.", opinion: () => ({ sends: false, why: "It asks the calculator for a result." }) };
-  scenarios.commentSends = { task: "Leave the comment 'Schöner Artikel' on this article.", opinion: () => ({ sends: true, why: "A comment is posted for others to read." }) };
+  // What the second opinion says in these scenarios, in the check's two
+  // fields. Elsewhere a form that is judged reaches other people and a
+  // button does nothing of note.
+  scenarios.calcAsks = { task: "What is 17 times 23? Use the calculator on this page.", opinion: () => ({ reaches: "this_visit", undo: "yes", why: "It asks the calculator for a result." }) };
+  scenarios.commentSends = { task: "Leave the comment 'Schöner Artikel' on this article.", opinion: () => ({ reaches: "other_people", undo: "no", why: "A comment is posted for others to read." }) };
 
   const state = {
     scenarioName: "search",
@@ -2065,7 +2066,7 @@ function createE2EServer(port = 8907) {
           sse = sseToolCall("addressed_check", { addressed: false });
         } else if (toolName === "form_check") {
           // A second opinion: what it was shown is kept, so a test can prove it never saw the page.
-          const said = scenario && scenario.opinion ? scenario.opinion(toolName, userText) : { sends: true, why: "Scripted: it sends." };
+          const said = scenario && scenario.opinion ? scenario.opinion(toolName, userText) : { reaches: "other_people", undo: "no", why: "Scripted: it sends." };
           (state.opinions = state.opinions || []).push({ tool: toolName, text: systemText });
           sse = sseToolCall(toolName, said);
         } else if (toolName === "press_check") {
