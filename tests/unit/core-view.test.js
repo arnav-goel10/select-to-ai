@@ -92,7 +92,11 @@ test("the bar is on the run's own tab only, while it is in front and the run is 
 test("the bar says what the run is doing in the agent page's words, with its state", () => {
   assert.deepEqual(V.barLine({ status: "running", current: { goal: "Search for flights to Lisbon" }, journal: [] }), { state: "working", text: "Search for flights to Lisbon" });
   assert.deepEqual(V.barLine({ status: "running", current: null, journal: [{ k: "status", text: "Waiting 9 s for the provider…" }] }), { state: "working", text: "Waiting 9 s for the provider…" });
-  assert.deepEqual(V.barLine({ status: "waiting", wait: { kind: "approval" }, journal: [] }), { state: "needs", text: "Waiting for your go-ahead" });
+  assert.deepEqual(V.barLine({ status: "waiting", wait: { kind: "approval" }, journal: [] }), { state: "needs", text: "Waiting for your go-ahead", onPage: false });
+  // A wait the user meets on the page is done from the bar there.
+  assert.equal(V.barLine({ status: "waiting", wait: { kind: "sign_in" }, journal: [] }).onPage, true);
+  assert.equal(V.barLine({ status: "waiting", wait: { kind: "code" }, journal: [] }).onPage, true);
+  assert.equal(V.barLine({ status: "waiting", wait: { kind: "question" }, journal: [] }).onPage, false);
   assert.deepEqual(V.barLine({ status: "waiting", wait: { kind: "pause" }, journal: [] }).state, "working");
   assert.equal(V.barLine({ status: "done", outcome: { state: "success" } }).state, "done");
   assert.equal(V.barLine({ status: "done", outcome: { state: "error" } }).state, "failed");

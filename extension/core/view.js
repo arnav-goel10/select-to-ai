@@ -125,7 +125,9 @@
       const kind = run.wait && run.wait.kind;
       // A held run is not paused for a moment: it waits for the reset, or for the user.
       if (kind === "pause" && run.wait.hold) return run.wait.until ? { state: "working", text: HELD_WORDS.timed } : { state: "needs", text: HELD_WORDS.open };
-      return { state: kind === "pause" ? "working" : "needs", text: WAIT_WORDS[kind] || "Waiting for you" };
+      // A wait met on the page itself is answered from the bar there; any other is answered on the agent's page.
+      if (kind === "pause") return { state: "working", text: WAIT_WORDS[kind] || "Waiting for you" };
+      return { state: "needs", text: WAIT_WORDS[kind] || "Waiting for you", onPage: ON_PAGE_WAITS.has(kind) };
     }
     const goal = run.current && String(run.current.goal || "").trim();
     if (goal) return { state: "working", text: goal };

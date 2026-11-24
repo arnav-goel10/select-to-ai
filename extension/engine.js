@@ -2125,7 +2125,7 @@
     const frontId = front ? front.id : null;
     const show = !!tab && VIEW.showBar({ home: v.home, tabId: tab.id, front: frontId, live, kept: ended && v.kept === tab.id });
     const line = VIEW.barLine(run);
-    const state = { action: "agentBar", show, state: line.state, text: line.text, ended, touched: v.touched, tokens: await tokens(), logo: chrome.runtime.getURL("icon128.png") };
+    const state = { action: "agentBar", show, state: line.state, text: line.text, onPage: !!line.onPage, ended, touched: v.touched, tokens: await tokens(), logo: chrome.runtime.getURL("icon128.png") };
     // The watch goes on the tab in front when it is one of the run's.
     const watchHere = frontId !== null && frontId !== v.home && v.tabs.includes(frontId) && (live || v.kept === frontId);
     for (const id of [...v.watched]) {
@@ -2184,6 +2184,8 @@
       if (message.action === "agentBarTouched") { v.touched = true; await save(session); }
       else if (message.action === "agentBarStop") { if (session.run && (session.run.status === "running" || session.run.status === "waiting")) stop(session); }
       else if (message.action === "agentBarHome") await goHome(session, sender.tab.windowId);
+      // "I'm done" on the page where the user signed in, typed the code or paid.
+      else if (message.action === "agentBarDone") { const w = session.run && session.run.status === "waiting" ? session.run.wait : null; if (w && VIEW.ON_PAGE_WAITS.has(w.kind)) enqueue(session, { type: "user_done", id: w.id }); }
       else if (message.action === "agentBarClose") { send(tabId, { action: "agentBar", off: true }); v.watched = v.watched.filter((x) => x !== tabId); if (v.kept === tabId) v.kept = null; await save(session); }
       sendResponse({ ok: true });
     });
