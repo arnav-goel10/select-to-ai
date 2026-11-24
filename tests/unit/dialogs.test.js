@@ -136,7 +136,7 @@ test("a message to a page that never answers ends at its bound, marked late", as
   assert.deepEqual(await INJECT.ask(gone, 3, {}, {}, 1000), { reply: null });
 });
 
-const session = () => ({ windowId: 1, run: { id: "r1", task: "t", tabId: 9 }, settings: {}, items: { agentPressables: "off" }, touched: new Set(), frames: [], runners: new Map() });
+const session = () => ({ windowId: 1, run: { id: "r1", task: "t", tabId: 9 }, settings: {}, touched: new Set(), frames: [], runners: new Map() });
 const tab = { id: 9, url: "https://shop.example/prod.html?idp_=8", title: "STORE", windowId: 1, active: true };
 
 test("an action whose alert the page's world answered is said with the alert's words", async () => {

@@ -205,34 +205,35 @@ test("element lines carry the state a person would see", () => {
   assert.equal(T.formatElementLine({ id: 6, tagName: "button", text: "Continue", disabled: true }), '[6] button "Continue" disabled');
 });
 
-test("task keywords work in any script", () => {
-  assert.deepEqual(T.taskKeywords("the café's opening hours"), ["café", "opening", "hours"]);
+test("task keywords work in any script, with no list of words to skip in any language", () => {
+  assert.deepEqual(T.taskKeywords("the café's opening hours"), ["the", "café", "opening", "hours"]);
   assert.ok(T.taskKeywords("Wie viel kostet die Lieferung nach Österreich?").includes("österreich"));
   assert.ok(T.taskKeywords("这个页面的退款政策是什么").includes("退款"));
   assert.ok(T.taskKeywords("返品ポリシーを教えて").includes("返品"));
   assert.ok(T.taskKeywords("стоимость доставки").includes("доставки"));
-  assert.deepEqual(T.taskKeywords("what is the price of the $249 plan"), ["price", "$249", "plan"]);
+  assert.deepEqual(T.taskKeywords("what is the price of the $249 plan"), ["what", "the", "price", "$249", "plan"]);
+  // Which words matter is measured on the page: one in most of its blocks tells nothing.
+  const blocks = Array.from({ length: 5 }, (_, i) => `${["The shop is open every day", "The staff are friendly", "The refund policy gives 30 days with a receipt", "The car park is free", "The café sells cake"][i]}. ${"Filler words go here. ".repeat(10)}`);
+  for (const [task, want] of [["what is the refund policy", /refund policy/], ["wie lange gilt die refund policy", /refund policy/], ["the the the", null]]) {
+    const got = T.relevantPassages(blocks.join("\n"), task, { max: 1 });
+    if (want) assert.match(got[0] || "", want, task);
+    else assert.deepEqual(got, [], "words in every block point at none of them");
+  }
 });
 
-test("a request to leave the sending to the user is recognised however it is put", () => {
-  for (const t of [
-    "fill in the form but don't submit it",
-    "fill in the form but don’t submit it",
-    "fill the form without sending",
-    "just fill it in",
-    "fill it in, I'll submit it myself",
-    "draft the reply and let me review it first",
-    "add my details and leave the rest to me",
-    "fill it out and stop before paying",
-    "do not place the order yet",
-  ]) assert.ok(T.saysNotToSubmit(t), t);
-  for (const t of [
-    "fill in the form and submit it",
-    "send the email to Dana",
-    "post this comment",
-    "book a table for two",
-    "what is the refund policy",
-  ]) assert.ok(!T.saysNotToSubmit(t), t);
+test("no word list reads the request for \"do not send\": the model reads it, and the gate holds a send however the request is put", () => {
+  assert.equal(T.saysNotToSubmit, undefined);
+  assert.equal(T.guardNoSubmit, undefined);
+  assert.equal(POLICY.keptFromSending, undefined);
+  const page = {
+    url: "https://forms.example/apply", title: "Apply", innerText: "Apply",
+    elements: [{ id: 1, tagName: "input", accName: "Name", formId: 0 }, { id: 2, tagName: "button", accName: "Submit application", submits: true, formId: 0 }],
+    forms: [{ id: 0, search: false, fields: 1 }],
+  };
+  const verdicts = ["fill in the application but don't submit it", "rellena la solicitud pero no la envíes", "fill in the application and submit it", "apply for me"]
+    .map((task) => POLICY.decide({ do: "click", ref: 2 }, page, { task, trust: { sites: ["forms.example"], urls: [] }, openedTabs: [], opinions: {} }, { riskConfirmation: true }));
+  for (const v of verdicts) assert.deepEqual(v, verdicts[0], "the request's words play no part in the gate");
+  assert.ok(verdicts[0].verdict === "confirm" || verdicts[0].check, `the send button is held or checked first: ${JSON.stringify(verdicts[0])}`);
 });
 
 test("only a page that is a challenge counts as a human check", () => {
@@ -254,6 +255,11 @@ test("a challenge page is recognised by its look, not by a page that mentions on
   assert.ok(T.isChallengePage(short("https://www.google.com/search?q=x", "Our systems have detected unusual traffic from your computer network.", "https://www.google.com/sorry/index?continue=x")));
   assert.ok(!T.isChallengePage(short("Lasagna recipes", "Just a moment while we load more recipes. ".repeat(60))), "a long ordinary page");
   assert.ok(!T.isChallengePage({ title: "Sign in", innerText: "Email. Password. Protected by reCAPTCHA.", elements: Array.from({ length: 20 }, (_, i) => ({ id: i })) }));
+  // A nearly empty page that holds a verification widget is one, in any language and at any address.
+  assert.ok(T.isChallengePage({ title: "Überprüfung", innerText: "Bitte bestätigen Sie, dass Sie ein Mensch sind.", url: "https://shop.example/a/b", widget: true, elements: [{ id: 1 }] }));
+  assert.ok(!T.isChallengePage({ title: "Recipes", innerText: "A long ordinary page. ".repeat(100), widget: true, elements: [{ id: 1 }] }), "a widget on a full page is a widget, not a challenge page");
+  // Where the page lives plays no part: the address of one service's check page is not a signal.
+  assert.ok(!T.isChallengePage({ title: "Results", innerText: "Two results found.", url: "https://search.example/sorry/index?continue=x", elements: [{ id: 1 }] }));
 });
 
 test("a link is judged as a link, told where it goes; a script link as a button; a link to a spot on the page passes", () => {
@@ -331,11 +337,14 @@ test("a formless message box is asked about first; a multi-line note box the che
   assert.equal(POLICY.decide({ do: "fill", ref: 4, value: "standup at 10" }, message, run, {}).verdict, "allow");
 });
 
-test("'write it but don't send' refuses Enter in a formless message box, and leaves a formless search alone", () => {
+test("Enter in a formless message box is checked as a send whatever the request says, and a formless search is left alone", () => {
   const run = { task: "draft a reply to Sam but don't send it", trust: { sites: ["chat.example"], urls: [] }, openedTabs: [] };
   const v = POLICY.decide({ do: "press", ref: 4, key: "Enter" }, chat({ id: 4, tagName: "div", isContentEditable: true, accName: "Message Sam" }), run, {});
-  assert.equal(v.verdict, "refuse");
-  assert.match(v.message, /Enter was not pressed/);
+  assert.ok(v.check || v.verdict === "confirm", `Enter in the box is not let through unasked: ${JSON.stringify(v)}`);
+  const same = POLICY.decide({ do: "press", ref: 4, key: "Enter" }, chat({ id: 4, tagName: "div", isContentEditable: true, accName: "Message Sam" }), { ...run, task: "reply to Sam" }, {});
+  // The check is shown the request among the rest; what the gate does with the press is the same.
+  const bare = (x) => ({ ...x, ...(x.check ? { check: { ...x.check, task: undefined } } : {}) });
+  assert.deepEqual(bare(v), bare(same), "the request's words play no part in the gate");
   const search = POLICY.decide({ do: "press", ref: 4, key: "Enter" }, chat({ id: 4, tagName: "input", inputType: "text", accName: "Search messages" }), run, {});
   assert.equal(search.verdict, "allow");
 });

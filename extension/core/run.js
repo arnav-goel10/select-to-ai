@@ -1164,6 +1164,9 @@
     run.steps = (run.steps || 0) + 1;
     if (run.by === "helper") run.helperSteps = (run.helperSteps || 0) + 1;
     const step = check.step;
+    // The step read the user's words as leaving committing steps to them:
+    // that holds until the user says something new (policy.js leftToUser).
+    if (step.leaveToUser) run.leaveToUser = { said: (run.said || []).length };
     const noted = keepNotes(run, step);
     run.current = { step: run.step, goal: step.goal, actions: [], url: page.url || "" };
     // The note this step added, for the trace.
@@ -1492,6 +1495,8 @@
       child.trust = { ...child.trust, urls: [...run.trust.urls], ...(run.trust.searches ? { searches: [...run.trust.searches] } : {}), ...(run.trust.shared ? { shared: [...run.trust.shared] } : {}) };
       // So is what the user has just declined: a sub-task does not do it another way.
       child.declined = (run.declined || []).map((d) => ({ ...d }));
+      // And so is a request that leaves committing steps to the user.
+      if (POLICY.leavesToUser(run)) child.leaveToUser = { said: (child.said || []).length };
       run.children.push({ id, task: t.task, url: t.url || "", state: "queued", tabId: null, held: [], result: null, run: child });
       ids.push(id);
     }

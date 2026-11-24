@@ -1555,7 +1555,7 @@ test("opening a link's own address is decided as pressing it, from this page or 
   assert.match([again.why, ...again.detail].join(" "), /You declined "Unsubscribe"/);
 });
 
-test("a request to fill in but not send holds the submit, whatever the settings", () => {
+test("a form's submit is held for the user however the request is worded, and with confirmations off the request is the model's to follow", () => {
   const page = shop({
     elements: [
       { id: 1, tagName: "input", accName: "Name", formId: 0 },
@@ -1565,21 +1565,24 @@ test("a request to fill in but not send holds the submit, whatever the settings"
     ],
     forms: [{ id: 0, search: false, fields: 2 }, { id: 1, search: true, fields: 1 }],
   });
-  for (const settings of [{ riskConfirmation: true }, { riskConfirmation: false }]) {
-    const run = RUN.newRun({ id: "r4", task: "fill in the contact form with my name but don't submit it", tabId: 7, startUrl: page.url, marker: "PAGE-abcd1234", now: 1 });
+  const step = (task, settings, action) => {
+    const run = RUN.newRun({ id: "r4", task, tabId: 7, startUrl: page.url, marker: "PAGE-abcd1234", now: 1 });
     advance(run, { type: "start" }, env(page, { settings }));
     advance(run, { type: "observed", page }, env(page, { settings }));
-    let fx = advance(run, { type: "model_replied", reply: { memory: "", goal: "g", actions: [{ do: "click", ref: 3 }] }, usage: {} }, env(page, { settings }));
-    assert.deepEqual(fx, [{ type: "observe" }], "the click is not run");
-    assert.match(run.history[0].actions[0].result, /filled in but not sent/);
-    advance(run, { type: "observed", page }, env(page, { settings }));
-    fx = advance(run, { type: "model_replied", reply: { memory: "", goal: "g", actions: [{ do: "press", key: "Enter", ref: 1 }] }, usage: {} }, env(page, { settings }));
-    assert.deepEqual(fx, [{ type: "observe" }], "Enter in the form is not pressed either");
-    // A search reads: Enter in a search box still runs.
-    advance(run, { type: "observed", page }, env(page, { settings }));
-    fx = advance(run, { type: "model_replied", reply: { memory: "", goal: "g", actions: [{ do: "press", key: "Enter", ref: 4 }] }, usage: {} }, env(page, { settings }));
-    assert.equal(fx[0].type, "act");
+    return advance(run, { type: "model_replied", reply: { memory: "", goal: "g", actions: [action] }, usage: {} }, env(page, { settings }));
+  };
+  for (const task of ["fill in the contact form with my name but don't submit it", "fill in the contact form with my name and send it"]) {
+    const on = { riskConfirmation: true };
+    for (const action of [{ do: "click", ref: 3 }, { do: "press", key: "Enter", ref: 1 }]) {
+      const fx = step(task, on, action);
+      const wait = fx.find((f) => f.type === "attention");
+      assert.ok(wait && wait.wait.kind === "approval", `${task}: ${action.do} is held for approval: ${JSON.stringify(fx).slice(0, 200)}`);
+    }
+    // A search reads: Enter in a search box runs.
+    assert.equal(step(task, on, { do: "press", key: "Enter", ref: 4 })[0].type, "act");
   }
+  // With confirmations off nothing is held: what the request says is the model's to follow.
+  assert.equal(step("fill in the contact form with my name but don't submit it", { riskConfirmation: false }, { do: "click", ref: 3 })[0].type, "act");
 });
 
 test("a click may be made with Enter or Space too only where those keys are allowed there as the click was", () => {
@@ -1603,8 +1606,8 @@ test("a click may be made with Enter or Space too only where those keys are allo
   const settings = { riskConfirmation: true };
   // A key on a button is the click again, and a key on a plain control outside any form sends nothing.
   for (const ref of [2, 4, 5]) assert.deepEqual(click(start("show me more of the page", settings), ref, settings), [{ type: "act", action: { do: "click", ref }, keys: true }], `ref ${ref}`);
-  // The user said not to send: a click on a plain control in the form is allowed, but Enter there is Enter in the form, so no key follows it.
-  const held = start("fill in the contact form with my name but don't submit it", settings);
+  // A click on a plain control in a form is allowed, but Enter there is Enter in the form, which sends it: no key follows the click.
+  const held = start("fill in the contact form with my name", settings);
   assert.deepEqual(click(held, 3, settings), [{ type: "act", action: { do: "click", ref: 3 } }]);
   assert.equal(POLICY.keysToo({ do: "click", ref: 3 }, page, held, settings, null), false);
   assert.equal(POLICY.keysToo({ do: "click", ref: 5 }, page, held, settings, null), true);
@@ -1916,15 +1919,15 @@ test("notes past their room are kept, and the model is asked once to rewrite the
   fx = noted(run, page, { note: `6 ${line}` });
   const all = run.memory;
   assert.ok(all.length > STEP.NOTES_ROOM && all.endsWith(`6 ${line}`), "nothing is cut");
-  assert.match(fx[0].user, new RegExp(`Your notes are ${all.length} characters, past their room of ${STEP.NOTES_ROOM}\\. Rewrite them shorter with rewrite_notes this step`));
+  assert.match(fx[0].user, new RegExp(`Your notes are ${all.length} characters, past their room of ${STEP.NOTES_ROOM}\\. rewrite_notes replaces them with a shorter version\\.`));
   fx = noted(run, page, { note: "" });
   assert.match(fx[0].user, new RegExp(`Your notes are ${all.length} characters, past their room of ${STEP.NOTES_ROOM}\\.`));
-  assert.doesNotMatch(fx[0].user, /Rewrite them shorter/, "asked once");
+  assert.doesNotMatch(fx[0].user, /past their room[^\n]*rewrite_notes/, "said once");
   noted(run, page, { note: `8 ${line}` });
   assert.ok(run.memory.length <= STEP.NOTES_LIMIT);
   fx = noted(run, page, { note: `9 ${line}` });
   assert.ok(!run.memory.includes(`9 ${line}`), "a note past the limit is not added");
-  assert.match(fx[0].user, new RegExp(`Your last note \\(982 characters\\) was not added: your notes are at their limit of ${STEP.NOTES_LIMIT} characters\\. Rewrite them shorter with rewrite_notes, with that note in\\.`));
+  assert.match(fx[0].user, new RegExp(`Your last note \\(982 characters\\) was not added: your notes are at their limit of ${STEP.NOTES_LIMIT} characters\\. rewrite_notes replaces them with a shorter version\\.`));
   // Rewritten within the room, the ask comes again the next time they pass it.
   noted(run, page, { rewrite_notes: "short" });
   assert.equal(run.notesFull, "");

@@ -10,7 +10,7 @@
 (function (root) {
   "use strict";
 
-  /** "https://www.duckduckgo.com/?q=..." as "duckduckgo.com". */
+  /** "https://www.example.com/?q=..." as "example.com". */
   function hostOf(url) {
     try {
       const u = new URL(url);

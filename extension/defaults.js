@@ -233,33 +233,72 @@
   // action of a small model's runs, each one a whole model call spent on
   // seeing a little more. A frontier model reads more and does more per
   // step. Every model's finished answer is checked (core/run.js), whatever
-  // its size. Matched on the model's name, first
-  // match wins; anything unknown is treated as mid-sized.
-  // A name is read for what it says about size, in this order: a family
-  // known to be a maker's largest; a parameter count in the name ("-20b",
-  // "550b"); a word that marks a maker's small model, as a whole word
-  // ("mini" is not the end of "gemini"). A name that says nothing is
-  // treated as mid-sized. Earlier, every Gemini, Llama, Qwen and Nemotron
-  // model was taken for small, whatever its size.
-  const FRONTIER_FAMILY = /claude-(fable|opus|sonnet)|gpt-(5|6)(?![\w.-]*(mini|nano))|gemini-[\w.-]*pro|grok-4/i;
-  const SMALL_WORD = /(?:^|[^a-z])(mini|nano|lite|small|haiku|ministral|tiny)(?![a-z])|openrouter\/free|(?:^|[^a-z0-9])e\d+b(?![a-z0-9])/i;
-  const FRONTIER_LIMITS = Object.freeze({ tier: "frontier", lines: 320, pageBudget: 24000, maxActions: 8 });
-  const SMALL_LIMITS = Object.freeze({ tier: "small", lines: 140, pageBudget: 8000, maxActions: 5 });
-  /** The largest parameter count a model's name states, in billions, or 0. */
-  function billionsIn(id) {
-    let most = 0;
-    for (const m of String(id).matchAll(/(?:^|[^a-z0-9.])(\d+(?:\.\d+)?)b(?![a-z0-9])/gi)) most = Math.max(most, parseFloat(m[1]));
-    return most;
+  // its size.
+  const TIER_LIMITS = Object.freeze({
+    small: Object.freeze({ tier: "small", lines: 140, pageBudget: 8000, maxActions: 5 }),
+    standard: Object.freeze({ tier: "standard", lines: 220, pageBudget: 12000, maxActions: 6 }),
+    frontier: Object.freeze({ tier: "frontier", lines: 320, pageBudget: 24000, maxActions: 8 }),
+  });
+  // The tier of each model the extension lists (its presets, fallbacks,
+  // free backups and siblings), set by hand per model and reviewed here,
+  // not guessed from words in its name. Every listed model is in one of
+  // the three lists (tests/unit/defaults.test.js), each at the tier it had
+  // before the table (tests/unit/model-tiers.test.js). A model the
+  // extension does not list, typed by the user, is placed by tierOf below.
+  const MODEL_TIERS = Object.freeze({
+    small: Object.freeze([
+      "anthropic/claude-haiku-4.5", "claude-haiku-4-5", "claude-haiku-5-5", "gemini-3.1-flash-lite",
+      "gemini-3.5-flash-lite", "gemini-flash-lite-latest", "google/gemma-4-31b-it:free", "gpt-5.4-mini", "gpt-5.4-nano",
+      "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo", "ministral-14b-latest", "mistral-small-latest",
+      "openai/gpt-5.4-mini", "openai/gpt-oss-20b", "openrouter/free", "qwen-3.8-27b", "qwen/qwen3.6-27b",
+      "qwen/qwen3.8-27b:free"
+    ]),
+    standard: Object.freeze([
+      "codestral-latest", "deepseek-ai/DeepSeek-V3", "deepseek-chat", "deepseek-reasoner", "deepseek-v4.1-flash",
+      "deepseek/deepseek-v4.1-flash", "gemini-2.5-flash", "gemini-3.5-flash", "gemini-3.8-flash", "gemini-flash-latest",
+      "google/gemini-3.8-flash", "gpt-oss-120b", "llama3", "meta-llama/Llama-3.3-70B-Instruct-Turbo", "mistral",
+      "mistral-large-latest", "mistral-medium-latest", "nvidia/nemotron-3-super-120b-a12b:free",
+      "nvidia/nemotron-3.5-lightning:free", "openai/gpt-oss-120b", "phi3", "qwen2.5-coder"
+    ]),
+    frontier: Object.freeze([
+      "anthropic/claude-sonnet-4.6", "anthropic/claude-sonnet-5", "claude-opus-5-5", "claude-sonnet-4-6",
+      "claude-sonnet-5", "claude-sonnet-5-5", "gemini-2.5-pro", "gemini-3.1-pro", "gemini-pro-latest", "gpt-5.4",
+      "gpt-5.5", "gpt-6-luna", "gpt-6.1-sol", "grok-4-1-fast-non-reasoning", "grok-4-1-fast-reasoning", "grok-4-6",
+      "openai/gpt-6-luna"
+    ]),
+  });
+  const TIER_OF = new Map(Object.entries(MODEL_TIERS).flatMap(([tier, ids]) => ids.map((id) => [id, tier])));
+
+  // LEGACY FALLBACK, kept as it was before the table so that no model's
+  // tier moves: how a model the table does not list was placed by its name. A family known to be a
+  // maker's largest; else a parameter count in the name ("-20b", "550b");
+  // else a word that marks a maker's small model, as a whole word ("mini"
+  // is not the end of "gemini"); else mid-sized. It reads words in the
+  // name, which is why it is only the last resort.
+  const LEGACY_FRONTIER_FAMILY = /claude-(fable|opus|sonnet)|gpt-(5|6)(?![\w.-]*(mini|nano))|gemini-[\w.-]*pro|grok-4/i;
+  const LEGACY_SMALL_WORD = /(?:^|[^a-z])(mini|nano|lite|small|haiku|ministral|tiny)(?![a-z])|openrouter\/free|(?:^|[^a-z0-9])e\d+b(?![a-z0-9])/i;
+  function legacyNameTier(id) {
+    const name = String(id || "");
+    if (LEGACY_FRONTIER_FAMILY.test(name)) return "frontier";
+    let size = 0;
+    for (const m of name.matchAll(/(?:^|[^a-z0-9.])(\d+(?:\.\d+)?)b(?![a-z0-9])/gi)) size = Math.max(size, parseFloat(m[1]));
+    if (size >= 200) return "frontier";
+    if (size > 0) return size < 40 ? "small" : "standard";
+    return LEGACY_SMALL_WORD.test(name) ? "small" : "standard";
   }
+
+  /**
+   * A model's tier: the tier the table sets for a model the extension
+   * lists, else the legacy fallback above, which is the tier the name gave
+   * before the table, unchanged.
+   */
+  function tierOf(id) {
+    return TIER_OF.get(String(id || "")) || legacyNameTier(id);
+  }
+  /** The listing size, page budget and actions per step for a model, by its tier. */
   function limitsFor(id) {
-    if (FRONTIER_FAMILY.test(id)) return FRONTIER_LIMITS;
-    const size = billionsIn(id);
-    // Large by its size alone: given a large model's room.
-    if (size >= 200) return FRONTIER_LIMITS;
-    if (size > 0) return size < 40 ? SMALL_LIMITS : STANDARD_PROFILE;
-    return SMALL_WORD.test(id) ? SMALL_LIMITS : STANDARD_PROFILE;
+    return TIER_LIMITS[tierOf(id)];
   }
-  const STANDARD_PROFILE = Object.freeze({ tier: "standard", lines: 220, pageBudget: 12000, maxActions: 6 });
 
   // Claude models that think adaptively (thinking: {type: "adaptive"}) and
   // refuse a thinking budget; the same models refuse a forced tool while
@@ -481,6 +520,8 @@
     MODEL_SIBLINGS,
     siblingModel,
     modelProfile,
+    MODEL_TIERS,
+    legacyNameTier,
     MODEL_PRICES,
     VISION_MODEL_PATTERNS,
     findModelRates,

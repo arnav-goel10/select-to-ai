@@ -46,8 +46,8 @@
     const secs = sectionsOf(body);
     const sectionAt = (i) => { let t = ""; for (const x of secs) { if (x.start <= i && x.level > 0) t = x.title; } return t; };
     const q = String(query || "").trim().toLowerCase();
-    const STOP = new Set(["what", "which", "does", "this", "that", "with", "from", "about", "when", "where", "there", "their", "have", "page", "the", "and", "for", "are", "was", "were", "how", "who", "why", "can", "you", "tell", "give", "show", "into", "than", "then", "they", "them", "its", "it's", "any", "all", "one", "some", "many", "much", "more", "most", "not"]);
-    const terms = [...new Set((q.match(/[\p{L}\p{N}_$.()[\]-]{3,}/gu) || []).map((w) => w.replace(/^[.(\[-]+|[.,;:!?\]-]+$/g, "")).filter((w) => w.length >= 3 && !STOP.has(w)))];
+    // Every word the model asked for, in any language: how much each counts is measured on the page (idf).
+    const terms = [...new Set((q.match(/[\p{L}\p{N}_$.()[\]-]{3,}/gu) || []).map((w) => w.replace(/^[.(\[-]+|[.,;:!?\]-]+$/g, "")).filter((w) => w.length >= 3))];
     if (!terms.length) return [];
     // Where each term occurs, and how rare it is on this page (rare words
     // point at the answer; words used everywhere point at nothing).
@@ -60,11 +60,12 @@
       if (at.length) occ[t] = { at, idf: Math.log(1 + total / at.length) };
     }
     const found = Object.keys(occ);
+    const telling = terms.filter((t) => !(occ[t] && occ[t].at.length > 5 && occ[t].at.length > total / 100));
     if (!found.length) return TOOLS.relevantPassages(body, query, { max: 3, maxChars: 700 }).map((p) => `[related] ${p}`);
     const phraseAt = q.length >= 6 ? lower.indexOf(q) : -1;
     const half = Math.floor(o.window / 2);
     // Adjacent query words found together ("jury selection") are strong evidence.
-    const seq = (q.match(/[\p{L}\p{N}_]{3,}/gu) || []).filter((w) => !STOP.has(w));
+    const seq = q.match(/[\p{L}\p{N}_]{3,}/gu) || [];
     const pairAt = [];
     for (let k = 0; k + 1 < seq.length; k++) {
       const pair = `${seq[k]} ${seq[k + 1]}`;
@@ -97,12 +98,14 @@
       // A hit on a heading is a hit on its section: the text under it is
       // what was looked for, so it comes with the heading, up to the next
       // heading of the same or a higher level (and a bound on its length).
-      // Only a heading that has every word looked for: one that shares a
-      // word with the query ("Garden Supplies" for "Garden Hose") is not it.
+      // Only a heading that has every telling word looked for: one that
+      // shares a word with the query ("Garden Supplies" for "Garden Hose")
+      // is not it. A word used all over the page (more than once in a
+      // hundred words, in whatever language) is not a telling one.
       const lineStart = body.lastIndexOf("\n", Math.max(0, p.c - 1)) + 1;
       const lineEnd = body.indexOf("\n", lineStart);
       const headingLine = lower.slice(lineStart, lineEnd < 0 ? body.length : lineEnd);
-      const heading = /^#{1,6}\s/.test(headingLine) && terms.every((t) => headingLine.includes(t)) ? secs.find((s) => s.start === lineStart && s.level > 0) : null;
+      const heading = /^#{1,6}\s/.test(headingLine) && telling.length && telling.every((t) => headingLine.includes(t)) ? secs.find((s) => s.start === lineStart && s.level > 0) : null;
       let start = Math.max(0, p.c - half, body.lastIndexOf("\n", Math.max(0, p.c - half)) + 1);
       let end = Math.min(body.length, start + o.window);
       if (heading) {

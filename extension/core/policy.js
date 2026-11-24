@@ -384,6 +384,32 @@
     return { verdict: "confirm", kind: hit.risk || "send", why: said, detail: [], declined: true };
   }
 
+  /** True while a step's reading that the user's words leave committing steps to them still holds: until they say something new. */
+  function leavesToUser(run) {
+    return !!(run && run.leaveToUser && run.leaveToUser.said === (run.said || []).length);
+  }
+
+  /**
+   * A step the user's request leaves to them. Each step the model says
+   * whether the user's own words say to stop before anything that commits
+   * them, or to leave that to them (leave_to_user, step.js), in whatever
+   * words or language they used. Once a step has said so, a press, a key
+   * or a submit that would commit them is not taken, with confirmations on
+   * or off, until the user says something new: the step itself said it
+   * commits, or the page's structure shows it pays, sends, deletes or
+   * decides. A search only asks the site something, and is not held.
+   */
+  function leftToUser(a, el, page, run, risky) {
+    if (!leavesToUser(run) || !risky) return null;
+    const form = el && el.formId !== undefined ? ((page && page.forms) || []).find((f) => f.id === el.formId) : null;
+    if (form && form.search) return null;
+    const risk = TOOLS.contentRisk(risky, page);
+    const commits = (a.commits === true && pressing(a)) || (!!risk && ["pay", "send", "delete", "decide"].includes(risk.kind));
+    if (!commits) return null;
+    const what = (el && TOOLS.elementLabel(el)) || (risk && risk.target) || "";
+    return { verdict: "refuse", leftToUser: true, message: `The user's request leaves this to them, so ${what ? `"${String(what).slice(0, 80)}"` : "this step"} was not taken: it would commit them to something. Finish now and tell the user what is ready for them to check and do themselves.` };
+  }
+
   /** True for an action that presses something: the pointer on a control or a point, a drag, or a key that presses or submits. */
   function pressing(a) {
     if (!a) return false;
@@ -488,9 +514,8 @@
     const secret = secretField(a, el);
     if (secret) return secret;
     if (!risky) return ALLOW;
-    // The user asked for the form to be filled and left for them to send.
-    const held = keptFromSending(a, el, page, run);
-    if (held) return held;
+    const left = leftToUser(a, el, page, run, risky);
+    if (left) return left;
     if (s.riskConfirmation === false) return ALLOW;
     // An address that carries one of the user's saved details, wherever the
     // address came from: a link on a page can be made to carry them too.
@@ -592,26 +617,6 @@
   }
 
   /**
-   * A refusal when the user's request says to fill in but not send ("fill
-   * it in but don't submit", "I'll send it myself") and the action would
-   * submit: a click on a form's send button, or Enter in a form. A search
-   * form reads and is left alone: "find flights but don't book" still
-   * searches.
-   */
-  function keptFromSending(a, el, page, run) {
-    if (!el || !TOOLS.saysNotToSubmit(requestOf(run))) return null;
-    const form = el.formId !== undefined ? ((page && page.forms) || []).find((f) => f.id === el.formId) : null;
-    if (form && form.search) return null;
-    const clicks = pressesOn(a, el) && !!TOOLS.guardNoSubmit({ action: "click", id: el.id }, requestOf(run), page);
-    // Enter in a message box with no form sends it as surely as in a form.
-    const enters = a.do === "press" && !pressesControl(el, a.key) && isEnter(a.key)
-      && ((!!form && form.fields > 0) || (!form && TOOLS.isMessageBox(el)));
-    if (!clicks && !enters) return null;
-    const what = clicks ? `"${TOOLS.elementLabel(el) || "that button"}"` : "Enter";
-    return { verdict: "refuse", message: `The user asked for this to be filled in but not sent, so ${what} was not pressed: it would submit the form. Finish now and tell the user it is ready for them to check and send.` };
-  }
-
-  /**
    * True when Enter and Space on the control of an allowed click are each
    * allowed outright too, judged as presses of those keys there. The page
    * may then press it with those keys when it shows no answer to the
@@ -698,7 +703,7 @@
     return t;
   }
 
-  const api = Object.freeze({ decide, decideSwitch, placeRiskier, pressesOn, POINTER_PRESSES, keysToo, blockersOf, detourSite, detourMessage, remember, asRiskAction, keptFromSending, pressesControl, pressLandsOn, writesText, secretField, firstAddress, pointTarget, dropPoint, declinedMark, declinedAgain, HANDOVER });
+  const api = Object.freeze({ leavesToUser, leftToUser, decide, decideSwitch, placeRiskier, pressesOn, POINTER_PRESSES, keysToo, blockersOf, detourSite, detourMessage, remember, asRiskAction, pressesControl, pressLandsOn, writesText, secretField, firstAddress, pointTarget, dropPoint, declinedMark, declinedAgain, HANDOVER });
   root.SELECT_TO_AI_POLICY = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

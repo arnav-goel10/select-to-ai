@@ -204,3 +204,21 @@ test("the split never moves, sends every task that has been read to dev, and sam
   assert.equal(sample.length, 20);
   assert.deepEqual(sample.map((t) => t.id), J.samplePerGroup(a.heldOut, 5).map((t) => t.id));
 });
+
+test("the store build has no switch the bench turns, and the bench does not pass itself off as a person's browser", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const EXT = path.join(__dirname, "../../extension");
+  const engine = fs.readFileSync(path.join(EXT, "engine.js"), "utf8");
+  const agent = fs.readFileSync(path.join(EXT, "agent.js"), "utf8");
+  // A run reads pages the same way for a user and for the bench: no setting picks another reading.
+  assert.doesNotMatch(engine, /agentObserve|agentPressables/);
+  // The side panel puts nothing on the page's global object for a harness to read.
+  assert.doesNotMatch(agent, /globalThis\.__selectToAi\w*\s*=/);
+  const runner = fs.readFileSync(path.join(__dirname, "../bench/run.js"), "utf8");
+  assert.doesNotMatch(runner, /AutomationControlled|setUserAgent|HeadlessChrome/, "the bench browser says what it is");
+  assert.doesNotMatch(runner, /BENCH_OBSERVE|BENCH_PRESSABLES/);
+  for (const file of ["../bench/run.js", "../bench/miniwob.js", "../e2e/run-v4.js"]) {
+    assert.doesNotMatch(fs.readFileSync(path.join(__dirname, file), "utf8"), /__selectToAiTrace/, `${file} reads the trace from the engine, not a page global`);
+  }
+});

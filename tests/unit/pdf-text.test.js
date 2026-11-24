@@ -306,7 +306,7 @@ function pdfWorker(page, fetch, o = {}) {
       return [{ result: await req.func(...(req.args || [])) }];
     },
   });
-  const session = { windowId: 1, run: { id: o.runId || "r1", task: "What does the form say?", status: "running" }, items: { agentPressables: "off" }, runners: new Map() };
+  const session = { windowId: 1, run: { id: o.runId || "r1", task: "What does the form say?", status: "running" }, runners: new Map() };
   return { w, runs, session, scan: () => w.engine.scan(session, w.tabs[9], () => {}) };
 }
 
