@@ -722,6 +722,26 @@ test("a form with more boxes than the check is shown is held as a send with no c
   const hidden = form(3);
   hidden.page.forms[0].fields = 9;
   assert.equal(P.decide({ do: "click", ref: 99 }, hidden.page, hidden.run, ON).check, undefined);
+  // Under eight boxes too: one box listed of the three the structure counts
+  // is held, on a click and on Enter, and an answer cannot let it through.
+  const few = form(1);
+  few.page.forms[0].fields = 3;
+  assert.equal(T.actionRisk({ action: "click", id: 99 }, few.page).unsure, undefined);
+  assert.equal(T.actionRisk({ action: "keypress", id: 10, text: "Enter" }, few.page).unsure, undefined);
+  const fewHeld = P.decide({ do: "click", ref: 99 }, few.page, few.run, ON);
+  assert.equal(fewHeld.verdict, "confirm");
+  assert.equal(fewHeld.kind, "send");
+  assert.equal(fewHeld.check, undefined);
+  const anyKey = { [`shop.example|https://shop.example/q|Message to the seller`]: { does: "none" } };
+  assert.equal(P.decide({ do: "click", ref: 99 }, few.page, { ...few.run, opinions: anyKey }, ON).verdict, "confirm");
+  // No box listed at all: held, and the check is never shown an empty list.
+  const none = form(1);
+  none.page.elements = none.page.elements.filter((e) => e.submits);
+  none.run.typed = {};
+  const noneHeld = P.decide({ do: "click", ref: 99 }, none.page, none.run, ON);
+  assert.equal(noneHeld.verdict, "confirm");
+  assert.equal(noneHeld.kind, "send");
+  assert.equal(noneHeld.check, undefined);
   // Eight boxes: every one of them, the message box included, is shown to the check.
   const eight = form(8);
   const asked = P.decide({ do: "click", ref: 99 }, eight.page, eight.run, ON);

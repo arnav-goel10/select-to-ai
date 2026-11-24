@@ -1348,12 +1348,16 @@
     // that is another site, each box's name and text, and the submitting
     // control's name. The first box is the one typed in, when there is one.
     //
-    // The check is shown at most FORM_BOXES_SHOWN boxes. A form with more
-    // than that is held as the certain send its structure makes it, so a
-    // box the check was never shown cannot go out on its answer.
+    // The check is shown at most FORM_BOXES_SHOWN boxes, and only the boxes
+    // the page lists. A form with more boxes than that, with none listed,
+    // or whose structure counts more boxes than are listed (one hidden
+    // behind an editor, or past the listing's end) is held as the certain
+    // send its structure makes it, so a box the check was never shown
+    // cannot go out on its answer.
     const unsureSend = (form, button, typedIn) => {
       const all = boxesOf(form);
-      if (Math.max(all.length, form.fields || 0) > FORM_BOXES_SHOWN) return risk("send", button || typedIn);
+      const counted = form.fields || 0;
+      if (all.length === 0 || all.length < counted || Math.max(all.length, counted) > FORM_BOXES_SHOWN) return risk("send", button || typedIn);
       const boxes = typedIn ? [typedIn, ...all.filter((b) => b !== typedIn)] : all;
       const box = boxes[0];
       const r = risk("send", button || box);
