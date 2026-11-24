@@ -1069,7 +1069,7 @@
   // by the whole host they answer on (a "www." in front is the same host).
   // A reviewed list: tests/unit/hygiene-allowlist.json says why each is here.
   const SEARCH_HOSTS = Object.freeze(["google.com", "bing.com", "duckduckgo.com", "ecosia.org", "startpage.com", "kagi.com", "baidu.com", "yandex.com", "yandex.ru", "qwant.com", "mojeek.com", "search.brave.com", "search.yahoo.com"]);
-  // An engine that answers on its country domains too (google.de, google.co.uk, google.com.sg).
+  // An engine that answers on its country domains too (ending in .de, .co.uk, .com.sg and so on).
   const COUNTRY_SEARCH = Object.freeze(["google"]);
 
   /**

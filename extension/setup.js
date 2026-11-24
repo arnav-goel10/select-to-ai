@@ -322,7 +322,7 @@
   /**
    * What Chrome is asked for when a first task is clicked: the one site that
    * task works on, with its own subdomains, and nothing else.
-   * "wikipedia.org" -> ["https://*.wikipedia.org/*"]. Every other site is
+   * "example.org" -> ["https://*.example.org/*"]. Every other site is
    * asked for when the agent first reaches it (the site-access card), and
    * notifications when the user turns task notices on in Settings.
    * Null for anything that is not a plain host name.
