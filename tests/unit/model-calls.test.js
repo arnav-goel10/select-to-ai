@@ -46,9 +46,24 @@ test("the free path is sent at the sampling of the model it goes out as", () => 
   const free = cfg({ provider: "openrouter", apiKey: "sk-or-test", baseUrl: "https://openrouter.ai/api/v1", model: "openrouter/free" });
   const first = LLM.buildRequest({ system: "s", user: "u", tool }, free, "openrouter/free", { maxTokens: 4000 }).body;
   assert.equal(first.model, D.OPENROUTER_FREE_CHAIN[0]);
-  assert.match(first.model, /qwen/);
+  assert.match(first.model, /gemma/);
   assert.equal(first.temperature, D.modelProfile(first.model).temperature);
-  assert.equal(first.temperature, 0.6, "Qwen is not sent greedy decoding");
+  // The chain's head now takes the steady default, so to see the sampling
+  // follow the id sent, not "openrouter/free", a fresh client is given a
+  // free path that goes out as a Qwen id.
+  const llmPath = require.resolve("../../extension/core/llm.js");
+  const saved = globalThis.SELECT_TO_AI_DEFAULTS;
+  delete require.cache[llmPath];
+  globalThis.SELECT_TO_AI_DEFAULTS = { ...D, outgoingModel: (p, m, b) => (p === "openrouter" && m === "openrouter/free" && !b ? "qwen/qwen3-test:free" : m) };
+  let viaQwen;
+  try {
+    viaQwen = require(llmPath).buildRequest({ system: "s", user: "u", tool }, free, "openrouter/free", { maxTokens: 4000 }).body;
+  } finally {
+    globalThis.SELECT_TO_AI_DEFAULTS = saved;
+    delete require.cache[llmPath];
+    require(llmPath);
+  }
+  assert.equal(viaQwen.temperature, 0.6, "a free path sent out as Qwen is not sent greedy decoding");
   // The bare router, for a connection that refused the chain, keeps the steady default.
   const bare = LLM.buildRequest({ system: "s", user: "u", tool }, free, "openrouter/free", { maxTokens: 4000, bareFree: true }).body;
   assert.equal(bare.model, "openrouter/free");

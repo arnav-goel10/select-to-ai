@@ -203,12 +203,17 @@
   // 2026 with tests/decisions: qwen3.8-27b and nemotron-3-super each made
   // 28 of 28 next-step decisions right. gemma-4-31b was rate limited for
   // most of the run, so it could not be scored and comes after them.
-  // On 24 Nov 2026 OpenRouter's public model list no longer had the first
-  // two. They stay here until a measured run picks what replaces them,
-  // since this chain decides which model the default free path acts with.
+  // On 24 Nov 2026 OpenRouter's public model list no longer had those two,
+  // so every free run first failed on them. Each was replaced by a free
+  // model on that list that takes tools, at the same tier, so the order
+  // stays small, standard, small: Gemma 4 26B A4B for qwen3.8-27b, and
+  // Nemotron 3.5 Super VL (the same 120B, 12B active size) for
+  // nemotron-3-super. Neither replacement has been scored with
+  // tests/decisions yet. Both Gemma models are served by Google AI Studio
+  // alone, so a limit there can hit the first and third together.
   const OPENROUTER_FREE_CHAIN = Object.freeze([
-    "qwen/qwen3.8-27b:free",
-    "nvidia/nemotron-3-super-120b-a12b:free",
+    "google/gemma-4-26b-a4b-it:free",
+    "nvidia/nemotron-3.5-super-vl:free",
     "google/gemma-4-31b-it:free",
     "openrouter/free",
   ]);
@@ -257,13 +262,13 @@
       "gemini-3.5-flash-lite", "gemini-flash-lite-latest", "google/gemma-4-31b-it:free", "gpt-5.4-mini", "gpt-5.4-nano",
       "ministral-14b-latest", "mistral-small-latest",
       "openai/gpt-5.4-mini", "openai/gpt-oss-20b", "openrouter/free", "qwen-3.8-27b", "qwen/qwen3.8-27b",
-      "qwen/qwen3.8-27b:free"
+      "google/gemma-4-26b-a4b-it:free"
     ]),
     standard: Object.freeze([
       "codestral-latest", "deepseek-ai/DeepSeek-V4-Pro-0813", "deepseek-ai/DeepSeek-V4.1-Flash", "deepseek-flash",
       "deepseek-v4-pro", "deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash", "gemini-3.8-flash", "gemini-flash-latest",
       "google/gemini-3.8-flash", "gpt-oss-120b", "llama3", "mistral",
-      "mistral-large-latest", "mistral-medium-latest", "nvidia/nemotron-3-super-120b-a12b:free",
+      "mistral-large-latest", "mistral-medium-latest", "nvidia/nemotron-3.5-super-vl:free",
       "nvidia/nemotron-3.5-lightning:free", "openai/gpt-oss-120b", "phi3", "qwen2.5-coder"
     ]),
     frontier: Object.freeze([
