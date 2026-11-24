@@ -2,27 +2,16 @@
 // The engine must work the same on any site. Nothing in it may name a site
 // it was tested on, or an incident from a test run: a rule written for one
 // site is a patch, and patches do not carry over to the next site.
+//
+// Which hosts, class names and task ids the agent's files may hold at all is
+// checked by structure in hygiene-hosts.test.js, against a reviewed allowlist,
+// over every file the worker loads and the engine injects.
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
 const EXT = path.join(__dirname, "../../extension");
-const files = [...fs.readdirSync(path.join(EXT, "core")).map((f) => path.join("core", f)), "engine.js"];
-// The sites of the public task sets the agent is measured on, and the sets' names.
-const TESTED_ON = /\b(allrecipes|amazon|arxiv|bbc|booking\.com|cambridge|coursera|espn|github|hugging ?face|wolfram|webvoyager|mind2web|benchmark)\b/i;
-// The extension's own project page is not a site it acts on.
-const OWN = /selecttoai\.github\.io/g;
-
-test("no file of the engine names a site it was tested on", () => {
-  const hits = [];
-  for (const file of files) {
-    fs.readFileSync(path.join(EXT, file), "utf8").split("\n").forEach((line, i) => {
-      if (TESTED_ON.test(line.replace(OWN, ""))) hits.push(`${file}:${i + 1}: ${line.trim().slice(0, 100)}`);
-    });
-  }
-  assert.deepEqual(hits, []);
-});
 
 test("the instructions the model reads name no site at all", () => {
   const { INSTRUCTIONS, VERIFIER } = require(path.join(EXT, "core/context.js"));
