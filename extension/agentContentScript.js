@@ -782,10 +782,6 @@
     // section past the cap could be seen in its table of contents but never read.
     const PAGE_TEXT_LIMIT = 700000;
 
-    // Tags whose text runs on inside the block around them.
-    const INLINE_TAGS = /^(A|ABBR|B|BDI|BDO|BR|CITE|CODE|DATA|DEL|DFN|EM|FONT|I|IMG|INS|KBD|LABEL|MARK|Q|S|SAMP|SMALL|SPAN|STRONG|SUB|SUP|TIME|TT|U|VAR|WBR)$/;
-    // Controls: their words are the page's machinery, not what it says.
-    const CONTROL_TAGS = /^(BUTTON|SELECT|OPTION|INPUT|TEXTAREA|MENU)$/;
     // Tags whose text is never drawn as words on the page.
     const UNREAD_TAGS = /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|SVG|IFRAME|OBJECT|CANVAS|HEAD)$/;
 
@@ -805,23 +801,16 @@
 
     /**
      * The text a reader can see on the page, counted per element: how many
-     * characters each element holds, how many of those are link text, and
-     * whether it holds a control (a box, a button, a list to pick from).
-     * Text that is not drawn (drawnState, textUnseeable) counts for nothing.
-     * Declared landmarks (nav, header, footer, aside and their roles) and
-     * the controls themselves are the page's frame, not what it says, so
-     * their text is not counted. Link text is counted as text: on a listing
-     * the links are the page. Text inside open shadow roots is counted for
-     * the element hosting it.
+     * characters of it each element holds. All of it counts, link text,
+     * menus and control labels included. Text that is not drawn
+     * (drawnState, textUnseeable) counts for nothing. Text inside open
+     * shadow roots is counted for the element hosting it.
      */
     function seenTextCounts(root) {
         const parentOf = new Map();
         const order = [];
         const chars = new Map();
-        const links = new Map();
-        const controls = new Set();
-        const add = (map, n, v) => map.set(n, (map.get(n) || 0) + v);
-        const walk = (el, state, inLink, frame, candidate, depth) => {
+        const walk = (el, state, candidate, depth) => {
             if (depth > 400) return;
             const kids = [...(el.childNodes || [])];
             if (el.shadowRoot && el.shadowRoot.childNodes) kids.push(...[...el.shadowRoot.childNodes].map((n) => ({ n, shadow: true })));
@@ -831,13 +820,10 @@
                 const inShadow = !!(item && item.shadow) || !candidate;
                 if (n.nodeType === 3) {
                     const t = (n.textContent || '').replace(/\s+/g, ' ').trim();
-                    if (!t || frame || state !== 2) continue;
+                    if (!t || state !== 2) continue;
                     if (ownSeen === null) ownSeen = !textUnseeable(el);
                     if (!ownSeen) continue;
-                    for (let up = el; up; up = parentOf.get(up)) {
-                        add(chars, up, t.length);
-                        if (inLink) add(links, up, t.length);
-                    }
+                    for (let up = el; up; up = parentOf.get(up)) chars.set(up, (chars.get(up) || 0) + t.length);
                     continue;
                 }
                 if (n.nodeType !== 1) continue;
@@ -845,17 +831,15 @@
                 if (UNREAD_TAGS.test(tag) || n.getAttribute('aria-hidden') === 'true') continue;
                 // The extension's own badges are not the page.
                 if (n.id === 'select-to-ai-overlay-container') continue;
-                const drawn = frame ? 2 : drawnState(n);
+                const drawn = drawnState(n);
                 if (drawn === 0) continue;
                 parentOf.set(n, el);
                 if (!inShadow) order.push(n);
-                const control = CONTROL_TAGS.test(tag);
-                if (control) for (let up = n; up; up = parentOf.get(up)) controls.add(up);
-                walk(n, drawn, inLink || tag === 'A', frame || control || n.matches(BOILERPLATE), !inShadow, depth + 1);
+                walk(n, drawn, !inShadow, depth + 1);
             }
         };
-        walk(root, drawnState(root), false, false, true, 0);
-        return { order, parentOf, chars, links, controls };
+        walk(root, drawnState(root), true, 0);
+        return { order, parentOf, chars };
     }
 
     /**
@@ -864,24 +848,12 @@
      * counts when it holds a fair share of the page's text: a listing has
      * one <article> per card, and taking one card as the page hid the rest.
      *
-     * With neither, the rule is never to do worse than reading the whole
-     * page. A part is taken only when it is clearly the page's content: it
-     * holds at least 80 percent of all the text a reader can see on the
-     * page (seenTextCounts, link text included), once the menus outside it
-     * are set aside. A menu is a part that is mostly link text and has
-     * nothing to act on in it or in the block around it: a list of
-     * archives, a link column, a crumb trail, a rail of related pages. A
-     * row with a box or a button beside its link (a cart line, a message
-     * with a tick box) is not a menu, and a table cell goes with its row.
-     * A link on its own is part of its block, not a menu. The menus set aside
-     * may never outweigh the part itself, so a stray paragraph beside a
-     * long list of links is never the page: the list is. Of the parts that
-     * qualify, the smallest is taken, then widened to the element around it
-     * while what that adds is more words than menu (a status line above a
-     * list is part of the page, a sidebar of links is not). Widening to the
-     * body, or no part that qualifies, returns null, and the whole page is
-     * read. No class or id is read: what a site calls its parts says
-     * nothing that holds on another site.
+     * With neither, a part is taken only when it holds at least 80 percent
+     * of all the text a reader can see on the page (seenTextCounts, link
+     * text counted as text), and then the smallest such part. Otherwise
+     * nothing is chosen and the whole page is read, as it was before. No
+     * class or id is read: what a site calls its parts says nothing that
+     * holds on another site.
      */
     function pickMain(doc) {
         const body = doc.body;
@@ -894,47 +866,15 @@
         }
         const article = doc.querySelector('article');
         if (article && textLength(article) > 200 && textLength(article) >= bodyLength * 0.3) return article;
-        const { order, parentOf, chars, links, controls } = seenTextCounts(body);
+        const { order, chars } = seenTextCounts(body);
         const total = chars.get(body) || 0;
-        const size = (n) => chars.get(n) || 0;
-        const isMenu = (n) => {
-            const c = size(n);
-            const up = parentOf.get(n);
-            if (!c || INLINE_TAGS.test(String(n.tagName || '').toUpperCase())) return false;
-            return (links.get(n) || 0) / c > 0.5 && !controls.has(n) && !(up && controls.has(up));
-        };
-        // The menus, each counted once at its widest.
-        const menus = new Map();
-        const menuWithin = new Map();
-        let menuTotal = 0;
-        for (const n of order) {
-            const up = parentOf.get(n);
-            if (!isMenu(n) || (up && isMenu(up))) continue;
-            menus.set(n, size(n));
-            menuTotal += size(n);
-            for (let p = n; p; p = parentOf.get(p)) menuWithin.set(p, (menuWithin.get(p) || 0) + size(n));
-        }
-        const menuAround = (n) => { for (let p = parentOf.get(n); p; p = parentOf.get(p)) if (menus.has(p)) return menus.get(p); return 0; };
-        const clearlyContent = (n) => {
-            const held = size(n);
-            const setAside = menuTotal - (menuWithin.get(n) || 0) - menuAround(n);
-            return held > 200 && setAside <= held && held >= 0.8 * (total - setAside);
-        };
-        const inside = (n, outer) => { for (let p = n; p; p = parentOf.get(p)) if (p === outer) return true; return false; };
         let best = null;
         for (const n of order) {
-            if (n === body || !clearlyContent(n)) continue;
-            if (!best || size(n) < size(best) || (size(n) === size(best) && inside(n, best))) best = n;
+            const held = chars.get(n) || 0;
+            if (n === body || !held || held < 0.8 * total) continue;
+            if (!best || held <= (chars.get(best) || 0)) best = n;
         }
-        if (!best) return null;
-        const words = (n) => size(n) - (menuWithin.get(n) || 0);
-        for (let up = parentOf.get(best); up; up = parentOf.get(best)) {
-            const added = words(up) - words(best);
-            const menu = (menuWithin.get(up) || 0) - (menuWithin.get(best) || 0);
-            if (!(added > 0 && added >= menu)) break;
-            best = up;
-        }
-        return best === body ? null : best;
+        return best;
     }
 
     /**

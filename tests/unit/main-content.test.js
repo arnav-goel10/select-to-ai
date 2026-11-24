@@ -1,7 +1,8 @@
 "use strict";
 // The main content of a page with no landmark, found from structure alone:
-// how much of each part is links, controls or a label stamped on every item,
-// against how much is the page's own words. The pages are whole HTML files
+// a part is taken only when it holds at least 80 percent of all the text a
+// reader can see on the page, link text counted as text, and otherwise the
+// whole page is read. The pages are whole HTML files
 // (tests/fixtures/main-content), parsed as a browser parses them, with the
 // whitespace, scripts, cookie notices and stray words real pages carry. The
 // browser test reads the same files through the real content script.
@@ -27,11 +28,19 @@ const constLine = (name) => {
 // has no layout, so a box is unseeable when its inline style folds it to no
 // height, and no text is drawn in invisible ink.
 const pickMain = new Function("getComputedStyle", [
-  ...["BOILERPLATE", "INLINE_TAGS", "CONTROL_TAGS", "UNREAD_TAGS"].map(constLine),
+  ...["UNREAD_TAGS"].map(constLine),
   "const boxUnseeable = (el) => !!el.folded;",
   "const textUnseeable = () => false;",
   source("drawnState"), source("seenTextCounts"), source("pickMain"), "return pickMain;",
 ].join("\n"))((el) => ({ display: (el.style && el.style.display) || "block" }));
+const seenTextCounts = new Function("getComputedStyle", [
+  constLine("UNREAD_TAGS"),
+  "const boxUnseeable = (el) => !!el.folded;",
+  "const textUnseeable = () => false;",
+  source("drawnState"), source("seenTextCounts"), "return seenTextCounts;",
+].join("\n"))((el) => ({ display: (el.style && el.style.display) || "block" }));
+// The share of the page's seeable text a part holds.
+const seen = (doc, part) => { const { chars } = seenTextCounts(doc.body); return (chars.get(part) || 0) / (chars.get(doc.body) || 1); };
 
 const flat = (s) => String(s || "").replace(/\s+/g, " ");
 
@@ -41,7 +50,9 @@ for (const c of CASES) {
     assert.ok(doc.body, `${c.file} has a body`);
     assert.equal(doc.querySelector("main, [role=\"main\"], article"), null, `${c.file} has no landmark to go by`);
     const main = pickMain(doc);
-    if (c.notRead.length) assert.ok(main, `${c.file}: a main area is found`);
+    if (c.whole) assert.equal(main, null, `${c.file}: no part holds 80 percent of the page, so the whole page is read (${main && main.tagName})`);
+    else assert.ok(main, `${c.file}: a main area is found`);
+    if (main) assert.ok(seen(doc, main) >= 0.8, `${c.file}: the part taken holds 80 percent of the seeable text`);
     // A page that hides text is read as it is drawn, as the reader reads it.
     const reading = flat(c.drawn ? (main || doc.body).innerText : (main || doc.body).textContent);
     for (const phrase of c.read) assert.ok(reading.includes(phrase), `${c.file}: "${phrase}" is in the main content (${main ? `${main.tagName}.${main.className}` : "whole page"})`);
@@ -96,15 +107,15 @@ test("text that is not drawn weighs nothing: a hidden dialog with more words tha
   assert.ok(!picked || picked.contains(shown.querySelector("[role=\"dialog\"]")), `a shown dialog is weighed as text (${picked && picked.tagName})`);
 });
 
-test("a part is taken only when it holds most of what can be seen, and never a paragraph beside a listing", () => {
-  // Each link-led page through pickMain: whatever is picked holds most of
-  // the page's drawn text, or the whole page is read.
+test("a part is taken only when it holds 80 percent of what can be seen, link text counted, and never a paragraph beside a listing", () => {
+  // Each link-led page through pickMain: whatever is picked holds 80 percent
+  // of the page's drawn text, or the whole page is read.
   for (const file of ["link-aggregator.html", "board-index.html", "category-grid.html", "file-directory.html", "cart.html"]) {
     const doc = parseHTML(html(file));
     const main = pickMain(doc);
     if (!main) continue;
     assert.notEqual(main.tagName, "P", `${file}: a lone paragraph is not the page`);
-    assert.ok(flat(main.innerText).length >= flat(doc.body.innerText).length * 0.5, `${file}: the part read holds most of the page (${main.tagName}.${main.className})`);
+    assert.ok(seen(doc, main) >= 0.8, `${file}: the part read holds 80 percent of the page (${main.tagName}.${main.className})`);
   }
   // A stray paragraph beside a long list of bare links: the list is the page.
   const links = Array.from({ length: 40 }, (_, i) => `<li><a href="/t/${i}">Thread title number ${i} about the spring sowing</a></li>`).join("");
@@ -112,8 +123,12 @@ test("a part is taken only when it holds most of what can be seen, and never a p
   const listing = parseHTML(`<html><body>${para}<ul>${links}</ul></body></html>`);
   const main = pickMain(listing);
   assert.ok(!main || /Thread title number 39/.test(main.textContent), "the listing is read");
-  // Cart lines are rows with a box and a button, so they are not a menu and
-  // the terms paragraph does not outweigh them, in plain boxes or a table.
+  // A paragraph longer than a list of links beside it is not the page
+  // either, unless it holds 80 percent of the text: the links count.
+  const few = Array.from({ length: 12 }, (_, i) => `<li><a href="/s/${i}">Section ${i}: plot letting and the waiting list</a></li>`).join("");
+  const longer = `<p>${"Members share a tool shed, two water troughs and a compost bay through the summer months. ".repeat(6)}</p>`;
+  assert.equal(pickMain(parseHTML(`<html><body>${longer}<ul>${few}</ul></body></html>`)), null, "a paragraph at about half the page is not taken");
+  // Cart lines in boxes or in a table, beside a terms paragraph.
   const terms = `<div class="legal"><p>${"Prices include tax and orders before two ship the same day, with a full refund at any time before it is sent. ".repeat(2)}</p></div>`;
   const boxes = [1, 2, 3].map((i) => `<div class="line"><a href="/p${i}">Enamel kettle ${i}</a> <span>Qty</span> <input value="1"> <span>$${i}9.00</span> <button>Remove</button></div>`).join("");
   const cells = [1, 2, 3].map((i) => `<tr><td><a href="/p${i}">Enamel kettle ${i}</a></td><td><input value="1"></td><td>$${i}9.00</td><td><button>Remove</button></td></tr>`).join("");
@@ -124,14 +139,19 @@ test("a part is taken only when it holds most of what can be seen, and never a p
   }
 });
 
-test("a menu is a part that is mostly links with nothing to act on, judged by structure", () => {
-  // The same list of links is a menu beside a long column of text, and the
-  // page itself when it stands alone with a short note.
+test("a column holding 80 percent of the page is taken, and nothing but the text a reader sees is weighed", () => {
+  // The same list of links is left out beside a long column of text that
+  // holds 80 percent of the page, and keeps the whole page when it is more
+  // than a fifth of it.
   const column = `<div>${Array.from({ length: 10 }, (_, i) => `<p>Paragraph ${i} of a long article about field drains and the way water finds the lowest ground in a wet season.</p>`).join("")}</div>`;
   const list = `<div>${Array.from({ length: 8 }, (_, i) => `<div><a href="/a/${i}">Archive month ${i}</a></div>`).join("")}</div>`;
   const prose = parseHTML(`<html><body>${column}${list}</body></html>`);
   const main = pickMain(prose);
-  assert.ok(main && /Paragraph 9/.test(main.textContent) && !/Archive month 3/.test(main.textContent), "beside a column, the list is a menu");
-  assert.equal(source("seenTextCounts").includes("className"), false, "no class is read");
-  assert.equal(source("pickMain").includes("className"), false, "no class is read");
+  assert.ok(main && /Paragraph 9/.test(main.textContent) && !/Archive month 3/.test(main.textContent), "beside a column holding 80 percent, the list is left out");
+  const bigList = `<div>${Array.from({ length: 40 }, (_, i) => `<div><a href="/a/${i}">Archive month ${i}</a></div>`).join("")}</div>`;
+  assert.equal(pickMain(parseHTML(`<html><body>${column}${bigList}</body></html>`)), null, "a list more than a fifth of the page keeps the whole page");
+  for (const name of ["seenTextCounts", "pickMain"]) {
+    assert.equal(source(name).includes("className"), false, `${name} reads no class`);
+    assert.doesNotMatch(source(name), /menu|links\.get|controls|setAside|widen/i, `${name} sets nothing aside`);
+  }
 });

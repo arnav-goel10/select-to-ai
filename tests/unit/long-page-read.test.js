@@ -212,7 +212,7 @@ test("the Markdown walk reads blocks whatever their class, and keeps bracketed n
 // text is. The fixtures give the parts misleading ids and classes, so a
 // reader that went by names would pick the wrong part.
 const pickMain = new Function([
-  ...["BOILERPLATE", "INLINE_TAGS", "CONTROL_TAGS", "UNREAD_TAGS"].map(constLine),
+  ...["UNREAD_TAGS"].map(constLine),
   "const boxUnseeable = () => false;",
   "const textUnseeable = () => false;",
   "const getComputedStyle = () => ({ display: 'block' });",
@@ -248,11 +248,11 @@ test("the main content is found from the page's structure, not from its names", 
   assert.ok(listing.querySelector("article"));
   assert.notEqual(pickMain(listing), listing.querySelector("article"), "the first card is not the page");
 
-  // A short status line above a long list is part of the page: words beside
-  // the list, however few, keep the reading at the level that holds both.
-  const rows = h("div", {}, ...Array.from({ length: 30 }, (_, i) => h("div", {}, `Person ${i}: Notes about item ${i}`)));
-  const inbox = page(h("h1", {}, "Mail"), h("p", {}, "Opened: Lunch on Friday"), rows);
-  assert.notEqual(pickMain(inbox), rows, "the status line is not cut off");
+  // Words beside a list that are more than a fifth of the page keep the
+  // whole page: the list does not hold 80 percent of it.
+  const rows = h("div", {}, ...Array.from({ length: 6 }, (_, i) => h("div", {}, `Person ${i}: Notes about item ${i}`)));
+  const inbox = page(h("h1", {}, "Mail"), h("p", {}, "Opened: Lunch on Friday, and the notes from the last two meetings are below."), rows);
+  assert.equal(pickMain(inbox), null, "the status line is not cut off");
   assert.doesNotMatch(source("pickMain"), /['"][#.][a-z]/i, "no class or id selector");
 });
 
