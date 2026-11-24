@@ -785,8 +785,8 @@ function checkDry(rows, tasks, shards) {
     if (t.dryForm && !(((row.formState && row.formState.controls) || []).some((c) => String(c.value || "") === t.dryForm))) problems.push(`${t.id}: no form control of the final page holds "${t.dryForm}" (${((row.formState && row.formState.controls) || []).length} control(s) read)`);
     // The run was started from the toolbar on its page, as a person starts it, so the browser would give the agent a picture of the page.
     if (got !== "lost" && !(row.picture && row.picture.granted)) problems.push(`${t.id}: the browser would not give the agent a picture of the page (${(row.picture && row.picture.why) || "not recorded"})`);
-    // Every hold the allow list did not decide went to the approver (its stand-in), and its answer was recorded.
-    for (const h of row.held || []) if (h && h.by !== "allow list" && !(h.by === "approver" && h.approver && typeof h.approver.asks === "boolean")) problems.push(`${t.id}: a held step (${h.kind}) has no recorded answer from the approver`);
+    // Every hold the allow list did not decide has the approver's answer recorded (its stand-in's, or why it was not asked: the run's call limit).
+    for (const h of row.held || []) if (h && h.by !== "allow list" && !(h.approver && typeof h.approver.asks === "boolean")) problems.push(`${t.id}: a held step (${h.kind}) has no recorded answer from the approver`);
     // The judge's code path ran against the stub, and its tokens were counted.
     if (got !== "lost" && !(row.judgeUsage && row.judgeUsage.calls >= 1 && row.judgeCostUSD > 0)) problems.push(`${t.id}: the judge stub was not called, or its tokens were not counted`);
   }

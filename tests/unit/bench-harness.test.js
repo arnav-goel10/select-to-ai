@@ -249,7 +249,7 @@ test("the dry check wants a picture and an approver answer for every hold the al
   const task = { id: "fx", dry: "failed" };
   const base = { id: "fx", success: false, ending: "finished", steps: 1, seconds: 1, costUSD: 0, counters: {}, family: "fixture", history: [], formState: {}, grounding: {}, judgeUsage: { calls: 1 }, judgeCostUSD: 0.001 };
   const shard = [{ agent: { debuggerAvailable: false }, spentUSD: 0.01 }];
-  const ok = T.checkDry([{ ...base, picture: { granted: true }, held: [{ kind: "send", allowed: false, by: "approver", approver: { asks: false } }] }], [task], shard);
+  const ok = T.checkDry([{ ...base, picture: { granted: true }, held: [{ kind: "send", allowed: false, by: "approver", approver: { asks: false } }, { kind: "send", allowed: false, by: "declined", approver: { asks: false, skipped: true } }] }], [task], shard);
   assert.ok(!ok.some((p) => /picture|approver/.test(p)), ok.join("; "));
   const bad = T.checkDry([{ ...base, picture: { granted: false, why: "refused" }, held: [{ kind: "send", allowed: false, by: "declined" }] }], [task], shard);
   assert.ok(bad.some((p) => /would not give the agent a picture/.test(p)));
