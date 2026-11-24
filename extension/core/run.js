@@ -52,19 +52,19 @@
   // The page-blind check on presses (agentTools.js pressEntries): at most
   // this many entries a call, in the order worth judging first; the rest
   // are judged alone if pressed. A step that presses an entry still being
-  // judged waits for the call. The call goes out beside the step, so the
-  // wait a person feels is only what it takes past the step: it is given
-  // up LABELS_WAIT_MS past the time this run's recent steps took (pressWait),
-  // and a press asked about alone SINGLE_WAIT_MS past it. Measured on 24 Nov
-  // 2026 (docs/agent-v4-status.md): Claude answered a page in 2 to 4 s, but
-  // free NVIDIA models took a median of 7 to 11 s, so a fixed 6 s threw
-  // away most of their answers, and with them the check.
+  // judged waits for the call. It is given up LABELS_WAIT_MS past the time
+  // this run's recent calls on the same connection took (pressWait), and a
+  // press asked about alone SINGLE_WAIT_MS past it. Measured on 24 Nov 2026
+  // (docs/agent-v4-status.md): Claude answered a page in 2 to 4 s, but free
+  // NVIDIA models took a median of 7 to 18 s, so a fixed 6 s threw away
+  // most of their answers, and with them the check.
   const LABELS_CAP = 200;
   const LABELS_WAIT_MS = 6000;
   const SINGLE_WAIT_MS = 8000;
-  // Steps whose time sets the wait, and the most that time may add to it.
-  const STEP_TIMES = 3;
-  const STEP_TIME_MOST = 60000;
+  // Calls whose time sets the wait (steps, and checks that answered), and
+  // the most that time may add to it.
+  const CALL_TIMES = 3;
+  const CALL_TIME_MOST = 30000;
   const INVALID_LIMIT = 3; // unusable replies in a row before the run gives up on the model
   const EVIDENCE_ROUNDS = 2;
   const VERIFY_ROUNDS = 2;
@@ -534,14 +534,23 @@
 
   /**
    * How long a press check is given: `least`, plus the longest of this
-   * run's last few steps on the same connection (stepTimes). A model that
-   * takes long over a step takes long over the check too, and the check
-   * runs beside the step, so this keeps the wait past the step near
-   * `least` for a slow model as for a fast one.
+   * run's last few steps and last few answered checks on the same
+   * connection (callTimes). A slow model is then given the time it was
+   * seen to need, and a fast one keeps a short wait. A check that ran out
+   * of time adds nothing, so a check that has stopped answering does not
+   * make every later press wait longer.
    */
   function pressWait(run, least) {
-    const took = Math.max(0, ...(run.stepTimes || []));
-    return least + Math.min(took, STEP_TIME_MOST);
+    const t = run.callTimes || {};
+    const took = Math.max(0, ...(t.step || []), ...(t.check || []));
+    return least + Math.min(took, CALL_TIME_MOST);
+  }
+
+  /** How long a call took, kept by kind ("step", "check") for pressWait. */
+  function tookMs(run, kind, ms) {
+    if (!(Number(ms) > 0)) return;
+    const t = run.callTimes || (run.callTimes = {});
+    t[kind] = [...(t[kind] || []), Number(ms)].slice(-CALL_TIMES);
   }
 
   /** A link the check said commits, kept by its whole address for opening it by that address later. */
@@ -601,6 +610,7 @@
     const said = event.reply ? TOOLS.readLabels(batch.entries, event.reply) : null;
     if (said) {
       answered(run);
+      tookMs(run, "check", event.ms);
       keepVerdicts(run, batch.entries, said, fx);
     } else {
       missed(run, batch.keys);
@@ -1116,7 +1126,7 @@
     if (run.status !== "running") return fx;
     addUsage(run, event.usage);
     // How long the step took, for how long a press check is given (pressWait).
-    if (Number(event.ms) > 0) run.stepTimes = [...(run.stepTimes || []), Number(event.ms)].slice(-STEP_TIMES);
+    tookMs(run, "step", event.ms);
     const budget = (env.settings && env.settings.costBudget) || 0;
     if (budget > 0 && run.usage.cost >= budget) {
       return end(run, fx, env, { state: "error", kind: "budget", text: `Cost budget reached: this task has used $${run.usage.cost.toFixed(4)} of the $${budget.toFixed(4)} limit set in Settings.` });
@@ -1402,6 +1412,7 @@
       log(run, "system", "Second Check", "The check gave no usable answer, so the user is asked.");
     } else {
       answered(run);
+      tookMs(run, "check", event.ms);
       if (press && said.does !== "none") log(run, "system", "Second Check", `Pressing "${clip(asked.label, 60)}" looks like it would ${{ pay: "spend money", send: "send something", delete: "delete something", decide: "decide something for you", unsure: "do something the check could not tell" }[said.does]}.`);
     }
     if (press && read) keepVerdicts(run, [asked.entry], read, fx);

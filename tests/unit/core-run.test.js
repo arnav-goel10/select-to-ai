@@ -1247,7 +1247,7 @@ test("after two pages the check could not answer, single asks stop but each page
   assert.ok(JUDGE.isSingle(fx[0]), "the press is asked alone again");
 });
 
-test("on a slow connection the press check is given as long past the step as on a fast one", () => {
+test("on a slow connection the press check is given the time this run saw it need", () => {
   const p1 = shop({ url: "https://shop.example/a", elements: [{ id: 2, tagName: "button", accName: "Weiter" }], forms: [] });
   const { run, check } = fresh("go on", p1);
   assert.equal(check.timeoutMs, 6000, "nothing measured yet");
@@ -1261,13 +1261,19 @@ test("on a slow connection the press check is given as long past the step as on 
   RUN.advance(run, { type: "model_replied", reply: { memory: "", goal: "g", actions: [{ do: "click", ref: 3 }] }, usage: { prompt: 100, completion: 10, cost: 0 }, ms: 9000 }, env(p2));
   const single = RUN.advance(run, { type: "model_failed", purpose: "labels", tag: c2.tag, kind: "timeout", message: "late" }, env(p2)).find(JUDGE.isSingle);
   assert.equal(single.timeoutMs, 19000, "the longest of the recent steps");
-  // However slow a step, the wait has an end.
-  run.stepTimes = [600000];
-  RUN.advance(run, { type: "model_failed", purpose: "opinion", kind: "timeout", message: "late" }, env(p2));
-  RUN.advance(run, { type: "approved", id: run.wait.id }, env(p2));
+  // A check that answered slowly sets the wait too; one that ran out of time does not.
+  RUN.advance(run, { type: "model_replied", purpose: "opinion", reply: { commits: [], unsure: [], count: 1 }, usage: { prompt: 30, completion: 5, cost: 0 }, ms: 14000 }, env(p2));
   RUN.advance(run, { type: "acted", result: { ok: true, message: "Done." } }, env(p2));
   const p3 = shop({ url: "https://shop.example/c", elements: [{ id: 4, tagName: "button", accName: "Senden" }], forms: [] });
-  assert.equal(RUN.advance(run, { type: "observed", page: p3 }, env(p3)).find(JUDGE.isCheck).timeoutMs, 66000);
+  const c3 = RUN.advance(run, { type: "observed", page: p3 }, env(p3)).find(JUDGE.isCheck);
+  assert.equal(c3.timeoutMs, 20000, "the slow answer");
+  RUN.advance(run, { type: "model_failed", purpose: "labels", tag: c3.tag, kind: "timeout", message: "late", ms: 20000 }, env(p3));
+  const p4 = shop({ url: "https://shop.example/d", elements: [{ id: 5, tagName: "button", accName: "Abbrechen" }], forms: [] });
+  assert.equal(RUN.advance(run, { type: "observed", page: p4 }, env(p4)).find(JUDGE.isCheck).timeoutMs, 20000, "a timed-out check does not stretch the next wait");
+  // However slow a call, the wait has an end.
+  run.callTimes.step = [600000];
+  const p5 = shop({ url: "https://shop.example/e", elements: [{ id: 6, tagName: "button", accName: "Weiter" }], forms: [] });
+  assert.equal(RUN.advance(run, { type: "observed", page: p5 }, env(p5)).find(JUDGE.isCheck).timeoutMs, 36000);
 });
 
 // Two pages the check gave no answer for: the run's misses are at the limit.
