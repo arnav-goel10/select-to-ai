@@ -7,10 +7,14 @@
 // are played by the scripted model server in tests/e2e/server.js, so the
 // pages show real engine output and need no provider key.
 //
-// Shots: popup, popup-upgrade (a 2.0 user's settings), options,
-// welcome-install, right-click-send (a page with a selection and the agent
-// asked about it in the side panel), side-panel, agent-result, needs-you
-// (an approval card) and recipes (the Recipes sheet).
+// Shots: popup, popup-upgrade (a 2.0 user's settings), options (with the
+// provider fields on show), welcome-install, right-click-send (a page with
+// a selection and the agent asked about it in the side panel), side-panel,
+// agent-result, needs-you (an approval card), recipes (the Recipes sheet),
+// and the setup picker at each step in light and dark: setup-providers-*
+// (every provider listed), setup-key-* (a provider picked) and setup-free-*
+// (OpenRouter's free or paid choice, after a key check answered here, never
+// by OpenRouter), plus setup-narrow (the picker 400 px wide).
 //
 // Fails on any console error or page error, on a failed chrome-extension://
 // request, on "undefined" or an em dash in the visible text, and on a PNG
@@ -23,8 +27,11 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { createE2EServer } = require("../tests/e2e/server.js");
 
-// The local test server is granted, as after Allow on the site-access card.
-const EXT = require("../tests/helpers/granted-build.js").grantedBuild(path.resolve(process.env.EXT || "extension"));
+// The local test server is granted, as after Allow on the site-access card,
+// and OpenRouter's API host, as after Agree on the setup page's consent
+// card. Its replies are played here (setupFree below), so nothing leaves.
+const GRANTED = require("../tests/helpers/granted-build.js");
+const EXT = GRANTED.grantedBuild(path.resolve(process.env.EXT || "extension"), [...GRANTED.TEST_HOSTS, "https://openrouter.ai/*"]);
 const OUT = path.resolve(process.argv[2] || "store-screens");
 const W = 1280;
 const H = 800;
@@ -140,6 +147,73 @@ try {
     await page.close();
   }
 
+  // The setup picker, at each step, in light and dark.
+  const welcomeAt = async (name, theme) => {
+    await storage(theme === "dark" ? { theme: "dark" } : { theme: "light" }, { agentDataConsent: { openrouter: Date.now() } });
+    const page = await newPage(name);
+    await page.goto(`chrome-extension://${id}/welcome.html?step=connect`, { waitUntil: "load" });
+    await sleep(500);
+    return page;
+  };
+  const toConnect = (page) => page.evaluate(() => { const c = document.getElementById("connect"); window.scrollTo(0, c.getBoundingClientRect().top + window.scrollY - 24); });
+  const visibleNow = (page, sel) => page.evaluate((s) => { const el = document.querySelector(s); return !!el && !el.closest("[hidden]") && el.getClientRects().length > 0; }, sel);
+  for (const theme of ["light", "dark"]) {
+    {
+      const name = `setup-providers-${theme}`;
+      const page = await welcomeAt(name, theme);
+      await page.evaluate(() => { document.getElementById("moreProviders").open = true; });
+      await sleep(400);
+      const cards = await page.$$eval(".prov", (els) => els.map((e) => e.id));
+      if (cards.length < 12) problems.push(`${name}: ${cards.length} provider cards, not 12`);
+      await toConnect(page);
+      await sleep(300);
+      await shoot(page, name);
+      await page.close();
+    }
+    {
+      const name = `setup-key-${theme}`;
+      const page = await welcomeAt(name, theme);
+      await page.click("#prov-anthropic");
+      await sleep(400);
+      if (!(await visibleNow(page, "#providerKey"))) problems.push(`${name}: no key field after picking Anthropic`);
+      await toConnect(page);
+      await sleep(200);
+      await shoot(page, name);
+      await page.close();
+    }
+    {
+      const name = `setup-free-${theme}`;
+      const page = await welcomeAt(name, theme);
+      await page.setRequestInterception(true);
+      page.on("request", (req) => {
+        const url = req.url();
+        if (!url.startsWith("https://openrouter.ai/")) { req.continue(); return; }
+        const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "*" };
+        if (req.method() === "OPTIONS") { req.respond({ status: 204, headers: cors }); return; }
+        const body = /\/api\/v1\/key$/.test(url) ? { data: { is_free_tier: true } } : { choices: [{ message: { role: "assistant", content: "Hi" } }] };
+        req.respond({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify(body) });
+      });
+      await page.click("#prov-openrouter");
+      await page.type("#providerKey", "sk-or-v1-placeholder-for-screenshots");
+      await page.click("#connectKey");
+      const t0 = Date.now();
+      while (Date.now() - t0 < 10000 && !(await visibleNow(page, "#planFree"))) await sleep(200);
+      if (!(await visibleNow(page, "#planFree"))) problems.push(`${name}: the free or paid choice did not show within 10 s`);
+      await toConnect(page);
+      await sleep(300);
+      await shoot(page, name);
+      await page.close();
+    }
+  }
+  {
+    await storage({ theme: "light" }, {});
+    const page = await composite("setup-narrow", [{ src: `chrome-extension://${id}/welcome.html?step=connect`, width: 400 }]);
+    const wide = await page.evaluate(() => { const d = document.querySelector("iframe").contentDocument; return d.documentElement.scrollWidth > d.documentElement.clientWidth; });
+    if (wide) problems.push("setup-narrow: the picker scrolls sideways at 400 px");
+    await shoot(page, "setup-narrow");
+    await page.close();
+  }
+
   // An upgrader: the 2.0 settings, nothing of 4.0's.
   const seed = JSON.parse(fs.readFileSync(path.resolve("tests/fixtures/v2.0/storage-seed.json"), "utf8"));
   // whatsNew40 is the one-time flag the worker sets on the update, for the popup's banner.
@@ -175,6 +249,9 @@ try {
     const page = await newPage("options");
     await page.goto(`chrome-extension://${id}/options.html`, { waitUntil: "load" });
     await sleep(800);
+    if (!(await page.evaluate(() => { const el = document.getElementById("provider"); return !!el && !el.closest("[hidden]"); }))) problems.push("options: the provider dropdown is hidden");
+    await page.evaluate(() => { const el = document.getElementById("h-agent"); window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 16); });
+    await sleep(200);
     await shoot(page, "options");
     await page.close();
   }
@@ -268,4 +345,4 @@ if (problems.length) {
   console.log(`\n${problems.length} problems:`);
   for (const p of problems) console.log(`  - ${p}`);
 }
-process.exit(problems.length || made.length < 9 ? 1 : 0);
+process.exit(problems.length || made.length < 16 ? 1 : 0);
