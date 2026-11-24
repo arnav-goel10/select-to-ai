@@ -144,7 +144,8 @@ async function main() {
             if (handled) seen.acted.add(key);
           }
           if (!state.cards.length) await user({ card: null, agent, fixture, state, seen, reopen: async () => { await agent.close(); await sleep(400); agent = await browser.newPage(); await agent.goto(agentUrl(""), { waitUntil: "load" }); return agent; } });
-          if (state.trace && state.trace.id) seen.runIds.add(state.trace.id);
+          // The run the last scenario ended on, shown for a moment before this page's reset, is not one of this scenario's runs.
+          if (state.trace && state.trace.id && state.trace.id !== lastFinishedRun) seen.runIds.add(state.trace.id);
           if (state.trace && state.trace.stopState && state.answer && state.trace.id !== lastFinishedRun) break;
         }
         if (Date.now() - t0 > ((opts && opts.timeoutMs) || TIMEOUT_MS)) { state = (await look(agent)) || state; state.timedOut = true; break; }
