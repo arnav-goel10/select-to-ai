@@ -320,7 +320,7 @@ const PRESS_HOLD = { pay: "pay", send: "send", delete: "delete", decide: "decide
  * that kind, or not held at all. A press is put to the same model the way
  * the engine puts it: the page's controls in one page-blind batch
  * (TOOLS.labelsMessages), and the one press alone when the batch's answer
- * cannot be used. A one-box form is put with its own question
+ * cannot be used. A form that sends what was typed is put with its own question
  * (TOOLS.opinionMessages). Answers are read as the engine reads them, and
  * one it cannot use holds the step, as in a run.
  */
@@ -361,7 +361,8 @@ async function settleHolds(c, v, asker, built) {
     ms += got.ms || 0;
     if (got.error) return { ...v, outcome: "lost", why: `the second opinion: ${got.error}` };
     const said = TOOLS.readOpinion(check, got.args);
-    const kind = !said ? "send" : said.sends ? "send" : "";
+    // As policy.js holds it: a definite answer names the hold, an unsure one stays the form's send.
+    const kind = !said ? "send" : said.does === "none" ? "" : ["pay", "send", "delete"].includes(said.does) ? said.does : "send";
     v.policy.push(`second opinion on ${what}: ${said ? JSON.stringify(said) : "no usable answer"}`);
     if (kind) held.push({ kind, what });
   }

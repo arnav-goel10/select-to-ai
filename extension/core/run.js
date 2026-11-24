@@ -1433,7 +1433,7 @@
     } else {
       answered(run);
       tookMs(run, "check", event.ms);
-      if (press && said.does !== "none") log(run, "system", "Second Check", `Pressing "${clip(asked.label, 60)}" looks like it would ${{ pay: "spend money", send: "send something", delete: "delete something", decide: "decide something for you", unsure: "do something the check could not tell" }[said.does]}.`);
+      if (press && said.does !== "none") log(run, "system", "Second Check", `Pressing "${clip(asked.label, 60)}" looks like it would ${{ pay: "move money", send: "reach other people", delete: "change something of yours that may not be put back", decide: "do something the check could not tell", unsure: "do something the check could not tell" }[said.does]}.`);
     }
     if (press && read) keepVerdicts(run, [asked.entry], read, fx);
     else run.opinions = { ...(run.opinions || {}), [asked.key]: said || { unanswered: true } };
@@ -1920,9 +1920,11 @@
   // Questions about a declined step sent back before the run ends with its answer.
   const DECLINED_ASKS = 3;
 
-  // What the model is told when the user declines a step. The user said no
-  // to the result, not to one control: getting it another way is not allowed.
-  const DECLINED_NEXT = "Do not ask them about it again, and do not try to get the same result another way (another control, a key, a drag, another page or address): the user said no to the result, not to one button. Carry on with any part of the request that does not need it. Then finish and say what you did, what you did not do and why.";
+  // What the model is told when the user declines a step. Only the result
+  // they declined is off limits. The same control and the same address are
+  // held for them again by code (policy.js declinedAgain), so the words do
+  // not need to put the rest of the page or the web out of bounds.
+  const DECLINED_NEXT = "Do not ask them about it again, and do not bring about the result they declined in some other way. Only that result is off limits: other controls, pages and addresses that do something else are still yours to use. Carry on with any part of the request that does not need it. Then finish and say what you did, what you did not do and why.";
 
   /** The user did, answered, approved, declined or skipped what the run was waiting for. */
   function onUser(run, event, page, env) {
@@ -1989,7 +1991,7 @@
         fx.push({ type: "act", action: approved });
         return fx;
       }
-      record(run, a, false, `The user declined this step${w.risk ? ` (it would ${{ pay: "spend money", send: "send or submit something", delete: "delete something", share: "put their details into this site", address: "open an address that was not on any page", site: "type on a site outside the request", secret: "type into a secret field" }[w.risk] || "need their go-ahead"})` : ""}. It was not done. ${DECLINED_NEXT}`);
+      record(run, a, false, `The user declined this step${w.risk ? ` (it would ${{ pay: "move money", send: "send something for them", delete: "change or remove something of theirs", share: "put their details into this site", address: "open an address that was not on any page", site: "type on a site outside the request", secret: "type into a secret field" }[w.risk] || "need their go-ahead"})` : ""}. It was not done. ${DECLINED_NEXT}`);
       log(run, "system", "Declined", "You declined this step.");
       // Until the user says something new, whatever reaches what they declined
       // is held for them again (policy.js decide), and a question back to

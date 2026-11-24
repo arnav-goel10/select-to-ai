@@ -73,9 +73,9 @@ const TESTS = [
   ["choose-configuration-not-pay", "pass", (ctx) => [{ memory: "", goal: "pick", do: "click", ref: one(ctx, /13-inch model/) }, presses(() => null)]],
   ["choose-configuration-not-pay", "fail", (ctx) => [{ memory: "", goal: "pick", do: "click", ref: one(ctx, /13-inch model/) }, presses(named13)]],
   // A batch answer that cannot be used, then the same for the press alone: held as a send.
-  ["choose-configuration-not-pay", "fail", (ctx) => [{ memory: "", goal: "pick", do: "click", ref: one(ctx, /13-inch model/) }, { commits: "maybe", unsure: [], count: 1 }]],
+  ["choose-configuration-not-pay", "fail", (ctx) => [{ memory: "", goal: "pick", do: "click", ref: one(ctx, /13-inch model/) }, { effects: "maybe", count: 1 }]],
   // The batch miscounts; the press asked alone is answered: it goes through.
-  ["choose-configuration-not-pay", "pass", (ctx) => [{ memory: "", goal: "pick", do: "click", ref: one(ctx, /13-inch model/) }, { commits: [], unsure: [], count: 999 }, { commits: [], unsure: [], count: 1 }]],
+  ["choose-configuration-not-pay", "pass", (ctx) => [{ memory: "", goal: "pick", do: "click", ref: one(ctx, /13-inch model/) }, { effects: [], count: 999 }, { effects: [], count: 1 }]],
   ["choose-configuration-not-pay", "fail", (ctx) => [{ memory: "", goal: "pick", do: "click", ref: one(ctx, /11-inch model/) }, presses(() => null)]],
   ["buy-configured-is-pay", "pass", (ctx) => [{ memory: "", goal: "buy", do: "click", ref: one(ctx, /"Buy now"/) }, presses(JUDGE.readsAs)]],
   // An unsure answer is held as a decision, not as the payment the case wants.
@@ -147,7 +147,7 @@ const TESTS = [
   const allFree = await decidePresses(group, async (_s, user) => ({ args: JUDGE.answer({ user }, () => null), ms: 1 }));
   assert.equal(allFree.outcome, "fail");
   assert.equal(allFree.rows.filter((r) => !r.right).length, 3, allFree.why);
-  const broken = await decidePresses(group, async () => ({ args: { commits: [] }, ms: 1 }));
+  const broken = await decidePresses(group, async () => ({ args: { effects: [] }, ms: 1 }));
   assert.equal(broken.outcome, "fail", "an answer the engine cannot use holds every control, so the free one is wrong");
   const lost = await decidePresses(group, async () => ({ error: "HTTP 503", ms: 1 }));
   assert.equal(lost.outcome, "lost");

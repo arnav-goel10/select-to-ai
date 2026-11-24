@@ -1413,10 +1413,11 @@
     function describeForm(form) {
         const controls = Array.from(form.elements || []);
         const shown = (c) => { const r = c.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-        const typed = controls.filter((c) => {
+        const typedAll = controls.filter((c) => {
             if (c.tagName === 'TEXTAREA') return true;
             return c.tagName === 'INPUT' && !/^(hidden|submit|button|reset|image|checkbox|radio|file|range|color)$/.test((c.type || 'text').toLowerCase());
-        }).filter(shown);
+        });
+        const typed = typedAll.filter(shown);
         const kinds = typed.map((c) => (c.tagName === 'TEXTAREA' ? 'textarea' : (c.type || 'text').toLowerCase()));
         const method = (form.getAttribute('method') || 'get').trim().toLowerCase();
         const marked = form.getAttribute('role') === 'search' || !!form.closest('[role="search"], search') || kinds.includes('search');
@@ -1427,16 +1428,60 @@
                 type: c.tagName === 'INPUT' ? (c.type || 'text').toLowerCase() : c.tagName.toLowerCase(),
             }));
         const hasSubmit = controls.some((c) => (c.tagName === 'BUTTON' && (c.getAttribute('type') || 'submit').toLowerCase() === 'submit') || (c.tagName === 'INPUT' && /^(submit|image)$/.test((c.type || '').toLowerCase())));
-        // One box for words or numbers and nothing else of the person's: no
-        // second box, no file, no tick box, no secret field, and a box whose
-        // autocomplete names none of their details. Such a form may ask the
-        // site something (a calculator, a translator, a tracking box) or post
-        // words for other people (a comment, a chat), and its structure
-        // cannot tell which. It is marked so the send it makes can be judged.
-        const oneBox = typed.length === 1
-            && /^(text|search|number|textarea|date|month|week|time|datetime-local)$/.test(kinds[0])
-            && /^(?:on|off)?$/.test((typed[0].getAttribute('autocomplete') || '').trim().toLowerCase())
-            && !controls.some((c) => sensitiveKind(c) || (c.tagName === 'INPUT' && /^(file|checkbox)$/.test((c.type || '').toLowerCase())));
+        // Plain: boxes for words, numbers or dates and nothing else of the
+        // person's, however many boxes there are: no file, no tick box, no
+        // secret field, and no box whose autocomplete names one of their
+        // details. Such a form may ask the site something (a calculator, a
+        // lookup, a tracking box) or post words for other people (a comment,
+        // a chat), and its structure cannot tell which. It is marked so the
+        // send it makes can be judged (agentTools.js judgedForm). oneBox is
+        // the same with a single box.
+        const nothingOfTheirs = !controls.some((c) => sensitiveKind(c) || (c.tagName === 'INPUT' && /^(file|checkbox)$/.test((c.type || '').toLowerCase())));
+        const plainBox = (c, i) => /^(text|search|number|textarea|date|month|week|time|datetime-local)$/.test(kinds[i])
+            && /^(?:on|off)?$/.test((c.getAttribute('autocomplete') || '').trim().toLowerCase());
+        const plain = typed.length > 0 && typed.every(plainBox) && nothingOfTheirs;
+        const oneBox = typed.length === 1 && plain;
+        // What else goes out with it that the page offers and one picks
+        // from: each dropdown, each checked radio or tick box, each slider
+        // and colour, shown or not. And the controls the page builds of its
+        // own inside it, whose value a script may send with it: any element
+        // other than a native box, dropdown or option that the page marks as
+        // holding a state or a value. That is an editable region, an element
+        // with a role of a control or of a choice in a list, an element
+        // carrying aria-haspopup (whatever its value), aria-pressed,
+        // aria-checked, aria-selected or aria-valuenow, and a custom element (a tag with a hyphen) that
+        // the form lists among its controls or that carries a name, a value
+        // or a checked state. The form check is shown the first as listed
+        // and never the second, so a form with a choice left out of the
+        // listing, or with a control of the page's own, is held
+        // (agentTools.js unsureSend). Two more are counted with the second,
+        // since the check cannot be shown them either: a box for words of
+        // the form that has no size on the page and holds a value (the
+        // hidden half of an editor or of a picker), and a frame inside the
+        // form (an iframe, object or embed), whose content a script may
+        // copy into the form when it is sent.
+        const kindOf = (c) => (c.type || '').toLowerCase();
+        const choices = controls.filter((c) => !c.disabled && (c.tagName === 'SELECT'
+            || (c.tagName === 'INPUT' && /^(hidden|submit|button|reset|image|checkbox|radio|file|range|color)$/.test(kindOf(c))
+                && !/^(hidden|submit|button|reset|image)$/.test(kindOf(c)) && (c.checked || !/^(checkbox|radio)$/.test(kindOf(c)))))).length;
+        const listed = new Set(controls);
+        const controlRoles = new Set(['textbox', 'searchbox', 'combobox', 'listbox', 'option', 'checkbox', 'radio', 'radiogroup', 'switch', 'slider', 'spinbutton', 'menuitemradio', 'menuitemcheckbox']);
+        const holdsState = (n) => {
+            const tag = String(n.tagName || '');
+            if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag) || tag === 'OPTION') return false;
+            if (n.isContentEditable) return true;
+            if (controlRoles.has(String(n.getAttribute('role') || '').trim().toLowerCase())) return true;
+            if (n.getAttribute('aria-haspopup') !== null || n.getAttribute('aria-pressed') !== null || n.getAttribute('aria-checked') !== null
+                || n.getAttribute('aria-selected') !== null || n.getAttribute('aria-valuenow') !== null) return true;
+            if (tag.includes('-')) {
+                return listed.has(n) || n.getAttribute('name') !== null || typeof n.checked === 'boolean' || typeof n.value === 'string';
+            }
+            return false;
+        };
+        const inside = [...controls, ...Array.from(form.querySelectorAll('*'))];
+        const unshownBox = (c) => !c.disabled && !shown(c) && String(c.value || '') !== '';
+        const frame = (n) => /^(IFRAME|OBJECT|EMBED|FRAME)$/.test(String(n.tagName || ''));
+        const built = new Set([...inside.filter(holdsState), ...typedAll.filter(unshownBox), ...inside.filter(frame)]).size;
         // Where the form goes, without its query: the same form on the same
         // page has the same address from one look at the page to the next.
         let action = '';
@@ -1450,8 +1495,11 @@
             hasSubmit,
             boxes,
             oneBox,
+            plain,
             action,
             fields: typed.length,
+            choices,
+            built,
             filled: typed.filter((c) => c.value).length,
             crossOrigin,
         };
@@ -2470,6 +2518,14 @@
             if (tag === 'select') {
                 const opts = Array.from(el.options || []);
                 entry.selected = opts[el.selectedIndex] ? opts[el.selectedIndex].text.trim() : "";
+                // A dropdown that takes several options sends every one
+                // chosen, not only the first.
+                if (el.multiple) {
+                    const picked = opts.filter((o) => o.selected).map((o) => o.text.trim());
+                    entry.multiple = true;
+                    entry.selectedAll = picked.slice(0, 12);
+                    if (picked.length > 12) entry.selectedMore = picked.length - 12;
+                }
                 entry.options = opts.map((o) => o.text.trim()).filter(Boolean).slice(0, 12);
                 if (opts.length > 12) entry.options.push(`+${opts.length - 12} more`);
             }

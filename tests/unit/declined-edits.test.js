@@ -85,13 +85,13 @@ const declinedRun = (first) => {
 };
 const results = (run) => run.history.flatMap((h) => h.actions.map((a) => a.result));
 
-test("a declined step tells the model not to get the same result another way, and to finish saying what it did and did not do", () => {
+test("a declined step tells the model not to bring about the declined result another way, leaves it the rest, and to finish saying what it did and did not do", () => {
   const run = declinedRun();
   const said = results(run)[0];
-  assert.match(said, /The user declined this step \(it would delete something\)\. It was not done\./);
+  assert.match(said, /The user declined this step \(it would change or remove something of theirs\)\. It was not done\./);
   assert.match(said, /Do not ask them about it again/);
-  assert.match(said, /do not try to get the same result another way \(another control, a key, a drag, another page or address\)/);
-  assert.match(said, /the user said no to the result, not to one button/);
+  assert.match(said, /do not bring about the result they declined in some other way/);
+  assert.match(said, /Only that result is off limits: other controls, pages and addresses that do something else are still yours to use\./);
   assert.doesNotMatch(said, /needs no go-ahead|do that\./, "nothing tells the model to go round the decline");
   assert.match(said, /Carry on with any part of the request that does not need it\. Then finish and say what you did, what you did not do and why\./);
   // The model is shown that on its next step.

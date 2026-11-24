@@ -379,7 +379,7 @@ test("the one-box check is shown only text the agent typed; a box the page fille
   assert.equal(asked.prefilled, true);
   const shown = T.opinionMessages(asked).user;
   assert.doesNotMatch(shown, /only a search/);
-  assert.match(shown, /The page filled in the box/);
+  assert.match(shown, /not shown: the page filled it in, the assistant did not type it/);
   // Text the agent typed, this step or earlier in the run, is shown.
   assert.equal(POLICY.decide({ do: "click", ref: 5 }, page("2+2"), run({ typed: { 2: "2+2" } }), {}).check.text, "2+2");
   const earlier = POLICY.decide({ do: "click", ref: 5 }, page("2+2"), run({ typedTexts: ["2+2"] }), {}).check;
