@@ -32,8 +32,11 @@
     if (!costBadge) return;
     // Free models cost nothing, and nothing is shown for them.
     costBadge.hidden = !(totalCostUSD > 0);
-    costBadge.textContent = `${costIsEstimated ? "est. " : ""}${totalCostUSD < 0.005 ? "<$0.01" : `$${totalCostUSD.toFixed(2)}`}`;
-    costBadge.title =
+    // Said as what it is: the money spent on model calls so far.
+    const amount = totalCostUSD < 0.005 ? "<$0.01" : `$${totalCostUSD.toFixed(2)}`;
+    costBadge.textContent = `${costIsEstimated ? "about " : ""}${amount} spent`;
+    costBadge.setAttribute("aria-label", `Spent on model calls: ${totalCostUSD < 0.005 ? "less than one cent" : amount}`);
+    costBadge.title = "Spent on model calls in this conversation. " +
       `Exact: $${totalCostUSD.toFixed(6)} · tokens in: ${totalPromptTokens}, out: ${totalCompletionTokens}.` +
       (costIsEstimated
         ? " Includes estimated usage (the provider did not report token counts for every call)."
@@ -413,6 +416,9 @@
   }
 
   const OUTCOME_WORDS = { success: "Done", unconfirmed: "Answered, not confirmed", error: "Stopped with a problem", limit: "Usage limit reached", idle: "Stopped" };
+  // The dot colours a legend names: one entry per colour.
+  const LEGEND = [["success", "Done"], ["unconfirmed", "Not confirmed"], ["error", "Problem"], ["idle", "Stopped"]];
+  const LEGEND_OF = { success: "success", unconfirmed: "unconfirmed", limit: "unconfirmed", error: "error", idle: "idle" };
 
   /** Renders recent runs from the run history the engine keeps. */
   function renderRecentSessions() {
@@ -433,7 +439,9 @@
 
         const dot = el("span", "outcome-dot");
         dot.dataset.outcome = outcome;
+        dot.setAttribute("role", "img");
         dot.setAttribute("aria-label", OUTCOME_WORDS[outcome] || "");
+        dot.title = OUTCOME_WORDS[outcome] || "";
         const title = el("span", "session-title", item.task || "(untitled task)");
         const end = el("span", "session-end");
         const time = el("span", "session-time", formatSessionTime(item.timestamp));
@@ -467,6 +475,19 @@
         });
         recentSessionsList.appendChild(row);
       });
+      // What each colour of dot in the list means.
+      const shown = [...new Set(memory.slice(0, 20).map((m) => LEGEND_OF[m.outcome || "success"]))].filter(Boolean);
+      const legend = el("div", "outcome-legend");
+      legend.setAttribute("aria-hidden", "true");
+      for (const [outcome, words] of LEGEND) {
+        if (!shown.includes(outcome)) continue;
+        const item = el("span");
+        const d = el("span", "outcome-dot");
+        d.dataset.outcome = outcome;
+        item.append(d, document.createTextNode(words));
+        legend.appendChild(item);
+      }
+      recentSessionsList.appendChild(legend);
     });
   }
 
@@ -765,7 +786,10 @@
     const list = (res && res.recipes) || [];
     recipesList.textContent = "";
     if (clearDetail !== false) { recipeDetail.hidden = true; recipeDetail.textContent = ""; }
-    if (!list.length) { recipesList.appendChild(el("li", "memory-empty", "No recipes yet. After a task works, press \"Save as recipe\" under its answer.")); return; }
+    recipesList.hidden = !list.length;
+    const emptyNote = document.getElementById("recipesEmpty");
+    if (emptyNote) emptyNote.remove();
+    if (!list.length) { recipesList.insertAdjacentElement("afterend", recipesEmptyState()); return; }
     for (const r of list) {
       const li = document.createElement("li");
       li.className = "recipe-row";
@@ -784,6 +808,19 @@
       li.append(body, open, del);
       recipesList.appendChild(li);
     }
+  }
+
+  /** No recipes yet: what one is for, and a way to make the first. */
+  function recipesEmptyState() {
+    const box = el("div", "recipes-empty");
+    box.id = "recipesEmpty";
+    box.appendChild(el("p", "recipes-empty-title", "No recipes yet"));
+    box.appendChild(el("p", "recipes-empty-text", "Run a task you do often. When it works, press Save as recipe under the answer."));
+    const start = el("button", "btn btn-primary recipes-empty-start", "Start a task");
+    start.type = "button";
+    start.addEventListener("click", () => { closeRecipesModal(); taskInput.focus(); });
+    box.appendChild(start);
+    return box;
   }
 
   function openRecipesModal() {
@@ -1361,6 +1398,8 @@
   let followBottom = true;
   let scrollQueued = false;
   let replaying = false;
+  // Content under the header fades out once the view is scrolled at all.
+  chatViewport.addEventListener("scroll", () => { chatViewport.classList.toggle("is-scrolled", chatViewport.scrollTop > 0); }, { passive: true });
   chatViewport.addEventListener("scroll", () => {
     if (scrollQueued) return;
     followBottom = chatViewport.scrollHeight - chatViewport.scrollTop - chatViewport.clientHeight < 160;
@@ -2172,13 +2211,14 @@
       const parts = [];
       if (counts.running) parts.push(`${counts.running} sub-task${counts.running === 1 ? "" : "s"} running`);
       if (counts.waiting) parts.push(`${counts.waiting} need${counts.waiting === 1 ? "s" : ""} you`);
-      words = parts.join(", ");
+      words = parts.join(" · ");
     }
     else if (activeRun && !activeRun.draft.hidden) words = "Writing the answer";
     else if (activeRun && activeRun.pending) words = activeRun.pendingText.textContent;
     else if (activeRun && activeRun.step) words = activeRun.step.goalWords.textContent;
     else words = "Starting";
     liveGoal.textContent = words;
+    liveGoal.title = words;
     tickLive();
     if (!liveTimer) liveTimer = setInterval(tickLive, 1000);
   }

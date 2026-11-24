@@ -85,23 +85,33 @@ body {
 
 .sidebar-new { padding: 4px 12px 8px; }
 
+/* A button, not a field: no outline box, a filled mark for the action. */
 .new-task-btn {
   width: 100%;
-  height: 34px;
+  height: 36px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 10px;
-  border: 1px solid var(--border-strong);
+  gap: 10px;
+  padding: 0 8px;
+  border: 0;
   border-radius: var(--radius-md);
-  background: var(--surface);
+  background: transparent;
   color: var(--text);
   font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-semibold);
   cursor: pointer;
-  box-shadow: var(--shadow-xs);
 }
-.new-task-btn:hover { background: var(--surface-2); }
+.new-task-btn:hover { background: var(--hover-overlay); }
+.new-task-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent-fill);
+  color: var(--accent-contrast);
+  flex: none;
+}
 .new-task-btn:active,
 .sidebar-chat-item:active,
 .sidebar-footer-link:active,
@@ -125,7 +135,7 @@ body {
 .selection-remove {
   transition: background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out), transform var(--dur-2) var(--ease-spring);
 }
-.new-task-btn svg { width: 16px; height: 16px; color: var(--text-muted); }
+.new-task-btn svg { width: 14px; height: 14px; color: inherit; }
 
 .sidebar-chats-list {
   flex: 1;
@@ -167,11 +177,28 @@ body {
 .outcome-dot[data-outcome="limit"] { background: var(--needs-mark); }
 .outcome-dot[data-outcome="error"] { background: var(--failed); }
 
+/* Two lines before the cut, so tasks that start alike can be told apart. */
 .sidebar-chat-item .session-title {
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+  line-height: var(--leading-snug);
 }
+.sidebar-chat-item .outcome-dot { align-self: start; margin-top: 7px; }
+/* What the dots mean, once, under the list. */
+.outcome-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 8px 10px 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: var(--text-xs);
+  color: var(--text-subtle);
+}
+.outcome-legend span { display: inline-flex; align-items: center; gap: 6px; }
 
 .session-end {
   display: grid;
@@ -259,7 +286,7 @@ body {
 
 /* The top bar: one line, the same height in every state. */
 .topbar {
-  height: var(--topbar-h);
+  min-height: var(--topbar-h);
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -318,14 +345,19 @@ body {
 .live-header[data-state="needs"] .live-dot { background: var(--needs-mark); box-shadow: 0 0 0 3px var(--needs-soft); }
 .live-header[data-state="needs"] .live-dot::after { animation: none; }
 
+/* The goal is what the header is for: it takes two lines before it is cut. */
 .live-goal {
   flex: 1 1 auto;
   min-width: 0;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+  line-height: var(--leading-snug);
   font-weight: var(--weight-medium);
   color: var(--text);
+  padding: 6px 0;
 }
 .live-header[data-state="needs"] .live-goal { color: var(--needs); }
 
@@ -366,11 +398,18 @@ body {
 
 /* ---------------------------------------------------- conversation */
 
+/* Text that scrolls up under the header fades out instead of being cut
+   mid-line, and a scroll to a step leaves room above it. */
 .chat-viewport {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-gutter: stable;
+  scroll-padding-top: 20px;
+}
+.chat-viewport.is-scrolled {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
 }
 
 .chat-container {
@@ -1471,7 +1510,9 @@ body {
   gap: 8px;
   min-width: 0;
 }
-.composer-bar .header-model { min-width: 0; flex-shrink: 1; }
+/* The model is a setting, not the task: quiet text that shows its edge on hover. */
+.composer-bar .header-model { min-width: 0; flex-shrink: 1; height: 24px; padding: 0 6px; margin-left: -6px; border-color: transparent; background: transparent; color: var(--text-subtle); font-weight: var(--weight-normal); }
+.composer-bar .header-model:hover { color: var(--text-muted); border-color: var(--border); background: transparent; }
 .composer-bar .header-model svg { color: var(--text-subtle); }
 
 .cost-badge {
@@ -1597,6 +1638,9 @@ body {
 .memory-list details summary { cursor: pointer; }
 .memory-list details ol { margin: 6px 0 0; padding-left: 18px; }
 .memory-empty { color: var(--text-subtle); font-size: var(--text-sm); }
+.recipes-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 4px 0 2px; }
+.recipes-empty-title { margin: 0; font-size: var(--text-sm); font-weight: var(--weight-semibold); color: var(--text); }
+.recipes-empty-text { margin: 0 0 6px; font-size: var(--text-sm); color: var(--text-muted); line-height: var(--leading-snug); }
 .memory-del {
   flex-shrink: 0;
   height: 26px;
@@ -1676,6 +1720,9 @@ body {
 }
 
 @media (max-width: 480px) {
+  /* Stop keeps its place as a square button, so the goal has the room. */
+  .live-stop { width: 32px; padding: 0; justify-content: center; }
+  .live-stop .live-stop-label { display: none; }
   .composer-hint { display: none; }
   .composer-bar .header-model { margin-right: auto; }
   .live-site { display: none !important; }

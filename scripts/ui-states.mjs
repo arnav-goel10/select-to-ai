@@ -49,7 +49,10 @@ const TASK = "Find the cheapest one-way flight from Singapore to Tokyo on 14 Nov
 const FLIGHTS = "https://www.google.com/travel/flights?q=SIN-TYO";
 const SITE2 = "https://www.zipair.net/en/booking";
 
-const log = (role, title, text) => ({ k: "log", role, title, text, fold: false });
+// An action carries what the engine sends with it as data (core/run.js
+// logAction): its kind, element number and the control's own name. The
+// words are the model's, with the typed value and no name, as the engine logs them.
+const log = (role, title, text, act) => ({ k: "log", role, title, text, fold: false, ...(act ? { act } : {}) });
 // What the run did for itself: kept for the saved log, not drawn as a step.
 const quiet = (role, title, text) => ({ ...log(role, title, text), quiet: true });
 const status = (role, text) => ({ k: "status", role, text });
@@ -57,23 +60,23 @@ const BASE = [
   status("executor", "Looking at the page…"),
   log("system", "Task Started", TASK),
   log("executor", "Step 1", "Open Google Flights and search for the route"),
-  log("executor", "Action", `navigate ${FLIGHTS}`),
+  log("executor", "Action", `navigate ${FLIGHTS}`, { do: "navigate", url: FLIGHTS }),
   log("executor", "Result", "Opened Google Flights. The page shows a search form with Where from, Where to and a date field."),
   status("executor", "Step 2…"),
   log("executor", "Step 2", "Enter Singapore and Tokyo as the cities"),
-  log("executor", "Action", 'fill [14] "Where from?": "Singapore"'),
+  log("executor", "Action", 'fill [14] "Singapore"', { do: "fill", ref: "14", control: "Where from?" }),
   log("executor", "Result", 'Filled "Where from?" with "Singapore". A list opened: Singapore (SIN), Singapore Changi.'),
-  log("executor", "Action", 'fill [15] "Where to?": "Tokyo"'),
+  log("executor", "Action", 'fill [15] "Tokyo"', { do: "fill", ref: "15", control: "Where to?" }),
   log("executor", "Result", 'Filled "Where to?" with "Tokyo". A list opened: Tokyo (all airports), Narita, Haneda.'),
   status("executor", "Step 3…"),
   log("executor", "Step 3", "Set the date to 14 November, one way"),
-  log("executor", "Action", 'click [22] "Departure"'),
+  log("executor", "Action", "click [22]", { do: "click", ref: "22", control: "Departure" }),
   log("error", "Action Failed", "[22] is covered: a div with no words is drawn over it. Nothing changed."),
-  log("executor", "Action", 'click [41] "One way"'),
+  log("executor", "Action", "click [41]", { do: "click", ref: "41", control: "One way" }),
   log("executor", "Result", "Trip type is now One way. A date picker opened on November 2026."),
   status("executor", "Step 4…"),
   log("executor", "Step 4", "Sort the results by price"),
-  log("executor", "Action", 'click [57] "Sort by"'),
+  log("executor", "Action", "click [57]", { do: "click", ref: "57", control: "Sort by" }),
   log("executor", "Result", "Sorted by price. 38 flights listed, cheapest first: ZIPAIR S$248, Scoot S$265, Peach S$281."),
 ];
 const history = [
@@ -104,7 +107,7 @@ const DONE = [
   ...BASE,
   status("executor", "Step 5…"),
   log("executor", "Step 5", "Open the cheapest fare to check the final price"),
-  log("executor", "Action", `tabs open ${SITE2}`),
+  log("executor", "Action", `tabs open ${SITE2}`, { do: "tabs", url: SITE2 }),
   log("executor", "Result", "The ZIPAIR booking page shows ZG52 on 14 Nov at S$248 including taxes."),
   status("validator", "Checking the answer…"),
   quiet("validator", "Checking Answer", "Checking the answer against what was read."),
@@ -131,31 +134,31 @@ const DELEGATING = [
   status("executor", "Looking at the page…"),
   log("system", "Task Started", TASK3),
   log("executor", "Step 1", "Check the three stores at the same time"),
-  log("executor", "Action", "delegate 3 sub-tasks"),
+  log("executor", "Action", "delegate 3 sub-tasks", { do: "delegate" }),
   { k: "subtasks", ids: STORES.map((x) => x.id), tasks: STORES.map((x) => ({ id: x.id, task: x.task, url: x.url })) },
   status("executor", "3 sub-tasks running…"),
   ...STORES.map((x, i) => ({ k: "sub", id: x.id, state: "running", tabId: 11 + i })),
   sub("run-1-s1", status("executor", "Looking at the page…")),
   sub("run-1-s1", log("executor", "Step 1", "Open the address it was given")),
-  sub("run-1-s1", log("executor", "Action", `navigate ${STORES[0].url}`)),
+  sub("run-1-s1", log("executor", "Action", `navigate ${STORES[0].url}`, { do: "navigate", url: STORES[0].url })),
   sub("run-1-s1", log("executor", "Result", "Opened the MacBook Air page. It lists 13-inch and 15-inch models with their configurations.")),
   sub("run-1-s1", status("executor", "Step 2…")),
   sub("run-1-s1", log("executor", "Step 2", "Read the price of the 16 GB, 256 GB model")),
-  sub("run-1-s1", log("executor", "Action", 'find "16GB 256GB"')),
+  sub("run-1-s1", log("executor", "Action", 'find "16GB 256GB"', { do: "find" })),
   sub("run-1-s1", log("executor", "Result", '"16GB 256GB" is in 2 places in the text. The text there reads: "13-inch MacBook Air M4 10-Core CPU 8-Core GPU 16GB Unified Memory 256GB SSD Storage $999.00"')),
   sub("run-1-s1", status("validator", "Checking the answer…")),
   { k: "sub", id: "run-1-s1", state: "ended", outcome: "success", success: true, text: "Apple sells the 13-inch MacBook Air M4 with 16 GB and 256 GB for **$999.00**." },
   sub("run-1-s2", status("executor", "Looking at the page…")),
   sub("run-1-s2", log("executor", "Step 1", "Open the address it was given")),
-  sub("run-1-s2", log("executor", "Action", `navigate ${STORES[1].url}`)),
+  sub("run-1-s2", log("executor", "Action", `navigate ${STORES[1].url}`, { do: "navigate", url: STORES[1].url })),
   sub("run-1-s2", log("executor", "Result", "Opened Best Buy. A search box is at the top of the page.")),
   sub("run-1-s2", status("executor", "Step 2…")),
   sub("run-1-s2", log("executor", "Step 2", "Search for the MacBook Air M4")),
-  sub("run-1-s2", log("executor", "Action", 'fill [4] "Search": "MacBook Air 13 M4 16GB 256GB"')),
+  sub("run-1-s2", log("executor", "Action", 'fill [4] "MacBook Air 13 M4 16GB 256GB"', { do: "fill", ref: "4", control: "Search" })),
   sub("run-1-s2", status("executor", "Step 3…")),
   sub("run-1-s3", status("executor", "Looking at the page…")),
   sub("run-1-s3", log("executor", "Step 1", "Open the address it was given")),
-  sub("run-1-s3", log("executor", "Action", `navigate ${STORES[2].url}`)),
+  sub("run-1-s3", log("executor", "Action", `navigate ${STORES[2].url}`, { do: "navigate", url: STORES[2].url })),
   sub("run-1-s3", log("executor", "Result", "Opened Amazon. A notice about cookies is on top of the page.")),
   sub("run-1-s3", status("executor", "Step 2…")),
   sub("run-1-s3", log("executor", "Step 2", "Open the listing from the search results")),
@@ -275,7 +278,7 @@ const STATES = {
   },
   failed: {
     ready: true,
-    msgs: [snap("done", [...BASE, status("executor", "Step 5…"), log("executor", "Step 5", "Open the cheapest fare"), log("executor", "Action", 'click [88] "ZIPAIR S$248"'), log("error", "Action Failed", "The page did not respond to the press after 3 tries."), { k: "answer", state: "error", text: "The flights page stopped responding after three tries, so I could not check the final price. The cheapest fare listed was ZIPAIR at S$248.", note: "", verified: null, used: {} }], { running: false, stopState: "error", steps: 5, activeMs: 64000 })],
+    msgs: [snap("done", [...BASE, status("executor", "Step 5…"), log("executor", "Step 5", "Open the cheapest fare"), log("executor", "Action", "click [88]", { do: "click", ref: "88", control: "ZIPAIR S$248" }), log("error", "Action Failed", "The page did not respond to the press after 3 tries."), { k: "answer", state: "error", text: "The flights page stopped responding after three tries, so I could not check the final price. The cheapest fare listed was ZIPAIR at S$248.", note: "", verified: null, used: {} }], { running: false, stopState: "error", steps: 5, activeMs: 64000 })],
   },
 };
 

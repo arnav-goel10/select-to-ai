@@ -24,7 +24,7 @@
             </div>
             <div class="sidebar-new">
                 <button type="button" class="new-task-btn" id="newTaskBtn" title="Clear the conversation and start a new task">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                    <span class="new-task-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span>
                     New task
                 </button>
             </div>
@@ -65,9 +65,9 @@
                 <!-- What a screen reader is told: a step starting, a wait, the end. -->
                 <div class="visually-hidden" id="liveAnnounce" role="status" aria-live="polite"></div>
                 <div class="topbar-actions">
-                    <button type="button" class="btn btn-sm live-stop" id="liveStopBtn" hidden>
+                    <button type="button" class="btn btn-sm live-stop" id="liveStopBtn" aria-label="Stop the task" title="Stop the task" hidden>
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/></svg>
-                        Stop
+                        <span class="live-stop-label">Stop</span>
                     </button>
                     <div class="assistants" id="assistantsWrap" hidden>
                         <button type="button" class="icon-btn" id="assistantsBtn" title="Ask an assistant site" aria-label="Ask an assistant site" aria-haspopup="menu" aria-expanded="false">
@@ -152,7 +152,7 @@
                 </button>
             </div>
             <div class="memory-body">
-                <p class="memory-lede">Tasks you saved, to repeat without the AI. Each step is checked as it runs. If a page only looks different, the step is fixed with a small, low-cost model call and checked again. If a step would now do something different, the recipe stops before it and tells you why.</p>
+                <p class="memory-lede">Tasks you saved, to run again in one click without asking the AI each time. Every step is checked as it runs. If a step would now do something different, the recipe stops before it and tells you why.</p>
                 <ul class="memory-list" id="recipesList"></ul>
                 <div class="recipe-detail" id="recipeDetail" hidden></div>
             </div>
