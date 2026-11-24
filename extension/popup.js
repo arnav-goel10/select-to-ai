@@ -54,6 +54,7 @@ document.addEventListener('DOMContentLoaded', () => {
             agentEnabled = items.showAgent === true && ready;
             taskForm.hidden = !agentEnabled;
             $('ideas').hidden = !agentEnabled;
+            $('taskHelper').hidden = !agentEnabled;
             openAgentBtn.hidden = !agentEnabled;
             // The quick box starts the agent, so it shows only when the agent is on.
             $('openPaletteBtn').hidden = !agentEnabled;
@@ -130,6 +131,10 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        // The popup moves toward where the task goes while the panel opens.
+        document.body.classList.add('handing-off');
+        // If nothing opens (a closed window, a refused panel), the popup comes back.
+        setTimeout(() => document.body.classList.remove('handing-off'), 900);
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
             const activeTab = tabs && tabs[0];
             const tabId = activeTab && activeTab.id ? activeTab.id : null;

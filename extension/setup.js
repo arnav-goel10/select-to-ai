@@ -234,7 +234,7 @@
   const PRIVACY_URL = "https://github.com/arnav-goel10/select-to-ai/blob/main/PRIVACY_POLICY.md";
 
   const CARD_STYLE = `
-.consent-card { border: 1px solid var(--border-strong, #c9ccd1); border-radius: var(--radius-lg, 10px); background: var(--surface, #fff); color: var(--text, #111); padding: 14px 16px; margin: 10px 0; box-shadow: var(--shadow-xs, none); text-align: left; }
+.consent-card { border: 1px solid var(--border-strong, #d3d3d8); border-radius: var(--radius-lg, 10px); background: var(--surface, #fff); color: var(--text, #111); padding: 14px 16px; margin: 10px 0; box-shadow: var(--shadow-xs, none); text-align: left; }
 .consent-card h3 { margin: 0 0 6px; font-size: var(--text-base, 14px); font-weight: var(--weight-semibold, 600); }
 .consent-card p { margin: 0 0 12px; color: var(--text-muted, #555); font-size: var(--text-sm, 13px); line-height: var(--leading-snug, 1.45); }
 .consent-card p a { color: inherit; }

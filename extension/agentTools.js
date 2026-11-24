@@ -631,6 +631,28 @@
     return clip(el.accName || el.label || el.text || el.placeholder || el.title || el.name, 70);
   }
 
+  /** True for a control that takes typed text: its words may be what was typed. */
+  function takesTyping(el) {
+    if (!el) return false;
+    const tag = String(el.tagName || "").toLowerCase();
+    const role = String(el.role || "").toLowerCase();
+    if (el.isContentEditable || tag === "textarea" || ["textbox", "searchbox", "combobox", "spinbutton"].includes(role)) return true;
+    if (tag !== "input") return false;
+    const type = String(el.inputType || "text").toLowerCase();
+    return !["button", "submit", "reset", "image", "checkbox", "radio", "range", "color", "file", "hidden"].includes(type);
+  }
+
+  /**
+   * The name a person may be shown for a control: what the page calls it.
+   * A field is named only by its label, placeholder or title, never by the
+   * words in it, which are what was typed there.
+   */
+  function controlName(el) {
+    if (!el) return "";
+    if (takesTyping(el)) return clip(el.accName || el.label || el.placeholder || el.title, 60);
+    return clip(elementLabel(el), 60);
+  }
+
   /**
    * One compact, readable line per element, e.g.
    *   [12] a "Genshin Impact" → /wiki/Genshin_Impact
@@ -2122,6 +2144,8 @@
     actionRisk,
     formatElementList,
     elementLabel,
+    controlName,
+    takesTyping,
     saysNotToSubmit,
     guardHumanCheck,
     guardNoSubmit,

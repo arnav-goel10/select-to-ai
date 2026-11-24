@@ -31,6 +31,7 @@ code {
   height: 22px;
   border-radius: 6px;
   display: block;
+  box-shadow: 0 0 0 1px var(--logo-edge);
 }
 
 /* ----------------------------------------------------------- buttons */
@@ -54,15 +55,9 @@ code {
   white-space: nowrap;
   text-decoration: none;
   box-shadow: var(--shadow-xs);
-  transition:
-    background-color var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    box-shadow var(--dur-fast) var(--ease-out),
-    transform var(--dur-fast) var(--ease-out);
 }
 .btn:hover { background: var(--surface-2); }
-.btn:active { transform: translateY(0.5px); background: var(--surface-3); }
+.btn:active { background: var(--surface-3); }
 .btn:disabled,
 .btn[aria-disabled="true"] { opacity: 0.5; cursor: default; transform: none; }
 .btn svg { flex-shrink: 0; }
@@ -73,16 +68,34 @@ code {
   color: var(--accent-contrast);
   box-shadow: var(--shadow-xs), inset 0 1px 0 rgb(255 255 255 / 0.12);
 }
-.btn-primary:hover { background: var(--accent-fill-hover); border-color: var(--accent-fill-hover); }
+.btn-primary:hover { background: var(--accent-fill-hover); border-color: var(--accent-fill-hover); transform: translateY(var(--lift)); }
 .btn-primary:active { background: var(--accent-fill-hover); }
 
+/* A quiet button still looks pressable: text colour and a hairline edge. */
 .btn-ghost {
-  border-color: transparent;
+  border-color: var(--border);
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text);
   box-shadow: none;
 }
-.btn-ghost:hover { color: var(--text); background: var(--hover-overlay); }
+.btn-ghost:hover { color: var(--text); background: var(--hover-overlay); border-color: var(--border-strong); }
+
+/* A small action inside a line of text (View, Undo): underlined, in the text colour. */
+.link-btn {
+  font: inherit;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text);
+  font-weight: var(--weight-medium);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  cursor: pointer;
+}
+.link-btn:hover { text-decoration-color: currentColor; }
 .btn-ghost:active { background: var(--press-overlay); }
 
 .btn-danger { color: var(--failed); }
@@ -105,13 +118,33 @@ code {
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .icon-btn:hover { background: var(--hover-overlay); color: var(--text); }
 .icon-btn:active { background: var(--press-overlay); }
 .icon-btn svg { width: 18px; height: 18px; display: block; }
 .icon-btn.sm { width: 28px; height: 28px; }
 .icon-btn.sm svg { width: 16px; height: 16px; }
+
+/* --------------------------------------------------------------- press */
+
+/* Everything that can be pressed answers the press: it sinks a little at
+   once and springs back when let go. Colours ease; the shape moves by
+   transform only. Pages add their own controls to this list with the
+   .pressable class. */
+:where(.btn, .icon-btn, .pill, .chip span, .seg span, .link-btn, .menu-item, .pressable) {
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    opacity var(--dur-1) var(--ease-out),
+    transform var(--dur-2) var(--ease-spring);
+}
+:where(.btn, .icon-btn, .pill, .link-btn, .menu-item, .pressable):not(:disabled, [aria-disabled="true"]):active,
+:where(.chip, .seg label):active span {
+  transform: scale(var(--press-scale));
+  transition-duration: var(--dur-1), var(--dur-1), var(--dur-1), var(--dur-1), 60ms;
+  transition-timing-function: var(--ease-out);
+}
 
 /* ------------------------------------------------------------ inputs */
 
@@ -122,7 +155,7 @@ textarea.input {
   font-size: var(--text-sm);
   color: var(--text);
   background: var(--surface);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--control-edge);
   border-radius: var(--radius-md);
   height: 32px;
   padding: 0 10px;
@@ -132,7 +165,8 @@ textarea.input {
 }
 .input::placeholder { color: var(--text-subtle); }
 textarea.input { height: auto; padding: 8px 10px; resize: vertical; line-height: var(--leading-normal); }
-.input:hover { border-color: color-mix(in srgb, var(--border-strong) 60%, var(--text-subtle)); }
+.input:hover { border-color: color-mix(in srgb, var(--control-edge) 60%, var(--text-subtle)); }
+/* Focus turns the field's own edge into a 2 px accent ring: one line, not two. */
 .input:focus,
 .input:focus-visible { border-color: var(--accent); box-shadow: var(--shadow-focus); outline: none; }
 .input.mono { font-family: var(--font-mono); font-size: var(--text-xs); }
@@ -160,8 +194,9 @@ input[type="checkbox"]:not(.switch input):not(.chip input) {
   position: absolute;
   inset: 0;
   border-radius: var(--radius-full);
-  background: var(--border-strong);
-  transition: background-color var(--dur-base) var(--ease-out);
+  background: var(--surface-3);
+  box-shadow: inset 0 0 0 1px var(--control-edge);
+  transition: background-color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
 }
 .switch span::after {
   content: "";
@@ -173,10 +208,10 @@ input[type="checkbox"]:not(.switch input):not(.chip input) {
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
-  transition: transform var(--dur-base) var(--ease-out);
+  transition: transform var(--dur-2) var(--ease-spring);
 }
-.switch input:checked + span { background: var(--accent-fill); }
-.switch input:checked + span::after { transform: translateX(16px); }
+.switch input:checked + span { background: var(--accent-fill); box-shadow: inset 0 0 0 1px var(--accent-fill); }
+.switch input:checked + span::after { transform: translateX(16px); background: var(--accent-contrast); }
 .switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ------------------------------------------------- segmented control */
@@ -198,7 +233,6 @@ input[type="checkbox"]:not(.switch input):not(.chip input) {
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   color: var(--text-muted);
-  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
 }
 .seg label:hover span { color: var(--text); }
 .seg input:checked + span { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); }
@@ -222,7 +256,6 @@ input[type="checkbox"]:not(.switch input):not(.chip input) {
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   color: var(--text-muted);
-  transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .chip span::before {
   content: "+";
@@ -232,7 +265,7 @@ input[type="checkbox"]:not(.switch input):not(.chip input) {
   text-align: center;
 }
 .chip:hover span { color: var(--text); }
-.chip input:checked + span { color: var(--accent); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.chip input:checked + span { color: var(--text); background: var(--accent-selected); border-color: var(--control-edge); }
 .chip input:checked + span::before { content: "\2713"; font-size: 11px; }
 .chip input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -253,7 +286,6 @@ input[type="checkbox"]:not(.switch input):not(.chip input) {
   text-decoration: none;
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 .pill:hover { color: var(--text); border-color: var(--border-strong); background: var(--surface-2); }
 .pill > span { overflow: hidden; text-overflow: ellipsis; }
@@ -285,9 +317,10 @@ kbd {
 
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-subtle); flex-shrink: 0; }
 .dot.ok { background: var(--done); box-shadow: 0 0 0 3px var(--done-soft); }
-.dot.warn { background: var(--needs); box-shadow: 0 0 0 3px var(--needs-soft); }
+.dot.warn { background: var(--needs-mark); box-shadow: 0 0 0 3px var(--needs-soft); }
 .dot.err { background: var(--failed); box-shadow: 0 0 0 3px var(--failed-soft); }
-.dot.live { background: var(--working); animation: ui-pulse var(--dur-pulse) ease-in-out infinite; }
+/* Live: the dot with a ring around it, so it reads as working when still. */
+.dot.live { background: var(--working); box-shadow: 0 0 0 3px color-mix(in srgb, var(--working) 30%, transparent); animation: ui-pulse var(--dur-pulse) ease-in-out infinite; }
 
 .spin {
   width: 12px;
@@ -340,7 +373,8 @@ details[open] > summary .chev { transform: rotate(180deg); }
   border: 1px solid var(--border);
   background: var(--surface);
   box-shadow: var(--shadow-lg);
-  animation: ui-enter var(--dur-base) var(--ease-out) both;
+  transform-origin: top right;
+  animation: ui-pop var(--dur-2) var(--ease-out) both;
 }
 .menu-pop .menu-label {
   padding: 6px 10px 4px;
@@ -364,8 +398,8 @@ details[open] > summary .chev { transform: rotate(180deg); }
   text-decoration: none;
   cursor: pointer;
 }
-.menu-item:hover,
-.menu-item:focus-visible { background: var(--hover-overlay); outline: none; }
+.menu-item:hover { background: var(--hover-overlay); }
+.menu-item:focus-visible { background: var(--hover-overlay); outline: var(--focus-ring); outline-offset: -2px; }
 .menu-item svg { width: 16px; height: 16px; color: var(--text-muted); flex-shrink: 0; }
 .menu-item .grow { flex: 1; min-width: 0; }
 
@@ -376,9 +410,9 @@ details[open] > summary .chev { transform: rotate(180deg); }
   inset: 0;
   z-index: 80;
   display: flex;
-  align-items: flex-start;
+  align-items: safe center;
   justify-content: center;
-  padding: 8vh 16px 16px;
+  padding: 16px;
   background: var(--scrim);
   animation: ui-fade var(--dur-base) var(--ease-out) both;
 }
@@ -392,8 +426,11 @@ details[open] > summary .chev { transform: rotate(180deg); }
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-lg);
-  animation: ui-enter var(--dur-base) var(--ease-out) both;
+  animation: ui-pop var(--dur-3) var(--ease-out) both;
 }
+.modal-sheet:focus { outline: none; }
+.modal.ui-leaving { animation: ui-fade var(--dur-1) var(--ease-in) reverse both !important; }
+.modal.ui-leaving .modal-sheet { animation: ui-leave var(--dur-1) var(--ease-in) both; }
 
 /* ------------------------------------------------------------- toast */
 

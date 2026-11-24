@@ -4,7 +4,10 @@
  * When a run is driven from the agent's page in a tab of its own and the
  * agent brings another tab to front to act there, this small bar sits on
  * that page so the user can follow: what the agent is doing now, a status
- * dot, Stop, Back to agent, and Open side panel. The engine (engine.js,
+ * dot, Stop, Back to agent, and Open side panel. When the run waits for
+ * something the user does on that page (signing in, a code, a payment), the
+ * bar has "I'm done" for it; any other question is answered on the agent's
+ * page, and the bar's way back says so. The engine (engine.js,
  * syncBar) puts it here and tells it what to show; it lives in a closed
  * shadow root, takes the app's colours from tokens.css, follows the theme
  * setting, and moves off any point the agent's pointer is about to use.
@@ -37,6 +40,7 @@
   const SVG = "http://www.w3.org/2000/svg";
   const ICONS = {
     stop: [["rect", { x: 4, y: 4, width: 8, height: 8, rx: 1.5, fill: "currentColor" }]],
+    check: [["path", { d: "M3.5 8.5 6.5 11.5 12.5 4.5", fill: "none", stroke: "currentColor", "stroke-width": 1.6, "stroke-linecap": "round", "stroke-linejoin": "round" }]],
     back: [["path", { d: "M9.5 3.5 5 8l4.5 4.5", fill: "none", stroke: "currentColor", "stroke-width": 1.6, "stroke-linecap": "round", "stroke-linejoin": "round" }]],
     panel: [["rect", { x: 2, y: 3, width: 12, height: 10, rx: 2, fill: "none", stroke: "currentColor", "stroke-width": 1.4 }], ["path", { d: "M10 3.5v9", stroke: "currentColor", "stroke-width": 1.4 }]],
     close: [["path", { d: "M4.5 4.5l7 7m0-7-7 7", stroke: "currentColor", "stroke-width": 1.6, "stroke-linecap": "round" }]],
@@ -74,10 +78,10 @@
     :host([data-edge="top"]) .bar { animation-name: bar-in-top; }
     @keyframes bar-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
     @keyframes bar-in-top { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
-    .logo { width: 18px; height: 18px; border-radius: 5px; flex: none; }
-    .dot { position: relative; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--working); }
+    .logo { width: 18px; height: 18px; border-radius: 5px; flex: none; margin-right: var(--space-1); }
+    .dot { position: relative; flex: none; width: 8px; height: 8px; margin: 0 2px; border-radius: 50%; background: var(--working); }
     .dot::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: inherit; animation: ring 1.6s var(--ease-out, ease-out) infinite; }
-    @keyframes ring { from { transform: scale(1); opacity: .55; } to { transform: scale(2.6); opacity: 0; } }
+    @keyframes ring { from { transform: scale(1); opacity: .55; } to { transform: scale(2); opacity: 0; } }
     .bar[data-state="needs"] .dot { background: var(--needs); }
     .bar[data-state="done"] .dot { background: var(--done); }
     .bar[data-state="failed"] .dot { background: var(--failed); }
@@ -109,7 +113,11 @@
     .btn svg { flex: none; }
     .stop svg { color: var(--failed); }
     .home { border: 1px solid var(--border-strong); }
+    .done { background: var(--accent-fill); color: var(--accent-contrast); }
+    .done:hover { background: var(--accent-fill-hover); }
+    .done:active { background: var(--accent-fill-hover); }
     .home:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+    .home.asks { border-color: var(--needs); }
     .icon { width: 32px; padding: 0; color: var(--text-muted); }
     .icon:hover { color: var(--text); }
     .sep { flex: none; width: 1px; height: 20px; background: var(--border); }
@@ -159,10 +167,26 @@
     return Math.ceil(reach);
   }
 
-  function hostStyle() {
+  // How far the page's bar reaches is read at most once a second and when
+  // the edge changes, not on every step update: each read makes the page
+  // work out its style and layout.
+  let pinnedAt = 0;
+  let pinnedEdge = "";
+  let pinnedReach = 0;
+  function pinnedNow(fresh) {
+    const now = Date.now();
+    if (fresh || edge !== pinnedEdge || now - pinnedAt > 1000) {
+      pinnedReach = pinned(edge);
+      pinnedEdge = edge;
+      pinnedAt = now;
+    }
+    return pinnedReach;
+  }
+
+  function hostStyle(fresh) {
     // The page's own styles never reach in (each rule is marked important,
     // which no page rule outranks), and the bar never pushes the page's layout.
-    const gap = 16 + pinned(edge);
+    const gap = 16 + pinnedNow(fresh);
     const rules = { all: "initial", "color-scheme": scheme(), position: "fixed", left: "0", right: "0", top: edge === "top" ? `${gap}px` : "auto", bottom: edge === "top" ? "auto" : `${gap}px`, "z-index": "2147483647", display: "flex", "justify-content": "center", padding: "0 16px", "pointer-events": "none", visibility: aside ? "hidden" : "visible", opacity: "1", transform: "none" };
     return Object.entries(rules).map(([k, v]) => `${k}: ${v} !important;`).join(" ");
   }
@@ -213,22 +237,24 @@
     const stop = button("stop", ICONS.stop, "Stop", "Stop the agent");
     const sep = document.createElement("span");
     sep.className = "sep";
+    const done = button("done", ICONS.check, "I'm done", "Tell the agent you have done this");
     const home = button("home", ICONS.back, "Back to agent", "Back to the agent page");
     const panel = button("icon panel", ICONS.panel, "", "Open the side panel");
     const close = button("icon close", ICONS.close, "", "Close");
     stop.addEventListener("click", (e) => { if (e.isTrusted) tell("agentBarStop"); });
     home.addEventListener("click", (e) => { if (e.isTrusted) tell("agentBarHome"); });
+    done.addEventListener("click", (e) => { if (e.isTrusted) tell("agentBarDone"); });
     // The side panel opens from this click: the user's gesture goes with the message.
     panel.addEventListener("click", (e) => {
       if (!e.isTrusted) return;
       tell("agentBarPanel").then((r) => { if (!r || !r.ok) say("The side panel did not open here. Use the toolbar button."); });
     });
     close.addEventListener("click", (e) => { if (e.isTrusted) tell("agentBarClose"); });
-    bar.append(logo, dot, line, stop, sep, home, panel, close);
+    bar.append(logo, dot, line, done, stop, sep, home, panel, close);
     style.replaceSync(STYLE);
     shadow.adoptedStyleSheets = [tokens, style];
     shadow.append(bar);
-    parts = { tokens, bar, logo, words, stop, sep, home, panel, close, line };
+    parts = { tokens, bar, logo, words, done, stop, sep, home, panel, close, line };
     (document.documentElement || document.body).appendChild(host);
   }
 
@@ -255,6 +281,16 @@
     parts.sep.hidden = !!state.ended;
     parts.panel.hidden = !!state.ended;
     parts.close.hidden = !state.ended;
+    // What the user is waiting on: done here, or answered on the agent's page.
+    const needs = !state.ended && state.state === "needs";
+    parts.done.hidden = !(needs && state.onPage);
+    const away = needs && !state.onPage;
+    const homeWords = away ? "Answer in the agent" : "Back to agent";
+    const label = parts.home.querySelector(".label");
+    if (label && label.textContent !== homeWords) label.textContent = homeWords;
+    parts.home.title = away ? "Answer on the agent page" : "Back to the agent page";
+    parts.home.setAttribute("aria-label", parts.home.title);
+    parts.home.classList.toggle("asks", away);
   }
 
   function off() {
@@ -297,7 +333,13 @@
     armed = false;
     tell("agentBarTouched");
   }
-  window.addEventListener("resize", () => { if (host && host.isConnected) host.style.cssText = hostStyle(); }, { passive: true });
+  // A resize is answered once a frame at most, however many events it fires.
+  let resizeQueued = false;
+  window.addEventListener("resize", () => {
+    if (resizeQueued) return;
+    resizeQueued = true;
+    requestAnimationFrame(() => { resizeQueued = false; if (host && host.isConnected) host.style.cssText = hostStyle(true); });
+  }, { passive: true });
   for (const type of ["pointerdown", "keydown", "wheel", "touchstart"]) window.addEventListener(type, watch, { capture: true, passive: true });
   // Clicking into a frame on the page moves focus to that frame element.
   window.addEventListener("blur", () => {
