@@ -254,6 +254,11 @@ test("a challenge page is recognised by its look, not by a page that mentions on
   assert.ok(T.isChallengePage(short("https://www.google.com/search?q=x", "Our systems have detected unusual traffic from your computer network.", "https://www.google.com/sorry/index?continue=x")));
   assert.ok(!T.isChallengePage(short("Lasagna recipes", "Just a moment while we load more recipes. ".repeat(60))), "a long ordinary page");
   assert.ok(!T.isChallengePage({ title: "Sign in", innerText: "Email. Password. Protected by reCAPTCHA.", elements: Array.from({ length: 20 }, (_, i) => ({ id: i })) }));
+  // A nearly empty page that holds a verification widget is one, in any language and at any address.
+  assert.ok(T.isChallengePage({ title: "Überprüfung", innerText: "Bitte bestätigen Sie, dass Sie ein Mensch sind.", url: "https://shop.example/a/b", widget: true, elements: [{ id: 1 }] }));
+  assert.ok(!T.isChallengePage({ title: "Recipes", innerText: "A long ordinary page. ".repeat(100), widget: true, elements: [{ id: 1 }] }), "a widget on a full page is a widget, not a challenge page");
+  // Where the page lives plays no part: the address of one service's check page is not a signal.
+  assert.ok(!T.isChallengePage({ title: "Results", innerText: "Two results found.", url: "https://search.example/sorry/index?continue=x", elements: [{ id: 1 }] }));
 });
 
 test("a link is judged as a link, told where it goes; a script link as a button; a link to a spot on the page passes", () => {

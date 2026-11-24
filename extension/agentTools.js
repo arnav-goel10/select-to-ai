@@ -815,16 +815,22 @@
   }
 
   const HUMAN_CHECK = /\b(i'?m not a robot|not a robot|captcha|recaptcha|hcaptcha|verify (?:that )?you(?:'re| are) (?:a )?human|verifying (?:that )?you(?:'re| are) (?:a )?human|human verification|are you a robot|press and hold|slide to verify|checking your browser|unusual traffic from your computer|verification successful\. waiting for|checking if the site connection is secure)\b/i;
-  // Interstitial challenge titles (Cloudflare, Google's "sorry" page).
+  // Titles the verification services give the page they put in front of a site.
   const CHALLENGE_TITLE = /^(just a moment\.*|attention required!?.*|one more step|are you a robot\??|security check)$/i;
 
-  /** True for a page whose only purpose is checking that a person is visiting. */
+  /**
+   * True for a page whose only purpose is checking that a person is
+   * visiting: a nearly empty page (a line or two and a few controls) that
+   * holds a verification widget (`page.widget`, found by the content
+   * script from where the widget is served), or whose title or opening
+   * words are a verification service's. Where the page lives plays no part.
+   */
   function isChallengePage(page) {
     if (!page) return false;
     const text = String(page.innerText || "");
     const title = String(page.title || "").trim();
     if (text.length > 1500 || ((page.elements || []).length > 12)) return false;
-    return CHALLENGE_TITLE.test(title) || HUMAN_CHECK.test(`${title} ${text.slice(0, 600)}`) || /\/sorry\/index/.test(String(page.url || ""));
+    return page.widget === true || CHALLENGE_TITLE.test(title) || HUMAN_CHECK.test(`${title} ${text.slice(0, 600)}`);
   }
 
   /**

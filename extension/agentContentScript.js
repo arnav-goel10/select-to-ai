@@ -5683,7 +5683,7 @@
         const widgets = shown(HUMAN_CHECK_WIDGETS).filter((el) => { const r = el.getBoundingClientRect(); return r.width >= 60 && r.height >= 40 && !el.closest('.grecaptcha-badge'); });
         const text = document.body ? (document.body.innerText || '') : '';
         const wholePage = typeof SELECT_TO_AI_TOOLS !== 'undefined' && SELECT_TO_AI_TOOLS.isChallengePage
-            && SELECT_TO_AI_TOOLS.isChallengePage({ title: document.title, url: location.href, innerText: text.slice(0, 2000), elements: Array.from(document.querySelectorAll('a, button, input, select, textarea')).slice(0, 20) });
+            && SELECT_TO_AI_TOOLS.isChallengePage({ title: document.title, widget: widgets.length > 0, innerText: text.slice(0, 2000), elements: Array.from(document.querySelectorAll('a, button, input, select, textarea')).slice(0, 20) });
         if (wholePage) out.push({ kind: 'human_check', whole: true });
         else if (widgets.length) out.push({ kind: 'human_check' });
         return out;

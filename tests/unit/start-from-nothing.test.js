@@ -182,12 +182,15 @@ const firstStep = (run, page) => {
   return RUN.advance(run, { type: "observed", page }, { now: 1000, page, settings, extras: {} });
 };
 
-test("the model is told as a fact that no site is open, and where to go", () => {
+test("the model is told as a fact that no site is open, and which addresses open without asking", () => {
   const run = fromNothing("find the cheapest flight to Rome in May");
   const fx = firstStep(run, blank());
   assert.equal(fx[0].type, "model");
-  assert.match(fx[0].user, /No site is open yet\. The run began on the new-tab page, and works in that same tab\. Go where the request needs/);
+  assert.match(fx[0].user, /No site is open yet\. The run began on the new-tab page, and works in that same tab\. Two kinds of address open without asking the user: a site the request names, and a search engine's results for the request's own words\./);
   assert.doesNotMatch(fx[0].user, /cannot be read or acted on by extensions/);
+  // No engine is named and no address is given as an example.
+  const fact = fx[0].user.slice(fx[0].user.indexOf("No site is open yet"), fx[0].user.indexOf("\n", fx[0].user.indexOf("No site is open yet")));
+  assert.doesNotMatch(fact, /https?:|\?q=|\b[a-z0-9-]+\.(?:com|org|net|io)\b/i);
 });
 
 test("a run moved off a page it cannot use says the user's tab was left as it was", () => {

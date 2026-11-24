@@ -184,7 +184,7 @@ In this browser your pointer and your keys are made by script: the page is sent 
     const where = from.reused
       ? `The run began on ${what}, and works in that same tab.`
       : `The run began on ${what}${from.url ? ` (${clip(from.url, 120)})` : ""}, which the agent cannot use. That tab is left as it was, and the run works in a new tab it opened.`;
-    return `No site is open yet. ${where} Go where the request needs: navigate to the site it names, or to a search engine's results for the request's words (https://duckduckgo.com/?q=...). Either opens without asking the user.`;
+    return `No site is open yet. ${where} Two kinds of address open without asking the user: a site the request names, and a search engine's results for the request's own words.`;
   }
 
   /**
