@@ -796,11 +796,12 @@
      * counts when it holds a fair share of the page's text: a listing has
      * one <article> per card, and taking one card as the page hid the rest.
      * With neither, the reading follows the text down from the body: into
-     * the container that holds nearly all of the text outside menus,
-     * banners, footers and links, for as long as one does. A wrapper around
-     * the whole page is walked through; a content column beside a sidebar
-     * of links is where it stops, and so is a container whose text is split
-     * among its parts or held in its own paragraphs, headings and lists.
+     * the one container that holds all of the text outside menus, banners,
+     * footers and links, for as long as one does. A wrapper around the whole
+     * page is walked through, and so is a sidebar of links beside a content
+     * column. Any words beside it stop the walk, however few (a status line
+     * above a long list is part of the page), and so does a container whose
+     * text is held in its own paragraphs, headings and lists.
      * No class or id is read: what a site calls its parts says nothing
      * that holds on another site.
      */
@@ -827,7 +828,7 @@
                 if (length > bestLength) { best = kid; bestLength = length; }
             }
             // A block of text (a paragraph, a heading, a list, a table) is content, not a container of it.
-            if (!best || bestLength < total * 0.8 || /^(P|H[1-6]|UL|OL|LI|DL|TABLE|PRE|BLOCKQUOTE|FIGURE)$/.test(best.tagName)) break;
+            if (!best || bestLength < total || /^(P|H[1-6]|UL|OL|LI|DL|TABLE|PRE|BLOCKQUOTE|FIGURE)$/.test(best.tagName)) break;
             node = best;
         }
         if (node === body) return null;

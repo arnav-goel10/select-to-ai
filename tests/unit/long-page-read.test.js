@@ -243,6 +243,12 @@ test("the main content is found from the page's structure, not from its names", 
   const listing = page(cards);
   assert.ok(listing.querySelector("article"));
   assert.notEqual(pickMain(listing), listing.querySelector("article"), "the first card is not the page");
+
+  // A short status line above a long list is part of the page: words beside
+  // the list, however few, keep the reading at the level that holds both.
+  const rows = h("div", {}, ...Array.from({ length: 30 }, (_, i) => h("div", {}, `Person ${i}: Notes about item ${i}`)));
+  const inbox = page(h("h1", {}, "Mail"), h("p", {}, "Opened: Lunch on Friday"), rows);
+  assert.notEqual(pickMain(inbox), rows, "the status line is not cut off");
   assert.doesNotMatch(source("pickMain"), /['"][#.][a-z]/i, "no class or id selector");
 });
 
