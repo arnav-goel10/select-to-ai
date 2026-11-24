@@ -100,8 +100,10 @@ test("price lookup matches exact key first, then longest substring", () => {
   );
   assert.equal(
     defaults.findModelRates("openai/gpt-oss-120b"),
-    prices["gpt-oss-120b"],
+    prices["openai/gpt-oss-120b"],
   );
+  assert.deepEqual(prices["openai/gpt-oss-120b"], [0.00015, 0.0006]);
+  assert.equal(defaults.findModelRates("gpt-oss-120b"), prices["gpt-oss-120b"]);
   assert.equal(
     defaults.findModelRates("meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
     prices["llama-3.1-8b"],

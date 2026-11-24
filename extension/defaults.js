@@ -419,6 +419,8 @@
     // Groq-hosted open-weight models
     "gpt-oss-20b": [0.0001, 0.0005],
     "gpt-oss-120b": [0.00015, 0.00075],
+    // Together serverless lists this id at $0.15 in, $0.60 out per M.
+    "openai/gpt-oss-120b": [0.00015, 0.0006],
     // Google
     // Gemini 3.8 Flash list price from 1 Jan 2027 (half that until then),
     // Google's pricing page, 24 Nov 2026.
