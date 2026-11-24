@@ -153,7 +153,10 @@ async function main() {
     const actions = checked.step.actions;
     const wheres = actions.map((a) => whereTo(a, run, page));
     const where = stepWhere(wheres);
-    return { actions, where, goal: checked.step.goal || "", said: actions.map((a) => STEP.describe(a, a.ref !== undefined ? run.labels[a.ref] : "")).join(", then ") };
+    // What a step that ends the run said: its answer or its question, for reading a miss.
+    const end = actions.find((a) => a.do === "done" || a.do === "ask_user");
+    const ending = end ? String(end.answer || end.question || "").slice(0, 300) + (end.do === "done" ? ` (success ${end.success})` : "") : "";
+    return { actions, where, ending, goal: checked.step.goal || "", note: String((out.reply && (out.reply.note || out.reply.memory)) || "").slice(0, 300), said: actions.map((a) => STEP.describe(a, a.ref !== undefined ? run.labels[a.ref] : "")).join(", then ") };
   }
 
   for (const c of cases) {
@@ -164,7 +167,7 @@ async function main() {
     const row = { name: c.name, group: c.group, task: c.task, site: run.startSite, steps: [] };
     rows.push(row);
     if (first.error) { row.error = first.error; console.log(`${c.name}: NO STEP (${first.error})`); continue; }
-    row.steps.push({ where: first.where, did: first.said });
+    row.steps.push({ where: first.where, did: first.said, goal: first.goal, note: first.note, ending: first.ending });
     if (c.group === "off" && first.where === "here") {
       // The action is taken as done, and the site shows nothing that fits.
       const reads = first.actions.every((a) => a.do === "find" || a.do === "read" || a.do === "scroll");
@@ -175,12 +178,12 @@ async function main() {
       look(run, shown);
       const second = await ask(run, shown);
       if (second.error) row.error = second.error;
-      else row.steps.push({ where: second.where, did: second.said });
+      else row.steps.push({ where: second.where, did: second.said, goal: second.goal, note: second.note, ending: second.ending });
     }
     const wheres = row.steps.map((s) => s.where);
     row.right = scored(c.group, wheres);
     if (row.error && c.group === "off" && !row.right) row.right = null;
-    console.log(`${row.right === true ? "ok   " : row.right === null ? "LOST " : "WRONG"} [${c.group}] ${c.name} on ${row.site}: ${row.steps.map((s, i) => `step ${i + 1} ${s.where}: ${s.did}`).join(" | ")}${row.error ? ` (${row.error})` : ""}`);
+    console.log(`${row.right === true ? "ok   " : row.right === null ? "LOST " : "WRONG"} [${c.group}] ${c.name} on ${row.site}: ${row.steps.map((s, i) => `step ${i + 1} ${s.where}: ${s.did}${s.ending ? ` [${s.ending}]` : ""}`).join(" | ")}${row.error ? ` (${row.error})` : ""}`);
   }
 
   const tally = (group) => {
