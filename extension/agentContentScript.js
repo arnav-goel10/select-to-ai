@@ -1413,10 +1413,11 @@
     function describeForm(form) {
         const controls = Array.from(form.elements || []);
         const shown = (c) => { const r = c.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-        const typed = controls.filter((c) => {
+        const typedAll = controls.filter((c) => {
             if (c.tagName === 'TEXTAREA') return true;
             return c.tagName === 'INPUT' && !/^(hidden|submit|button|reset|image|checkbox|radio|file|range|color)$/.test((c.type || 'text').toLowerCase());
-        }).filter(shown);
+        });
+        const typed = typedAll.filter(shown);
         const kinds = typed.map((c) => (c.tagName === 'TEXTAREA' ? 'textarea' : (c.type || 'text').toLowerCase()));
         const method = (form.getAttribute('method') || 'get').trim().toLowerCase();
         const marked = form.getAttribute('role') === 'search' || !!form.closest('[role="search"], search') || kinds.includes('search');
@@ -1453,7 +1454,12 @@
         // or a checked state. The form check is shown the first as listed
         // and never the second, so a form with a choice left out of the
         // listing, or with a control of the page's own, is held
-        // (agentTools.js unsureSend).
+        // (agentTools.js unsureSend). Two more are counted with the second,
+        // since the check cannot be shown them either: a box for words of
+        // the form that has no size on the page and holds a value (the
+        // hidden half of an editor or of a picker), and a frame inside the
+        // form (an iframe, object or embed), whose content a script may
+        // copy into the form when it is sent.
         const kindOf = (c) => (c.type || '').toLowerCase();
         const choices = controls.filter((c) => !c.disabled && (c.tagName === 'SELECT'
             || (c.tagName === 'INPUT' && /^(hidden|submit|button|reset|image|checkbox|radio|file|range|color)$/.test(kindOf(c))
@@ -1472,7 +1478,10 @@
             }
             return false;
         };
-        const built = new Set([...controls, ...Array.from(form.querySelectorAll('*'))].filter(holdsState)).size;
+        const inside = [...controls, ...Array.from(form.querySelectorAll('*'))];
+        const unshownBox = (c) => !c.disabled && !shown(c) && String(c.value || '') !== '';
+        const frame = (n) => /^(IFRAME|OBJECT|EMBED|FRAME)$/.test(String(n.tagName || ''));
+        const built = new Set([...inside.filter(holdsState), ...typedAll.filter(unshownBox), ...inside.filter(frame)]).size;
         // Where the form goes, without its query: the same form on the same
         // page has the same address from one look at the page to the next.
         let action = '';
