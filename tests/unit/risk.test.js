@@ -328,7 +328,7 @@ test("a formless message box is asked about first; a multi-line note box the che
   const first = POLICY.decide({ do: "press", ref: 4, key: "Enter" }, message, run, {});
   assert.equal(first.verdict, "confirm");
   assert.equal(first.check.kind, "form");
-  assert.equal(first.check.key, "form|chat.example|Message #general");
+  assert.ok(first.check.key.startsWith("form|chat.example|Message #general|"), first.check.key);
   assert.equal(first.check.text, "standup at 10", "the check is shown what the agent typed");
   assert.equal(T.opinionMessages(first.check).user.includes("none named; Enter is pressed in a box"), true);
   // The check says it posts for other people: the user approves it.
@@ -660,6 +660,75 @@ test("a form of several plain boxes goes to the check with every box; one that h
   assert.equal(T.actionRisk({ action: "click", id: 5 }, own).unsure, undefined);
   // A page that hides text written to an AI: held without asking, as for one box.
   assert.equal(P.decide({ do: "click", ref: 5 }, { ...page, injection: true }, run, ON).check, undefined);
+});
+
+test("a form check's answer holds only for the control and the text it was shown", () => {
+  const els = [
+    { id: 2, tagName: "input", inputType: "text", accName: "Title", formId: 0, value: "Hello" },
+    { id: 3, tagName: "textarea", accName: "Body", formId: 0, value: "My post" },
+    btn("Save draft", { id: 5, formId: 0, submits: true }),
+    btn("Publish", { id: 6, formId: 0, submits: true }),
+  ];
+  const page = { url: "https://blog.example/new", elements: els, forms: [{ id: 0, method: "post", search: false, plain: true, oneBox: false, fields: 2, action: "https://blog.example/posts" }] };
+  const run = { task: "x", trust: { sites: ["blog.example"], urls: [] }, openedTabs: [], typed: { 2: "Hello", 3: "My post" } };
+  const draft = P.decide({ do: "click", ref: 5 }, page, run, ON);
+  assert.equal(draft.verdict, "confirm");
+  assert.equal(draft.check.button, "Save draft");
+  const opinions = { [draft.check.key]: T.readOpinion(draft.check, { reaches: "own_record", undo: "yes", why: "a draft only they see" }) };
+  assert.equal(P.decide({ do: "click", ref: 5 }, page, { ...run, opinions }, ON).verdict, "allow", "the same button with the same text goes through");
+  // Another submit on the same form is a question of its own.
+  const publish = P.decide({ do: "click", ref: 6 }, page, { ...run, opinions }, ON);
+  assert.equal(publish.verdict, "confirm");
+  assert.ok(publish.check, "asked again");
+  assert.equal(publish.check.button, "Publish");
+  assert.notEqual(publish.check.key, draft.check.key);
+  // The same button with other text typed is asked again.
+  const retyped = { ...page, elements: els.map((e) => (e.id === 3 ? { ...e, value: "entirely different text" } : e)) };
+  const other = P.decide({ do: "click", ref: 5 }, retyped, { ...run, typed: { 2: "Hello", 3: "entirely different text" }, opinions }, ON);
+  assert.equal(other.verdict, "confirm");
+  assert.ok(other.check, "asked again");
+  assert.notEqual(other.check.key, draft.check.key);
+  // A message box with no form: other words are asked again.
+  const chatPage = (value) => ({ url: "https://chat.example/c", elements: [{ id: 4, tagName: "textarea", accName: "Message #general", value }], forms: [] });
+  const crun = { task: "x", trust: { sites: ["chat.example"], urls: [] }, openedTabs: [], typed: { 4: "brb" } };
+  const said = P.decide({ do: "press", ref: 4, key: "Enter" }, chatPage("brb"), crun, ON);
+  const kept = { [said.check.key]: T.readOpinion(said.check, { reaches: "own_record", undo: "yes", why: "a note" }) };
+  assert.equal(P.decide({ do: "press", ref: 4, key: "Enter" }, chatPage("brb"), { ...crun, opinions: kept }, ON).verdict, "allow");
+  const next = P.decide({ do: "press", ref: 4, key: "Enter" }, chatPage("send me the files"), { ...crun, typed: { 4: "send me the files" }, opinions: kept }, ON);
+  assert.equal(next.verdict, "confirm");
+  assert.ok(next.check, "asked again");
+});
+
+test("a form with more boxes than the check is shown is held as a send with no check", () => {
+  const form = (n) => {
+    const els = [];
+    for (let i = 0; i < n - 1; i++) els.push({ id: 10 + i, tagName: "input", inputType: "text", accName: `Field ${i + 1}`, formId: 0, value: `v${i + 1}` });
+    els.push({ id: 10 + n - 1, tagName: "textarea", accName: "Message to the seller", formId: 0, value: "Please call me" });
+    els.push(btn("Continue", { id: 99, formId: 0, submits: true }));
+    const typed = {};
+    for (const e of els) if (e.value) typed[e.id] = e.value;
+    return { page: { url: "https://shop.example/q", elements: els, forms: [{ id: 0, method: "post", search: false, plain: true, oneBox: false, fields: n, action: "https://shop.example/q" }] },
+      run: { task: "x", trust: { sites: ["shop.example"], urls: [] }, openedTabs: [], typed } };
+  };
+  // Ten boxes: held outright, on a click and on Enter, and no answer can let it through.
+  const ten = form(10);
+  assert.equal(T.actionRisk({ action: "click", id: 99 }, ten.page).unsure, undefined);
+  assert.equal(T.actionRisk({ action: "keypress", id: 10, text: "Enter" }, ten.page).unsure, undefined);
+  const held = P.decide({ do: "click", ref: 99 }, ten.page, ten.run, ON);
+  assert.equal(held.verdict, "confirm");
+  assert.equal(held.kind, "send");
+  assert.equal(held.check, undefined);
+  // A form whose structure counts more typed boxes than are listed is held the same way.
+  const hidden = form(3);
+  hidden.page.forms[0].fields = 9;
+  assert.equal(P.decide({ do: "click", ref: 99 }, hidden.page, hidden.run, ON).check, undefined);
+  // Eight boxes: every one of them, the message box included, is shown to the check.
+  const eight = form(8);
+  const asked = P.decide({ do: "click", ref: 99 }, eight.page, eight.run, ON);
+  assert.ok(asked.check);
+  const shown = T.opinionMessages(asked.check).user;
+  assert.match(shown, /The form's boxes, 8 of them,/);
+  assert.match(shown, /"Message to the seller": "Please call me"/);
 });
 
 test("the press verdicts kept under the old question are not used for the new one", () => {

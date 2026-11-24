@@ -591,7 +591,19 @@
       // written to an AI it is held without asking. Until it has been
       // asked, the run asks it first.
       const u = risk.unsure;
-      const key = `form|${u.key}`;
+      // Only text the agent typed is shown to the check. Text the page put
+      // in a box could argue for its own submission, so it is not shown.
+      const flat = (t) => String(t || "").replace(/\s+/g, " ").trim().slice(0, 290);
+      const typedIn = (b) => {
+        const now = run.typed && b.ref !== undefined ? run.typed[b.ref] : undefined;
+        const mine = now !== undefined ? now : (run.typedTexts || []).find((t) => flat(t) && flat(t) === flat(b.text));
+        return { name: b.name, text: mine || "", prefilled: !mine && !!flat(b.text) };
+      };
+      const listed = u.boxes && u.boxes.length ? u.boxes : [{ name: u.box, ref: u.boxRef, text: u.text }];
+      const boxes = listed.map(typedIn);
+      // An answer is about this form sent by this control with this text:
+      // another button on it, or other words in its boxes, is asked again.
+      const key = `form|${u.key}|${u.button || ""}|${TOOLS.textStamp(JSON.stringify([boxes, listed.map((b) => b.text || "")]))}`;
       const said = opinions[key];
       if (said && said.does === "none") {
         return { verdict: "allow", note: `Not held for approval: a check shown only the site, the names of the boxes and the button, and the text judged that this stays within this visit to ${u.to || u.host || "the site"} and reaches no one else${said.why ? ` (${said.why.replace(/[.\s]+$/, "")})` : ""}.` };
@@ -604,15 +616,6 @@
       }
       if (said && said.why && said.does !== "none") opinion = `from the site, the form's names and the text, ${said.why.replace(/[.\s]+$/, "")}`;
       if (!said) {
-        // Only text the agent typed is shown to the check. Text the page put
-        // in a box could argue for its own submission, so it is not shown.
-        const flat = (t) => String(t || "").replace(/\s+/g, " ").trim().slice(0, 290);
-        const typedIn = (b) => {
-          const now = run.typed && b.ref !== undefined ? run.typed[b.ref] : undefined;
-          const mine = now !== undefined ? now : (run.typedTexts || []).find((t) => flat(t) && flat(t) === flat(b.text));
-          return { name: b.name, text: mine || "", prefilled: !mine && !!flat(b.text) };
-        };
-        const boxes = (u.boxes && u.boxes.length ? u.boxes : [{ name: u.box, ref: u.boxRef, text: u.text }]).map(typedIn);
         check = { kind: "form", key, host: u.host, to: u.to, box: boxes[0].name, button: u.button, text: boxes[0].text, prefilled: boxes[0].prefilled, boxes, task: requestOf(run) };
       }
     }

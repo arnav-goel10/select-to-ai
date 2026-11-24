@@ -1347,8 +1347,13 @@
     // that never sees the page needs: the site, where the form goes when
     // that is another site, each box's name and text, and the submitting
     // control's name. The first box is the one typed in, when there is one.
+    //
+    // The check is shown at most FORM_BOXES_SHOWN boxes. A form with more
+    // than that is held as the certain send its structure makes it, so a
+    // box the check was never shown cannot go out on its answer.
     const unsureSend = (form, button, typedIn) => {
       const all = boxesOf(form);
+      if (Math.max(all.length, form.fields || 0) > FORM_BOXES_SHOWN) return risk("send", button || typedIn);
       const boxes = typedIn ? [typedIn, ...all.filter((b) => b !== typedIn)] : all;
       const box = boxes[0];
       const r = risk("send", button || box);
@@ -1356,7 +1361,7 @@
       try { host = new URL(String((page && page.url) || "")).hostname; } catch (_e) { /* no address */ }
       let to = "";
       if (form.crossOrigin) { try { to = new URL(String(form.action || "")).hostname; } catch (_e) { /* no address */ } }
-      const shown = boxes.slice(0, 8).map((b) => ({ name: nameOf(b), ref: b.id, text: clip(b.value || "", 300) }));
+      const shown = boxes.map((b) => ({ name: nameOf(b), ref: b.id, text: clip(b.value || "", 300) }));
       r.unsure = {
         host,
         to,
@@ -1416,11 +1421,16 @@
     return null;
   }
 
+  // The most boxes of one form the form check is shown (contentRisk).
+  const FORM_BOXES_SHOWN = 8;
+
   /**
    * True when a form that sends is put to the check rather than held: none
    * of its boxes holds anything of the person's (agentContentScript.js
-   * describeForm marks it plain). How many boxes it has plays no part. A
-   * form read before forms were marked so is judged as one of one box.
+   * describeForm marks it plain). How many boxes it has plays no part
+   * here, though one with more than the check is shown is held in
+   * contentRisk. A form read before forms were marked so is judged as one
+   * of one box.
    */
   function judgedForm(form) {
     if (!form) return false;
@@ -1785,9 +1795,14 @@
    * another stamp is not used.
    */
   function judgeStamp(model) {
-    const text = [JUDGE_VERSION, OPINION_SYSTEM, PRESS_QUESTION, JSON.stringify(PRESS_TOOL), String(model || "")].join("\n");
+    return textStamp([JUDGE_VERSION, OPINION_SYSTEM, PRESS_QUESTION, JSON.stringify(PRESS_TOOL), String(model || "")].join("\n"));
+  }
+
+  /** A short stamp of `text` (FNV-1a), the same for the same text. */
+  function textStamp(text) {
+    const t = String(text || "");
     let h = 0x811c9dc5;
-    for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
     return h.toString(36);
   }
 
@@ -2073,6 +2088,7 @@
     REACHES_TEXT,
     UNDO_TEXT,
     judgeStamp,
+    textStamp,
     formSends,
     exactUrl,
     opinionMessages,
