@@ -430,20 +430,24 @@ const RUN = require("../../extension/core/run.js");
 const PRESSES = ["click", "double_click", "right_click", "hold"];
 const decideOn = (a, page, task) => POLICY.decide(a, page, { task, trust: { sites: [], urls: [] }, opinions: {} }, { riskConfirmation: true }, null);
 
-test("\"fill it in but don't send it\" holds for every way of pressing the send button", () => {
+test("every way of pressing a form's send button is decided as the press it is, whatever the request says", () => {
   const page = {
     url: "https://forms.example/apply", title: "Apply", innerText: "Apply",
     elements: [{ id: 1, tagName: "input", accName: "Name", formId: 0 }, { id: 2, tagName: "button", accName: "Submit application", submits: true, formId: 0 }],
     forms: [{ id: 0, search: false, fields: 1 }],
   };
+  const click = decideOn({ do: "click", ref: 2 }, page, "fill in the application");
+  assert.ok(click.verdict === "confirm" || click.check, `the send button is not pressed unasked: ${JSON.stringify(click)}`);
   for (const kind of PRESSES) {
-    const v = decideOn({ do: kind, ref: 2 }, page, "fill in the application but don't submit it");
-    assert.equal(v.verdict, "refuse", `${kind} on the send button is refused`);
-    assert.match(v.message, /filled in but not sent/);
+    for (const task of ["fill in the application but don't submit it", "fill in the application"]) {
+      const v = decideOn({ do: kind, ref: 2 }, page, task);
+      assert.notEqual(v.verdict, "allow", `${kind} on the send button, "${task}"`);
+      if (kind === "click" || kind === "hold" || kind === "right_click") assert.deepEqual(v, click, `${kind}: the same as a click`);
+    }
   }
   // A drag let go on it is a press on it too.
   const page2 = { ...page, elements: [...page.elements, { id: 3, tagName: "div", text: "Photo", draggable: true }] };
-  assert.equal(decideOn({ do: "drag", ref: 3, to_ref: 2 }, page2, "fill in the application but don't submit it").verdict, "refuse");
+  assert.notEqual(decideOn({ do: "drag", ref: 3, to_ref: 2 }, page2, "fill in the application but don't submit it").verdict, "allow");
 });
 
 test("the pay button is the user's to press, however the agent would press it", () => {

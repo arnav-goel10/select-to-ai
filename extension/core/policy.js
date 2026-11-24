@@ -488,9 +488,6 @@
     const secret = secretField(a, el);
     if (secret) return secret;
     if (!risky) return ALLOW;
-    // The user asked for the form to be filled and left for them to send.
-    const held = keptFromSending(a, el, page, run);
-    if (held) return held;
     if (s.riskConfirmation === false) return ALLOW;
     // An address that carries one of the user's saved details, wherever the
     // address came from: a link on a page can be made to carry them too.
@@ -592,26 +589,6 @@
   }
 
   /**
-   * A refusal when the user's request says to fill in but not send ("fill
-   * it in but don't submit", "I'll send it myself") and the action would
-   * submit: a click on a form's send button, or Enter in a form. A search
-   * form reads and is left alone: "find flights but don't book" still
-   * searches.
-   */
-  function keptFromSending(a, el, page, run) {
-    if (!el || !TOOLS.saysNotToSubmit(requestOf(run))) return null;
-    const form = el.formId !== undefined ? ((page && page.forms) || []).find((f) => f.id === el.formId) : null;
-    if (form && form.search) return null;
-    const clicks = pressesOn(a, el) && !!TOOLS.guardNoSubmit({ action: "click", id: el.id }, requestOf(run), page);
-    // Enter in a message box with no form sends it as surely as in a form.
-    const enters = a.do === "press" && !pressesControl(el, a.key) && isEnter(a.key)
-      && ((!!form && form.fields > 0) || (!form && TOOLS.isMessageBox(el)));
-    if (!clicks && !enters) return null;
-    const what = clicks ? `"${TOOLS.elementLabel(el) || "that button"}"` : "Enter";
-    return { verdict: "refuse", message: `The user asked for this to be filled in but not sent, so ${what} was not pressed: it would submit the form. Finish now and tell the user it is ready for them to check and send.` };
-  }
-
-  /**
    * True when Enter and Space on the control of an allowed click are each
    * allowed outright too, judged as presses of those keys there. The page
    * may then press it with those keys when it shows no answer to the
@@ -698,7 +675,7 @@
     return t;
   }
 
-  const api = Object.freeze({ decide, decideSwitch, placeRiskier, pressesOn, POINTER_PRESSES, keysToo, blockersOf, detourSite, detourMessage, remember, asRiskAction, keptFromSending, pressesControl, pressLandsOn, writesText, secretField, firstAddress, pointTarget, dropPoint, declinedMark, declinedAgain, HANDOVER });
+  const api = Object.freeze({ decide, decideSwitch, placeRiskier, pressesOn, POINTER_PRESSES, keysToo, blockersOf, detourSite, detourMessage, remember, asRiskAction, pressesControl, pressLandsOn, writesText, secretField, firstAddress, pointTarget, dropPoint, declinedMark, declinedAgain, HANDOVER });
   root.SELECT_TO_AI_POLICY = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -859,48 +859,7 @@
     };
   }
 
-  /**
-   * The user said not to send or submit ("fill it in but don't send it",
-   * "without submitting"). A hard guard, not a prompt rule: submits are
-   * removed from the action whatever the model chose, and a click on the
-   * form's send button becomes a finish that says it stopped there.
-   */
-  const SEND_VERB = "(?:send|submit|post|book|place|pay|confirm|publish|order|checkout|check out)(?:ing|ting)?";
-  const NO_SUBMIT = new RegExp(
-    `\\b(?:don'?t|do not|without|never|not yet|no need to|stop (?:before|short of)|hold off on)\\b[^.!?\\n]{0,25}\\b${SEND_VERB}\\b`
-    + `|\\b(?:just|only) fill\\b`
-    + `|\\b(?:i'?ll|i will|let me)\\b[^.!?\\n]{0,20}\\b(?:${SEND_VERB}|review|check|look (?:it )?over)\\b[^.!?\\n]{0,20}\\b(?:myself|first|before|it)\\b`
-    + `|\\bleave (?:it|that|the (?:rest|form|submit\\w*|send\\w*))\\b[^.!?\\n]{0,20}\\b(?:to|for) me\\b`,
-    "i",
-  );
-  const SUBMIT_LABEL = /\b(send|submit|post|publish|book|place order|pay|confirm|register|sign up|continue to payment)\b/i;
-  /** True when the task tells the agent to prepare something and leave the sending to the user. */
-  function saysNotToSubmit(task) {
-    return NO_SUBMIT.test(String(task || "").replace(/[\u2018\u2019\u02BC]/g, "'"));
-  }
-  function guardNoSubmit(action, task, page) {
-    if (!action || !saysNotToSubmit(task)) return null;
-    if (action.action === "fill_form" && action.submitId !== undefined) {
-      const { submitId, ...rest } = action;
-      return { action: rest, note: "You asked not to send, so the form is filled but not submitted." };
-    }
-    if (action.action === "type" && action.submit === true) {
-      return { action: { ...action, submit: false }, note: "You asked not to send, so the text is typed without pressing Enter." };
-    }
-    if (action.action === "click") {
-      const el = ((page && page.elements) || []).find((e) => e.id === action.id);
-      const label = el ? [el.accName, el.text, el.label, el.value].join(" ") : "";
-      const isSubmit = el && (SUBMIT_LABEL.test(label) || el.inputType === "submit" || el.submits === true);
-      if (isSubmit) {
-        const name = String(el.accName || el.text || "Send").trim().slice(0, 40);
-        return {
-          action: { action: "finish", answer: `I filled it in and stopped before pressing "${name}", as you asked. Check it and press it yourself when you're ready.`, evidence: "The form fields hold the values entered." },
-          note: `Stopped before "${name}" because you asked not to send.`,
-        };
-      }
-    }
-    return null;
-  }
+
 
   // =========================================================================
   // Actions the user confirms first
@@ -2062,9 +2021,7 @@
     actionRisk,
     formatElementList,
     elementLabel,
-    saysNotToSubmit,
     guardHumanCheck,
-    guardNoSubmit,
     formatElementLine,
     colourName,
     parseKeyCombo,

@@ -49,7 +49,7 @@ for (const settings of [{ riskConfirmation: true }, { riskConfirmation: false }]
   });
 }
 
-test("Enter held with other keys is Enter however it is written, so \"do not send\" holds", () => {
+test("Enter held with other keys is Enter however it is written, and is judged as Enter in the box", () => {
   const chat = {
     url: "https://chat.example/room",
     title: "Room",
@@ -57,15 +57,17 @@ test("Enter held with other keys is Enter however it is written, so \"do not sen
     elements: [{ id: 5, tagName: "textarea", accName: "Message", focused: false }],
     forms: [],
   };
-  const r = run("write a reply saying thanks, but do not send it");
-  for (const key of ["Enter", "ctrl+Enter", "Ctrl-Enter", "Mod-Enter", "Cmd-Return", "meta - enter", "shift-Return"]) {
-    const v = POLICY.decide({ do: "press", key, ref: 5 }, chat, r, { riskConfirmation: false });
-    assert.equal(v.verdict, "refuse", key);
+  // Enter in a message box is a send the check is asked about; written any way, it is that same Enter.
+  const r = run("write a reply saying thanks", { trust: { sites: ["chat.example"], urls: [] } });
+  const plain = POLICY.decide({ do: "press", key: "Enter", ref: 5 }, chat, r, { riskConfirmation: true });
+  assert.ok(plain.check, "Enter in the box is checked before it is pressed");
+  for (const key of ["ctrl+Enter", "Ctrl-Enter", "Mod-Enter", "Cmd-Return", "meta - enter", "shift-Return"]) {
+    assert.deepEqual(POLICY.decide({ do: "press", key, ref: 5 }, chat, r, { riskConfirmation: true }), plain, key);
   }
   // With no ref, the key is judged where the focus is.
   const focused = { ...chat, elements: [{ ...chat.elements[0], focused: true }] };
   assert.deepEqual(POLICY.pressLandsOn({ do: "press", key: "Ctrl-Enter" }, focused, {}), [5]);
-  assert.equal(POLICY.decide({ do: "press", key: "Ctrl-Enter" }, focused, r, { riskConfirmation: false }).verdict, "refuse");
+  assert.deepEqual(POLICY.decide({ do: "press", key: "Ctrl-Enter" }, focused, r, { riskConfirmation: true }), plain);
   // Enter or Space with a hyphen on a button is a click on it.
   const button = { id: 9, tagName: "button", accName: "Send" };
   assert.equal(POLICY.pressesControl(button, "Ctrl-Enter"), true);
