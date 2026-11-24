@@ -91,12 +91,14 @@ async function click(entry, script) {
   play.newTab = entry === "new tab";
   const w = worker(play);
   const session = { windowId: 1, run: { id: "r1", status: "running", tabId: SAME_TAB, children: [], openedTabs: [] }, runners: new Map(), touched: new Set(), view: { home: null, tabs: [SAME_TAB], touched: false, watched: [], kept: null } };
+  // The worker's own timers do not hold the process open (as in review-fixes.test.js): this does, while the click is waited for.
+  const alive = setInterval(() => {}, 50);
   try {
     const result = await w.engine.interact(session, { do: "click", ref: 1 }, { action: "click", id: 1 }, true);
     const ended = Date.now() - w.t0.at;
     const tabId = play.newTab ? NEW_TAB : SAME_TAB;
     return { ended, tab: { ...w.tabs.get(tabId) }, result, engine: w.engine };
-  } finally { w.stop(); }
+  } finally { clearInterval(alive); w.stop(); }
 }
 
 const ENTRIES = ["new tab", "same tab"];
