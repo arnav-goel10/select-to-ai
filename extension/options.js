@@ -168,10 +168,19 @@
       chrome.tabs.create({ url: chrome.runtime.getURL("welcome.html?step=connect") });
     }
   };
+  // A section's panel opening or closing is a view change: cross-faded where
+  // Chrome has view transitions, plain elsewhere or with reduced motion.
+  const viewChange = (update) => {
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!document.startViewTransition || still) { update(); return; }
+    try { document.startViewTransition(update); } catch (_e) { update(); }
+  };
   $("changeBtn").onclick = () => {
-    $("providerPanel").hidden = !$("providerPanel").hidden;
-    renderStatus();
-    if (!$("providerPanel").hidden) $("apiKey").focus();
+    viewChange(() => {
+      $("providerPanel").hidden = !$("providerPanel").hidden;
+      renderStatus();
+      if (!$("providerPanel").hidden) $("apiKey").focus();
+    });
   };
   $("agentOff").onchange = (e) => {
     if (e.target.checked && assistantsOn() === 0) {
