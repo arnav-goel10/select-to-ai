@@ -1231,7 +1231,7 @@ body {
   cursor: pointer;
 }
 .answer-feedback button:hover { background: var(--hover-overlay); color: var(--text); }
-.answer-feedback svg { width: 13px; height: 13px; }
+.answer-feedback svg { width: 15px; height: 15px; }
 .answer-feedback .feedback-why {
   flex: 1;
   min-width: 160px;

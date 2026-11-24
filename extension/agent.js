@@ -1432,6 +1432,7 @@
   function newStep(n, goalText) {
     clearPending();
     clearDraft();
+    if (activeRun) activeRun.lastEvent = null;
     const li = el("li", "tl-step");
     li.dataset.step = String(n);
     const ic = el("span", "tl-icon");
@@ -1561,7 +1562,8 @@
     body.appendChild(item);
     li.append(ic, body);
     activeLogsWrapper.appendChild(li);
-    if (title === "Second Check" && activeRun) activeRun.secondCheck = li;
+    // The row a card is about to say again: the card stands for it.
+    if (activeRun) activeRun.lastEvent = { title, li };
     // A failed check reads in full here; the answer it sent back only says so.
     if (look[1] === "bad" || look[1] === "warn") li.classList.add("tl-full");
   }
@@ -2622,8 +2624,11 @@
     }
     if (actions.children.length) content.appendChild(actions);
     card.appendChild(content);
-    // The second check's row said what the card now asks: the card stands for it.
-    if (approval && activeRun && activeRun.secondCheck) { activeRun.secondCheck.classList.add("tl-quiet"); activeRun.secondCheck = null; }
+    // The row just before said what the card now says (the second check
+    // before an approval, the check-in, the provider's wait): the card stands for it.
+    const said = { approval: "Second Check", check_in: "Checking In", pause: "Provider Asked To Wait" }[wait.kind];
+    const last = activeRun && activeRun.lastEvent;
+    if (said && last && last.title === said && last.li.isConnected) { last.li.classList.add("tl-quiet"); activeRun.lastEvent = null; }
     chatContainer.appendChild(card);
     engineCards.set(wait.id, card);
     scrollToBottom(true);
