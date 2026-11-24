@@ -169,7 +169,7 @@
             </div>
             <div class="memory-body" id="memoryKnown">
                 <p class="memory-lede">What the agent knows about you, so you never tell it twice. It stays in this browser, encrypted. Your details are put into forms by the extension itself; your AI provider is only sent one when the agent has to write with it, and you are shown when that happens.</p>
-                <label class="memory-toggle"><span class="switch"><input type="checkbox" id="knownPaused" /><span></span></span><span>Pause memory. While on, it neither uses nor learns anything.</span></label>
+                <label class="memory-toggle"><span class="switch"><input type="checkbox" id="knownPaused" aria-describedby="knownPausedHint" /><span></span></span><span class="memory-toggle-words"><span>Pause memory</span><span class="memory-toggle-hint" id="knownPausedHint">While paused, nothing is used or learned.</span></span></label>
                 <section>
                     <h3>Your details</h3>
                     <p class="memory-hint">For filling forms. It asks before using them on a site for the first time. Passwords, cards and codes are never kept.</p>

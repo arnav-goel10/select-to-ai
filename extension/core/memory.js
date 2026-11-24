@@ -82,6 +82,34 @@
     ["postal-code", "Postal code"], ["country", "Country"], ["bday", "Date of birth"], ["organization", "Company or school"], ["job-title", "Job title"], ["url", "Website"],
   ]);
   const FIELD_LABEL = Object.freeze(Object.fromEntries(FIELDS));
+  // The details as the Memory panel groups them. First and last name sit on
+  // one row; the full name is asked for only when it is not those two.
+  const FIELD_GROUPS = Object.freeze([
+    ["Name", ["given-name", "family-name", "name"]],
+    ["Contact", ["email", "tel"]],
+    ["Address", ["street-address", "address-line2", "address-level2", "address-level1", "postal-code", "country"]],
+    ["Other", ["bday", "organization", "job-title", "url"]],
+  ]);
+
+  /**
+   * How the panel lays out the details: the ones kept, by group, and the
+   * empty ones, by group, to be added on request. `fields` maps a key to
+   * {value}. The full name is offered only once first or last is missing
+   * or it is already kept, so the three name boxes never all ask at once.
+   */
+  function fieldLayout(fields) {
+    const has = (k) => !!(fields && fields[k] && String(fields[k].value || "").trim());
+    const kept = [];
+    const empty = [];
+    for (const [title, keys] of FIELD_GROUPS) {
+      const filled = keys.filter(has);
+      let open = keys.filter((k) => !has(k));
+      if (title === "Name" && has("given-name") && has("family-name")) open = open.filter((k) => k !== "name");
+      if (filled.length) kept.push({ title, keys: filled });
+      if (open.length) empty.push({ title, keys: open });
+    }
+    return { kept, empty };
+  }
   // Other standard names for the same thing.
   const TOKEN_ALIAS = Object.freeze({ "address-line1": "street-address", "country-name": "country", "organization-title": "job-title", "tel-national": "tel", "additional-name": "", nickname: "", username: "" });
   // What a field asks for, read from its label when it does not say so itself.
@@ -782,7 +810,7 @@
       .map((x) => x.e);
   }
 
-  const api = Object.freeze({ wordsOf, overlap, FIELDS, FIELD_LABEL, KINDS, SOURCES, LIMITS, CONTEXT_SAME, prefsFor, contextFor, searchMemory, provenance, groundContext, putFact, noteContextSite, hostOf, empty, fieldKindOf, isStorable, fieldValue, setField, addEntry, removeEntry, forgetRun, learnRoutine, updateEntry, mark, knownBlock, knownSites, annotate, planFill, userFilled, saidByUser, migrate, sanitizeStore, profileOf });
+  const api = Object.freeze({ wordsOf, overlap, FIELDS, FIELD_LABEL, FIELD_GROUPS, fieldLayout, KINDS, SOURCES, LIMITS, CONTEXT_SAME, prefsFor, contextFor, searchMemory, provenance, groundContext, putFact, noteContextSite, hostOf, empty, fieldKindOf, isStorable, fieldValue, setField, addEntry, removeEntry, forgetRun, learnRoutine, updateEntry, mark, knownBlock, knownSites, annotate, planFill, userFilled, saidByUser, migrate, sanitizeStore, profileOf });
   root.SELECT_TO_AI_KNOWN = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -148,6 +148,7 @@
     sparkle: '<path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4z"/>',
     external: '<path d="M14 3h7v7M21 3l-9 9"/><path d="M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/>',
     up: '<path d="M12 19V5M5 12l7-7 7 7"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
     split: '<path d="M6 3v6a3 3 0 0 0 3 3h6a3 3 0 0 1 3 3v6"/><path d="M6 21V12"/><path d="m15 18 3 3 3-3"/><path d="m3 18 3 3 3-3"/>',
   };
 
@@ -3055,18 +3056,43 @@
     const change = (c) => enginePost({ type: "memory_change", change: c });
     document.getElementById("knownPaused").checked = !!store.paused;
     // Do not redraw a field the user is typing in.
+    // The details kept are shown by group; the empty ones wait behind "Add
+    // a detail", so a new user sees one line, not a wall of empty boxes.
     if (!fieldsBox.contains(document.activeElement)) {
+      const wasOpen = !!fieldsBox.querySelector(".known-more[open]");
       fieldsBox.textContent = "";
       const fields = KNOWN.profileOf(store).fields;
-      for (const [key, label] of KNOWN.FIELDS) {
-        const wrap = document.createElement("label");
-        wrap.textContent = label;
-        const input = document.createElement("input");
-        input.value = (fields[key] && fields[key].value) || "";
-        input.dataset.key = key;
-        input.addEventListener("change", () => change({ op: "field", key, value: input.value, source: "you_said" }));
-        wrap.appendChild(input);
-        fieldsBox.appendChild(wrap);
+      const layout = KNOWN.fieldLayout(fields);
+      const nameLabel = (key) => (key === "name" ? "Full name, if not first and last" : KNOWN.FIELD_LABEL[key]);
+      const group = (g) => {
+        const box = el("div", `known-group known-group-${g.title.toLowerCase()}`);
+        box.appendChild(el("p", "known-group-title", g.title));
+        const grid = el("div", "known-grid");
+        for (const key of g.keys) {
+          const wrap = el("label", `known-field${key === "given-name" || key === "family-name" ? " is-half" : ""}`);
+          wrap.appendChild(el("span", "", nameLabel(key)));
+          const input = document.createElement("input");
+          input.value = (fields[key] && fields[key].value) || "";
+          input.dataset.key = key;
+          input.autocomplete = "off";
+          input.addEventListener("change", () => change({ op: "field", key, value: input.value, source: "you_said" }));
+          wrap.appendChild(input);
+          grid.appendChild(wrap);
+        }
+        box.appendChild(grid);
+        return box;
+      };
+      if (!layout.kept.length) fieldsBox.appendChild(el("p", "memory-empty", "None kept yet. After you type them into a page, it offers to keep them."));
+      for (const g of layout.kept) fieldsBox.appendChild(group(g));
+      if (layout.empty.length) {
+        const more = el("details", "known-more");
+        more.open = wasOpen;
+        const count = layout.empty.reduce((n, g) => n + g.keys.length, 0);
+        const summary = el("summary", "known-more-summary");
+        summary.append(icon("plus"), el("span", "", layout.kept.length ? "Add another detail" : "Add a detail"), el("span", "known-more-count", String(count)));
+        more.appendChild(summary);
+        for (const g of layout.empty) more.appendChild(group(g));
+        fieldsBox.appendChild(more);
       }
     }
     const sourceText = { you_said: "You told it", you_confirmed: "You confirmed it", you_filled: "You typed it into a page", you_mentioned: "You mentioned it in a task", run: "Learned from a task that worked", correction: "Learned from your correction" };
