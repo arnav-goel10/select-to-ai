@@ -26,6 +26,22 @@ A new engine, built and measured over 1 to 3 October 2026 (the measurements are 
 - The welcome page and store text name only ChatGPT and Gemini as right-click choices on a fresh install, and say Perplexity and Claude are in Settings. The reviewer steps now include the "What the agent sends" card before the OpenRouter sign-in.
 - CI: the core-flow-e2e and consent-gate jobs fail when their test file is missing, instead of passing after an echo.
 
+### No rules written for one case (Nov 2026)
+
+The harness held rules that fixed one test or one site rather than the agent. Each is gone, replaced by a general mechanism or left out, and a unit test now fails if one comes back.
+
+- Search engines are matched by their whole registrable host (`agentTools.js` `SEARCH_HOSTS`), so a look-alike such as `google.evil.com` no longer counts as a search page.
+- A nickname in the request no longer makes a site trusted. Only a site whose address the request writes opens without asking.
+- A human check is told by the page itself: a nearly empty page that shows a check vendor's widget. No search engine's own path is named.
+- The facts the browser gives the model state what happened. None of them gives an order, and a grammar test calls every branch to check it.
+- The examples in the instructions are new scenes that share no shape with any decision case or bench task, and a test checks that they stay that way.
+- A page's main text is found from its structure (`main`, an article, the container holding most of the prose), and ratings from `aria-label`, `aria-labelledby` and `title`. No site's class names are read.
+- Each listed model's tier is set in a table in `defaults.js` instead of being guessed from words in its name. An unlisted model is standard.
+- "Do not send" is left to the model and the approval gate. With confirmations off, nothing now stops a send the user said not to make.
+- Other tabs are read ahead only when the request writes their site. The stop-word lists are gone: a word counts as a match by how rare it is on the page.
+- The bench switches (`agentObserve`, `agentPressables`, the page's trace global) are out of the store build. The harnesses read the trace from the engine, and the bench no longer hides that the browser is automated.
+- `tests/unit/hygiene-hosts.test.js` checks every file the worker loads and the engine injects for hosts, site class names and task ids, against a reviewed allowlist (`tests/unit/hygiene-allowlist.json`) where each entry says why it is there.
+
 ### A run you can leave and come back to
 
 - The run lives in the service worker and is saved after every step. Close the panel, switch tabs, let the worker sleep: it carries on, and the panel shows it from the start when reopened.
@@ -130,7 +146,7 @@ Every change here was checked against a test that existed before it, or one buil
 
 ### It understands what you mean
 
-- The agent reads the request in the context you asked it in. Text you had selected is part of the task ("summarise this", "is this claim right?"), and when a task refers to your other tabs ("compare these two", "the other tab", "all my tabs") it reads a short excerpt of each open tab in the window first, so it can answer or act without opening them again. Other tabs are only read when the task points at them.
+- The agent reads the request in the context you asked it in. Text you had selected is part of the task ("summarise this", "is this claim right?"), and when a task names the site of another open tab it reads a short excerpt of that tab first, so it can answer or act without opening it again. Every open tab's title and address is in each step, and the agent switches to any other tab it needs.
 - The instructions were rewritten around how to choose the next step: answer as soon as the page shows it, ask when only you can decide (a login, payment, human check, or a choice the task leaves open), dismiss cookie banners with the privacy-preserving option, search by typing with Enter, fill forms in one step, jump to headings on long pages, and never repeat a step that changed nothing.
 - Human-verification checks (CAPTCHAs) are never clicked; the agent hands them to you. Web searches type and press Enter in one step.
 
