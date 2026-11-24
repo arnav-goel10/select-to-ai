@@ -290,6 +290,7 @@ const FORM_CASES = [
   formHeld("delete", "form-delete-workspace", { host: "app.notebook-tools.example.com", button: "Delete workspace", boxes: [{ name: "Type the workspace name to confirm", text: "Family notes" }] }),
   formFree("form-loan-term", { host: "www.homes.example.com", button: "Show monthly payment", boxes: [{ name: "Loan amount", text: "280000" }, { name: "Interest rate", text: "6.1" }], choices: [{ name: "Loan term", chosen: "30 years" }] }),
   formHeld("share", "form-note-visible-to-all", { host: "notes.example.com", button: "Save", boxes: [{ name: "Title", text: "Plan" }, { name: "Notes", text: "Q3 numbers" }], choices: [{ name: "Visible to", chosen: "Everyone in the company" }, { name: "Email this to all members", checked: true }] }),
+  formHeld("share", "form-note-shared-with-several", { host: "notes.example.com", button: "Save", boxes: [{ name: "Title", text: "Plan" }, { name: "Notes", text: "Q3 numbers" }], choices: [{ name: "Share with", chosen: "Only me" }, { name: "Share with", chosen: "Everyone in the company" }] }),
   formHeld("share", "form-share-folder", { host: "drive.example.com", button: "Share", boxes: [{ name: "Add people or groups", text: "Design Team" }] }),
 ];
 
