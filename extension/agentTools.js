@@ -910,6 +910,8 @@
     delete: "This deletes, cancels or removes something.",
     decide: "This accepts, rejects, joins, leaves or confirms something for you, or changes something other people see.",
     unsure: "A check shown only this control's names could not tell what pressing it does, so it is yours to allow.",
+    unchecked: "The safety check that looks at what buttons and links do is not answering, so what this does could not be checked.",
+    uncheckedChoice: "You can carry on with this task without the check, or stop it. If you carry on, buttons and links the check has not looked at are pressed without asking until it answers again. Anything it did say commits you, or that the page shows will pay, send or delete, is still yours to allow.",
     declared: "The agent said this step commits you to something (it pays, sends, submits, deletes, cancels, joins, leaves, accepts or rejects), so it is yours to allow.",
     secret: "This types into a password, payment or verification field.",
     address: "The agent wrote this address itself. It was not on any page it read or in your request.",

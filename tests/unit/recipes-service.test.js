@@ -201,6 +201,9 @@ test("a press the check judges is recorded as a commit whatever it said, so a re
     assert.deepEqual(await recorded(5, { does: "none" }), ["navigate:read", "click:commit"]);
     // A link: the recording sees where the browser went, and the check's word can only tighten it.
     assert.deepEqual(await recorded(6, { does: "delete" }), ["navigate:read", "click:commit"]);
+    // A press the check gave no answer for, pressed because the user chose to carry on without it, is a commit either way: a replay with no one there holds it.
+    assert.deepEqual(await recorded(5, { unanswered: true }), ["navigate:read", "click:commit"]);
+    assert.deepEqual(await recorded(6, { unanswered: true }), ["navigate:read", "click:commit"]);
   } finally {
     delete globalThis.SELECT_TO_AI_TOOLS;
     delete globalThis.SELECT_TO_AI_POLICY;

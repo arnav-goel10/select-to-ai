@@ -411,30 +411,32 @@
   /**
    * What the run's checks said of a press entry, as a press risk: null for
    * one that commits nothing, the risk for one that does, and {check} for
-   * one not yet judged. A check that could not be had holds a button. A
-   * link it could not judge is decided as links were before the check:
-   * by its address (actionRisk), the user's declines, and the step's own
-   * word that it commits ({unchecked}), so a check that is down does not
-   * put a card on every link the run follows.
+   * one not yet judged. A press the check could not answer for, a button
+   * or a link, is held with the run's one card about the check being down
+   * (kind "unchecked"), never let through on the hope that it is harmless.
+   * Once the user has chosen on that card to carry on without the check
+   * (run.uncheckedOk, cleared when the check answers again), such a press
+   * is {unchecked}: it is decided as with confirmations off for it alone,
+   * so what the page's structure holds, the step's own word that it
+   * commits and the user's declines still hold it.
    */
   function entryRisk(entry, run, target) {
     const said = ((run && run.opinions) || {})[entry.key];
     if (!said) return { check: true };
-    if (said.unanswered && entry.kind === "link") return { unchecked: true };
-    if (said.unanswered) return { risk: { kind: "send", why: "What this button does could not be checked, so pressing it is yours to allow.", target } };
+    if (said.unanswered) return run && run.uncheckedOk ? { unchecked: true } : { risk: { kind: "unchecked", why: TOOLS.RISK_TEXT.unchecked, target } };
     if (said.does === "unsure") return { risk: { kind: "decide", why: TOOLS.RISK_TEXT.unsure, target } };
     if (["pay", "send", "delete", "decide"].includes(said.does)) return { risk: { kind: said.does, why: TOOLS.RISK_TEXT[said.does], target }, opinion: VERB[said.does] };
     return {};
   }
-  const UNCHECKED_LINK = Object.freeze({ verdict: "allow", note: "The press check could not be had for this link, so it was decided by its address and by the step's own word that it commits nothing." });
+  const UNCHECKED = Object.freeze({ verdict: "allow", note: "The safety check was not answering, and you chose to carry on without it for this task, so this was not checked." });
   const VERB = Object.freeze({ pay: "it spends money", send: "it sends something", delete: "it deletes something", decide: "it decides something for you" });
 
   /** A verdict on pressing an entry alone, for a link opened by its address. */
   function entryVerdict(entry, run, target) {
     const r = entryRisk(entry, run, String(target || "").slice(0, 80));
     if (r.check) return { verdict: "allow", check: { kind: "press", key: entry.key, entry } };
-    if (!r.risk) return r.unchecked ? UNCHECKED_LINK : ALLOW;
-    return { verdict: "confirm", kind: r.risk.kind, why: r.risk.why, detail: [`On: ${r.risk.target}`, ...(r.opinion ? [`Second check, from the link's names alone: ${r.opinion}.`] : [])] };
+    if (!r.risk) return r.unchecked ? UNCHECKED : ALLOW;
+    return { verdict: "confirm", kind: r.risk.kind, why: r.risk.why, detail: [`On: ${r.risk.target}`, ...(r.opinion ? [`Second check, from the link's names alone: ${r.opinion}.`] : []), ...(r.risk.kind === "unchecked" ? [TOOLS.RISK_TEXT.uncheckedChoice] : [])] };
   }
 
   function judge(a, page, run, settings, store, tabs) {
@@ -525,7 +527,7 @@
       const entry = press.entry;
       const r = entryRisk(entry, run, (el && TOOLS.elementLabel(el)) || entry.names[0] || "");
       if (r.check) return { verdict: "allow", check: { kind: "press", key: entry.key, entry } };
-      if (!r.risk) return r.unchecked ? UNCHECKED_LINK : ALLOW;
+      if (!r.risk) return r.unchecked ? UNCHECKED : ALLOW;
       risk = r.risk;
       opinion = r.opinion ? `from the control's names alone, ${r.opinion}` : "";
     } else if (risk.unsure && !(page && page.injection)) {
@@ -568,6 +570,7 @@
     if (risk.target) detail.push(`On: ${risk.target}`);
     if ((a.do === "fill" || a.do === "type") && risk.kind !== "secret") detail.push(`Text: ${String(a.value).slice(0, 160)}`);
     if (opinion) detail.push(`Second check: ${opinion}`);
+    if (risk.kind === "unchecked") detail.push(TOOLS.RISK_TEXT.uncheckedChoice);
     return { verdict: "confirm", kind: risk.kind, why: risk.why, detail, site: risk.site || "", url: risk.url || "", ...(check ? { check } : {}) };
   }
 

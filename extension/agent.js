@@ -2266,6 +2266,12 @@
       button("Fill them in", "confirm-risk-btn primary-btn btn btn-primary", () => enginePost({ type: "approve", id: wait.id }));
       button("Always on this site", "confirm-always-btn secondary-btn btn", () => enginePost({ type: "approve", id: wait.id, always: true }));
       button("Don't", "abort-risk-btn secondary-btn btn btn-ghost", () => enginePost({ type: "decline", id: wait.id }));
+    } else if (approval && wait.risk === "unchecked") {
+      // One card for the run, not one per press: carry on without the check, or stop.
+      title.textContent = "The safety check is not answering";
+      card.setAttribute("aria-label", title.textContent);
+      button("Carry on without it", "confirm-risk-btn primary-btn btn btn-primary", () => enginePost({ type: "approve", id: wait.id }));
+      button("Stop the task", "abort-risk-btn secondary-btn btn", () => enginePost({ type: "decline", id: wait.id }));
     } else if (approval) {
       button("Allow this step", "confirm-risk-btn primary-btn btn btn-primary", () => enginePost({ type: "approve", id: wait.id }));
       button("Don't do this", "abort-risk-btn secondary-btn btn", () => enginePost({ type: "decline", id: wait.id }));

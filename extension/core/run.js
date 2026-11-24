@@ -324,6 +324,9 @@
       opinionMisses: 0,
       // The keys of the questions counted as misses since the check last answered.
       missedKeys: [],
+      // The user chose to carry on without the press check while it is not
+      // answering: for this run only, until it answers again.
+      uncheckedOk: false,
       // Press checks asked about a page's entries and not yet answered
       // ({tag, keys, entries}), and the press waiting for one of them.
       pressBatches: [],
@@ -541,10 +544,14 @@
     run.missedKeys = [...before, ...keys].slice(-LABELS_CAP);
   }
 
-  /** The check answered: misses start again from none. */
+  /**
+   * The check answered: misses start again from none, and a choice to
+   * carry on without it is over, so a later outage is put to the user again.
+   */
   function answered(run) {
     run.opinionMisses = 0;
     run.missedKeys = [];
+    run.uncheckedOk = false;
   }
 
   /** The verdicts a check gave, kept for the run and, definite ones, for later runs (engine.js). */
@@ -1887,6 +1894,22 @@
       if (origin && origin !== "null") run.declinedSites = [...new Set([...(run.declinedSites || []), origin])];
     }
     const a = w.action;
+    // The run's one card about the safety check not answering. Carrying on
+    // is for this run only, is kept nowhere else, and ends when the check
+    // answers again (answered). The press in hand is decided again, so the
+    // rules that still apply without the check (the step's own word that it
+    // commits, the user's declines, the page's structure) can still hold it.
+    if (w.kind === "approval" && w.risk === "unchecked") {
+      if (event.type === "approved") {
+        run.uncheckedOk = true;
+        log(run, "system", "Allowed", "You chose to carry on without the safety check for this task, until it answers again.");
+        status(run, "executor", "Carrying on…");
+        if (!page) return closeStep(run, fx);
+        return next(run, page, env, fx);
+      }
+      log(run, "system", "Declined", "You chose to stop, since the safety check was not answering.");
+      return end(run, fx, env, { state: "idle", kind: "stopped", text: `Stopped: the safety check was not answering, and you chose to stop rather than carry on without it.${found(run)}` });
+    }
     if (w.kind === "approval") {
       if (event.type === "approved") {
         run.trust = POLICY.remember(run.trust, w.confirm || {});

@@ -1179,8 +1179,11 @@ test("a press check that fails is asked once more for the press alone, then the 
   fx = RUN.advance(run, { type: "model_failed", purpose: "opinion", kind: "timeout", message: "The check took too long." }, env(page));
   assert.equal(fx[0].type, "attention", "held, never pressed in the hope that it is harmless");
   assert.match(run.wait.question, /could not be checked/);
+  assert.equal(run.wait.risk, "unchecked", "the run's one card about the check not answering");
   assert.equal(run.opinionMisses, 1, "the same question asked again is the same miss");
-  RUN.advance(run, { type: "declined", id: run.wait.id }, env(page));
+  fx = RUN.advance(run, { type: "approved", id: run.wait.id }, env(page));
+  assert.deepEqual(fx.filter((f) => f.type === "act").map((f) => f.action.ref), [2], "carried on without the check");
+  RUN.advance(run, { type: "acted", result: { ok: true, message: "Done." } }, env(page));
   // One slow page does not switch the check off: the next page is asked, and its press alone too.
   const later = shop({ url: "https://shop.example/p2", elements: [{ id: 5, tagName: "button", accName: "Schließen" }], forms: [] });
   const look2 = RUN.advance(run, { type: "observed", page: later }, env(later));
@@ -1188,6 +1191,7 @@ test("a press check that fails is asked once more for the press alone, then the 
   assert.ok(check2, "the next page is still checked");
   judgeSays(run, later, check2, JUDGE.answer(check2));
   assert.equal(run.opinionMisses, 0, "an answer starts the count again");
+  assert.equal(run.uncheckedOk, false, "and ends the choice to carry on without it");
   assert.equal(stepSays(run, later, [{ do: "click", ref: 5 }])[0].type, "act");
 });
 
@@ -1214,16 +1218,22 @@ test("after two pages the check could not answer, single asks stop but each page
   let fx = stepSays(run, p3, [{ do: "click", ref: 4 }]);
   assert.equal(fx[0].type, "attention");
   assert.match(run.wait.question, /could not be checked/);
+  assert.equal(run.wait.risk, "unchecked");
   assert.equal(run.usage.calls, calls + 1, "the step's own call only");
-  RUN.advance(run, { type: "declined", id: run.wait.id }, env(p3));
-  // An ordinary link is followed as before the check existed: no card on every link.
+  // The user carries on without the check: the button is pressed.
+  fx = RUN.advance(run, { type: "approved", id: run.wait.id }, env(p3));
+  assert.deepEqual(fx.filter((f) => f.type === "act").map((f) => f.action.ref), [4]);
+  RUN.advance(run, { type: "acted", result: { ok: true, message: "Done." } }, env(p3));
+  RUN.advance(run, { type: "observed", page: p3 }, env(p3)).filter(JUDGE.isCheck).forEach((c) => RUN.advance(run, { type: "model_failed", purpose: "labels", tag: c.tag, kind: "timeout", message: "late" }, env(p3)));
+  // An unjudged link then follows with no card of its own.
   fx = stepSays(run, p3, [{ do: "click", ref: 5 }]);
-  assert.deepEqual(fx.filter((f) => f.type === "act").map((f) => f.action.ref), [5], "an ordinary link is not carded");
+  assert.deepEqual(fx.filter((f) => f.type === "act").map((f) => f.action.ref), [5], "no card on every link once the user carried on");
   RUN.advance(run, { type: "acted", result: { ok: true, message: "Done." } }, env(p3));
   RUN.advance(run, { type: "observed", page: p3 }, env(p3)).filter(JUDGE.isCheck).forEach((c) => RUN.advance(run, { type: "model_failed", purpose: "labels", tag: c.tag, kind: "timeout", message: "late" }, env(p3)));
   // The step's own word that a link commits still holds it.
   fx = stepSays(run, p3, [{ do: "click", ref: 6, commits: true }]);
   assert.equal(fx[0].type, "attention", "the step said this link commits");
+  assert.equal(run.wait.risk, "decide");
   RUN.advance(run, { type: "declined", id: run.wait.id }, env(p3));
   // The check answers again on a later page: misses are cleared and single asks come back.
   const p4 = shop({ url: "https://shop.example/c", elements: [{ id: 7, tagName: "button", accName: "Weiter" }, { id: 8, tagName: "button", accName: "Zurück" }], forms: [] });
@@ -1235,6 +1245,109 @@ test("after two pages the check could not answer, single asks stop but each page
   stepSays(run, p5, [{ do: "click", ref: 9 }]);
   fx = RUN.advance(run, { type: "model_failed", purpose: "labels", tag: c5.tag, kind: "timeout", message: "late" }, env(p5));
   assert.ok(JUDGE.isSingle(fx[0]), "the press is asked alone again");
+});
+
+// Two pages the check gave no answer for: the run's misses are at the limit.
+const checkDown = (task) => {
+  const p1 = shop({ url: "https://mail.example/a", elements: [{ id: 2, tagName: "button", accName: "Weiter" }], forms: [] });
+  const { run, check } = fresh(task, p1);
+  RUN.advance(run, { type: "model_failed", purpose: "labels", tag: check.tag, kind: "timeout", message: "late" }, env(p1));
+  const p2 = shop({ url: "https://mail.example/b", elements: [{ id: 3, tagName: "button", accName: "Fortfahren" }], forms: [] });
+  const c2 = RUN.advance(run, { type: "observed", page: p2 }, env(p2)).find(JUDGE.isCheck);
+  RUN.advance(run, { type: "model_failed", purpose: "labels", tag: c2.tag, kind: "timeout", message: "late" }, env(p2));
+  assert.equal(run.opinionMisses, 2);
+  return run;
+};
+// The check gives no answer for whatever this look at the page asks.
+const lookUnanswered = (run, page) => RUN.advance(run, { type: "observed", page }, env(page)).filter(JUDGE.isCheck).forEach((c) => RUN.advance(run, { type: "model_failed", purpose: "labels", tag: c.tag, kind: "timeout", message: "late" }, env(page)));
+const mailPage = () => shop({ url: "https://mail.example/inbox/1", elements: [
+  { id: 4, tagName: "a", accName: "Unsubscribe", url: "https://news.example.org/u?id=abc" },
+  { id: 5, tagName: "button", accName: "Archive" },
+  { id: 6, tagName: "a", accName: "Next message", url: "https://mail.example/inbox/2" },
+], forms: [] });
+
+test("while the check is not answering, an unjudged link is held like a button, with one card for the run", () => {
+  const page = mailPage();
+  // Pressed, or opened by its address: the step saying it commits nothing does not let it through.
+  for (const action of [{ do: "click", ref: 4, commits: false }, { do: "navigate", url: "https://news.example.org/u?id=abc" }]) {
+    const run = checkDown("read my newsletter mail");
+    lookUnanswered(run, page);
+    const fx = stepSays(run, page, [action]);
+    assert.deepEqual(fx.filter((f) => f.type === "act"), [], JSON.stringify(action));
+    assert.equal(fx[0].type, "attention", JSON.stringify(action));
+    assert.equal(run.wait.risk, "unchecked");
+    assert.match(run.wait.question, /safety check .* not answering/);
+    assert.ok(run.wait.detail.some((d) => /carry on with this task without the check, or stop/.test(d)), "the two choices are said plainly");
+  }
+  // One card, not one per press: once the user carries on, the other unjudged controls go without asking.
+  const run = checkDown("read my newsletter mail");
+  lookUnanswered(run, page);
+  let cards = 0;
+  let fx = stepSays(run, page, [{ do: "click", ref: 4 }]);
+  cards += fx.filter((f) => f.type === "attention").length;
+  fx = RUN.advance(run, { type: "approved", id: run.wait.id }, env(page));
+  assert.deepEqual(fx.filter((f) => f.type === "act").map((f) => f.action.ref), [4]);
+  for (const ref of [5, 6]) {
+    RUN.advance(run, { type: "acted", result: { ok: true, message: "Done." } }, env(page));
+    lookUnanswered(run, page);
+    fx = stepSays(run, page, [{ do: "click", ref }]);
+    cards += fx.filter((f) => f.type === "attention").length;
+    assert.deepEqual(fx.filter((f) => f.type === "act").map((f) => f.action.ref), [ref]);
+  }
+  assert.equal(cards, 1, "one card for the run");
+  // The step's own word that a press commits still holds it without the check.
+  RUN.advance(run, { type: "acted", result: { ok: true, message: "Done." } }, env(page));
+  lookUnanswered(run, page);
+  fx = stepSays(run, page, [{ do: "click", ref: 5, commits: true }]);
+  assert.equal(fx[0].type, "attention");
+  assert.equal(run.wait.risk, "decide", "the step said it commits");
+  // The choice lives on the run alone: nothing is kept for later runs.
+  assert.equal(run.uncheckedOk, true);
+});
+
+test("carrying on without the check is for that run only, and ends when the check answers again", () => {
+  const page = mailPage();
+  const run = checkDown("read my newsletter mail");
+  lookUnanswered(run, page);
+  const kept = [];
+  let fx = stepSays(run, page, [{ do: "click", ref: 4 }]);
+  fx = RUN.advance(run, { type: "approved", id: run.wait.id }, env(page));
+  kept.push(...fx.filter((f) => f.type === "verdicts"));
+  RUN.advance(run, { type: "acted", result: { ok: true, message: "Done." } }, env(page));
+  // Nothing about the choice, and no verdict for the unjudged link, is kept for later runs.
+  assert.deepEqual(kept, []);
+  // Another run with the check down holds the same link again.
+  const other = checkDown("read my newsletter mail");
+  lookUnanswered(other, page);
+  assert.equal(stepSays(other, page, [{ do: "click", ref: 4 }])[0].type, "attention");
+  assert.equal(other.wait.risk, "unchecked");
+  // The check answers on a later page: the choice is over, and the next press it cannot answer for is put to the user again.
+  const p3 = shop({ url: "https://mail.example/c", elements: [{ id: 7, tagName: "button", accName: "Weiter" }], forms: [] });
+  const c3 = RUN.advance(run, { type: "observed", page: p3 }, env(p3)).find(JUDGE.isCheck);
+  judgeSays(run, p3, c3, JUDGE.answer(c3));
+  assert.equal(run.uncheckedOk, false);
+  assert.equal(run.opinionMisses, 0);
+  assert.equal(stepSays(run, p3, [{ do: "click", ref: 7 }])[0].type, "act", "a judged press goes as normal");
+  RUN.advance(run, { type: "acted", result: { ok: true, message: "Done." } }, env(p3));
+  const p4 = shop({ url: "https://mail.example/d", elements: [{ id: 8, tagName: "a", accName: "Abmelden", url: "https://news.example.org/u?id=def" }], forms: [] });
+  const c4 = RUN.advance(run, { type: "observed", page: p4 }, env(p4)).find(JUDGE.isCheck);
+  stepSays(run, p4, [{ do: "click", ref: 8 }]);
+  fx = RUN.advance(run, { type: "model_failed", purpose: "labels", tag: c4.tag, kind: "timeout", message: "late" }, env(p4));
+  assert.ok(JUDGE.isSingle(fx[0]), "asked alone first, as normal");
+  fx = RUN.advance(run, { type: "model_failed", purpose: "opinion", kind: "timeout", message: "late" }, env(p4));
+  assert.equal(fx[0].type, "attention", "held again, not let through on the earlier choice");
+  assert.equal(run.wait.risk, "unchecked");
+});
+
+test("stopping on the card about the check ends the run and presses nothing", () => {
+  const page = mailPage();
+  const run = checkDown("read my newsletter mail");
+  lookUnanswered(run, page);
+  stepSays(run, page, [{ do: "click", ref: 4 }]);
+  const fx = RUN.advance(run, { type: "declined", id: run.wait.id }, env(page));
+  assert.deepEqual(fx.filter((f) => f.type === "act"), []);
+  assert.equal(run.status, "stopped");
+  assert.match(run.outcome.text, /safety check was not answering/);
 });
 
 test("with confirmations off, nothing is asked and nothing waits", () => {
