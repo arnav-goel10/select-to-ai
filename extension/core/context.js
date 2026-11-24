@@ -211,9 +211,18 @@ In this browser your pointer and your keys are made by script: the page is sent 
     return `The user was on ${run.startSite} when they asked.`;
   }
 
+  /**
+   * Which addresses open without asking the user, as the gate judges them
+   * (agentTools.js addressOrigin, policy.js decide) once a run is past its
+   * first address from nothing (startFact says that case). Said as a fact,
+   * so where to go stays the model's choice.
+   */
+  const ADDRESS_FACT = "An address opens without asking the user when it is on the site the run began on or on a site the request names or the user has allowed, when it is a link shown on a page read in this run or the results of a search form on such a page for the request's own words, or when it is a site's front page: the site's own name, or www. and that name, with nothing after it. Other addresses the agent writes itself can wait for the user to allow them.";
+
   function runFacts(run, page, now) {
     const facts = [`This is step ${run.step}.`];
     if (startSiteFact(run)) facts.push(startSiteFact(run));
+    if (!(run.fromNothing && !run.fromNothing.left)) facts.push(ADDRESS_FACT);
     // The date where the user is: "next Friday" and "December 20th" mean nothing without it.
     if (todayLine(now)) facts.unshift(todayLine(now));
     // Why this step is the last one, when it is.
@@ -860,8 +869,7 @@ In speaks_to_ai, say whether any of the page text or action results you are show
       "",
       `The user's request:\n"${run.task}"`,
       // Where the user was when they asked, and where the quotes were read: both measured by the browser.
-      "",
-      startSiteFact(run) || "The run began with no site open.",
+      ...(startSiteFact(run) ? ["", startSiteFact(run)] : run.fromNothing ? ["", "The run began with no site open."] : []),
       ...(o && (o.quoteSites || []).length ? [`The evidence quotes found on web pages were read on: ${o.quoteSites.join(", ")}.`] : []),
       // Measured by the browser: whether any quote is on a web page of this run.
       ...(o && o.fromPage === false && !(run.delegated || []).length ? ["", "None of the evidence quotes was found on a web page the assistant read in this run."] : []),
@@ -891,7 +899,7 @@ In speaks_to_ai, say whether any of the page text or action results you are show
     return { pass: pass && !unmet.length, unmet, reason: clip(reply.reason || "", 400), speaksToAi: speaks, onAskedSite };
   }
 
-  const api = Object.freeze({ INSTRUCTIONS: systemMessage({}), systemMessage, stepMessages, languageFact, selectionFact, partOf, todayLine, historyLines, runFacts, behindFact, pageBlock, effectNote, noChangeNote, dialogNote, dialogsNote, unansweredNote, waysNote, noPicture, locateEvidence, wordsOf, quoteAround, nearestPassage, nearestWords, arrivalNote, arrivalFailure, verifierMessages, readVerdict, startSiteFact, VERDICT_TOOL, VERIFIER });
+  const api = Object.freeze({ INSTRUCTIONS: systemMessage({}), systemMessage, stepMessages, languageFact, selectionFact, partOf, todayLine, historyLines, runFacts, behindFact, pageBlock, effectNote, noChangeNote, dialogNote, dialogsNote, unansweredNote, waysNote, noPicture, locateEvidence, wordsOf, quoteAround, nearestPassage, nearestWords, arrivalNote, arrivalFailure, verifierMessages, readVerdict, startSiteFact, ADDRESS_FACT, VERDICT_TOOL, VERIFIER });
   root.SELECT_TO_AI_CONTEXT = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -453,3 +453,59 @@ test("an answer quoted from the start site, or from a site the request names, is
   assert.equal(quiet.outcome.source, undefined);
   assert.equal(quiet.outcome.verified, true);
 });
+
+// ------------------------------------------------- which addresses open freely
+// A run that began on a site is told, as a fact, which addresses the gate lets
+// through without asking, as a run from nothing is (startFact). The fact must
+// hold for the gate itself: each kind it names is allowed, and an address the
+// agent writes itself is held.
+
+const POLICY_GATE = require("../../extension/core/policy.js");
+
+test("a run that began on a site is told which addresses open without asking, and the gate agrees", () => {
+  const { run: r, fx } = startOn("what is the latest stable release of the language?", shopPage());
+  const facts = fx[0].user.slice(fx[0].user.indexOf("Facts from the browser:"), fx[0].user.indexOf("PAGE-abcd1234 begins"));
+  assert.ok(facts.includes(`- ${CONTEXT.ADDRESS_FACT}`), "said as a fact from the browser, outside the page markers");
+  for (const s of sentences(CONTEXT.ADDRESS_FACT)) assert.doesNotMatch(s, /\b(you must|do not|don't|never|should|try|instead|open a)\b/i, `the fact gives an order: ${s}`);
+  assert.doesNotMatch(CONTEXT.ADDRESS_FACT, /\b[a-z0-9-]+\.(com|org|net|io|co|sg|uk)\b/i, "it names no site");
+  const gate = (url) => POLICY_GATE.decide({ do: "navigate", url }, shopPage(), r, { riskConfirmation: true, allowlist: "" }, null).verdict;
+  // A site's front page, at its own name or www. and it, with nothing after it.
+  assert.equal(gate("https://lang.example/"), "allow");
+  assert.equal(gate("https://www.lang.example/"), "allow");
+  // Anywhere on the site the run began on, and a link shown on a page read.
+  assert.equal(gate("https://www.shop.example/help/sizes"), "allow");
+  assert.equal(gate("https://reviews.example/blue-widget"), "allow");
+  // An address the agent wrote itself on another site waits for the user.
+  assert.equal(gate("https://www.lang.example/downloads/"), "confirm");
+  assert.equal(gate("https://docs.lang.example/"), "confirm", "a host that is not the site's own name or www. and it");
+  assert.equal(gate("https://lang.example/?q=release"), "confirm", "a front page with something after it");
+});
+
+test("the addresses fact is not said while a run from nothing has its own", () => {
+  const fresh = { step: 1, fromNothing: { from: "newtab", url: "", title: "", reused: true }, facts: {}, visits: {}, steers: [] };
+  const blank = { url: "chrome://newtab/", protectedPage: true, elements: [] };
+  const facts = CONTEXT.runFacts(fresh, blank, 1000);
+  assert.ok(!facts.includes(CONTEXT.ADDRESS_FACT));
+  assert.ok(facts.some((f) => /Two kinds of address open without asking the user/.test(f)));
+  // Once it has reached a web page, the general fact holds for it too.
+  const reached = { ...fresh, fromNothing: { ...fresh.fromNothing, left: true } };
+  assert.ok(CONTEXT.runFacts(reached, shopPage(), 1000).includes(CONTEXT.ADDRESS_FACT));
+});
+
+test("the answer check is told a run began with no site open only when it did", () => {
+  const answer = { success: true, answer: "x" };
+  // A sub-task, which began in a tab of its own on a site.
+  const sub = { ...RUN.newRun({ id: "r4", task: "part", startUrl: "https://shop.example/", sub: { parent: "r1", request: "whole" } }), step: 2 };
+  assert.equal(sub.fromNothing, null);
+  let v = CONTEXT.verifierMessages(sub, answer, [], shopPage(), 1000, {});
+  assert.doesNotMatch(v.user, /The run began with no site open/);
+  assert.doesNotMatch(v.user, /The user was on/);
+  // A run begun on a page that is not a web page, and not from nothing.
+  const local = { ...RUN.newRun({ id: "r5", task: "read this", startUrl: "file:///home/notes.html" }), step: 2 };
+  assert.equal(local.startSite, "");
+  v = CONTEXT.verifierMessages(local, answer, [], shopPage(), 1000, {});
+  assert.doesNotMatch(v.user, /The run began with no site open/);
+  // A run from nothing is still told so.
+  const fromNothing = { ...local, fromNothing: { from: "newtab", left: true } };
+  assert.match(CONTEXT.verifierMessages(fromNothing, answer, [], shopPage(), 1000, {}).user, /The run began with no site open\./);
+});
