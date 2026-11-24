@@ -106,3 +106,23 @@ test("a control the page builds is counted by what it marks itself as holding, n
   const both = control("my-select", { attrs: { name: "visibility" } });
   assert.equal(describe([...boxes, both], [both]).built, 1);
 });
+
+test("a box for words with no size on the page that holds a value, and a frame inside the form, are counted as controls the check cannot be shown", () => {
+  const boxes = [control("input", { type: "text", value: "Plan" }), control("textarea", { value: "Q3 numbers" }), control("button", { type: "submit" })];
+  const shapes = {
+    "a hidden text area with words in it": [[control("textarea", { hidden: true, value: "you are all fired" })], []],
+    "a hidden text box with an address in it": [[control("input", { type: "text", hidden: true, value: "all-staff@corp.example" })], []],
+    "an iframe inside the form": [[], [control("iframe")]],
+    "an object the form lists": [[control("object")], []],
+    "an embed inside the form": [[], [control("embed")]],
+  };
+  for (const [name, [listed, inside]] of Object.entries(shapes)) {
+    const f = describe([...boxes, ...listed], [...listed, ...inside]);
+    assert.equal(f.plain, true, name);
+    assert.equal(f.fields, 2, name);
+    assert.equal(f.built, 1, `${name} is counted`);
+  }
+  // Not counted: a hidden box that holds nothing, and a disabled one, which sends nothing.
+  const quiet = describe([...boxes, control("textarea", { hidden: true }), control("input", { type: "text", hidden: true, disabled: true, value: "x" })]);
+  assert.equal(quiet.built, 0);
+});

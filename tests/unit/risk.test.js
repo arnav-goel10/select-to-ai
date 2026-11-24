@@ -881,6 +881,58 @@ test("a form with a sharing control the page builds, or a dropdown of several op
   certain(page([share(many)], { choices: 1 }), "two boxes and seven options chosen");
 });
 
+test("a form whose value goes out from a box with no size on the page, or from a frame, is held as a send without asking", () => {
+  // The form as describeForm reads it from the page: a shown title and
+  // notes, and a box hidden by CSS that holds words the check is never shown.
+  const { describeForm } = require("../helpers/content-source.js").build(["describeForm"], {
+    accessibleName: () => "",
+    sensitiveKind: () => "",
+    location: { href: "https://notes.example/new", origin: "https://notes.example" },
+  });
+  const node = (tag, o = {}) => ({
+    tagName: tag, type: o.type || "", value: o.value || "", checked: false, disabled: false, isContentEditable: false,
+    getAttribute: () => null,
+    getBoundingClientRect: () => (o.hidden ? { width: 0, height: 0 } : { width: 100, height: 20 }),
+  });
+  const facts = (extra, inside) => describeForm({
+    elements: [node("INPUT", { type: "text", value: "Plan" }), node("TEXTAREA", { value: "Q3 numbers" }), node("BUTTON", { type: "submit" }), ...extra],
+    getAttribute: (k) => ({ method: "post", action: "/save" })[k] || null,
+    closest: () => null,
+    querySelectorAll: () => inside || [],
+    action: "https://notes.example/save",
+  });
+  const els = [
+    { id: 2, tagName: "input", inputType: "text", accName: "Title", formId: 0, value: "Plan" },
+    { id: 3, tagName: "textarea", accName: "Notes", formId: 0, value: "Q3 numbers" },
+    btn("Save", { id: 5, formId: 0, submits: true }),
+  ];
+  const page = (form) => ({ url: "https://notes.example/new", elements: els, forms: [{ id: 0, ...form }] });
+  const run = { task: "x", trust: { sites: ["notes.example"], urls: [] }, openedTabs: [], typed: { 2: "Plan", 3: "Q3 numbers" } };
+  // The same two shown boxes alone are asked, and an own-record answer lets them through.
+  const asked = P.decide({ do: "click", ref: 5 }, page(facts([])), run, ON);
+  assert.ok(asked.check, "the plain form is asked");
+  const onFile = { [asked.check.key]: T.readOpinion(asked.check, { reaches: "own_record", undo: "yes", why: "a note" }) };
+  assert.equal(P.decide({ do: "click", ref: 5 }, page(facts([])), { ...run, opinions: onFile }, ON).verdict, "allow");
+  const shapes = {
+    "a hidden text area with words in it": [[node("TEXTAREA", { hidden: true, value: "you are all fired" })], []],
+    "a hidden text box with an address in it": [[node("INPUT", { type: "text", hidden: true, value: "all-staff@corp.example" })], []],
+    "an editor in a frame": [[], [node("IFRAME")]],
+  };
+  for (const [name, [listed, inside]] of Object.entries(shapes)) {
+    for (const act of [{ do: "click", ref: 5 }, { do: "press", ref: 3, key: "Enter" }]) {
+      const v = P.decide(act, page(facts(listed, inside)), { ...run, opinions: onFile }, ON);
+      assert.equal(v.verdict, "confirm", `${name}, ${act.do}`);
+      assert.equal(v.kind, "send", `${name}, ${act.do}`);
+      assert.equal(v.check, undefined, `${name}, ${act.do}`);
+    }
+  }
+  // A frame the listing shows as a control of the form is held the same way.
+  const framed = { url: "https://notes.example/new", elements: [...els, { id: 8, tagName: "iframe", accName: "Rich text", formId: 0 }], forms: [{ id: 0, ...facts([]) }] };
+  const v = P.decide({ do: "click", ref: 5 }, framed, { ...run, opinions: onFile }, ON);
+  assert.equal(v.verdict, "confirm");
+  assert.equal(v.check, undefined);
+});
+
 test("the press verdicts kept under the old question are not used for the new one", () => {
   const src = require("node:fs").readFileSync(require.resolve("../../extension/agentTools.js"), "utf8");
   assert.match(src, /const JUDGE_VERSION = "reaches-undo-3";/);

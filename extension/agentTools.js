@@ -1377,6 +1377,8 @@
       if (PAGE_CONTROL_ROLES.has(role)) return "unknown";
       if ([e.ariaHaspopup, e.ariaPressed, e.ariaChecked, e.ariaSelected].some((v) => v !== undefined && v !== null)) return "unknown";
       if (tag.includes("-")) return "unknown";
+      // A frame inside a form holds content a script may send with it.
+      if (/^(iframe|object|embed|frame)$/.test(tag)) return "unknown";
       return "none";
     };
     const sentBy = (form, as) => els.filter((e) => e.formId === form.id && sentAs(e) === as);
@@ -1413,11 +1415,13 @@
     // cannot be shown (sentAs "unknown"), any control the page makes of its
     // own (describeForm counts each element other than a native box,
     // dropdown or option that the page marks as holding a state or a
-    // value), or more boxes or choices than are listed (one hidden behind
-    // an editor, or past the listing's end). Two things still go out
-    // unshown: a plain hidden field, which the page sets and the person
-    // never does, and a control of the page's own that carries no mark of
-    // being one, which no structure can tell from any other element.
+    // value, and also each box for words that has no size on the page and
+    // holds a value, and each frame inside the form), or more boxes or
+    // choices than are listed (one hidden behind an editor, or past the
+    // listing's end). Two things still go out unshown: a plain hidden
+    // field, which the page sets and the person never does, and a control
+    // of the page's own that carries no mark of being one, which no
+    // structure can tell from any other element.
     const unsureSend = (form, button, typedIn) => {
       const all = boxesOf(form);
       const choices = sentBy(form, "choice");
