@@ -26,7 +26,7 @@ These tasks were written for this trial. They are a dev set: read the transcript
 
 The everyday tasks are a development set now: their failures were read and the agent was changed to fix them. `suite: holdout` runs 50 other tasks, written blind to the agent's behaviour, mostly on widely used real sites none of the other suites use, with a difficulty (easy, medium, hard) on each and a `widgets` family for the interactions only practice pages offer. The tasks are committed encrypted and the workflow decrypts them with the `HOLDOUT_KEY` secret. Its summary shows totals, pass rates, median seconds, spend and counts by family and difficulty, no line of fewer than 3 tasks, and nothing that names a task or carries a failure's text. The per-task files go to artifacts named `holdout-SEALED-per-task-do-not-open-shard-N`, kept one day. Nobody tunes the agent on this suite, its results are read as numbers only, and a task whose site changes is replaced, not worked around. The full rule: [tests/bench/README.md](../tests/bench/README.md).
 
-`gh workflow run real-tasks.yml --ref rel40-real-tasks -f suite=holdout -f max_usd=5`. A dry leg (`sealed`) on every push checks that the sealed path prints no task, in the shard log and in the summary.
+`gh workflow run real-tasks.yml --ref main -f suite=holdout -f max_usd=5`. A dry leg (`sealed`) on every push checks that the sealed path prints no task, in the shard log and in the summary.
 
 ## The widgets suite
 
@@ -57,7 +57,73 @@ No task shares a registrable domain with any other suite, the holdout included. 
 
 Every start page answered a plain `curl` with its page, not a bot check, on 18 Nov 2026. The fixed values in the rubrics (a chart's peak, a list's order, the countries with the most land) were read in the pages' own HTML or data that day. Values that depend on the run's date (a range next month) or on a demo's live data (a kanban card, a grid cell) are judged from the final page.
 
-`gh workflow run real-tasks.yml --ref rel40-real-tasks -f suite=widgets -f max_usd=2`. The summary adds a table by kind of interaction under the family table.
+`gh workflow run real-tasks.yml --ref main -f suite=widgets -f max_usd=2`. The summary adds a table by kind of interaction under the family table.
+
+## Online-Mind2Web
+
+Online-Mind2Web (`osunlp/Online-Mind2Web` on Hugging Face, 300 tasks on 136 live sites) is the general benchmark. It has a workflow of its own, `.github/workflows/om2w.yml` ("Online-Mind2Web trial"), on the same harness, judge and packed build as this one. Every value it is run with is in `tests/bench/om2w-config.json`, written before the first run: the dataset revision, the split's seed and rules, the 600 s cap per task, the allow policy and the baseline models. None of them is changed per task or after a result has been seen.
+
+### The task file is never in the repository
+
+The dataset is gated. The owner accepted its conditions with his own Hugging Face account and put a read token in the `HF_TOKEN` secret. Each job that needs the tasks fetches `Online_Mind2Web.json` at the pinned revision into the runner's temporary folder (`tests/bench/om2w.js fetch`), checks its size and git blob hash against the config, and never uploads it. The token goes to huggingface.co only, in the fetch steps, and is never printed. The file is never committed, pasted into a PR or an issue, or printed in a log, and nor is any task of a sealed part.
+
+The loader already reads its format: `task_id`, `website`, `confirmed_task` and `level` are what `normaliseTasks` in `tests/bench/judge.js` reads. The dataset card's field names are wrong; the file matches the loader. The level becomes the task's `difficulty`, and its family is `om2w`.
+
+### The split
+
+By registrable domain (the extension's own `siteOf`), so one site never spans two parts. `node tests/bench/om2w.js split` applies three rules in order:
+
+1. A site that a read suite uses goes to dev: every open task file the workflow knows, the reading checks, and the sites of the WebVoyager set, listed in the config.
+2. A site that the sealed holdout suite uses goes to the sealed side, and wins over rule 1. The job decrypts the holdout to apply it, and prints only how many sites it moved.
+3. Every other site is taken in the order of a hash of the seed and the site, and goes to the part that is least full against its target.
+
+| Part | Target | Read? | Runs |
+|---|---|---|---|
+| dev | about 60 tasks | Yes: transcripts, screenshots, judge reasons | any time |
+| gate | about 100 | No. Counts only | once per batch of fixes |
+| vault | about 100 | No. Counts only | once per release |
+| reserve | about 40 | No. Never run | drawn on when a site is burned |
+
+Sizes are a few tasks off the targets, since a site carries 1 to 11 tasks. The ids are not committed: the split depends on the holdout's sites, which only the workflow can read, so only the seed and the rules are committed and each job works the split out again. The same file, seed and holdout always give the same split.
+
+A gate or vault run writes no file of any run. Screenshots are kept in memory for the judge and dropped. Each shard writes one counts file (`om2w-counts-N.json`): outcomes, a histogram of the solved runs' seconds in 10 s bins and of their model calls, tokens and spend, and nothing that names or orders a task. Its log prints numbers only (`BENCH_QUIET=sealed`), and a step checks that neither the log nor the counts name a task before the counts are uploaded. Dev runs keep their per-task files in `trial-shard-N`, and their log shows each run's ending but not the judge's reasons.
+
+### The census
+
+`mode: census` loads each of the 300 start pages once from a GitHub runner, with no model call: headful Chrome under xvfb, the packed extension loaded, the browser's own user agent, nothing hidden. A page is classed by the engine's own detection: `isChallengePage` from `agentTools.js`, and the human-check widget list read from the build's `agentContentScript.js`. Classes: reachable, blocked (a human check, or a refusal (401, 403, 429) with a page as thin as a challenge page), error (did not load, or 400 or more), timeout. Dev sites are named with their class and HTTP status. Gate, vault and reserve are counts. It costs nothing and needs only `HF_TOKEN`.
+
+The plan's rule: under about 30% blocked, run from GitHub Actions; over that, probe the cluster first. Blocked tasks stay in the set.
+
+### The baseline run
+
+| Setting | Value |
+|---|---|
+| Build | the shipped configuration, no debugger permission (arm `shipped`) |
+| Agent | Claude Haiku 5.5, on the tier the shipped build gives it (`modelProfile` in `defaults.js`: small, 8,000 characters of page text). The summary prints the tier |
+| Judge | the repository's Claude Sonnet 5.5 judge, through the Message Batches API at half price, its fixed instructions in a one-hour cache block |
+| Per task | 600 s |
+| Allow policy | site and address approved. Pay, send, delete and every other kind declined |
+| Repeats | dev 3, gate 2 |
+| Where | GitHub Actions, sharded, one browser per shard |
+
+The batch judge sends finished runs in batches of four and collects the verdicts as they come. Until a verdict is in, the most its call can cost (every input token written to the cache, every output token used, at batch prices) is held against the cap. Each run's own budget leaves room for its verdict. A run whose verdict would not fit under the cap is not judged and nothing more starts. So spent plus held never passes the cap. A request that errors or gives no readable verdict is asked once more and then counted as lost.
+
+Before any paid run, of this workflow or of `real-tasks.yml`, a canary job runs three fixture tasks (`tests/bench/fixture-canary-tasks.json`) through the same harness with the batch judge's local stand-in, headful under xvfb. The paid jobs need it and do not start if it fails.
+
+The summary reports passed, failed, blocked, timed out, held (ended waiting on the user for a sign-in, a code, a payment or an answer), declined (the harness refused a confirmation), lost and not run, then two rates: the strict rate, passes over all planned runs, and the scored rate, passes over runs that reached the site. Also the median seconds and model calls per solved run, the agent's and the judge's tokens cached and uncached, and the real spend. All of it is "our number on this runner". Leaderboard runs use other browsers and another judge, so it is never set beside them.
+
+### Running it
+
+```
+gh workflow run om2w.yml --ref <branch> -f mode=census
+gh workflow run om2w.yml --ref <branch> -f dry=true
+gh workflow run om2w.yml --ref <branch> -f mode=run -f part=dev -f runs=3 -f shards=12 -f max_usd=10
+gh workflow run om2w.yml --ref <branch> -f mode=run -f part=gate -f runs=2 -f shards=16 -f max_usd=40
+```
+
+Dry mode (the box, or any push that touches the bench) needs no key and fetches nothing. Four legs run on the fixture pages: `batch` (the batch judge, its cache written then read), `sealed-counts` (counts only, no file of a run, a log and counts that name no task), `census` (the fixture human check classed blocked) and `batch-cap` (a cap that must stop the run with spend and holds under it).
+
+Not built yet: the never-send list of tasks that reach a real person or a payment (upstream issues 21, 25, 31 and 34). Those tasks are declined by the allow policy at run time and count as declined, and so as failures in the strict rate.
 
 ## Keys
 
@@ -147,7 +213,7 @@ A replay does again what the run did. A run only does what the bench allowed, so
 
 Dry mode proves the plumbing with no key and no spend. The model is the scripted one from the end-to-end tests (`tests/e2e/server.js`), the pages are its local fixtures, and the judge is a stub on the runner that answers, in the judge's own format, with the verdict each task's `pattern` gives. The packed zip, the shards, the per-task files, the judge's code path, the merge and the summary are all the real ones. The costs it prints are prices applied to scripted tokens. Nothing is spent.
 
-It runs when `dry` is ticked and on every push to `rel40-real-tasks`. The summary job checks that each of the seven fixture tasks ended the way its `dry` field says (five pass, one stops at a human check, one has its form submission held and declined), that the counters it expects are there (typing steps, scripted presses, held actions), that the form controls of the signup page were read back with the typed name in them, and that the judge stub was called and its tokens counted.
+It runs when `dry` is ticked and on every push to `main` or `om2w-trial` that touches the bench. The summary job checks that each of the seven fixture tasks ended the way its `dry` field says (five pass, one stops at a human check, one has its form submission held and declined), that the counters it expects are there (typing steps, scripted presses, held actions), that the form controls of the signup page were read back with the typed name in them, and that the judge stub was called and its tokens counted.
 
 Five more jobs run the fixtures one more way each, and fail unless that way left its mark:
 
@@ -160,6 +226,8 @@ Five more jobs run the fixtures one more way each, and fail unless that way left
 | `sealed` | The holdout suite's sealed path: the shard's log and the numbers-only summary name no task. |
 
 Dry mode says nothing about how good the agent is.
+
+A real run first runs the canary: three of the fixture tasks (`tests/bench/fixture-canary-tasks.json`) the same way, at no cost. The run jobs need it, so a broken harness stops before anything is spent.
 
 ## Reading the results
 
