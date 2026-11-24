@@ -441,7 +441,7 @@ test("a capped shard waits for the verdicts still out before it decides it is ov
   assert.equal(waitForHolds({ capUSD: 0, committedUSD: 5, waiting: 3 }), false, "no cap: no wait");
   // run.js asks before every run and before a verdict that would not fit.
   const src = fs.readFileSync(path.join(ROOT, "tests/bench/run.js"), "utf8");
-  assert.match(src, /await settleHolds\(carried \+ judgeRoom\);\n\s+if \(MAX_USD && committed\(\) \+ carried >= MAX_USD\)/);
+  assert.match(src, /await settleHolds\(carried \+ judgeRoom \+ approverRoom\);\n\s+if \(MAX_USD && committed\(\) \+ carried >= MAX_USD\)/);
   assert.match(src, /committed\(\) \+ hold > MAX_USD && batch\.waiting\) for \(const x of await batch\.drain/);
 });
 
