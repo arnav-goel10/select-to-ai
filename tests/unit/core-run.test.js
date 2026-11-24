@@ -1005,6 +1005,46 @@ test("in difficulty means the measured facts, nothing else", () => {
   assert.equal(RUN.inDifficulty(run), "", "how many steps a run has taken is not difficulty");
 });
 
+// ------------------------------------------------- what a decline covers
+
+test("after a decline only its result is off limits: another address opens, and the same control is held again", () => {
+  const consent = shop({
+    url: "https://news.example/today", title: "Today",
+    innerText: "Today's stories. Your privacy choices.",
+    elements: [
+      { id: 4, tagName: "button", accName: "Do not consent", dialog: { name: "Your privacy choices", modal: true } },
+      { id: 5, tagName: "a", accName: "World", url: "https://news.example/world" },
+    ],
+    forms: [],
+  });
+  const world = shop({ url: "https://news.example/world", title: "World", innerText: "World stories.", elements: [{ id: 6, tagName: "a", accName: "Today", url: "https://news.example/today" }], forms: [] });
+  const { run } = begin("what is the top story today?", consent);
+  // The step says the press reaches the user's own record and cannot be put back: held, and declined.
+  let fx = reply(run, consent, [{ do: "click", ref: 4, reaches: "own_record", undo: "no" }]);
+  assert.equal(fx[0].type, "attention");
+  assert.equal(run.wait.kind, "approval");
+  fx = advance(run, { type: "declined", id: run.wait.id }, env(consent));
+  assert.deepEqual(fx, [{ type: "observe" }]);
+  const said = run.history[run.history.length - 1].actions[0].result;
+  assert.match(said, /Only that result is off limits: other controls, pages and addresses that do something else are still yours to use\./);
+  assert.doesNotMatch(said, /another page or address/, "the words no longer put every other page out of bounds");
+  // Another address, read on the page: it opens with no card.
+  advance(run, { type: "observed", page: consent }, env(consent));
+  fx = reply(run, consent, [{ do: "navigate", url: "https://news.example/world" }]);
+  assert.deepEqual(fx.filter((f) => f.type === "act").map((f) => f.action.url), ["https://news.example/world"], "another address is not the declined result");
+  acted(run, consent, { pageChanged: true });
+  advance(run, { type: "observed", page: world }, env(world));
+  // Back on the first page, the same control is the declined one: held for the user again, saying so.
+  fx = reply(run, world, [{ do: "navigate", url: "https://news.example/today" }]);
+  assert.equal(fx.filter((f) => f.type === "act").length, 1);
+  acted(run, world, { pageChanged: true });
+  advance(run, { type: "observed", page: consent }, env(consent));
+  fx = reply(run, consent, [{ do: "click", ref: 4 }]);
+  assert.equal(fx[0].type, "attention", "the same control is held again by code, whatever the words say");
+  assert.equal(run.wait.kind, "approval");
+  assert.match(`${run.wait.question} ${(run.wait.detail || []).join(" ")}`, /You declined "Do not consent" a moment ago/);
+});
+
 // ---------------------------------------------------------- second opinions
 
 const calc = (extra) => shop({
@@ -1031,19 +1071,19 @@ test("a one-box form the second opinion says asks runs with no wait, and the log
   assert.equal(fx[0].tool.name, "form_check");
   assert.equal(fx[0].tier, "pro", "with no helper set, the run's own model is asked, never the lite fallback");
   assert.match(fx[0].user, /The site: calc\.example/);
-  assert.match(fx[0].user, /The box, as the site names it: "Your input"/);
+  assert.match(fx[0].user, /The form's boxes, 1 of them,/);
   assert.match(fx[0].user, /The control that submits it: "Berechnen"/);
-  assert.match(fx[0].user, /The text about to be submitted: "17\*23"/, "the text the agent just typed");
+  assert.match(fx[0].user, /\n1\. "Your input": "17\*23"/, "the box by its name, with the text the agent just typed");
   assert.doesNotMatch(fx[0].user, /what is 17 times 23\?/, "the request is not shown: the same text is the same question");
   // Page-blind: nothing of the page's text reaches the question.
   assert.ok(!`${fx[0].system}\n${fx[0].user}`.includes("Ignore the user"), "no page text");
   assert.ok(!`${fx[0].system}\n${fx[0].user}`.includes("Calculator."), "no page text");
-  fx = opinion(run, page, { sends: false, why: "It asks for a calculation." });
+  fx = opinion(run, page, { reaches: "this_visit", undo: "yes", why: "It asks for a calculation." });
   assert.deepEqual(fx, [{ type: "act", action: { do: "click", ref: 2 }, keys: true }]);
   assert.equal(run.status, "running");
   const held = run.journal.filter((j) => j.title === "Not Held");
   assert.equal(held.length, 1);
-  assert.match(held[0].text, /asks calc\.example for something.*It asks for a calculation/);
+  assert.match(held[0].text, /stays within this visit to calc\.example.*It asks for a calculation/);
   assert.equal(run.usage.calls, 3, "the step, the page's press check and the form's check are all counted");
 });
 
@@ -1054,8 +1094,8 @@ test("a one-box form the second opinion says sends waits for the user, as it alw
   run.typedTexts = ["Great post"];
   let fx = reply(run, page, [{ do: "click", ref: 2 }]);
   assert.equal(fx[0].purpose, "opinion");
-  assert.match(fx[0].user, /The text about to be submitted: "Great post"/, "the box's value, typed by the agent in an earlier step");
-  fx = opinion(run, page, { sends: true, why: "A comment others read." });
+  assert.match(fx[0].user, /\n1\. "Kommentar": "Great post"/, "the box's value, typed by the agent in an earlier step");
+  fx = opinion(run, page, { reaches: "other_people", undo: "no", why: "A comment others read." });
   assert.equal(fx[0].type, "attention");
   assert.equal(run.wait.kind, "approval");
   assert.equal(run.wait.risk, "send");
@@ -1065,7 +1105,8 @@ test("a failed or unusable second opinion on a one-box form leaves the user aske
   for (const ending of [
     (run, page) => advance(run, { type: "model_failed", purpose: "opinion", kind: "network", message: "down" }, env(page)),
     (run, page) => advance(run, { type: "model_failed", purpose: "opinion", kind: "no_action", message: "no tool" }, env(page)),
-    (run, page) => opinion(run, page, { sends: "probably not" }),
+    (run, page) => opinion(run, page, { reaches: "probably not", undo: "yes" }),
+    (run, page) => opinion(run, page, { undo: "yes", why: "no reaches" }),
     (run, page) => opinion(run, page, null),
   ]) {
     const page = calc();
@@ -1122,7 +1163,7 @@ test("one look at a page asks the step and the press check together, and a press
   // The step comes back first and chooses a size the check is still judging: it waits, and asks nothing more.
   assert.deepEqual(stepSays(run, page, [{ do: "click", ref: 21 }]), []);
   assert.equal(run.awaitingPress.key, T.pressEntryOf(page.elements[1], page).entry.key);
-  const out = judgeSays(run, page, check, { commits: [{ n: 1, does: "pays" }], unsure: [], count: 3 });
+  const out = judgeSays(run, page, check, { effects: [{ n: 1, reaches: "money", undo: "no" }], count: 3 });
   assert.deepEqual(noKept(out), [{ type: "act", action: { do: "click", ref: 21 }, keys: true }], "choosing a size runs once the check says it commits nothing");
   const kept = out.find((f) => f.type === "verdicts").set;
   assert.deepEqual(Object.values(kept).sort(), ["none", "none", "pay"], "definite verdicts are kept for later runs");
@@ -1230,10 +1271,10 @@ test("after two pages the check could not answer, single asks stop but each page
   assert.deepEqual(fx.filter((f) => f.type === "act").map((f) => f.action.ref), [5], "no card on every link once the user carried on");
   RUN.advance(run, { type: "acted", result: { ok: true, message: "Done." } }, env(p3));
   RUN.advance(run, { type: "observed", page: p3 }, env(p3)).filter(JUDGE.isCheck).forEach((c) => RUN.advance(run, { type: "model_failed", purpose: "labels", tag: c.tag, kind: "timeout", message: "late" }, env(p3)));
-  // The step's own word that a link commits still holds it.
-  fx = stepSays(run, p3, [{ do: "click", ref: 6, commits: true }]);
-  assert.equal(fx[0].type, "attention", "the step said this link commits");
-  assert.equal(run.wait.risk, "decide");
+  // The step's own word that a link reaches other people still holds it.
+  fx = stepSays(run, p3, [{ do: "click", ref: 6, reaches: "other_people", undo: "no" }]);
+  assert.equal(fx[0].type, "attention", "the step said this link reaches other people");
+  assert.equal(run.wait.risk, "send");
   RUN.advance(run, { type: "declined", id: run.wait.id }, env(p3));
   // The check answers again on a later page: misses are cleared and single asks come back.
   const p4 = shop({ url: "https://shop.example/c", elements: [{ id: 7, tagName: "button", accName: "Weiter" }, { id: 8, tagName: "button", accName: "Zurück" }], forms: [] });
@@ -1327,9 +1368,9 @@ test("while the check is not answering, an unjudged link is held like a button, 
   // The step's own word that a press commits still holds it without the check.
   RUN.advance(run, { type: "acted", result: { ok: true, message: "Done." } }, env(page));
   lookUnanswered(run, page);
-  fx = stepSays(run, page, [{ do: "click", ref: 5, commits: true }]);
+  fx = stepSays(run, page, [{ do: "click", ref: 5, reaches: "money", undo: "no" }]);
   assert.equal(fx[0].type, "attention");
-  assert.equal(run.wait.risk, "decide", "the step said it commits");
+  assert.equal(run.wait.risk, "pay", "the step said money moves");
   // The choice lives on the run alone: nothing is kept for later runs.
   assert.equal(run.uncheckedOk, true);
 });
@@ -1408,18 +1449,22 @@ test("with confirmations off, nothing is asked and nothing waits", () => {
 
 test("a press check whose count or numbers do not match what was asked is thrown away", () => {
   const page = shop({ elements: [{ id: 2, tagName: "button", accName: "Weiter" }, { id: 3, tagName: "button", accName: "Löschen" }], forms: [] });
-  for (const reply of [{ commits: [], unsure: [], count: 3 }, { commits: [{ n: 3, does: "deletes" }], unsure: [], count: 2 }, { commits: [{ n: 2, does: "maybe" }], unsure: [], count: 2 }, { commits: [], unsure: [0], count: 2 }, { does: "nothing" }]) {
+  for (const reply of [{ effects: [], count: 3 }, { effects: [{ n: 3, reaches: "own_record", undo: "no" }], count: 2 }, { effects: [0], count: 2 }, { effects: [{ reaches: "money", undo: "no" }], count: 2 }, { effects: "none", count: 2 }, { does: "nothing" }]) {
     const { run, check } = fresh("go on", page);
     judgeSays(run, page, check, reply);
     assert.deepEqual(run.opinions, {}, JSON.stringify(reply));
     assert.equal(run.opinionMisses, 1);
   }
-  // A good reply: listed ones commit, unsure ones are held, the rest commit nothing.
+  // A good reply: listed ones are held by where they land, unsure ones are held, the rest stay within the visit.
   const { run, check } = fresh("go on", page);
-  judgeSays(run, page, check, { commits: [{ n: 2, does: "deletes" }], unsure: [1], count: 2 });
+  judgeSays(run, page, check, { effects: [{ n: 2, reaches: "own_record", undo: "no" }, { n: 1, reaches: "unsure", undo: "unsure" }], count: 2 });
   assert.deepEqual(Object.values(run.opinions).map((o) => o.does), ["unsure", "delete"]);
   assert.equal(stepSays(run, page, [{ do: "click", ref: 2 }])[0].type, "attention", "unsure is held");
   assert.equal(run.wait.risk, "decide");
+  // An item whose field is not one of the words is that control held, never the reply let through.
+  const odd = fresh("go on", page);
+  judgeSays(odd.run, page, odd.check, { effects: [{ n: 1, reaches: "maybe", undo: "yes" }, { n: 2, reaches: "own_record" }], count: 2 });
+  assert.deepEqual(Object.values(odd.run.opinions).map((o) => o.does), ["unsure", "delete"]);
 });
 
 test("verdicts kept from an earlier run cost no call; the run asks only about what nothing has judged", () => {
@@ -1444,23 +1489,31 @@ test("verdicts kept from an earlier run cost no call; the run asks only about wh
   assert.equal(T.judgeStamp("openrouter/a"), T.judgeStamp("openrouter/a"));
 });
 
-test("the step's word that a press commits holds it; its word that it does not grants nothing", () => {
+test("the step's word that a press reaches past the visit holds it; its word that it stays within the visit grants nothing", () => {
   const page = shop({ url: "https://app.example/team", elements: [{ id: 2, tagName: "button", accName: "Okay" }, { id: 3, tagName: "button", accName: "Remove member" }, { id: 4, tagName: "button", marked: "icon-x", at: { x: 5, y: 5 } }], forms: [] });
   const run = { task: "tidy the team page", trust: { sites: ["app.example"], urls: [] }, openedTabs: [], opinions: JUDGE.judged(page) };
   const on = { riskConfirmation: true };
-  assert.equal(POLICY.decide({ do: "click", ref: 2 }, page, run, on).verdict, "allow", "the check says it commits nothing");
-  const held = POLICY.decide({ do: "click", ref: 2, commits: true }, page, run, on);
-  assert.equal(held.verdict, "confirm", "the step said it commits");
-  assert.equal(held.kind, "decide");
-  assert.equal(POLICY.decide({ do: "click", ref: 3, commits: false }, page, run, on).verdict, "confirm", "saying it does not commit changes nothing");
+  assert.equal(POLICY.decide({ do: "click", ref: 2 }, page, run, on).verdict, "allow", "the check says it stays within the visit");
+  const held = POLICY.decide({ do: "click", ref: 2, reaches: "other_people", undo: "no" }, page, run, on);
+  assert.equal(held.verdict, "confirm", "the step said it reaches other people");
+  assert.equal(held.kind, "send");
+  assert.equal(POLICY.decide({ do: "click", ref: 3, reaches: "this_visit", undo: "yes" }, page, run, on).verdict, "confirm", "saying it stays within the visit changes nothing");
   // A control with no name at all: only the step's word can hold it.
   assert.equal(POLICY.decide({ do: "click", ref: 4 }, page, run, on).verdict, "allow");
-  assert.equal(POLICY.decide({ do: "click", ref: 4, commits: true }, page, run, on).verdict, "confirm");
-  // Read from the step as the model writes it; only true is kept.
+  assert.equal(POLICY.decide({ do: "click", ref: 4, reaches: "own_record", undo: "no" }, page, run, on).verdict, "confirm");
+  assert.equal(POLICY.decide({ do: "click", ref: 4, reaches: "own_record", undo: "yes" }, page, run, on).verdict, "allow", "a change of the user's own that they can put back");
+  // Read from the step as the model writes it: both fields kept on a press, nothing on anything else.
   const ctx = { page, labels: {}, labelOf: T.elementLabel, maxActions: 3 };
-  assert.equal(STEP.checkStep({ note: "", goal: "g", do: "click", ref: 4, commits: true }, ctx).step.actions[0].commits, true);
-  assert.equal(STEP.checkStep({ note: "", goal: "g", do: "click", ref: 4, commits: false }, ctx).step.actions[0].commits, undefined);
-  assert.ok(STEP.stepTool({}).parameters.required.includes("commits"));
+  const read = STEP.checkStep({ note: "", goal: "g", do: "click", ref: 4, reaches: "money", undo: "no" }, ctx).step.actions[0];
+  assert.equal(read.reaches, "money");
+  assert.equal(read.undo, "no");
+  assert.equal(STEP.checkStep({ note: "", goal: "g", do: "click", ref: 4 }, ctx).step.actions[0].reaches, undefined);
+  assert.equal(STEP.checkStep({ note: "", goal: "g", do: "scroll", direction: "down", reaches: "money", undo: "no" }, ctx).step.actions[0].reaches, undefined, "only a press carries it");
+  const tool = STEP.stepTool({});
+  assert.ok(tool.parameters.required.includes("reaches") && tool.parameters.required.includes("undo"));
+  assert.equal(tool.parameters.properties.commits, undefined, "one definition: the old flag is gone");
+  assert.deepEqual(tool.parameters.properties.reaches.enum, T.REACHES, "the step answers in the check's own words");
+  assert.deepEqual(tool.parameters.properties.undo.enum, T.UNDO);
 });
 
 test("controls whose markup says a press cannot commit pass with no check; the same kinds elsewhere are judged", () => {
@@ -1494,7 +1547,7 @@ test("the press check is told the dialog a control sits in by the dialog's own n
     const page = shop({ url: "https://app.example/x", elements: [{ id: 3, tagName: "button", accName: label, dialog: { name, alert: true } }], forms: [] });
     const { run, check } = fresh("look around", page);
     assert.deepEqual(JUDGE.entriesOf(check.user)[0], { names: [label], kind: "button", dialog: { name, alert: true } });
-    judgeSays(run, page, check, { commits: [{ n: 1, does: "decides" }], unsure: [], count: 1 });
+    judgeSays(run, page, check, { effects: [{ n: 1, reaches: "other_people", undo: "no" }], count: 1 });
     assert.equal(stepSays(run, page, [{ do: "click", ref: 3 }])[0].type, "attention", label);
   }
 });
@@ -1508,7 +1561,7 @@ test("a search form only the site marks as one is free; any other GET form's sub
     const { run, check } = fresh("read the news", p);
     const entry = JUDGE.entriesOf(check.user)[0];
     assert.deepEqual(entry, { names: [label], kind: "submit", form: { method: "get", action: "/subscribe", boxes: [{ name: "E-Mail", type: "email" }] } });
-    judgeSays(run, p, check, { commits: [{ n: 1, does: "sends" }], unsure: [], count: 1 });
+    judgeSays(run, p, check, { effects: [{ n: 1, reaches: "other_people", undo: "no" }], count: 1 });
     assert.equal(stepSays(run, p, [{ do: "click", ref: 2 }])[0].type, "attention", label);
   }
   // A form the site marks as a search and sends by GET reads: no check at all.
@@ -1888,7 +1941,7 @@ test("each step's note is added to the notes with its step number, and the notes
   assert.match(props.note.description, /leave it empty if nothing/);
   assert.match(props.rewrite_notes.description, new RegExp(`^Rarely needed: .*room for ${STEP.NOTES_ROOM} characters`));
   assert.equal(props.memory, undefined, "the notes are not written out again each step");
-  assert.deepEqual(first[0].tool.parameters.required, ["note", "goal", "do", "commits"]);
+  assert.deepEqual(first[0].tool.parameters.required, ["note", "goal", "do", "reaches", "undo"]);
   noted(run, page, { note: "Blue Widget $19 (shop page)." });
   noted(run, page, { note: "" });
   const fx = noted(run, page, { note: "Red Widget $24 (red page)." });

@@ -3,7 +3,8 @@
 // check (agentTools.js labelsMessages): it reads the numbered entries out
 // of the request, as a model would, and answers each from `says`, a
 // function from an entry to "pays", "sends", "deletes", "decides",
-// "unsure" or null (commits nothing). The default reads English names the
+// "unsure" or null (stays within the visit), each answered as the
+// reaches and undo a model would give for it (EFFECT). The default reads English names the
 // way a model would for these fixtures. It is a fixture, not the
 // extension's decision: the extension sends the question and reads the
 // reply, and nothing in it holds a list of words.
@@ -34,17 +35,25 @@ function entriesOf(user) {
   return out;
 }
 
+// What a model would answer, in the check's two fields, for each verdict
+// the stand-in reads: where the effect lands and whether it can be put back.
+const EFFECT = Object.freeze({
+  pays: { reaches: "money", undo: "no" },
+  sends: { reaches: "other_people", undo: "no" },
+  decides: { reaches: "other_people", undo: "no" },
+  deletes: { reaches: "own_record", undo: "no" },
+  unsure: { reaches: "unsure", undo: "unsure" },
+});
+
 /** The reply the stand-in gives to a press-check effect. */
 function answer(fx, says) {
   const entries = entriesOf(fx.user);
-  const commits = [];
-  const unsure = [];
+  const effects = [];
   entries.forEach((e, i) => {
     const d = (says || readsAs)(e);
-    if (d === "unsure") unsure.push(i + 1);
-    else if (d) commits.push({ n: i + 1, does: d });
+    if (d) effects.push({ n: i + 1, ...(EFFECT[d] || EFFECT.unsure) });
   });
-  return { commits, unsure, count: entries.length };
+  return { effects, count: entries.length };
 }
 
 const isCheck = (f) => f && f.type === "model" && f.purpose === "labels";
@@ -79,9 +88,9 @@ function judged(page, says, opinions) {
   const out = { ...(opinions || {}) };
   for (const e of T.pressEntries(page)) {
     const d = (says || readsAs)(e);
-    out[e.key] = { does: d === null ? "none" : ({ pays: "pay", sends: "send", deletes: "delete", decides: "decide" }[d] || d) };
+    out[e.key] = { does: d === null ? "none" : T.effectVerdict(EFFECT[d] || EFFECT.unsure) };
   }
   return out;
 }
 
-module.exports = { answer, entriesOf, judging, judged, readsAs, isCheck, isSingle };
+module.exports = { EFFECT, answer, entriesOf, judging, judged, readsAs, isCheck, isSingle };
