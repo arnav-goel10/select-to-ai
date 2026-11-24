@@ -1106,10 +1106,6 @@ async function main() {
       // A form filled from the user's details: they are asked once, the
       // values never reach the model, and the one detail not on file is asked for.
       ["profileForm", "/signup", async ({ card, agent, seen }) => {
-        if (!seen.seeded) {
-          seen.seeded = true;
-          await setMemory([{ op: "wipe" }, { op: "field", key: "name", value: "Ada Lovelace" }, { op: "field", key: "email", value: "ada@example.com" }, { op: "field", key: "organization", value: "Analytical Engines Ltd" }]);
-        }
         if (!card) return false;
         if (card.kind === "approval" && card.risk === "share") { seen.share = card.text; await click(agent, ".confirm-risk-btn"); return true; }
         if (card.kind === "approval") { seen.confirms++; await click(agent, ".confirm-risk-btn"); return true; }
@@ -1125,7 +1121,7 @@ async function main() {
         if (!r.chips.some((c) => /your email/.test(c))) return `no "Used" chips: ${JSON.stringify(r.chips)}`;
         if (!r.answer.includes("Ada Lovelace")) return `answer: ${JSON.stringify(r.answer)}`;
         return null;
-      }],
+      }, null, { before: async () => { await setMemory([{ op: "wipe" }, { op: "field", key: "name", value: "Ada Lovelace" }, { op: "field", key: "email", value: "ada@example.com" }, { op: "field", key: "organization", value: "Analytical Engines Ltd" }]); } }],
       ["rememberSaid", "/home", async ({ seen }) => { if (!seen.seeded) { seen.seeded = true; await setMemory([{ op: "wipe" }]); } return false; }, async (r) => {
         const store = await memory();
         const kept = store.entries.find((e) => /prices in SGD/i.test(e.text));
