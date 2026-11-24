@@ -330,8 +330,8 @@ for (const [name, provider, model, usage, cached, cacheWrite] of [
   ["Groq", "groq", "openai/gpt-oss-120b", { prompt_tokens: 4641, prompt_tokens_details: { cached_tokens: 4608 } }, 4608, 0],
   ["Cerebras", "cerebras", "qwen-3.8-27b", { prompt_tokens: 3000, prompt_tokens_details: { cached_tokens: 2800 } }, 2800, 0],
   ["xAI", "xai", "grok-4-6", { prompt_tokens: 32, prompt_tokens_details: { text_tokens: 32, audio_tokens: 0, image_tokens: 0, cached_tokens: 8 } }, 8, 0],
-  ["DeepSeek", "deepseek", "deepseek-chat", { prompt_tokens: 1200, prompt_cache_hit_tokens: 1000, prompt_cache_miss_tokens: 200 }, 1000, 0],
-  ["Mistral", "mistral", "mistral-small-latest", { prompt_tokens: 900, num_cached_tokens: 640 }, 640, 0],
+  ["DeepSeek", "deepseek", "deepseek-flash", { prompt_tokens: 1200, prompt_cache_hit_tokens: 1000, prompt_cache_miss_tokens: 200 }, 1000, 0],
+  ["Mistral", "mistral", "mistral-small-latest", { prompt_tokens: 1013, prompt_tokens_details: { cached_tokens: 1008 } }, 1008, 0],
 ]) {
   test(`${name}: cached prompt tokens are read from its own usage fields`, async () => {
     const out = await client([reply(200, cachedReply(usage))], []).call({ system: "s", user: "u", tool, tier: "pro" }, cfg({ provider, model, liteModel: model }));
@@ -347,9 +347,12 @@ test("the Responses API's cached tokens are read from input_tokens_details and n
   assert.deepEqual(LLM.cacheOf(u), { cached: 12000, cacheWrite: 3000, apart: false });
 });
 
-test("Mistral's prompt_tokens_details and prompt_token_details spellings are both read", () => {
-  assert.equal(LLM.cacheOf({ prompt_tokens: 900, prompt_tokens_details: { cached_tokens: 300 } }).cached, 300);
-  assert.equal(LLM.cacheOf({ prompt_tokens: 900, prompt_token_details: { cached_tokens: 200 } }).cached, 200);
+test("DeepSeek's prompt_tokens_details copy of the hit count is read the same", () => {
+  assert.equal(LLM.cacheOf({ prompt_tokens: 1200, prompt_tokens_details: { cached_tokens: 1000 }, prompt_cache_hit_tokens: 1000 }).cached, 1000);
+});
+
+test("a usage with no cached count, as Gemini's OpenAI endpoint and Together send it, reads as none cached", () => {
+  assert.deepEqual(LLM.cacheOf({ prompt_tokens: 800, completion_tokens: 20, total_tokens: 820 }), { cached: 0, cacheWrite: 0, apart: false });
 });
 
 test("Anthropic's cache fields stay counted apart from input_tokens", () => {
