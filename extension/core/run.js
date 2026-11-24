@@ -2224,7 +2224,7 @@
     const checked = a.success && settings.verify !== false && run.verifyRounds < VERIFY_ROUNDS;
     if (checked) {
       run.verifyRounds += 1;
-      run.pendingDone = { ...a, missing: missing.map((e) => e.quote), sources };
+      run.pendingDone = { ...a, missing: missing.map((e) => e.quote), sources, quoteSites: quoteSites(located) };
       // The answer is shown while it is checked, marked as being checked.
       // The check decides exactly as it would with nothing shown: the run
       // ends only on its verdict, and an answer it sends back is marked as
@@ -2236,7 +2236,7 @@
       quietLog(run, "validator", "Checking Answer", `Checking the answer against what was read${run.helper ? `, with ${run.helper.model}` : ""}.`);
       // Whether any quote was found on a web page of this run, as opposed to the request, the date, or nothing.
       const fromPage = located.some((e) => e.found && /^https?:/i.test(String(e.url || "")));
-      const m = CONTEXT.verifierMessages(run, a, located, page, env.now, { fromPage });
+      const m = CONTEXT.verifierMessages(run, a, located, page, env.now, { fromPage, quoteSites: run.pendingDone.quoteSites });
       fx.push({ type: "model", system: m.system, user: m.user, tool: CONTEXT.VERDICT_TOOL, tier: run.helper ? "helper" : "pro", purpose: "verify", effort: "default" });
       return fx;
     }
@@ -2258,6 +2258,7 @@
     const a = run.pendingDone;
     run.pendingDone = null;
     const verdict = CONTEXT.readVerdict(event.reply);
+    const source = sourceOf(run, verdict, a);
     // Page text the check found speaking to an AI: the run teaches nothing,
     // whatever the verdict.
     if (verdict && verdict.speaksToAi && !run.injectionSeen) {
@@ -2272,7 +2273,7 @@
     if (verdict.pass && !a.missing.length) {
       quietLog(run, "validator", "Check Passed", verdict.reason || "The answer is supported by what was read.");
       record(run, a, true, "Finished.");
-      return finish(run, fx, env, a, { verified: true });
+      return finish(run, fx, env, a, { verified: true, source });
     }
     const why = [verdict.reason, verdict.unmet.length ? `Not shown to be met: ${verdict.unmet.join("; ")}.` : ""].filter(Boolean).join(" ");
     log(run, "validator", "Check Failed", why);
@@ -2291,7 +2292,39 @@
     const open = [...verdict.unmet, ...a.missing.map((q) => `"${clip(q, 100)}" is not in ${(run.dropped || []).length ? "the page text still kept" : "what was read"}`)];
     if (!open.length) open.push(verdict.reason || "the check did not say what");
     record(run, a, true, "Finished, not confirmed.");
-    return finish(run, fx, env, a, { verified: false, unconfirmed: open, note: unconfirmedNote(open) });
+    return finish(run, fx, env, a, { verified: false, unconfirmed: open, note: unconfirmedNote(open), source });
+  }
+
+  /** The sites the quotes found on web pages were read on, in the order first seen. */
+  function quoteSites(located) {
+    const out = [];
+    for (const e of located || []) {
+      if (!e || !e.found || !/^https?:/i.test(String(e.url || ""))) continue;
+      const site = TOOLS.siteOf(e.url);
+      if (site && !out.includes(site)) out.push(site);
+    }
+    return out;
+  }
+
+  /**
+   * Where the answer's quotes were read, as the check said it, for a run
+   * that began on a site: {asked, start, sites}, where asked is true when
+   * they were read there or on a site the request names. It is reported
+   * with the answer and does not decide the verdict. Null when the check
+   * did not say, no quote was found on a web page, or the run began where
+   * no site was open.
+   */
+  function sourceOf(run, verdict, a) {
+    const sites = (a && a.quoteSites) || [];
+    if (!verdict || verdict.onAskedSite === null || !sites.length || !CONTEXT.startSiteFact(run)) return null;
+    return { asked: verdict.onAskedSite, start: run.startSite, sites };
+  }
+
+  /** What the user is told of an answer taken from a site other than the one they asked on, or "". */
+  function sourceNote(source) {
+    // Said only when a quote was measured on a site other than the one asked on.
+    const others = source && !source.asked ? source.sites.filter((x) => x !== source.start) : [];
+    return others.length ? `This answer comes from ${others.join(", ")}, not from ${source.start}, the site you asked on.` : "";
   }
 
   /**
@@ -2322,7 +2355,8 @@
     // wrong one should not change what the user is told. An answer the check
     // still objected to ends "unconfirmed": answered, not shown to be right.
     const state = check.unconfirmed ? "unconfirmed" : "success";
-    return end(run, fx, env, { state, text: a.answer, note: check.note || "", ...(check.unconfirmed ? { unconfirmed: check.unconfirmed } : {}), success: a.success, verified: check.verified, evidence: a.evidence || [], sources: a.sources || [], kind: a.success ? "done" : "partial" });
+    const note = [check.note, sourceNote(check.source)].filter(Boolean).join(" ");
+    return end(run, fx, env, { state, text: a.answer, note, ...(check.unconfirmed ? { unconfirmed: check.unconfirmed } : {}), ...(check.source ? { source: check.source } : {}), success: a.success, verified: check.verified, evidence: a.evidence || [], sources: a.sources || [], kind: a.success ? "done" : "partial" });
   }
 
   function end(run, fx, env, outcome) {
