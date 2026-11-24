@@ -1,6 +1,6 @@
 # Agent v4: where it stands (3 Oct 2026)
 
-The new engine is the default since 3 Oct and the only engine since 5 Oct: the old loop and the address bar's command router are removed (old-loop figures below were measured before that). This page is the short version of two nights of measurement.
+The new engine is the default since 3 Oct and the only engine since 5 Oct: the old loop and the command router are removed (old-loop figures below were measured before that). This page is the short version of two nights of measurement.
 
 ## 23 Nov 2026: one page-blind check decides what a press commits
 
@@ -43,7 +43,7 @@ Two gaps from the 4.0.0 audit ("Close my account" and "Leave team" pressed with 
 
 From the 4.0.0 audit (first-run and upgrade findings, each confirmed by a second reviewer). Each fix is in the mechanism, not a rule for one case. Tests in `tests/unit/first-run-edges.test.js`.
 
-- **A popup task ran again whenever the panel was reopened.** The popup wrote `task` and `autostart=1` into the side panel's saved address. The popup now hands the task over the way the address bar does, through `omnibox.js` `handOff` (one id in session storage, taken once by `agent.js`). A tab opened from the popup still carries the task in its own address, which the agent page drops at once.
+- **A popup task ran again whenever the panel was reopened.** The popup wrote `task` and `autostart=1` into the side panel's saved address. The popup now hands the task over through `omnibox.js` `handOff` (one id in session storage, taken once by `agent.js`). A tab opened from the popup still carries the task in its own address, which the agent page drops at once.
 - **A welcome-page first task took over another tab.** `engine.js` `targetTab`, given no tab while the active tab is the extension's own page, searched the window for any web tab. It now returns the tab the conversation's last run worked in (`session.run.tabId`, then the latest of `session.view.tabs`) while that tab is open, and otherwise null, so `startingPlace` opens a fresh tab. A follow-up typed in the agent's tab goes on where the last run was. If the task needs one of the user's tabs, the model asks to switch. `tests/e2e/run-v4.js` now passes the fixture's tab id, as the popup and the side panel do.
 - **A task typed in the quick box with the agent off was lost.** `background.js` kept it, but no page read it. `background.js` `offerKeptTask` now runs whenever `showAgent` goes from off to on, however that happens (the setup page, the Settings switch, a key already saved). It opens the agent page on the tab the task was typed on with the task in its box, not started, and removes it. Older than 30 minutes, it is dropped.
 - **The quick box did nothing on browser pages.** Without the notifications grant the failure was silent. The toolbar icon is now marked for that tab with a grey cross and the reason as its title. The tab is recorded in `iconTabMarks` (session storage), and a run that needs the user sets its orange "!" and its title on those tabs too, since Chrome shows a tab's own mark over the window-wide one. They are put back when the wait ends. The popup's row waits for the worker's answer and stays open with the reason. The welcome page says "on any website".
@@ -122,7 +122,7 @@ Held-out set, once, Haiku 5.5 alone, Sonnet 5.5 judge, same settings as the base
 
 ## 5 Oct 2026, night: what changed
 
-- One engine and one way in: the old loop and the command router are removed (extension/ 29,787 to 20,922 lines). The address-bar keyword `ai` starts the agent; a run started on a page it cannot use opens a tab and goes where the request needs.
+- One engine and one way in: the old loop and the command router are removed (extension/ 29,787 to 20,922 lines). A run started on a page it cannot use opens a tab and goes where the request needs.
 - The interface is redesigned to `ui-direction.md`: shared tokens, the run told as a story, both themes, calm motion; `scripts/ui-states.mjs` renders every state.
 - Sub-tasks: `delegate` runs up to four parts of an errand side by side in background tabs.
 - Learning measured (each task twice, 12 dev tasks): where something was learned the second run took about half the steps and time; one wrongly checked success taught a wrong route. Matching works in any script now; failing notes are dropped.

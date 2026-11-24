@@ -21,7 +21,6 @@ There is one agent: the engine in the service worker. Every way of asking starts
 | Way in | What it does |
 | --- | --- |
 | The agent page or side panel (Alt+A, Control+Shift+G on macOS) | The composer sends the request to the engine |
-| The address bar: `ai`, a space, then the request | Enter opens the side panel (or a tab) and starts the agent on the request (`extension/omnibox.js`) |
 | The quick box (Control+Shift+Q on macOS, Alt+K elsewhere, `extension/commandPalette.js`) | Enter starts the agent on the request, with any text selected on the page, in the tab it was opened on |
 | Right-click, "Ask the agent about this" | Opens the agent on that tab |
 
