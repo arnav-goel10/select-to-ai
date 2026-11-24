@@ -69,9 +69,10 @@ customElements.define("x-feature", class extends HTMLElement { connectedCallback
 </script>
 </body></html>`;
 
-// Pages with no landmark at all, in the shapes older sites take, and what of
-// each is and is not the main content (tests/fixtures/main-content). The unit
-// test reads the same files through a parsed DOM.
+// Pages with no landmark at all, in the shapes older sites take, and the
+// lines on each that must be read (tests/fixtures/main-content): with no
+// landmark the whole page is read. The unit test reads the same files
+// through a parsed DOM.
 const { CASES: NO_LANDMARK, html: fixtureHtml } = require("../fixtures/main-content/cases.js");
 
 async function scanOf(browser, html) {
@@ -91,7 +92,10 @@ async function scanOf(browser, html) {
   const scan = await scanOf(browser, HTML);
   const comp = await scanOf(browser, COMPONENTS);
   const noLandmark = [];
-  for (const c of NO_LANDMARK) noLandmark.push({ c, text: (await scanOf(browser, fixtureHtml(c.file))).innerText.replace(/\s+/g, " ") });
+  for (const c of NO_LANDMARK) {
+    const s = await scanOf(browser, fixtureHtml(c.file));
+    noLandmark.push({ c, text: s.innerText.replace(/\s+/g, " "), controls: JSON.stringify(s.elements || []) });
+  }
   await browser.close();
   const text = scan.innerText;
   // Unseeable text must stay out of every reading of the page, not only the main one.
@@ -130,9 +134,11 @@ async function scanOf(browser, html) {
     ["a class name is never read as a rating", !/star-rating|class "/.test(text) && /Tipping the Velvet/.test(text)],
     ["bracketed numbers are the page's own text", /items\[12\]/.test(text) && /says \[3\]/.test(text)],
     ["a block is read whatever its class", /Notes block a site happens to call reference/.test(text)],
-    ...noLandmark.flatMap(({ c, text: t }) => [
+    ...noLandmark.flatMap(({ c, text: t, controls }) => [
       ...c.read.map((phrase) => [`with no landmark, ${c.shape}: "${phrase}" is read`, t.includes(phrase)]),
-      ...c.notRead.map((phrase) => [`with no landmark, ${c.shape}: "${phrase}" is left out`, !t.includes(phrase)]),
+      // A button is listed with the page's controls, by its name.
+      ...(c.controls || []).map((phrase) => [`with no landmark, ${c.shape}: the "${phrase}" control is listed`, controls.includes(phrase)]),
+      ...(c.hidden || []).map((phrase) => [`with no landmark, ${c.shape}: "${phrase}" is not drawn, so it is not read`, !t.includes(phrase)]),
     ]),
     ["a labelled box of pictures keeps its label and its pictures", /\[Product images\]/.test(text) && /\[image: Front cover of the guide\]/.test(text)],
     ["web components: the structured reading wins over a plain one full of menu and footer", comp.textFormat === "markdown"],

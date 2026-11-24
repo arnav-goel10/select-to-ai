@@ -782,99 +782,21 @@
     // section past the cap could be seen in its table of contents but never read.
     const PAGE_TEXT_LIMIT = 700000;
 
-    // Tags whose text is never drawn as words on the page.
-    const UNREAD_TAGS = /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|SVG|IFRAME|OBJECT|CANVAS|HEAD)$/;
-
     /**
-     * How much of an element a reader can see: 0 when none of it is drawn
-     * (the hidden attribute, display:none, a box off the page or clipped to
-     * nothing), 1 when its box is there but its own text is not
-     * (visibility:hidden, which a child may undo), 2 when it is seen. The
-     * same tests the reading itself applies (boxUnseeable, checkVisibility).
-     */
-    function drawnState(el) {
-        if (el.hidden || boxUnseeable(el)) return 0;
-        if (typeof el.checkVisibility !== 'function') return 2;
-        if (!el.checkVisibility()) return getComputedStyle(el).display === 'contents' ? 2 : 0;
-        return el.checkVisibility({ visibilityProperty: true }) ? 2 : 1;
-    }
-
-    /**
-     * The text a reader can see on the page, counted per element: how many
-     * characters of it each element holds. All of it counts, link text,
-     * menus and control labels included. Text that is not drawn
-     * (drawnState, textUnseeable) counts for nothing. Text inside open
-     * shadow roots is counted for the element hosting it.
-     */
-    function seenTextCounts(root) {
-        const parentOf = new Map();
-        const order = [];
-        const chars = new Map();
-        const walk = (el, state, candidate, depth) => {
-            if (depth > 400) return;
-            const kids = [...(el.childNodes || [])];
-            if (el.shadowRoot && el.shadowRoot.childNodes) kids.push(...[...el.shadowRoot.childNodes].map((n) => ({ n, shadow: true })));
-            let ownSeen = null;
-            for (const item of kids) {
-                const n = item && item.shadow ? item.n : item;
-                const inShadow = !!(item && item.shadow) || !candidate;
-                if (n.nodeType === 3) {
-                    const t = (n.textContent || '').replace(/\s+/g, ' ').trim();
-                    if (!t || state !== 2) continue;
-                    if (ownSeen === null) ownSeen = !textUnseeable(el);
-                    if (!ownSeen) continue;
-                    for (let up = el; up; up = parentOf.get(up)) chars.set(up, (chars.get(up) || 0) + t.length);
-                    continue;
-                }
-                if (n.nodeType !== 1) continue;
-                const tag = String(n.tagName || '').toUpperCase();
-                if (UNREAD_TAGS.test(tag) || n.getAttribute('aria-hidden') === 'true') continue;
-                // The extension's own badges are not the page.
-                if (n.id === 'select-to-ai-overlay-container') continue;
-                const drawn = drawnState(n);
-                if (drawn === 0) continue;
-                parentOf.set(n, el);
-                if (!inShadow) order.push(n);
-                walk(n, drawn, !inShadow, depth + 1);
-            }
-        };
-        walk(root, drawnState(root), true, 0);
-        return { order, parentOf, chars };
-    }
-
-    /**
-     * The page's main content area, from its structure alone. A page that
-     * marks one with <main> or role="main" says so itself. An <article>
-     * counts when it holds a fair share of the page's text: a listing has
-     * one <article> per card, and taking one card as the page hid the rest.
-     *
-     * With neither, a part is taken only when it holds at least 80 percent
-     * of all the text a reader can see on the page (seenTextCounts, link
-     * text counted as text), and then the smallest such part. Otherwise
-     * nothing is chosen and the whole page is read, as it was before. No
-     * class or id is read: what a site calls its parts says nothing that
-     * holds on another site.
+     * The page's main content area, when the page marks one itself with
+     * <main> or role="main". With no such landmark nothing is chosen and
+     * the whole page is read. No part is guessed, from a common id or
+     * class or from how much of the text it holds: a guess cuts off the
+     * short lines that tell a reader what happened (a status line, a
+     * total, an error, a result count, a next link). Which parts of a
+     * page matter is the model's to judge from the whole reading.
      */
     function pickMain(doc) {
-        const body = doc.body;
-        if (!body) return null;
-        const textLength = (el) => ((el && el.innerText) || '').trim().length;
-        const bodyLength = textLength(body);
         for (const sel of ['main', '[role="main"]']) {
             const cand = doc.querySelector(sel);
-            if (cand && textLength(cand) > 200) return cand;
+            if (cand && (cand.innerText || '').trim().length > 200) return cand;
         }
-        const article = doc.querySelector('article');
-        if (article && textLength(article) > 200 && textLength(article) >= bodyLength * 0.3) return article;
-        const { order, chars } = seenTextCounts(body);
-        const total = chars.get(body) || 0;
-        let best = null;
-        for (const n of order) {
-            const held = chars.get(n) || 0;
-            if (n === body || !held || held < 0.8 * total) continue;
-            if (!best || held <= (chars.get(best) || 0)) best = n;
-        }
-        return best;
+        return null;
     }
 
     /**

@@ -199,18 +199,20 @@ const OUT_OF_REACH = {
 };
 
 // Lines written into the content script's own functions, beside code that
-// already reads ids and selectors, and gated with that file's entries.
-const IN_SEEN_TEXT = "                if (n.id === 'select-to-ai-overlay-container') continue;";
-const IN_PICK_MAIN = "        const article = doc.querySelector('article');";
+// already reads tags, roles and selectors, and gated with that file's
+// entries: in the Markdown walk, beside the line that skips a block by its
+// role, and in pickMain, beside the landmark lookup.
+const IN_WALK = "            if (SKIP_TAGS.has(tag)) return;";
+const IN_PICK_MAIN = "        for (const sel of ['main', '[role=\"main\"]']) {";
 const INPLACE = [
-  { file: "agentContentScript.js", anchor: IN_SEEN_TEXT, line: "                if (n.id === 'mw-content-text') return;" },
-  { file: "agentContentScript.js", anchor: IN_SEEN_TEXT, line: "                if (n.id === 'siteSub' || n.id === 'jump-to-nav' || n.id === 'toc') continue;" },
-  { file: "agentContentScript.js", anchor: IN_SEEN_TEXT, line: "                if (new Set(n.classList).has('navbox') || new Set(n.classList).has('mw-editsection')) continue;" },
-  { file: "agentContentScript.js", anchor: IN_SEEN_TEXT, line: "                if (n.matches(':is(.navbox, .mw-editsection, .reference)')) continue;" },
-  { file: "agentContentScript.js", anchor: IN_SEEN_TEXT, line: "                if (n.classList.contains('navbox')) continue;" },
+  { file: "agentContentScript.js", anchor: IN_WALK, line: "            if (el.id === 'mw-content-text') return;" },
+  { file: "agentContentScript.js", anchor: IN_WALK, line: "            if (el.id === 'siteSub' || el.id === 'jump-to-nav' || el.id === 'toc') return;" },
+  { file: "agentContentScript.js", anchor: IN_WALK, line: "            if (new Set(el.classList).has('navbox') || new Set(el.classList).has('mw-editsection')) return;" },
+  { file: "agentContentScript.js", anchor: IN_WALK, line: "            if (el.matches(':is(.navbox, .mw-editsection, .reference)')) return;" },
+  { file: "agentContentScript.js", anchor: IN_WALK, line: "            if (el.classList.contains('navbox')) return;" },
   { file: "agentContentScript.js", anchor: IN_PICK_MAIN, line: "        const guessed = doc.querySelector(':is(#mw-content-text, #content, #main, .main-content)'); if (guessed) return guessed;" },
-  { file: "agentContentScript.js", anchor: IN_PICK_MAIN, line: "        for (const d of body.children) if (d.id === 'content' || d.id === 'main') return d;" },
-  { file: "agentContentScript.js", anchor: IN_PICK_MAIN, line: "        const kids = [...body.children]; const hit = kids.find((k) => k.id === 'content' || k.id === 'bodyContent'); if (hit) return hit;" },
+  { file: "agentContentScript.js", anchor: IN_PICK_MAIN, line: "        for (const d of doc.body.children) if (d.id === 'content' || d.id === 'main') return d;" },
+  { file: "agentContentScript.js", anchor: IN_PICK_MAIN, line: "        const kids = [...doc.body.children]; const hit = kids.find((k) => k.id === 'content' || k.id === 'bodyContent'); if (hit) return hit;" },
   { file: "agentContentScript.js", anchor: IN_PICK_MAIN, line: "        const rows = doc.querySelectorAll('[data-asin]'); if (rows.length > 8) return rows[0].parentElement;" },
 ];
 

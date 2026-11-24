@@ -208,51 +208,43 @@ test("the Markdown walk reads blocks whatever their class, and keeps bracketed n
   assert.match(text, /Related reading on the same subject\./);
 });
 
-// The main content from structure: a document's own landmark, or where the
-// text is. The fixtures give the parts misleading ids and classes, so a
-// reader that went by names would pick the wrong part.
-const pickMain = new Function([
-  ...["UNREAD_TAGS"].map(constLine),
-  "const boxUnseeable = () => false;",
-  "const textUnseeable = () => false;",
-  "const getComputedStyle = () => ({ display: 'block' });",
-  source("drawnState"), source("seenTextCounts"), source("pickMain"), "return pickMain;",
-].join("\n"))();
+// The main content: a document's own landmark, or else the whole page. The
+// fixtures give the parts misleading ids and classes, so a reader that went
+// by names would pick the wrong part.
+const pickMain = new Function(`${source("pickMain")}\nreturn pickMain;`)();
 const page = (...kids) => { const body = h("body", {}, ...kids); return { body, querySelector: (sel) => body.descendants().find((n) => n.matches(sel)) || null }; };
 const words = (n, w) => Array.from({ length: n }, (_, i) => `${w} ${i}.`).join(" ");
 
-test("the main content is found from the page's structure, not from its names", () => {
+test("the main content is the page's own landmark, or the whole page, never a part chosen by its names", () => {
   // A page that marks its <main> says so itself.
   const declared = h("main", {}, h("p", {}, words(60, "Main text")));
   assert.equal(pickMain(page(h("div", { id: "content" }, h("p", {}, words(400, "Other"))), declared)), declared);
 
   // No landmark: a content column beside a sidebar of links, under a wrapper.
   // The sidebar is the one called "content"; the column is called "sidebar".
+  // Neither is taken: the whole page is read.
   const column = h("div", { class: "sidebar" }, h("h1", {}, "Mosses"), h("p", {}, words(200, "Mosses grow on stone")), h("p", {}, words(100, "Spores travel far")));
   const links = h("div", { id: "content", class: "main-content" }, ...Array.from({ length: 40 }, (_, i) => h("a", { href: `/p/${i}` }, `Related page number ${i}`)));
   const wrapped = page(h("header", {}, h("a", { href: "/" }, "Home")), h("div", { id: "main" }, links, column), h("footer", {}, "Footer text"));
-  assert.equal(pickMain(wrapped), column, "the text column, not the links called content");
+  assert.equal(pickMain(wrapped), null, "neither the links called content nor the column: the whole page");
 
   // A long document whose sections take their ids from their titles: one
   // section called "Content" holds a small share, and is not the page.
   const sections = Array.from({ length: 6 }, (_, i) => h("section", i === 3 ? { id: "content" } : {}, h("h2", {}, `Section ${i}`), h("p", {}, words(80, `Section ${i} text`))));
-  const doc = h("div", {}, ...sections);
-  const rfc = page(doc);
-  const picked = pickMain(rfc);
-  assert.notEqual(picked, sections[3], "the section with id=content is not taken for the page");
-  assert.ok(picked === doc || picked === null, "the document as a whole, or the whole page");
+  assert.equal(pickMain(page(h("div", {}, ...sections))), null, "the section with id=content is not taken for the page");
 
   // A listing: one <article> per card is a card, not the page.
   const cards = h("ol", {}, ...Array.from({ length: 12 }, (_, i) => h("li", {}, h("article", {}, h("p", {}, words(8, `Card ${i}`))))));
   const listing = page(cards);
   assert.ok(listing.querySelector("article"));
-  assert.notEqual(pickMain(listing), listing.querySelector("article"), "the first card is not the page");
+  assert.equal(pickMain(listing), null, "the first card is not the page");
 
-  // Words beside a list that are more than a fifth of the page keep the
-  // whole page: the list does not hold 80 percent of it.
-  const rows = h("div", {}, ...Array.from({ length: 6 }, (_, i) => h("div", {}, `Person ${i}: Notes about item ${i}`)));
-  const inbox = page(h("h1", {}, "Mail"), h("p", {}, "Opened: Lunch on Friday, and the notes from the last two meetings are below."), rows);
-  assert.equal(pickMain(inbox), null, "the status line is not cut off");
+  // A short status line above a long list is part of the page: the line,
+  // however few its words, is read with the list.
+  const rows = h("div", {}, ...Array.from({ length: 30 }, (_, i) => h("div", {}, `Person ${i}: Notes about item ${i}`)));
+  const inbox = page(h("h1", {}, "Mail"), h("p", {}, "Opened: Lunch on Friday"), rows);
+  assert.notEqual(pickMain(inbox), rows, "the status line is not cut off");
+  assert.equal(pickMain(inbox), null, "the whole page is read");
   assert.doesNotMatch(source("pickMain"), /['"][#.][a-z]/i, "no class or id selector");
 });
 
