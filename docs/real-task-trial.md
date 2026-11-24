@@ -71,11 +71,11 @@ The loader already reads its format: `task_id`, `website`, `confirmed_task` and 
 
 ### The split
 
-By registrable domain (the extension's own `siteOf`), so one site never spans two parts. `node tests/bench/om2w.js split` applies three rules in order:
+By registrable domain (the extension's own `siteOf`), so one site never spans two parts. `node tests/bench/om2w.js split` gives each site its part on its own, from the seed and the site alone, so no site's part depends on any other site or task:
 
 1. A site that a read suite uses goes to dev: every open task file the workflow knows, the reading checks, and the sites of the WebVoyager set, listed in the config.
-2. A site that the sealed holdout suite uses goes to the sealed side, and wins over rule 1. The job decrypts the holdout to apply it, and prints only how many sites it moved.
-3. Every other site is taken in the order of a hash of the seed and the site, and goes to the part that is least full against its target.
+2. A site that the sealed holdout suite uses goes to a sealed part, chosen by a second hash of the seed and the site, and wins over rule 1. The job decrypts the holdout to apply it, and prints only how many sites it moved.
+3. Every other site goes by a hash of the seed and the site against fixed cuts in the config (dev below 0.2, gate below 0.5333, vault below 0.8667, reserve the rest), the targets' shares of 300.
 
 | Part | Target | Read? | Runs |
 |---|---|---|---|
@@ -84,13 +84,21 @@ By registrable domain (the extension's own `siteOf`), so one site never spans tw
 | vault | about 100 | No. Counts only | once per release |
 | reserve | about 40 | No. Never run | drawn on when a site is burned |
 
-Sizes are a few tasks off the targets, since a site carries 1 to 11 tasks. The ids are not committed: the split depends on the holdout's sites, which only the workflow can read, so only the seed and the rules are committed and each job works the split out again. The same file, seed and holdout always give the same split.
+Sizes can be some way off the targets, since a site carries 1 to 11 tasks and each falls on its own. The ids are not committed: the split depends on the holdout's sites, which only the workflow can read, so each job works the split out again.
 
-A gate or vault run writes no file of any run. Screenshots are kept in memory for the judge and dropped. Each shard writes one counts file (`om2w-counts-N.json`): outcomes, a histogram of the solved runs' seconds in 10 s bins and of their model calls, tokens and spend, and nothing that names or orders a task. Its log prints numbers only (`BENCH_QUIET=sealed`), and a step checks that neither the log nor the counts name a task before the counts are uploaded. Dev runs keep their per-task files in `trial-shard-N`, and their log shows each run's ending but not the judge's reasons.
+The split is pinned. Every job that splits computes a digest of the whole site-to-part map, HMAC-SHA256 keyed from the `HOLDOUT_KEY` secret so the committed value says nothing about where any site is, and stops with an error if it is not `split.digest` in the config. An edit to a read suite, the holdout, the cuts, the seed or the dataset revision that moves even one site therefore fails every job instead of quietly re-rolling gate and vault. A new digest is committed only on purpose, before any result of the new split is seen.
+
+The first digest comes from a one-time bootstrap. While `split.digest` is empty, nothing runs except a census with `bootstrap_split` ticked, which prints the digest in its log and summary under a BOOTSTRAP warning. Commit that value. From then on `bootstrap_split` is refused.
+
+The never-send list in the config holds the tasks that reach a real person or office, or need a real payment: four tasks from upstream issues 21 and 25, one from issue 31, and the one of issue 34, which is also among issue 21's four: five in all, by the first 32 characters of their ids. They are left out of every part before anything runs, their sites keep their place in the map, and the summary reports how many were left out: dev's own count for dev, the whole set's for a sealed part.
+
+A gate or vault run writes no file of any run. Screenshots are kept in memory for the judge and dropped. Each shard writes one counts file (`om2w-counts-N.json`): outcomes, a histogram of the solved runs' seconds in 10 s bins and of their model calls, tokens and spend, and nothing that names or orders a task. No shard reports on its own. Its log shows run counts only, no numbers table, and the counts go to the summary encrypted with a key the jobs derive from `HOLDOUT_KEY` for that one workflow run. A sealed shard runs 5 tasks or more (run.js refuses fewer, and the plan caps the shards at the limit over 5), and the summary reports a sealed part only as one group of 10 tasks or more.
+
+Dev runs keep their per-task files (transcripts, screenshots, judge reasons, and so the gated task text), but the repository and its artifacts are public, so they are uploaded only encrypted: AES-256 (`tests/bench/om2w-crypt.sh`, PBKDF2 from the `OM2W_DEV_KEY` secret). Only a counts file per shard and the summary's counts, rates, timings and spend go up in the clear. The dev log shows run counts only, as a sealed one does, since a run's ending can carry a task's words. The owner keeps the key at `~/.config/select-to-ai/om2w-dev.key` and opens a run with `scripts/om2w-dev-results.sh <run id>`, which downloads its artifacts and decrypts them into `~/Documents/select-to-ai-v3/bench-results/om2w-dev-<run id>/`.
 
 ### The census
 
-`mode: census` loads each of the 300 start pages once from a GitHub runner, with no model call: headful Chrome under xvfb, the packed extension loaded, the browser's own user agent, nothing hidden. A page is classed by the engine's own detection: `isChallengePage` from `agentTools.js`, and the human-check widget list read from the build's `agentContentScript.js`. Classes: reachable, blocked (a human check, or a refusal (401, 403, 429) with a page as thin as a challenge page), error (did not load, or 400 or more), timeout. Dev sites are named with their class and HTTP status. Gate, vault and reserve are counts. It costs nothing and needs only `HF_TOKEN`.
+`mode: census` loads each of the 300 start pages once from a GitHub runner, with no model call: headful Chrome under xvfb, the packed extension loaded, the browser's own user agent, nothing hidden. A page is classed by the engine's own detection: `isChallengePage` from `agentTools.js`, and the human-check widget list read from the build's `agentContentScript.js`. Classes: reachable, blocked (a human check, or a refusal (401, 403, 429) with a page as thin as a challenge page), error (did not load, or 400 or more), timeout. Dev sites are named with their class and HTTP status. Gate, vault and reserve are counts of the whole part: each shard hands its counts on encrypted and shows only dev's. It costs nothing and needs only `HF_TOKEN` and `HOLDOUT_KEY`.
 
 The plan's rule: under about 30% blocked, run from GitHub Actions; over that, probe the cluster first. Blocked tasks stay in the set.
 
@@ -106,7 +114,7 @@ The plan's rule: under about 30% blocked, run from GitHub Actions; over that, pr
 | Repeats | dev 3, gate 2 |
 | Where | GitHub Actions, sharded, one browser per shard |
 
-The batch judge sends finished runs in batches of four and collects the verdicts as they come. Until a verdict is in, the most its call can cost (every input token written to the cache, every output token used, at batch prices) is held against the cap. Each run's own budget leaves room for its verdict. A run whose verdict would not fit under the cap is not judged and nothing more starts. So spent plus held never passes the cap. A request that errors or gives no readable verdict is asked once more and then counted as lost.
+The batch judge sends finished runs in batches of four and collects the verdicts as they come. Until a verdict is in, the most its call can cost (the fixed instructions written to the cache, the run's own text and screenshots at the input price, every output token used, at batch prices) is held against the cap. Each run's own budget leaves room for its verdict. Holds are far above what verdicts really cost, so a shard never stops for holds alone: before it decides it is over the cap, or before it would start a run with less than `baseline.runRoomUSD` ($0.30) left, it waits for its open verdicts and decides on what they really cost. A run whose verdict still would not fit is not judged and nothing more starts. So spent plus held never passes the cap. A cap that rounds to $0.0000 a shard is an error, not "no cap". A request that errors or gives no readable verdict is asked once more and then counted as lost.
 
 Before any paid run, of this workflow or of `real-tasks.yml`, a canary job runs three fixture tasks (`tests/bench/fixture-canary-tasks.json`) through the same harness with the batch judge's local stand-in, headful under xvfb. The paid jobs need it and do not start if it fails.
 
@@ -115,15 +123,15 @@ The summary reports passed, failed, blocked, timed out, held (ended waiting on t
 ### Running it
 
 ```
+gh workflow run om2w.yml --ref <branch> -f mode=census -f bootstrap_split=true   # once, then commit the digest it prints
 gh workflow run om2w.yml --ref <branch> -f mode=census
 gh workflow run om2w.yml --ref <branch> -f dry=true
-gh workflow run om2w.yml --ref <branch> -f mode=run -f part=dev -f runs=3 -f shards=12 -f max_usd=10
+gh workflow run om2w.yml --ref <branch> -f mode=run -f part=dev -f runs=1 -f shards=4 -f max_usd=10
 gh workflow run om2w.yml --ref <branch> -f mode=run -f part=gate -f runs=2 -f shards=16 -f max_usd=40
+scripts/om2w-dev-results.sh <run id>   # on the owner's machine: a dev run's files, decrypted
 ```
 
-Dry mode (the box, or any push that touches the bench) needs no key and fetches nothing. Four legs run on the fixture pages: `batch` (the batch judge, its cache written then read), `sealed-counts` (counts only, no file of a run, a log and counts that name no task), `census` (the fixture human check classed blocked) and `batch-cap` (a cap that must stop the run with spend and holds under it).
-
-Not built yet: the never-send list of tasks that reach a real person or a payment (upstream issues 21, 25, 31 and 34). Those tasks are declined by the allow policy at run time and count as declined, and so as failures in the strict rate.
+Dry mode (the box, or any push that touches the bench) needs no key and fetches nothing. Four legs run on the fixture pages: `batch` (the batch judge, its cache written then read, its files encrypted and opened again), `sealed-counts` (counts only, encrypted, no file of a run, a log that names no task and shows no shard numbers), `census` (the fixture human check classed blocked) and `batch-cap` (a cap that must stop the run with spend and holds under it).
 
 ## Keys
 
@@ -183,7 +191,7 @@ Measured on 6 Nov 2026 with the same models on other tasks (agent-v4-status.md):
 
 ### The spend cap
 
-The cap is split evenly between the shards. In each shard, a run is not started once the shard's spend has reached its share, and every run is given what is left as its own cost budget (the extension's own per-task budget), so a single long run cannot pass the cap either. A run the cap ended is counted as lost, not failed, and runs never started show under "not run".
+The cap is split evenly between the shards. In each shard, a run is not started once the shard's spend has reached its share (with the batch judge, only after the shard has waited for its open verdicts), and every run is given what is left as its own cost budget (the extension's own per-task budget), so a single long run cannot pass the cap either. A run the cap ended is counted as lost, not failed, and runs never started show under "not run".
 
 What is counted:
 
