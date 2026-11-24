@@ -20,20 +20,13 @@
   const chatgptOption = document.querySelector('#provider option[value="chatgpt"]');
   const showChatGPTOption = (p) => { if (chatgptOption) chatgptOption.hidden = chatgptOption.disabled = !D.FEATURES.chatgptSignIn && p !== "chatgpt"; };
 
+  // Names, key pages and key shapes come from one table (defaults.js
+  // PROVIDER_INFO), which the welcome page's picker reads too. In a
+  // sentence here, a custom server is "your own server".
   const PROVIDERS = {
     chatgpt: { name: "ChatGPT", keyUrl: "", placeholder: "" },
-    openrouter: { name: "OpenRouter", keyUrl: "https://openrouter.ai/keys", placeholder: "sk-or-v1-…", prefix: "sk-or-" },
-    openai: { name: "OpenAI", keyUrl: "https://platform.openai.com/api-keys", placeholder: "sk-…", prefix: "sk-" },
-    anthropic: { name: "Anthropic", keyUrl: "https://platform.claude.com/settings/keys", placeholder: "sk-ant-…", prefix: "sk-ant-" },
-    gemini: { name: "Google Gemini", keyUrl: "https://aistudio.google.com/app/apikey", placeholder: "AIza… or AQ.…", prefix: ["AIza", "AQ."] },
-    groq: { name: "Groq", keyUrl: "https://console.groq.com/keys", placeholder: "gsk_…", prefix: "gsk_" },
-    deepseek: { name: "DeepSeek", keyUrl: "https://platform.deepseek.com/api_keys", placeholder: "sk-…", prefix: "sk-" },
-    mistral: { name: "Mistral", keyUrl: "https://console.mistral.ai/api-keys/", placeholder: "Mistral API key" },
-    xai: { name: "xAI", keyUrl: "https://console.x.ai/", placeholder: "xai-…", prefix: "xai-" },
-    together: { name: "Together AI", keyUrl: "https://api.together.ai/settings/api-keys", placeholder: "Together API key" },
-    opencode: { name: "OpenCode Zen", keyUrl: "https://opencode.ai/console", placeholder: "oc_sk_…" },
-    cerebras: { name: "Cerebras", keyUrl: "https://cloud.cerebras.ai/", placeholder: "csk-…", prefix: "csk-" },
-    custom: { name: "your own server", keyUrl: "", placeholder: "Optional" },
+    ...D.PROVIDER_INFO,
+    custom: { ...D.PROVIDER_INFO.custom, name: "your own server" },
   };
 
   const CG = globalThis.SELECT_TO_AI_CHATGPT || null;
@@ -41,9 +34,11 @@
   // ChatGPT has no key: it is signed in to instead (chatgptConnect.js).
   const keyNameFor = (provider) =>
     provider === "chatgpt" ? null : provider === "custom" ? "agentCustomKey" : D.PROVIDER_ENDPOINTS[provider].keyName;
+  // A provider starts on its main model, and OpenRouter on its free one
+  // until the user chooses Paid (defaults.js startModelFor).
   const defaultModelFor = (provider) =>
     provider === "chatgpt" ? (CG && CG.bestModel(chatgpt && chatgpt.models)) || D.PROVIDER_FALLBACK_MODELS.chatgpt.pro
-      : provider === AGENT.activeProvider ? AGENT.model : D.PROVIDER_FALLBACK_MODELS[provider].lite;
+      : provider === AGENT.activeProvider ? AGENT.model : D.startModelFor(provider);
   const baseUrlFor = (provider, customUrl) =>
     provider === "chatgpt" ? (CG ? CG.API_BASE : "") : provider === "custom" ? customUrl || AGENT.customUrl : D.PROVIDER_ENDPOINTS[provider].baseUrl;
 
@@ -129,7 +124,6 @@
     const hasKey = hasCredentials(p);
     const on = settings.showAgent === true;
     const dot = $("agentDot");
-    const panelOpen = !$("providerPanel").hidden;
     if (hasKey && on) {
       dot.className = "dot ok";
       $("agentStatus").textContent = p === "chatgpt" ? `Signed in to ChatGPT${chatgpt.email ? ` as ${chatgpt.email}` : ""}` : `Connected to ${PROVIDERS[p].name}`;
@@ -137,27 +131,29 @@
       detail.textContent = model() === "openrouter/free" ? "Using free models. Ready on any tab." : `Using ${modelLabel(model())}.`;
       if (p === "chatgpt" && CG_UI) { detail.append(" "); detail.appendChild(CG_UI.usageLine()); }
       $("connectBtn").hidden = true;
-      $("changeBtn").textContent = panelOpen ? "Done" : "Change";
+      $("changeBtn").hidden = false;
     } else if (hasKey && !on) {
       dot.className = "dot";
       $("agentStatus").textContent = "Turned off";
       $("agentStatusDetail").textContent = `Connected to ${PROVIDERS[p].name}, but hidden everywhere.`;
       $("connectBtn").hidden = false;
       $("connectBtn").textContent = "Turn on";
-      $("changeBtn").textContent = panelOpen ? "Done" : "Change";
+      $("changeBtn").hidden = false;
     } else {
       dot.className = "dot warn";
       $("agentStatus").textContent = "Not connected";
       $("agentStatusDetail").textContent = "Connect a model so the agent can click, type and read pages for you. OpenRouter is free.";
       $("connectBtn").hidden = false;
       $("connectBtn").textContent = "Connect";
-      $("changeBtn").textContent = panelOpen ? "Done" : "Use my own key";
+      $("changeBtn").hidden = true;
     }
-    $("changeBtn").hidden = false;
-    $("changeBtn").setAttribute("aria-expanded", String(panelOpen));
     $("agentOff").checked = !on;
   }
 
+  // Connect and Change open the same provider picker as first-run setup
+  // (welcome.html). Change starts it on the provider in use. The fields
+  // below stay open here for anyone who would rather type.
+  const openPicker = (p) => chrome.tabs.create({ url: chrome.runtime.getURL(`welcome.html?step=connect${p ? `&provider=${encodeURIComponent(p)}` : ""}`) });
   $("connectBtn").onclick = () => {
     const p = provider();
     const hasKey = hasCredentials(p);
@@ -165,16 +161,10 @@
       save({ showAgent: true });
       renderStatus();
     } else {
-      chrome.tabs.create({ url: chrome.runtime.getURL("welcome.html?step=connect") });
+      openPicker("");
     }
   };
-  // The panel opens at once, so the next click lands on it; it slides in by
-  // CSS (.sub in options.html).
-  $("changeBtn").onclick = () => {
-    $("providerPanel").hidden = !$("providerPanel").hidden;
-    renderStatus();
-    if (!$("providerPanel").hidden) $("apiKey").focus();
-  };
+  $("changeBtn").onclick = () => openPicker(provider() === "chatgpt" ? "" : provider());
   $("agentOff").onchange = (e) => {
     if (e.target.checked && assistantsOn() === 0) {
       e.target.checked = false;
@@ -291,6 +281,9 @@
     $("apiKey").placeholder = info.placeholder;
     $("apiKey").value = keys[keyNameFor(p)] || "";
     $("model").value = model();
+    // The stronger model this provider would suggest, beside the field that takes it.
+    const pair = D.PROVIDER_FALLBACK_MODELS[p] || {};
+    $("helperSuggest").textContent = p !== "custom" && p !== "chatgpt" && pair.pro && pair.pro !== pair.lite ? `For ${info.name}, try ${pair.pro}.` : "";
     $("testNote").textContent = "";
     $("testNote").className = "note";
     if (p === "chatgpt") fillModelList(((chatgpt && chatgpt.models) || []).map((m) => m.slug), (chatgpt && chatgpt.models) || []);

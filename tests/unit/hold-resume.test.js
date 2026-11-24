@@ -71,10 +71,10 @@ test("the free daily cap is said where the free path is picked, from one figure"
   assert.ok(note.includes(String(D.FREE_CAPS.openrouter.daily)));
   assert.equal(D.freeCapNote("anthropic"), "", "no figure is made up for a provider without one on file");
   assert.equal(note.includes(String.fromCharCode(0x2014)), false);
-  // The welcome page shows it beside the button that picks the free path, and again once connected.
+  // The welcome page shows it in the choice that picks the free path, and again once connected.
   const html = fs.readFileSync(path.join(EXT, "welcome.html"), "utf8");
   const js = fs.readFileSync(path.join(EXT, "welcome.js"), "utf8");
-  assert.match(html, /id="connectOR"[^>]*>Continue with OpenRouter \(free\)<\/button>\s*<p class="fine">[^<]*<span id="freeCapNote"><\/span><\/p>/);
+  assert.match(html, /<input type="radio" name="plan" id="planFree" value="free" \/><span><b>Free models<\/b><span class="d">[^<]*<span id="freeCapNote"><\/span><\/span><\/span><\/label>/);
   assert.match(js, /\$\("freeCapNote"\)\.textContent = D\.freeCapNote\("openrouter"\)/);
   assert.match(js, /You're on OpenRouter's free models\. \$\{D\.freeCapNote\("openrouter"\)\}/);
 });

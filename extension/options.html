@@ -76,19 +76,19 @@
             </div>
             <div class="controls">
               <button class="btn btn-primary" id="connectBtn" type="button" hidden>Connect</button>
-              <button class="btn" id="changeBtn" type="button" hidden aria-expanded="false" aria-controls="providerPanel">Change</button>
+              <button class="btn" id="changeBtn" type="button" hidden>Change</button>
             </div>
           </div>
 
-          <div class="sub" id="providerPanel" hidden>
+          <div class="sub" id="providerPanel">
             <div class="field">
               <label for="provider">Provider</label>
               <select class="input" id="provider">
                 <option value="openrouter">OpenRouter (free models available)</option>
                 <option value="openai">OpenAI</option>
                 <option value="anthropic">Anthropic</option>
-                <option value="gemini">Google Gemini</option>
-                <option value="groq">Groq</option>
+                <option value="gemini">Google Gemini (free tier)</option>
+                <option value="groq">Groq (free tier)</option>
                 <option value="deepseek">DeepSeek</option>
                 <option value="mistral">Mistral</option>
                 <option value="xai">xAI</option>
@@ -116,15 +116,15 @@
               <span class="note" id="testNote" role="status" aria-live="polite"></span>
             </div>
             <div class="field">
-              <label for="model">Model</label>
-              <input class="input mono" id="model" list="modelList" spellcheck="false" />
+              <label for="model">Main model</label>
+              <input class="input mono" id="model" list="modelList" spellcheck="false" aria-describedby="modelHint" />
               <datalist id="modelList"></datalist>
-              <span class="hint">The default works well. Change it only if you want a specific model.</span>
+              <span class="hint" id="modelHint">It runs every step. The default works well, so change it only if you want a specific model.</span>
             </div>
             <div class="field">
-              <label for="helperModel">Helper model</label>
-              <input class="input mono" id="helperModel" list="modelList" spellcheck="false" placeholder="None" />
-              <span class="hint">Optional. A stronger model from the same provider that takes over when the agent is stuck, and checks its answers.</span>
+              <label for="helperModel">Stronger model</label>
+              <input class="input mono" id="helperModel" list="modelList" spellcheck="false" placeholder="None" aria-describedby="helperHint" />
+              <span class="hint" id="helperHint">Optional. A stronger model from the same provider that takes over when the agent is stuck, and checks its answers. <span id="helperSuggest"></span></span>
             </div>
           </div>
 
