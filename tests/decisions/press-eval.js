@@ -9,7 +9,10 @@
  *
  * Env:
  *   PRESS_EVAL_KEY       the provider key (never printed)
- *   PRESS_EVAL_PROVIDER  provider id as in Settings (default anthropic)
+ *   PRESS_EVAL_PROVIDER  provider id as in Settings (default anthropic), or
+ *                        "custom" for an OpenAI-compatible endpoint
+ *   PRESS_EVAL_BASE_URL  with custom: its base URL (NVIDIA NIM's free tier:
+ *                        https://integrate.api.nvidia.com/v1)
  *   PRESS_EVAL_MODEL     model id (default claude-haiku-5-5)
  *   PRESS_EVAL_REPEAT    times each group is asked (default 3)
  *   PRESS_EVAL_CAP_USD   hard spend cap for the run (default 1). A call is
@@ -58,9 +61,11 @@ function worstCost(m) {
 async function main() {
   if (!KEY) { console.error("Set PRESS_EVAL_KEY."); process.exit(1); }
   if (!D.findModelRates(MODEL)) { console.error(`No price is known for ${MODEL}, so the spend cap cannot be kept.`); process.exit(1); }
-  const entry = (D.PROVIDER_ENDPOINTS || {})[PROVIDER];
+  const custom = PROVIDER === "custom";
+  const entry = custom ? { keyName: "agentCustomKey" } : (D.PROVIDER_ENDPOINTS || {})[PROVIDER];
   if (!entry) { console.error(`Unknown provider ${PROVIDER}.`); process.exit(1); }
-  const cfg = LLM.settingsFrom({ agentActiveProvider: PROVIDER, [entry.keyName]: KEY, agentModel: MODEL }, Date.now());
+  if (custom && !process.env.PRESS_EVAL_BASE_URL) { console.error("Set PRESS_EVAL_BASE_URL for a custom provider."); process.exit(1); }
+  const cfg = LLM.settingsFrom({ agentActiveProvider: PROVIDER, [entry.keyName]: KEY, agentModel: MODEL, ...(custom ? { agentCustomUrl: process.env.PRESS_EVAL_BASE_URL } : {}) }, Date.now());
   if (cfg.keyProblem) { console.error(cfg.keyProblem); process.exit(1); }
   const client = LLM.createClient({ fetch: (...a) => fetch(...a) });
   const groups = PRESS_CASES.filter((g) => !ONLY.length || ONLY.includes(g.name));
