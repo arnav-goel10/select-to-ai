@@ -155,22 +155,20 @@ test("while the main provider's allowance is spent, the chosen backup answers", 
   assert.equal(LLM.settingsFrom(items, 9000).provider, "openrouter");
 });
 
-test("a model is given what suits its size, and the sampling its maker asks for", () => {
-  assert.equal(D.modelProfile("ministral-8b-latest").tier, "small");
+test("a model is given the room its listed tier says, and the sampling its maker asks for", () => {
   assert.equal(D.modelProfile("openrouter/free").tier, "small");
   assert.equal(D.modelProfile("mistral-medium-latest").tier, "standard");
   assert.equal(D.modelProfile("claude-opus-5-5").tier, "frontier");
   assert.equal("verify" in D.modelProfile("claude-opus-5-5"), false, "no model is trusted to skip the check of its answer");
-  assert.equal(D.modelProfile("gpt-5.5-mini").tier, "small");
-  // A name is read for its size, not its family: "mini" is not the end of "gemini".
   assert.equal(D.modelProfile("gemini-pro-latest").tier, "frontier");
   assert.equal(D.modelProfile("gemini-flash-latest").tier, "standard");
   assert.equal(D.modelProfile("gemini-3.1-flash-lite").tier, "small");
-  assert.equal(D.modelProfile("nvidia/nemotron-3-ultra-550b-a55b").tier, "frontier");
   assert.equal(D.modelProfile("openai/gpt-oss-120b").tier, "standard");
   assert.equal(D.modelProfile("openai/gpt-oss-20b").tier, "small");
-  assert.equal(D.modelProfile("meta/llama-4-maverick").tier, "standard");
-  assert.equal(D.modelProfile("gemma4:e4b").tier, "small");
+  // A model the extension does not list is standard: its name is not read for a size.
+  for (const id of ["ministral-8b-latest", "gpt-5.5-mini", "nvidia/nemotron-3-ultra-550b-a55b", "meta/llama-4-maverick", "gemma4:e4b", "acme-haiku-tiny", "claude-opus-9", ""]) {
+    assert.equal(D.modelProfile(id).tier, "standard", id);
+  }
   assert.equal(D.modelProfile("gemini-3.5-flash").temperature, 1);
   assert.equal(D.modelProfile("gpt-6").temperature, null);
   assert.equal(D.modelProfile("ministral-8b-latest").temperature, 0.1);
