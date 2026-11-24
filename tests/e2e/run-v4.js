@@ -384,7 +384,9 @@ async function main() {
       ["decadeSentBack", "/article", watchAnswer, (r) => {
         const s = r.seen;
         if (!/twelve/.test(s.firstText || "")) return `shown while checked: ${JSON.stringify(s.firstText)}`;
-        if (!s.marks.some((m) => /^replaced: Checking found a problem: The number of years is wrong.*; still working$/.test(m))) return `no sent-back mark: ${JSON.stringify([...new Set(s.marks)])}`;
+        if (!s.marks.some((m) => /^replaced: The check sent this answer back\. Still working on it\.$/.test(m))) return `no sent-back mark: ${JSON.stringify([...new Set(s.marks)])}`;
+        // The reason is said once, in full, in the check's own row above the answer.
+        if (!(s.shownSteps || []).some((t) => /Check Failed\. .*The number of years is wrong/.test(t))) return `the check's reason is not in its row: ${JSON.stringify(s.shownSteps)}`;
         if (r.answer !== "A decade is exactly ten years.") return `final: ${JSON.stringify(r.answer)}`;
         if (r.trace.answer !== r.answer) return `trace answer: ${JSON.stringify(r.trace.answer)}`;
         return null;

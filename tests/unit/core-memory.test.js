@@ -211,3 +211,18 @@ test("a run's route takes the place of the earlier one for the same request, and
   assert.equal(crowded.store, full);
   assert.ok(crowded.store.entries.some((e) => e.kind === "routine" && e.origin.runId === "run-2"), "the earlier route is still there");
 });
+
+test("the Memory panel shows the details kept by group and keeps the empty ones behind one line", () => {
+  const MEM = require("../../extension/core/memory.js");
+  const none = MEM.fieldLayout({});
+  assert.deepEqual(none.kept, [], "a new user sees no empty boxes up front");
+  assert.equal(none.empty.reduce((n, g) => n + g.keys.length, 0), MEM.FIELDS.length, "every detail can still be added");
+  const named = MEM.fieldLayout({ "given-name": { value: "Ada" }, "family-name": { value: "Lovelace" }, email: { value: "ada@example.com" } });
+  assert.deepEqual(named.kept, [{ title: "Name", keys: ["given-name", "family-name"] }, { title: "Contact", keys: ["email"] }]);
+  assert.ok(!named.empty.some((g) => g.keys.includes("name")), "with first and last kept, a full name is not asked for too");
+  const full = MEM.fieldLayout({ name: { value: "Ada Lovelace" } });
+  assert.deepEqual(full.kept[0], { title: "Name", keys: ["name"] });
+  assert.deepEqual(full.empty[0], { title: "Name", keys: ["given-name", "family-name"] });
+  const grouped = MEM.FIELD_GROUPS.flatMap(([, keys]) => keys).sort();
+  assert.deepEqual(grouped, MEM.FIELDS.map(([k]) => k).sort(), "each detail is in exactly one group");
+});

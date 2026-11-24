@@ -16,6 +16,7 @@
   "use strict";
 
   const RUN = root.SELECT_TO_AI_RUN;
+  const FEED = root.SELECT_TO_AI_FEED;
   const LLM = root.SELECT_TO_AI_LLM;
   const TOOLS = root.SELECT_TO_AI_TOOLS;
   const PAGE = root.SELECT_TO_AI_PAGE;
@@ -399,12 +400,28 @@
     if (!run) return;
     const fresh = run.journal.slice(session.sent);
     session.sent = run.journal.length;
-    if (fresh.length) post(session, { type: "entries", runId: run.id, entries: fresh, trace: RUN.trace(run), status: run.status });
-    if (fresh.length) syncBar(session);
+    if (!fresh.length) return;
+    // The trace goes whole once per run, then as what changed since the last batch.
+    const now = RUN.trace(run);
+    const was = session.sentTrace && session.sentTrace.id === now.id ? session.sentTrace : null;
+    // A copy: the trace holds some of the run's own objects, which change in place.
+    session.sentTrace = JSON.parse(JSON.stringify(now));
+    post(session, { type: "entries", runId: run.id, entries: fresh, status: run.status, ...(was ? { traceDelta: FEED.traceDelta(was, now) } : { trace: now }) });
+    syncBar(session);
   }
 
-  /** The conversation before the run in hand, and that run. */
-  const snapshot = (session) => ({ type: "snapshot", turns: session.run ? session.turns.slice(0, session.run.outcome && session.run.outcome.text ? -2 : -1) : session.turns, run: session.run ? { id: session.run.id, task: session.run.task, selection: session.extras && session.extras.selectionCaptured ? session.extras.selectionPlace : null, status: session.run.status, journal: session.run.journal, wait: session.run.wait, trace: RUN.trace(session.run) } : null });
+  /**
+   * The trace a view starts from: the one the views already have, so the
+   * parts sent next follow on from it for every view alike.
+   */
+  function sharedTrace(session) {
+    const now = RUN.trace(session.run);
+    if (!session.sentTrace || session.sentTrace.id !== now.id) session.sentTrace = JSON.parse(JSON.stringify(now));
+    return session.sentTrace;
+  }
+
+  /** The conversation before the run in hand, and that run, with the reply being written so far. */
+  const snapshot = (session) => ({ type: "snapshot", turns: session.run ? session.turns.slice(0, session.run.outcome && session.run.outcome.text ? -2 : -1) : session.turns, run: session.run ? { id: session.run.id, task: session.run.task, selection: session.extras && session.extras.selectionCaptured ? session.extras.selectionPlace : null, status: session.run.status, journal: session.run.journal, wait: session.run.wait, trace: sharedTrace(session), stream: session.streamed || "" } : null });
 
   // ------------------------------------------------------------------- loop
 
@@ -986,13 +1003,21 @@
       const out = await clientFor().call({
         system: fx.system, user: fx.user, tool: fx.tool, tier: fx.tier, effort: fx.effort, image: fx.image, reasks: fx.reasks, signal: ctl.signal,
         // A sub-task's reply as it is written is not shown: its steps are.
-        onText: (text) => { const t = Date.now(); if (shows && t - last > 150) { last = t; post(session, { type: "stream", runId: run.id, text: String(text).slice(-6000) }); } },
+        // Sent as the text added since the last part, so a long reply is never cut.
+        onText: (text) => {
+          const t = Date.now();
+          if (!shows || t - last <= 150) return;
+          last = t;
+          const part = FEED.streamPart(session.streamed, text);
+          session.streamed = String(text || "");
+          post(session, { type: "stream", runId: run.id, ...part });
+        },
       }, session.cfg);
-      if (shows) post(session, { type: "stream", runId: run.id, text: "" });
+      if (shows) { session.streamed = ""; post(session, { type: "stream", runId: run.id, at: 0, text: "" }); }
       if (out.left) noteAllowance(out.provider, out.left);
       back({ type: "model_replied", purpose: fx.purpose, ...tag, reply: out.reply, usage: out.usage, ms: Date.now() - startedAt });
     } catch (e) {
-      if (shows) post(session, { type: "stream", runId: run.id, text: "" });
+      if (shows) { session.streamed = ""; post(session, { type: "stream", runId: run.id, at: 0, text: "" }); }
       if (timedOut) { back({ type: "model_failed", purpose: fx.purpose, ...tag, kind: "timeout", message: "The check took too long.", usage: null, ms: Date.now() - startedAt }); return; }
       if (e && e.kind === "aborted") return;
       // A spent allowance: when it comes back, for the run to be held until then.
@@ -2096,7 +2121,7 @@
     const frontId = front ? front.id : null;
     const show = !!tab && VIEW.showBar({ home: v.home, tabId: tab.id, front: frontId, live, kept: ended && v.kept === tab.id });
     const line = VIEW.barLine(run);
-    const state = { action: "agentBar", show, state: line.state, text: line.text, ended, touched: v.touched, tokens: await tokens(), logo: chrome.runtime.getURL("icon128.png") };
+    const state = { action: "agentBar", show, state: line.state, text: line.text, onPage: !!line.onPage, ended, touched: v.touched, tokens: await tokens(), logo: chrome.runtime.getURL("icon128.png") };
     // The watch goes on the tab in front when it is one of the run's.
     const watchHere = frontId !== null && frontId !== v.home && v.tabs.includes(frontId) && (live || v.kept === frontId);
     for (const id of [...v.watched]) {
@@ -2155,6 +2180,8 @@
       if (message.action === "agentBarTouched") { v.touched = true; await save(session); }
       else if (message.action === "agentBarStop") { if (session.run && (session.run.status === "running" || session.run.status === "waiting")) stop(session); }
       else if (message.action === "agentBarHome") await goHome(session, sender.tab.windowId);
+      // "I'm done" on the page where the user signed in, typed the code or paid.
+      else if (message.action === "agentBarDone") { const w = session.run && session.run.status === "waiting" ? session.run.wait : null; if (w && VIEW.ON_PAGE_WAITS.has(w.kind)) enqueue(session, { type: "user_done", id: w.id }); }
       else if (message.action === "agentBarClose") { send(tabId, { action: "agentBar", off: true }); v.watched = v.watched.filter((x) => x !== tabId); if (v.kept === tabId) v.kept = null; await save(session); }
       sendResponse({ ok: true });
     });
@@ -2539,6 +2566,8 @@
     session.token += 1;
     session.page = null;
     session.sent = 0;
+    session.sentTrace = null;
+    session.streamed = "";
     session.spawned = {};
     session.run = RUN.newRun({
       id, task: text, tabId: tab ? tab.id : null, startUrl: tab && !place.fromNothing ? tab.url : "", marker, earlierTurns: session.turns.slice(-6), now: Date.now(),

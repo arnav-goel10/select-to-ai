@@ -24,7 +24,7 @@
             </div>
             <div class="sidebar-new">
                 <button type="button" class="new-task-btn" id="newTaskBtn" title="Clear the conversation and start a new task">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                    <span class="new-task-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span>
                     New task
                 </button>
             </div>
@@ -58,14 +58,16 @@
                 <div class="topbar-title" id="topbarTitle"><span>Agent</span></div>
                 <div class="live-header" id="liveHeader" data-state="working" hidden>
                     <span class="live-dot" aria-hidden="true"></span>
-                    <span class="live-goal" id="liveGoal" role="status" aria-live="polite"></span>
+                    <span class="live-goal" id="liveGoal"></span>
                     <span class="live-site" id="liveSite" hidden><img alt="" id="liveFavicon" /><span id="liveHost"></span></span>
-                    <span class="live-time tabular" id="liveTime" aria-label="Time worked">0:00</span>
+                    <span class="live-time tabular" id="liveTime" role="timer" aria-label="Time worked">0:00</span>
                 </div>
+                <!-- What a screen reader is told: a step starting, a wait, the end. -->
+                <div class="visually-hidden" id="liveAnnounce" role="status" aria-live="polite"></div>
                 <div class="topbar-actions">
-                    <button type="button" class="btn btn-sm live-stop" id="liveStopBtn" hidden>
+                    <button type="button" class="btn btn-sm live-stop" id="liveStopBtn" aria-label="Stop the task" title="Stop the task" hidden>
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/></svg>
-                        Stop
+                        <span class="live-stop-label">Stop</span>
                     </button>
                     <div class="assistants" id="assistantsWrap" hidden>
                         <button type="button" class="icon-btn" id="assistantsBtn" title="Ask an assistant site" aria-label="Ask an assistant site" aria-haspopup="menu" aria-expanded="false">
@@ -79,11 +81,11 @@
             <div class="chat-viewport" id="chatViewport">
                 <div class="chat-container" id="chatContainer">
                     <!-- Empty state: what it can do, and three ways to start, right above the composer. -->
-                    <div class="welcome-screen" id="welcomeScreen">
+                    <div class="welcome-screen" id="welcomeScreen" style="display: none">
                         <div class="welcome-hero">
                             <img class="welcome-logo" src="icon128.png" alt="" />
                             <h1 class="welcome-title">What should I do?</h1>
-                            <p class="welcome-desc">It works in your browser on the tab you came from, reads your other tabs when you mention them, and asks before anything that costs money.</p>
+                            <p class="welcome-desc">It works on this tab for you, and asks before anything that costs money.</p>
                         </div>
                         <div class="suggestions-grid" role="group" aria-label="Suggestions">
                             <button type="button" class="suggestion-card" data-prompt="Summarize this page in 5 short bullet points.">
@@ -129,7 +131,8 @@
                             <span id="costDashboardBadge" class="cost-badge tabular" hidden>$0.00</span>
                             <span class="composer-hint" id="composerHint"><kbd>Enter</kbd> to send</span>
                             <button id="actionBtn" class="action-circle-btn" title="Run" aria-label="Run">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+                                <svg class="send-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+                                <svg class="stop-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
                             </button>
                         </div>
                     </div>
@@ -149,7 +152,7 @@
                 </button>
             </div>
             <div class="memory-body">
-                <p class="memory-lede">Runs you saved, to repeat without the AI. Each step is checked as it runs. If a page changed only in looks, the step is fixed with your model's cheap tier and checked again. If what a step means changed, the recipe stops before that step and tells you why.</p>
+                <p class="memory-lede">Tasks you saved, to run again in one click without asking the AI each time. Every step is checked as it runs. If a step would now do something different, the recipe stops before it and tells you why.</p>
                 <ul class="memory-list" id="recipesList"></ul>
                 <div class="recipe-detail" id="recipeDetail" hidden></div>
             </div>
@@ -166,7 +169,7 @@
             </div>
             <div class="memory-body" id="memoryKnown">
                 <p class="memory-lede">What the agent knows about you, so you never tell it twice. It stays in this browser, encrypted. Your details are put into forms by the extension itself; your AI provider is only sent one when the agent has to write with it, and you are shown when that happens.</p>
-                <label class="memory-toggle"><span class="switch"><input type="checkbox" id="knownPaused" /><span></span></span><span>Pause memory: use and learn nothing until this is off</span></label>
+                <label class="memory-toggle"><span class="switch"><input type="checkbox" id="knownPaused" aria-describedby="knownPausedHint" /><span></span></span><span class="memory-toggle-words"><span>Pause memory</span><span class="memory-toggle-hint" id="knownPausedHint">While paused, nothing is used or learned.</span></span></label>
                 <section>
                     <h3>Your details</h3>
                     <p class="memory-hint">For filling forms. It asks before using them on a site for the first time. Passwords, cards and codes are never kept.</p>
@@ -214,9 +217,12 @@
     <script src="answerFormat.js"></script>
     <script src="core/memory.js"></script>
     <script src="core/runlog.js"></script>
+    <script src="core/feed.js"></script>
     <script src="omnibox.js"></script>
     <script src="core/grants.js"></script>
     <script src="setup.js"></script>
+    <script src="runWords.js"></script>
+    <script src="keyGuard.js"></script>
     <script src="agent.js"></script>
 </body>
 

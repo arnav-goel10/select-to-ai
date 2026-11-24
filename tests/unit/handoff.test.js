@@ -288,3 +288,32 @@ test("an answer from the provider starts the count of pauses again", () => {
   }
   assert.equal(run.status, "running");
 });
+
+test("on the page where the user signs in, the bar's I'm done ends the wait; it answers nothing else", async () => {
+  const saved = savedWaiting();
+  saved["agentSession:1"].view = { home: 5, tabs: [9], watched: [9] };
+  const w = fakeWorker({ saved, onTabMessage: (_id, m) => (m.action === "probe" ? { success: true, blockers: [{ kind: "sign_in" }] } : { success: true }) });
+  await w.connect(1).hello();
+  await settle(40);
+  const s = w.engine.sessions.get(1);
+  const bars = w.calls.tabMessages.filter((m) => m.message.action === "agentBar" && !m.message.off);
+  for (const b of bars) if (b.message.state === "needs") assert.equal(b.message.onPage, true, "the bar is told the wait is met on its page");
+  for (const fn of w.listeners["runtime.onMessage"] || []) fn({ action: "agentBarDone" }, { tab: { id: 9 }, frameId: 0 }, () => {});
+  await settle(40);
+  assert.ok(s.run.journal.some((j) => j.k === "ask_done" && j.id === "r1-w1"), "the wait is over");
+});
+
+test("the bar's I'm done does not answer an approval, which is answered on the agent's page", async () => {
+  const saved = savedWaiting();
+  const stored = saved["agentSession:1"];
+  stored.run.wait = { id: "r1-w1", kind: "approval", risk: "pay", question: "Pay?", tabId: 9, since: 1 };
+  stored.view = { home: 5, tabs: [9], watched: [9] };
+  const w = fakeWorker({ saved, onTabMessage: () => ({ success: true }) });
+  await w.connect(1).hello();
+  await settle(40);
+  const s = w.engine.sessions.get(1);
+  for (const fn of w.listeners["runtime.onMessage"] || []) fn({ action: "agentBarDone" }, { tab: { id: 9 }, frameId: 0 }, () => {});
+  await settle(40);
+  assert.equal(s.run.status, "waiting");
+  assert.ok(!s.run.journal.some((j) => j.k === "ask_done"), "an approval is never answered from the page's bar");
+});

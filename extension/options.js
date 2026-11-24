@@ -168,6 +168,8 @@
       chrome.tabs.create({ url: chrome.runtime.getURL("welcome.html?step=connect") });
     }
   };
+  // The panel opens at once, so the next click lands on it; it slides in by
+  // CSS (.sub in options.html).
   $("changeBtn").onclick = () => {
     $("providerPanel").hidden = !$("providerPanel").hidden;
     renderStatus();

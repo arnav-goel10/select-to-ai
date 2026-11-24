@@ -266,6 +266,8 @@ test("a run that cannot be saved says why, in memory and after a restart", async
   assert.equal((await RECIPES.canSave(chrome, quiet.run.id)).nothing, true);
   // A run nothing is known of: the reason is that its recording is gone.
   assert.match((await RECIPES.canSave(chrome, "run-unknown")).why, /no longer kept \(the browser or the extension restarted/);
+  // That is the extension's business, so it is marked for the view to leave unsaid.
+  assert.equal((await RECIPES.canSave(chrome, "run-unknown")).gone, true);
 });
 
 test("a run the worker restarted under says so when it ends", async () => {

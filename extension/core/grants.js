@@ -27,7 +27,7 @@
 
   // Shown when a tab has no usable icon: a plain globe, so no site is asked.
   const GENERIC_ICON = "data:image/svg+xml," + encodeURIComponent(
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#8a8f98" stroke-width="1.2">'
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#8a8b8f" stroke-width="1.2">'
     + '<circle cx="8" cy="8" r="6.4"/><ellipse cx="8" cy="8" rx="2.8" ry="6.4"/><path d="M1.6 8h12.8M2.6 4.8h10.8M2.6 11.2h10.8"/></svg>',
   );
 
