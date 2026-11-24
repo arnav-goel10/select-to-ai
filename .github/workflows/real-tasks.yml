@@ -21,7 +21,9 @@ name: Real-task trial
 # and only on a push (where holdout-check runs) or when suite is holdout: it
 # decrypts the holdout tasks so they can be checked. No other event reads it.
 # A manual run without the dry box is a real run or a failed one, never a dry
-# one.
+# one. Before a real run, a canary of three fixture tasks runs through the
+# same harness at no cost, and the run does not start if it fails.
+# Online-Mind2Web has a workflow of its own: om2w.yml.
 on:
   workflow_dispatch:
     inputs:
@@ -77,7 +79,8 @@ on:
         type: boolean
         default: false
   push:
-    branches: [rel40-real-tasks]
+    branches: [main, om2w-trial]
+    paths: [".github/workflows/real-tasks.yml", "tests/bench/**", "tests/e2e/server.js"]
 
 permissions:
   contents: read
@@ -291,9 +294,54 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # Before any paid run: three fixture tasks through the same harness, the
+  # batch judge (its local stand-in) and a headful browser under xvfb. A
+  # failure here stops the run before a cent is spent.
+  canary:
+    name: canary (three fixture tasks)
+    needs: [plan, build]
+    if: ${{ needs.plan.outputs.dry != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - run: npx puppeteer browsers install chrome
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: command -v xvfb-run || { sudo apt-get update && sudo apt-get install -y xvfb; }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+      - run: mkdir -p build && unzip -q "${{ needs.build.outputs.artifact }}" -d build
+      - name: Run the canary
+        env:
+          BENCH_DRY: "1"
+          BENCH_EXTENSION: build
+          BENCH_TASKS: tests/bench/fixture-canary-tasks.json
+          BENCH_OUT: tests/bench/out/canary
+          BENCH_COUNTS_OUT: tests/bench/out/canary
+          BENCH_MAX_USD: "2"
+          BENCH_TIMEOUT_S: "60"
+          BENCH_JUDGE_BATCH: "1"
+          BENCH_HEADFUL: "1"
+          BENCH_DISGUISE: "off"
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" node tests/bench/run.js
+      - name: The canary ended as it must
+        run: |
+          node tests/bench/trial.js summary tests/bench/out/canary --tasks tests/bench/fixture-canary-tasks.json --suite "canary" --arm shipped --shards 1 --commit "$GITHUB_SHA" --check-dry | tee -a "$GITHUB_STEP_SUMMARY"
+          node tests/bench/om2w.js summary tests/bench/out/canary --part fixture --planned 3 --arm shipped --shards 1 --commit "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+
   run:
     name: tasks (shard ${{ matrix.shard }} of ${{ needs.plan.outputs.shard_count }})
-    needs: [plan, build]
+    needs: [plan, build, canary]
+    # A real run only after its canary passed; a dry run has none.
+    if: ${{ always() && needs.plan.result == 'success' && needs.build.result == 'success' && (needs.canary.result == 'success' || (needs.canary.result == 'skipped' && needs.plan.outputs.dry == 'true')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     strategy:
