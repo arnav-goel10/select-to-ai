@@ -255,7 +255,7 @@ jobs:
       # needs; without this every launch fails with "No usable sandbox".
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       # check:browser without test:v4, which runs in e2e-shipped and nightly.
-      - run: npm run test:extract && npm run test:scan && npm run test:widgets && npm run test:recipes-driver && npm run test:recipes-ext
+      - run: npm run test:extract && npm run test:scan && npm run test:widgets && npm run test:card-keys && npm run test:recipes-driver && npm run test:recipes-ext
 
   # The core-flow and consent scenarios on the packed build. Each job runs its
   # file unconditionally, so a renamed or missing file fails the check.

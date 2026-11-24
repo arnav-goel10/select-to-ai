@@ -87,6 +87,7 @@
     liveAnnounce.textContent = t;
   }
   const WORDS = globalThis.SELECT_TO_AI_RUNWORDS;
+  const KEYS = globalThis.SELECT_TO_AI_KEYS;
 
   const credentialsWarning = document.getElementById("credentialsWarning");
   const openKeySettings = document.getElementById("openKeySettings");
@@ -1298,7 +1299,7 @@
     selectionSlot.hidden = !aboutSelection;
     if (aboutSelection) {
       selectionSlot.appendChild(selectionQuote(aboutSelection, () => { dropSelection(); taskInput.focus(); }));
-      if (!taskInput.disabled) taskInput.focus();
+      if (!taskInput.disabled) KEYS.offerFocus(document, taskInput);
     }
     updateComposerForSelection();
   }
@@ -2637,16 +2638,13 @@
     chatContainer.appendChild(card);
     engineCards.set(wait.id, card);
     scrollToBottom(true);
+    // Its buttons act on no key press that began before the card was in view
+    // for a moment, so keys meant for the box never answer it.
+    if (KEYS && actions.children.length) card._stopKeys = KEYS.guardKeys(card, actions);
     if (replaying) return;
+    // Said to a screen reader, and focus stays where the user has it: a card
+    // that took focus would turn their next Enter or Space into an answer.
     announce(`${title.textContent} ${wait.question || ""}`.trim());
-    // A decision takes focus, so Enter or Tab acts on it; never out of a dialog
-    // or a field the user is typing in.
-    const first = actions.querySelector("button");
-    const active = document.activeElement;
-    const free = !active || active === document.body || active === taskInput || active === actionBtn;
-    if (first && free && (approval || wait.kind === "site_access" || wait.kind === "check_in" || wait.kind === "pause")) {
-      requestAnimationFrame(() => first.focus({ preventScroll: true }));
-    }
   }
 
   /** An answered card leaves quickly; it stops counting as a card at once. */
@@ -2659,6 +2657,7 @@
     // name it as one go now.
     card.classList.remove("message-bubble", "confirmation-bubble", "risk", "share", "needs-you", "save-offer");
     card.classList.add("card-leaving");
+    if (card._stopKeys) card._stopKeys();
     card.removeAttribute("data-wait-kind");
     card.removeAttribute("data-risk-kind");
     leave(card);
