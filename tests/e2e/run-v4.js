@@ -20,6 +20,7 @@
 const path = require("node:path");
 const { createE2EServer } = require("./server.js");
 const TOOLS = require("../../extension/agentTools.js");
+const { engineTrace } = require("../helpers/engine-trace.js");
 
 const PORT = parseInt(process.env.E2E_PORT || "8917", 10);
 // The local test server is granted, as after Allow on the site-access card.
@@ -34,10 +35,10 @@ const TIMEOUT_MS = 60000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** What the panel shows, and what the run did. */
-const look = (page) => page.evaluate(() => {
+const look = async (page) => page.evaluate((trace) => {
   const boxes = [...document.querySelectorAll(".final-answer-box")].filter((b) => getComputedStyle(b).display !== "none" && (b.innerText || "").trim());
   return {
-    trace: globalThis.__selectToAiTrace ? globalThis.__selectToAiTrace() : null,
+    trace,
     answer: boxes.length ? boxes[boxes.length - 1].innerText.trim() : "",
     cards: [...document.querySelectorAll(".confirmation-bubble")].map((c) => ({ kind: c.dataset.waitKind || "", risk: c.dataset.riskKind || "", text: (c.innerText || "").replace(/\s+/g, " ") })),
     bubbles: document.querySelectorAll(".agent-run-status").length,
@@ -46,7 +47,7 @@ const look = (page) => page.evaluate(() => {
     inputDisabled: document.getElementById("taskInput").disabled,
     subRows: document.querySelectorAll(".tl-sub").length,
   };
-}).catch(() => null);
+}, await engineTrace(page.browser(), page)).catch(() => null);
 
 const click = (page, selector) => page.evaluate((s) => { const b = document.querySelector(s); if (b) b.click(); return !!b; }, selector);
 

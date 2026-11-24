@@ -74,6 +74,7 @@ const J = require("./judge.js");
 const { summarise, normaliseTasks, sampleTasks, isInfra } = J;
 const { judgeConfig, judgeRun } = require("./judge-call.js");
 const BENCH_PROFILE_LIB = require("./profile.js");
+const { engineTrace } = require("../helpers/engine-trace.js");
 
 // BENCH_EXTENSION runs another build of the extension (an older commit's
 // checkout) under this same harness, for before-and-after comparisons.
@@ -180,7 +181,7 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
   };
 
   while (Date.now() - t0 < TIMEOUT_MS) {
-    const state = await agentPage.evaluate((allow) => {
+    const state = await agentPage.evaluate((allow, trace) => {
       // The harness plays the user at a confirmation: it allows only what it
       // was told to, and refuses the rest.
       // At a check-in the user says to keep going: the harness's own timeout is the limit.
@@ -199,12 +200,11 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
         const btn = bubble.querySelector(ok ? ".confirm-risk-btn" : ".abort-risk-btn");
         if (btn) btn.click();
       }
-      const trace = globalThis.__selectToAiTrace ? globalThis.__selectToAiTrace() : null;
       // A run at a check-in, or paused for its provider, is still under way.
       const held = !!keep || !!(trace && trace.waitingForUser && ["check_in", "pause"].includes(trace.waitKind));
       const running = held || document.getElementById("actionBtn").classList.contains("stop-btn");
       return { asked, running, steps: trace ? trace.steps : 0 };
-    }, [...ALLOW]);
+    }, [...ALLOW], await engineTrace(browser, agentPage));
     if (state.asked) held.push(state.asked);
     if (state.running) sawRunning = true;
     if (state.steps !== lastStep) { lastStep = state.steps; if (state.steps > 0) await shot(`step${state.steps}`); }
@@ -218,7 +218,7 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
   }
   await shot("final");
 
-  const trace = await agentPage.evaluate(() => (globalThis.__selectToAiTrace ? globalThis.__selectToAiTrace() : null)).catch(() => null);
+  const trace = await engineTrace(browser, agentPage);
   const shown = await agentPage.evaluate(() => { const b = [...document.querySelectorAll(".final-answer-box")].filter((x) => getComputedStyle(x).display !== "none").pop(); return b ? (b.innerText || "").trim() : ""; }).catch(() => "");
   // The final answer, from the trace: never one shown while it was being checked.
   const answer = J.finalAnswer(trace, shown);
@@ -323,25 +323,17 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
       // Watched by a person: the page in a window of its own size, on the left.
       ...(HEADFUL ? { defaultViewport: null } : {}),
       ...(profileCopy ? { userDataDir: profileCopy } : {}),
-      // A headless browser that says so is turned away by many sites (Cloudflare
-      // challenges that never clear, Google's "unusual traffic" page), which
-      // a person's own Chrome never sees. Measured 1 Oct 2026: with these two
-      // changes Allrecipes, Google search and Booking load as they do for people.
+      // The browser says what it is: an automated, headless browser with its
+      // own user agent and automation flag. A site that turns it away is
+      // counted as blocked by the site, never passed as a person. To see what
+      // a visible browser gets, run with BENCH_HEADFUL=1 (under xvfb on a
+      // machine with no screen).
       // BENCH_EXTRA_EXTENSION: another unpacked extension loaded beside the
       // agent's, for measuring what it changes (an ad blocker, say).
       args: [`--disable-extensions-except=${[loaded, process.env.BENCH_EXTRA_EXTENSION].filter(Boolean).join(",")}`, `--load-extension=${[loaded, process.env.BENCH_EXTRA_EXTENSION].filter(Boolean).join(",")}`, "--no-first-run", "--disable-features=DialMediaRouteProvider",
-        "--disable-blink-features=AutomationControlled",
         // A window on a desktop can be covered by another one, and Chrome stops drawing a covered window.
         ...(HEADFUL ? ["--window-position=0,0", "--window-size=1060,900", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"] : [])],
     });
-    const userAgent = (await browser.userAgent()).replace("HeadlessChrome", "Chrome");
-    const dressed = async (target) => {
-      if (target.type() !== "page") return;
-      const page = await target.page().catch(() => null);
-      if (page) await page.setUserAgent(userAgent).catch(() => {});
-    };
-    browser.on("targetcreated", dressed);
-    for (const target of browser.targets()) await dressed(target);
     const workerTarget = await browser.waitForTarget((t) => t.type() === "service_worker" && t.url().includes("background.js"), { timeout: 20000 });
     const extensionId = new URL(workerTarget.url()).host;
     const worker = await workerTarget.worker();
@@ -352,8 +344,6 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
       agentLearning: !!LEARN,
       agentEngine: process.env.BENCH_ENGINE || "v4",
       // Switches for measuring one design choice against another.
-      ...(process.env.BENCH_OBSERVE ? { agentObserve: process.env.BENCH_OBSERVE } : {}),
-      ...(process.env.BENCH_PRESSABLES ? { agentPressables: process.env.BENCH_PRESSABLES } : {}),
     });
     // ChatGPT has no key: the profile's sign-in is used.
     await worker.evaluate((e) => new Promise((r) => chrome.storage.local.set(e, r)), { onboardingComplete: true, ...(CHATGPT ? { agentProviderPause: null } : { [PROVIDER === "custom" ? "agentCustomKey" : PROVIDER_ENDPOINTS[PROVIDER].keyName]: KEY }) });
@@ -557,6 +547,6 @@ async function runTask(browser, extensionId, task, runIndex, dir) {
   if (s.lost) console.log(`${s.lost} run(s) were lost to the browser, the provider or the judge and are left out of the rate.`);
   if (s.blocked || s.lost) console.log(`Success with the ${s.blocked} blocked and ${s.lost} lost run(s) counted as failures: ${pct(s.successAllRuns)}.`);
   if (stoppedEarly) console.log(`Stopped early: ${stoppedEarly}`);
-  fs.writeFileSync(path.join(OUT, `results${SHARD ? `-${SHARD[1]}of${SHARD[2]}` : ""}.json`), JSON.stringify({ agent: { provider: PROVIDER, model: MODEL, helperModel: HELPER_MODEL || undefined, url: CUSTOM_URL || undefined, extension: EXT, profile: CHATGPT ? CHATGPT.profile : undefined }, judge: { model: JUDGE.model, url: JUDGE.url, vision: JUDGE.vision, shots: JUDGE.vision ? JUDGE.shots : 0 }, summary: s, stoppedEarly, rows: rows.map((r) => ({ ...r, finalText: undefined, pages: undefined, screenshots: (r.screenshots || []).length })) }, null, 2));
+  fs.writeFileSync(path.join(OUT, `results${SHARD ? `-${SHARD[1]}of${SHARD[2]}` : ""}.json`), JSON.stringify({ agent: { provider: PROVIDER, model: MODEL, tier: require(path.join(EXT, "defaults.js")).modelProfile(MODEL).tier, helperModel: HELPER_MODEL || undefined, url: CUSTOM_URL || undefined, extension: EXT, profile: CHATGPT ? CHATGPT.profile : undefined }, judge: { model: JUDGE.model, url: JUDGE.url, vision: JUDGE.vision, shots: JUDGE.vision ? JUDGE.shots : 0 }, summary: s, stoppedEarly, rows: rows.map((r) => ({ ...r, finalText: undefined, pages: undefined, screenshots: (r.screenshots || []).length })) }, null, 2));
   if (stoppedEarly) process.exitCode = 2;
 })().catch((e) => { console.error(e); process.exit(1); });

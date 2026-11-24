@@ -30,6 +30,7 @@ const http = require("node:http");
 const EXT = path.resolve(__dirname, "../../extension");
 const HTML = process.env.MINIWOB_HTML || "";
 const BENCH_PROFILE_LIB = require("./profile.js");
+const { engineTrace } = require("../helpers/engine-trace.js");
 // BENCH_PROFILE: the owner's ChatGPT plan, as in run.js.
 let CHATGPT = null;
 try { CHATGPT = BENCH_PROFILE_LIB.profileEnv(process.env); } catch (e) { console.error(e.message); process.exit(1); }
@@ -204,8 +205,7 @@ async function runEpisode(browser, extensionId, task, episode) {
   while (Date.now() - t0 < TIMEOUT_MS) {
     const state = await page.evaluate(() => ({ done: WOB_DONE_GLOBAL, reward: WOB_RAW_REWARD_GLOBAL, reason: WOB_REWARD_REASON || "" })).catch(() => null);
     if (state && state.done) { ending = "page ended the episode"; break; }
-    const a = await agent.evaluate(() => {
-      const t = globalThis.__selectToAiTrace ? globalThis.__selectToAiTrace() : null;
+    const a = await agent.evaluate((t) => {
       const bubble = document.querySelector(".confirmation-bubble.risk");
       if (bubble) { const btn = bubble.querySelector(".confirm-risk-btn"); if (btn) btn.click(); }
       // At a check-in the user says to keep going; a run there or paused for its provider is still under way.
@@ -216,7 +216,7 @@ async function runEpisode(browser, extensionId, task, episode) {
       if (holdStop) holdStop.click();
       const held = !!keep || !!(t && t.waitingForUser && ["check_in", "pause"].includes(t.waitKind));
       return { running: held || document.getElementById("actionBtn").classList.contains("stop-btn"), trace: t };
-    }).catch(() => ({ running: false, trace: null }));
+    }, await engineTrace(browser, agent)).catch(() => ({ running: false, trace: null }));
     if (a.trace) trace = a.trace;
     if (a.running) sawRunning = true;
     if (sawRunning && !a.running) { ending = trace && trace.waitingForUser ? "asked the user" : "agent stopped"; break; }
@@ -228,7 +228,7 @@ async function runEpisode(browser, extensionId, task, episode) {
   // The page settles its reward a moment after the ending action.
   await sleep(600);
   // The last word on tokens and time: the poll above can miss the final step.
-  const last = await agent.evaluate(() => (globalThis.__selectToAiTrace ? globalThis.__selectToAiTrace() : null)).catch(() => null);
+  const last = await engineTrace(browser, agent);
   if (last) trace = last;
   const final = await page.evaluate(() => ({ done: WOB_DONE_GLOBAL, reward: WOB_DONE_GLOBAL ? WOB_RAW_REWARD_GLOBAL : null, reason: WOB_REWARD_REASON || "" })).catch(() => ({ done: false, reward: null, reason: "" }));
   const log = await agent.evaluate(() => [...document.querySelectorAll(".log-item")].map((i) => i.textContent).join("\n")).catch(() => "");

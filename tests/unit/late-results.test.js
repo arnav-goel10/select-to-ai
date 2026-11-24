@@ -124,7 +124,7 @@ test("a script that needs nothing from the page is run at once, and a page that 
 
 test("the engine starts the count in the page's world when it reads a page that has none", async () => {
   const scanOf = (netView, netEvent = NAME) => ({ elements: [], url: "https://shop.example/", title: "Shop", innerText: "", netView, dialogView: netView, netEvent });
-  const session = () => ({ windowId: 1, run: { task: "t" }, settings: {}, items: { agentPressables: "off" }, touched: new Set(), frames: [] });
+  const session = () => ({ windowId: 1, run: { task: "t" }, settings: {}, touched: new Set(), frames: [] });
   const tab = { id: 9, url: "https://shop.example/", title: "Shop", windowId: 1 };
   const without = fakeWorker({ onTabMessage: (_id, m) => (m.action === "scan" ? scanOf(false) : undefined) });
   await without.engine.scan(session(), tab, () => {});

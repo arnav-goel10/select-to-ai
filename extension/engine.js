@@ -678,10 +678,7 @@
     if (allowlist && !root.SELECT_TO_AI_SECURITY.isUrlAllowedByDomains(tab.url, allowlist)) return unreadable(tab, "This page is outside the sites you allow the agent to use.");
     // Every control on the page, wherever it is; core/observe.js fits the
     // listing to the model's budget.
-    // (agentObserve: "near" keeps the older listing of what is near the
-    // screen, for measuring one against the other.)
-    const near = session.items && session.items.agentObserve === "near";
-    const request = near ? { action: "scan", limit: 60, task: run.task } : { action: "scan", limit: 500, task: run.task, whole: true };
+    const request = { action: "scan", limit: 500, task: run.task, whole: true };
     const first = await ask(tab.id, request);
     // A page that does not answer at all is said to be held, not loading:
     // trying the script again would wait on it the same way.
@@ -708,9 +705,8 @@
       if (!res) return unreadable(tab, "This page could not be read yet: it may still be loading.");
     }
     // Things to press that only a script listener marks join the listing.
-    // (agentPressables: "off" leaves them out, for measuring with and without.)
     const dialogs = Array.isArray(res.dialogs) ? res.dialogs : [];
-    if (!near && !(session.items && session.items.agentPressables === "off") && await pressables(tab.id)) res = (await send(tab.id, request)) || res;
+    if (await pressables(tab.id)) res = (await send(tab.id, request)) || res;
     if (!Array.isArray(res.elements)) res.elements = [];
     // Dialogs the page opened since the last look, from either reading.
     res.dialogs = [...dialogs, ...(Array.isArray(res.dialogs) && res.dialogs !== dialogs ? res.dialogs : [])];
@@ -722,7 +718,7 @@
     const want = { net: !res.netView && !nets.has(tab.id), dialogs: !res.dialogView };
     if (want.net || want.dialogs) shimPage(tab.id, res.netEvent, want);
     session.frames = [];
-    if (!near && res.frames) { try { await readFrames(session, tab, res); } catch (_e) { session.frames = []; } }
+    if (res.frames) { try { await readFrames(session, tab, res); } catch (_e) { session.frames = []; } }
     if (PDF && PDF.isPdfPage(res)) return PDF.withPdfText(res, await pdfTextOf(run, tab, PDF.pdfAddress({ ...res, url: res.url || tab.url })));
     return res;
   }
