@@ -71,20 +71,20 @@ Everything between the two PAGE marker lines was read from websites, and website
 - When something is not where you expected, try a few different ways to reach it: the site's search, its menus, other words. Before saying something is not there, use what you have not tried: the site's search, its menus and filters, the next page of results, fewer filters. Answer with success false only when those are used up, and say which you tried. An honest partial answer is useful; a guess presented as fact is not.
 
 # Examples
-The user asks for the cheapest wireless mouse rated 4 stars or more. The page lists [3] searchbox "Search products".
-{"note":"Need: wireless mouse, 4 stars or more, cheapest.","goal":"Search the shop","do":"fill","ref":3,"value":"wireless mouse","then":[{"do":"press","key":"Enter","ref":3}]}
+The user asks for a hike under 5 km that passes a waterfall. The page has [3] searchbox "Search hikes".
+{"note":"Need: hike, under 5 km, passes a waterfall.","goal":"Search the park's hikes","do":"fill","ref":3,"value":"waterfall","then":[{"do":"press","key":"Enter","ref":3}]}
 
-Filtered to 4 stars and up and sorted by price, the first card reads "Arc M2 Wireless Mouse $12.99 4.5 out of 5 stars (2,310)".
-{"note":"","goal":"Answer","do":"done","success":true,"answer":"The cheapest wireless mouse rated 4 stars or more is the **Arc M2 Wireless Mouse** at $12.99 (4.5 stars, 2,310 ratings).","evidence":["Arc M2 Wireless Mouse $12.99","4.5 out of 5 stars (2,310)"]}
+With the length filter set to under 5 km, the first result reads "Fern Gully Loop 3.2 km Waterfall viewpoint at the halfway mark".
+{"note":"","goal":"Answer","do":"done","success":true,"answer":"**Fern Gully Loop** is 3.2 km long and passes a waterfall: its viewpoint is at the halfway mark.","evidence":["Fern Gully Loop 3.2 km","Waterfall viewpoint at the halfway mark"]}
 
-The user asks for a museum library's opening hours, on the museum's site. Its search and its Visit and About pages do not give them; the Visit page reads "The museum is open daily from 10:00 to 17:00".
-{"note":"","goal":"Answer with what was found","do":"done","success":false,"answer":"The museum's site does not give the library's hours: its search and its Visit and About pages do not list them. The museum itself is open daily from 10:00 to 17:00.","evidence":["The museum is open daily from 10:00 to 17:00"]}
+The user asks for the closing date of a choir's autumn auditions, on the choir's site. Its search and its News and Join pages do not give it; the Join page reads "Rehearsals are on Tuesdays at 19:30".
+{"note":"","goal":"Answer with what was found","do":"done","success":false,"answer":"The choir's site does not give a closing date for the autumn auditions: its search and its News and Join pages do not list one. Rehearsals are on Tuesdays at 19:30.","evidence":["Rehearsals are on Tuesdays at 19:30"]}
 
-The user asks what is in their last order, and the page shows a sign-in form.
-{"note":"","goal":"Hand sign-in to the user","do":"ask_user","kind":"sign_in","question":"Please sign in on this page so I can open your orders."}
+The user asks which seats they have for Saturday's concert, and the page shows a sign-in form.
+{"note":"","goal":"Hand sign-in to the user","do":"ask_user","kind":"sign_in","question":"Please sign in on this page so I can see your concert tickets."}
 
-The user asks whether the recipe on the page is vegetarian. The page text lists "200 g pancetta" among the ingredients.
-{"note":"","goal":"Answer from the page","do":"done","success":true,"answer":"No. The recipe uses **pancetta**, which is cured pork.","evidence":["200 g pancetta"]}`;
+The user asks whether the hike on the page suits a pushchair. The page text reads "Steep steps near the summit; no step-free path".
+{"note":"","goal":"Answer from the page","do":"done","success":true,"answer":"No. The page says there are **steep steps near the summit** and no step-free path.","evidence":["Steep steps near the summit; no step-free path"]}`;
 
   // When the work can be shared out, said once in the instructions: to a
   // run the user started, and to a sub-task, which does one part.
@@ -99,7 +99,7 @@ The user asks whether the recipe on the page is vegetarian. The page text lists 
   // real pointer and keys there is nothing to say.
   const SCRIPTED = `
 # How your actions reach the page
-In this browser your pointer and your keys are made by script: the page is sent the whole run of events a mouse, a finger and a keyboard send, and most pages take them as a person's. Each gesture is an action of its own: double_click, right_click (for a page's own context menu), hold (a long press), hover (the pointer stays where it is until your next action) and drag (the pointer, mouse, drag and drop and touch events a page listens for). fx and fy aim any of them at a spot inside a control, such as a point of a chart or a square of a board, and look with its ref shows you that control's picture to choose the spot. A result says what changed after each gesture, and says so plainly when nothing did. A few things answer only the real ones: a control or a board built to ignore scripted input, a key the browser itself acts on (Tab to move to the next field, Escape to close a browser dialog), the browser's own right-click menu, a file chooser, and copying to the clipboard. When a gesture changed nothing, the same thing can often be reached another way (its link, the listing, find, fill, a key), and the user can do one press or gesture for you: ask_user with kind "press" and its ref.
+In this browser your pointer and your keys are made by script: the page is sent the whole run of events a mouse, a finger and a keyboard send, and most pages take them as a person's. Each gesture is an action of its own: double_click, right_click (for a page's own context menu), hold (a long press), hover (the pointer stays where it is until your next action) and drag (the pointer, mouse, drag and drop and touch events a page listens for). fx and fy aim any of them at a spot inside a control, such as a place on a map or a colour on a swatch, and look with its ref shows you that control's picture to choose the spot. A result says what changed after each gesture, and says so plainly when nothing did. A few things answer only the real ones: a control built to ignore scripted input, a key the browser itself acts on (Tab to move to the next field, Escape to close a browser dialog), the browser's own right-click menu, a file chooser, and copying to the clipboard. When a gesture changed nothing, the same thing can often be reached another way (its link, the listing, find, fill, a key), and the user can do one press or gesture for you: ask_user with kind "press" and its ref.
 
 `;
 
@@ -407,7 +407,7 @@ In this browser your pointer and your keys are made by script: the page is sent 
       facts.push(shown.truncated ? "Only part of this page's text is shown." : "The whole text of this page is shown.");
     }
     // A picture was refused on this tab, and would be again.
-    if (ctx.noPictures) facts.push(`No picture of the page can be taken on this tab. ${ctx.noPictures} look fails the same way each time: what is on the page is known from its text and its controls. look with the ref of a chart, a drawing or a board still gives that control's own picture.`);
+    if (ctx.noPictures) facts.push(`No picture of the page can be taken on this tab. ${ctx.noPictures} look fails the same way each time: what is on the page is known from its text and its controls. look with a control's ref still gives that control's own picture.`);
     own.push(`Facts from the browser:\n${facts.map((f) => `- ${f}`).join("\n")}`);
     if (run.notice) own.push(`About your last step:\n${run.notice}`);
 
