@@ -35,12 +35,12 @@ The harness held rules that fixed one test or one site rather than the agent. Ea
 - A human check is told by the page itself: a nearly empty page that shows a check vendor's widget. No search engine's own path is named.
 - The facts the browser gives the model state what happened. None of them gives an order, and a grammar test calls every branch to check it.
 - The examples in the instructions are new scenes that share no shape with any decision case or bench task, and a test checks that they stay that way.
-- A page's main text is found from its structure (`main`, an article, the container holding most of the prose), and ratings from `aria-label`, `aria-labelledby` and `title`. No site's class names are read.
-- Each listed model's tier is set in a table in `defaults.js` instead of being guessed from words in its name. An unlisted model is standard.
-- "Do not send" is left to the model and the approval gate. With confirmations off, nothing now stops a send the user said not to make.
+- A page's main text is found from its structure: `main`, an article, or else the part whose own words outweigh the links, controls and repeated labels it would bring in. Six page shapes with no landmark (a blog post, a forum thread, a product page, a documentation page, a news front page, a reference table) are tested in a real browser and as parsed pages. Ratings are read from `aria-label`, `aria-labelledby` and `title`. No site's class names are read, so a rating drawn from a class alone is not in the page text.
+- Each listed model's tier is set in a table in `defaults.js` instead of being guessed from words in its name. A model the table does not list keeps the tier it had, worked out from the table: the same model written with a provider prefix, a date or a tag, the size its id states, a newer release of a listed line, or a smaller variant by its maker's mark.
+- "Do not send" is read by the model, not a word pattern. Each step says whether the user's own words leave committing steps to them, in any wording or language. Once a step says so, a press or submit that would commit them is not taken, with confirmations on or off, until the user says something new.
 - Other tabs are read ahead only when the request writes their site. The stop-word lists are gone: a word counts as a match by how rare it is on the page.
 - The bench switches (`agentObserve`, `agentPressables`, the page's trace global) are out of the store build. The harnesses read the trace from the engine, and the bench no longer hides that the browser is automated.
-- `tests/unit/hygiene-hosts.test.js` checks every file the worker loads and the engine injects for hosts, site class names and task ids, against a reviewed allowlist (`tests/unit/hygiene-allowlist.json`) where each entry says why it is there.
+- `tests/unit/hygiene-hosts.test.js` parses every file the extension ships and reads every string, regex, comment and name in code for hosts, site and brand names (from a public top-site list kept under `tests/hygiene/`), class or id tokens held against a page's class, and address paths, against a reviewed allowlist (`tests/unit/hygiene-allowlist.json`) where each entry says why it is there.
 
 ### A run you can leave and come back to
 
