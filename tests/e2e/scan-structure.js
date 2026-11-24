@@ -136,6 +136,20 @@ const PRESSES = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Desk</t
 <button id="flip" type="button">Save draft</button>
 </body></html>`;
 
+// A filter panel whose options are labels drawn as the choice, each tied
+// to a native box the page hides. Nothing on a label says it is clickable
+// (no pointer cursor, tabindex or handler): its tie to the box does.
+const FILTERS = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Find a pet</title>
+<style>body{margin:0;font-family:system-ui} .opt input{display:none} label{cursor:auto}</style></head><body>
+<form id="filters" action="/pets" method="get">
+<h4>Color</h4><div class="opt"><input type="checkbox" id="c1" name="color" value="bw"><label for="c1">Black &amp; White or Tuxedo</label></div>
+<div class="opt"><input type="checkbox" id="c2" name="color" value="w"><label for="c2">White</label></div>
+<h4>Health</h4><div class="opt"><label><input type="checkbox" name="health" value="n">Spayed/Neutered</label></div>
+<h4>Age</h4><div class="opt"><label><input type="radio" name="age" value="k">Kitten</label><label><input type="radio" name="age" value="s">Senior</label></div>
+<label><input type="checkbox" name="near"> Near me</label>
+<label for="zip">Postcode</label><input id="zip" name="zip">
+<button>Apply Filters</button></form></body></html>`;
+
 async function open(browser, url, html) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 800 });
@@ -172,6 +186,8 @@ const check = (name, fn) => checks.push([name, fn]);
     const chipScan = await (await open(browser, "https://profile.example/edit", CHIPS)).scan("take purple out of my colours");
     const desk = await open(browser, "https://desk.example/tickets/42", PRESSES);
     const deskScan = await desk.scan("look at the ticket");
+    const pets = await open(browser, "https://pets.example/search", FILTERS);
+    const petScan = await pets.scan("show white cats");
 
     check("three same-named buttons are told apart by their card", () => {
       const adds = named(plain, /^Add to cart$/);
@@ -436,6 +452,38 @@ const check = (name, fn) => checks.push([name, fn]);
       const place = named(deskScan, /^Place order$/)[0];
       assert.equal(deskScan.forms[place.formId].hasSubmit, true);
       assert.ok(T.pressEntryOf(place, deskScan).entry, "the order's submit is a question for the check");
+    });
+
+    check("a label tied to a hidden box is listed once, as that box, with its state", () => {
+      for (const [re, kind] of [[/^White$/, "checkbox"], [/^Spayed\/Neutered$/, "checkbox"], [/^Kitten$/, "radio"]]) {
+        const lines = named(petScan, re);
+        assert.equal(lines.length, 1, `${re} is one line`);
+        assert.equal(lines[0].tagName, "label");
+        assert.match(T.formatElementLine(lines[0]), /checked=false/, `${re} carries the state`);
+        assert.equal(T.pressKind(lines[0]), kind);
+        assert.deepEqual(T.pressEntryOf(lines[0], petScan), { pass: "staged" }, "a choice in a form with its own submit");
+      }
+    });
+
+    check("a shown box and its label are one line, and a label for a text box is not a control", () => {
+      const near = named(petScan, /Near me/);
+      assert.equal(near.length, 1);
+      assert.equal(near[0].tagName, "input");
+      assert.ok(!petScan.elements.some((el) => el.tagName === "label" && /Postcode/.test(el.text || "")), "the text box's label is not listed");
+      assert.ok(petScan.elements.some((el) => el.tagName === "input" && el.accName === "Postcode"), "the text box is, by its label");
+    });
+
+    check("find on a label's word returns that label as a control, and pressing it ticks the box", async () => {
+      const res = await pets.send({ action: "find", query: "White" });
+      const again = await pets.scan("show white cats");
+      const white = named(again, /^White$/)[0];
+      assert.ok(white && white.pinned, JSON.stringify(res));
+      const press = await pets.send({ action: "interact", data: { action: "click", id: white.id, names: { accName: white.accName || "", text: white.text || "" } } });
+      assert.equal(press.success, true, JSON.stringify(press));
+      assert.equal(await pets.page.evaluate(() => document.getElementById("c2").checked), true);
+      assert.match(press.message, new RegExp(`\\[${white.id}\\] is now checked`));
+      const after = named(await pets.scan("show white cats"), /^White$/)[0];
+      assert.match(T.formatElementLine(after), /checked=true/);
     });
 
     check("a control renamed after the page was read is not pressed", async () => {

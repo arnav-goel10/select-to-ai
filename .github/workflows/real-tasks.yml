@@ -486,6 +486,8 @@ jobs:
           - { leg: recipes, arm: shipped, debugger: "", tasks: tests/bench/fixture-tasks.json, cap: "2", learn: "", recipes: "1", check: recipes }
           # The holdout suite's sealed path: its log and its summary name no task.
           - { leg: sealed, arm: shipped, debugger: "", tasks: tests/bench/fixture-tasks.json, cap: "2", learn: "", recipes: "", check: sealed, quiet: sealed }
+          # The simulated approver on (off in every other run): a hold allowed on its yes, one declined on its no, and holds of kinds it is never asked about declined with no call. The summaries give both scores.
+          - { leg: approver, arm: shipped, debugger: "", tasks: tests/bench/fixture-approver-tasks.json, cap: "2", learn: "", recipes: "", check: approver, approver: "on" }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -513,9 +515,12 @@ jobs:
           BENCH_LEARN: ${{ matrix.learn }}
           BENCH_RECIPES: ${{ matrix.recipes }}
           BENCH_QUIET: ${{ matrix.quiet }}
+          BENCH_APPROVER: ${{ matrix.approver }}
           BENCH_DISGUISE: "off"
+          LEG: ${{ matrix.leg }}
         run: |
           mkdir -p tests/bench/out
+          if [ "$LEG" = "approver" ]; then export BENCH_COUNTS_OUT=tests/bench/out/leg; fi
           node tests/bench/run.js | tee tests/bench/out/leg-run.log
       - name: Check what it left
         if: always()
@@ -530,7 +535,14 @@ jobs:
           check=""
           if [ -n "$CHECK" ]; then check="--check $CHECK"; fi
           if [ "$LEG" = "sealed" ]; then check="$check --sealed"; fi
+          if [ "$LEG" = "approver" ]; then check="$check --check-dry"; fi
           node tests/bench/trial.js summary tests/bench/out/leg --tasks "$TASKS" --suite "fixture, dry leg $LEG" --arm "$ARM" --learn "$LEARN" --commit "$GITHUB_SHA" $check | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$LEG" = "approver" ]; then
+            # The shard's own log and the Online-Mind2Web summary of the same runs give both scores and the approved holds too.
+            grep -q '^Simulated approver (dry-approver-stub): [0-9]* hold(s) put to it, [1-9][0-9]* approved' tests/bench/out/leg-run.log || { echo "::error::The run's log has no line for the approver."; exit 1; }
+            node tests/bench/om2w.js summary tests/bench/out/leg --part fixture --planned 3 --arm shipped --shards 1 | tee tests/bench/out/leg-om2w.md | tee -a "$GITHUB_STEP_SUMMARY"
+            grep -q '^| with the simulated approver |' tests/bench/out/leg-om2w.md || { echo "::error::The Online-Mind2Web summary has no score with the approver."; exit 1; }
+          fi
           if [ "$LEG" = "sealed" ]; then
             # The shard's log, as a sealed run's would be seen in the Actions page, names no task.
             node tests/bench/trial.js leaks tests/bench/out/leg-run.log --tasks "$TASKS"

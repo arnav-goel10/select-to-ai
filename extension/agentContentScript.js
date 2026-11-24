@@ -630,7 +630,9 @@
         try {
             const said = [];
             const type = (el.type || '').toLowerCase();
-            const checked = el.tagName === 'INPUT' && /^(checkbox|radio)$/.test(type) ? String(el.checked) : el.getAttribute('aria-checked');
+            // A label for a native box or choice shows that control's state.
+            const box = checkableOf(el);
+            const checked = box ? String(box.checked) : el.tagName === 'INPUT' && /^(checkbox|radio)$/.test(type) ? String(el.checked) : el.getAttribute('aria-checked');
             if (checked !== null) said.push(checked === 'true' ? 'checked' : checked === 'mixed' ? 'partly checked' : 'not checked');
             const pressed = el.getAttribute('aria-pressed');
             if (pressed !== null) said.push(pressed === 'true' ? 'pressed' : 'not pressed');
@@ -1297,6 +1299,32 @@
     /** On the page for a person to use: drawn, or a native control the page draws over. */
     const isShown = (el) => isRendered(el) || isDrawnOver(el);
 
+    /**
+     * The native checkbox or radio button a label is tied to (by for=, or
+     * by holding it), or null. HTML makes a press on the label a press on
+     * that control, so the label is a control by structure, whatever its
+     * style says and however the box itself is hidden.
+     */
+    function checkableOf(el) {
+        try {
+            if (!el || el.tagName !== 'LABEL') return null;
+            const c = el.control;
+            return c && c.tagName === 'INPUT' && /^(checkbox|radio)$/.test((c.type || '').toLowerCase()) ? c : null;
+        } catch (_) { return null; }
+    }
+
+    /**
+     * True for a label whose control has a line of its own, which carries
+     * the label's words and the state: the pair is listed once, as the
+     * control. A box to tick that is not shown is listed as its label.
+     */
+    function listedThroughControl(el) {
+        const c = el && el.tagName === 'LABEL' ? el.control : null;
+        if (!c) return false;
+        if (!isRendered(c) && isDrawnOver(c)) return true;
+        return !!checkableOf(el) && isShown(c) && placeOf(c.getBoundingClientRect()).where !== 'side';
+    }
+
     function isRendered(el) {
         try {
             if (el.getAttribute('aria-hidden') === 'true') return false;
@@ -1714,6 +1742,7 @@
         let owner = null;
         const type = (el.type || '').toLowerCase();
         if (el.tagName === 'INPUT' && (type === 'radio' || type === 'checkbox')) owner = el;
+        else if (checkableOf(el)) owner = checkableOf(el);
         else if (el.tagName === 'OPTION') owner = el.closest('select');
         else if (picked) owner = el;
         else {
@@ -1759,6 +1788,10 @@
             if (tagName === 'input' && el.type === 'hidden') return false;
             return true;
         }
+
+        // The label of a native box to tick or choice to pick is what a
+        // person presses for it.
+        if (checkableOf(el)) return true;
 
         // ARIA interactive roles
         if (role && INTERACTIVE_ROLES.has(role)) return true;
@@ -1903,6 +1936,7 @@
                     el.getAttribute('draggable') === 'true' ||
                     tagName === 'canvas' || (tagName === 'svg' && !el.ownerSVGElement) ||
                     el.isContentEditable ||
+                    checkableOf(el) ||
                     offeredRows.has(el) ||
                     hoverPointers().has(el)
                 ) {
@@ -2015,7 +2049,7 @@
             const tokens = hay.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
             const hits = words.filter((w) => tokens.some((t) => t === w || (w.length >= 3 && t.startsWith(w)))).length;
             if (!hits || !isShown(el)) return;
-            if (el.tagName === 'LABEL' && el.control && !isRendered(el.control) && isDrawnOver(el.control)) return;
+            if (listedThroughControl(el)) return;
             matches.push({ el, hits, order, exact: hits === words.length });
         });
         // Every word beats some words; then the shortest label (the control
@@ -2048,7 +2082,11 @@
                 const el = n.parentElement;
                 if (!el || found.includes(el) || /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(el.tagName)) continue;
                 if ((el.innerText || '').trim().length > 80 || !isRendered(el) || !isShown(el)) continue;
-                if (el.closest('a[href], button, [role="button"], [role="link"], label, select, textarea')) continue;
+                if (el.closest('a[href], button, [role="button"], [role="link"], select, textarea')) continue;
+                // Words of a label are its control's: that control, or the
+                // label itself for a box to tick, is in the listing already.
+                const label = el.closest('label');
+                if (label && label.control) continue;
                 offeredRows.add(el);
                 found.push(el);
             }
@@ -2134,7 +2172,7 @@
             // A label whose control is listed itself: the control's line
             // carries the label's words and the state, so the label is not
             // listed a second time.
-            if (el.tagName === 'LABEL' && el.control && !isRendered(el.control) && isDrawnOver(el.control)) return;
+            if (listedThroughControl(el)) return;
 
             const tag = el.tagName.toLowerCase();
             const text = (el.textContent || el.value || "").trim();
@@ -2454,6 +2492,15 @@
             // as a property, as a native box does (a checkbox element whose
             // real box is in its shadow root).
             else if (tag !== 'input' && tag.includes('-') && typeof el.checked === 'boolean') entry.ariaChecked = String(el.checked);
+            // A label for a native box or choice: the kind of control it
+            // presses and that control's state and limits.
+            const box = checkableOf(el);
+            if (box) {
+                entry.controlKind = box.type.toLowerCase();
+                entry.ariaChecked = String(!!box.checked);
+                if (box.disabled) entry.disabled = true;
+                if (box.required) entry.required = true;
+            }
             const ariaPressed = el.getAttribute('aria-pressed');
             if (ariaPressed !== null) entry.ariaPressed = ariaPressed;
             // The value a slider, a stepper, a rating or a meter shows, as
