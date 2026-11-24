@@ -35,7 +35,12 @@ function installWatch() {
     if (m.type === "snapshot") { view.runId = m.run ? m.run.id : ""; view.trace = m.run ? structuredClone(m.run.trace) : null; return; }
     if (m.type === "started") { view.runId = m.runId; view.trace = null; return; }
     if (m.runId !== view.runId) return;
-    if (m.type === "entries") view.trace = structuredClone(m.trace);
+    // A batch carries the whole trace the first time and then only what
+    // changed (core/feed.js traceDelta), as agent.js applies it.
+    if (m.type === "entries") {
+      if (m.trace) view.trace = structuredClone(m.trace);
+      else if (m.traceDelta && view.trace && self.SELECT_TO_AI_FEED) view.trace = self.SELECT_TO_AI_FEED.applyTrace(view.trace, structuredClone(m.traceDelta));
+    }
   };
   chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== "agentView") return;
