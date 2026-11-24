@@ -159,10 +159,26 @@
     return Math.ceil(reach);
   }
 
-  function hostStyle() {
+  // How far the page's bar reaches is read at most once a second and when
+  // the edge changes, not on every step update: each read makes the page
+  // work out its style and layout.
+  let pinnedAt = 0;
+  let pinnedEdge = "";
+  let pinnedReach = 0;
+  function pinnedNow(fresh) {
+    const now = Date.now();
+    if (fresh || edge !== pinnedEdge || now - pinnedAt > 1000) {
+      pinnedReach = pinned(edge);
+      pinnedEdge = edge;
+      pinnedAt = now;
+    }
+    return pinnedReach;
+  }
+
+  function hostStyle(fresh) {
     // The page's own styles never reach in (each rule is marked important,
     // which no page rule outranks), and the bar never pushes the page's layout.
-    const gap = 16 + pinned(edge);
+    const gap = 16 + pinnedNow(fresh);
     const rules = { all: "initial", "color-scheme": scheme(), position: "fixed", left: "0", right: "0", top: edge === "top" ? `${gap}px` : "auto", bottom: edge === "top" ? "auto" : `${gap}px`, "z-index": "2147483647", display: "flex", "justify-content": "center", padding: "0 16px", "pointer-events": "none", visibility: aside ? "hidden" : "visible", opacity: "1", transform: "none" };
     return Object.entries(rules).map(([k, v]) => `${k}: ${v} !important;`).join(" ");
   }
@@ -297,7 +313,13 @@
     armed = false;
     tell("agentBarTouched");
   }
-  window.addEventListener("resize", () => { if (host && host.isConnected) host.style.cssText = hostStyle(); }, { passive: true });
+  // A resize is answered once a frame at most, however many events it fires.
+  let resizeQueued = false;
+  window.addEventListener("resize", () => {
+    if (resizeQueued) return;
+    resizeQueued = true;
+    requestAnimationFrame(() => { resizeQueued = false; if (host && host.isConnected) host.style.cssText = hostStyle(true); });
+  }, { passive: true });
   for (const type of ["pointerdown", "keydown", "wheel", "touchstart"]) window.addEventListener(type, watch, { capture: true, passive: true });
   // Clicking into a frame on the page moves focus to that frame element.
   window.addEventListener("blur", () => {
