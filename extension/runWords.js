@@ -18,10 +18,35 @@
     } catch (_e) { return ""; }
   }
 
-  /** The names an action gave its element numbers: `click [57] "Sort by"` gives 57 -> Sort by. */
-  function namesIn(text, into) {
+  // How each kind of action is said in a step row.
+  const ACTION_VERB = {
+    click: "Click", click_at: "Click a point on the page", double_click: "Double-click", right_click: "Right-click", hold: "Press and hold", hover: "Point at", drag: "Drag", fill: "Fill in", fill_details: "Fill in your details",
+    recall: "Look up your details", remember: "Remember", press: "Press", scroll: "Scroll", navigate: "Open", back: "Go back",
+    tabs: "Switch tabs", wait: "Wait for the page", look: "Look at the screen", read: "Read further", find: "Search the page", ask_user: "Ask you", done: "Answer",
+    delegate: "Hand out sub-tasks",
+  };
+  // The actions a row names by the control they act on.
+  const NAMES_CONTROL = new Set(["click", "double_click", "right_click", "hold", "hover", "drag", "fill"]);
+
+  /**
+   * An action as a step row says it, from the data the engine sends with it
+   * ({do, ref, control, url, key}): the verb and the control's own name. The
+   * action's words are never read for a name, since what was typed is in them.
+   */
+  function actionWords(act) {
+    const a = act || {};
+    const verb = ACTION_VERB[a.do] || "Act on the page";
+    if (a.do === "navigate") { const host = hostOf(a.url); return host ? `Open ${host}` : verb; }
+    if (a.do === "press" && a.key) return `Press ${a.key}`;
+    if (NAMES_CONTROL.has(a.do) && a.control) return `${verb} "${a.control}"`;
+    if (a.do === "fill") return "Fill in a field";
+    return verb;
+  }
+
+  /** The control names an action carries as data: element 57 -> Sort by. */
+  function namesFrom(act, into) {
     const names = into || new Map();
-    for (const m of String(text || "").matchAll(/\[(\d+)\]\s*"([^"\n]{1,60})"/g)) names.set(m[1], m[2]);
+    if (act && act.ref !== undefined && act.control) names.set(String(act.ref), String(act.control));
     return names;
   }
 
@@ -63,7 +88,7 @@
     return `${cut.slice(0, space > 0 ? space : max).replace(/[.,;\s]+$/, "")}…`;
   }
 
-  const api = Object.freeze({ hostOf, namesIn, plainResult, clipWords });
+  const api = Object.freeze({ hostOf, actionWords, namesFrom, plainResult, clipWords });
   root.SELECT_TO_AI_RUNWORDS = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -273,6 +273,7 @@
       dropped: [],
       reads: [],
       labels: {},
+      controlNames: {},
       previous: null,
       tabId: o.tabId === undefined ? null : o.tabId,
       openedTabs: o.openedTab !== undefined && o.openedTab !== null ? [o.openedTab] : [],
@@ -354,6 +355,21 @@
   // something the run did for itself that changed nothing for the user.
   const quietLog = (run, role, title, text) => run.journal.push({ k: "log", role, title, text: String(text || ""), fold: false, quiet: true });
   const status = (run, role, text) => run.journal.push({ k: "status", role, text });
+  /**
+   * An action, in the words the model reads, with what the view may show as
+   * data: the kind of action, the element number and the control's own name
+   * from the page. What was typed is in the words only, so the view never
+   * has to read a name out of them.
+   */
+  function logAction(run, a) {
+    const name = a.ref !== undefined && run.controlNames ? run.controlNames[a.ref] : "";
+    const act = { do: String(a.do || "") };
+    if (a.ref !== undefined) act.ref = String(a.ref);
+    if (name) act.control = name;
+    if (a.url) act.url = String(a.url);
+    if (a.key) act.key = String(a.key);
+    run.journal.push({ k: "log", role: "executor", title: "Action", text: STEP.describe(a), fold: false, act });
+  }
 
   function fingerprint(page) {
     const visible = String(page.visibleText || "");
@@ -447,8 +463,9 @@
     run.trust.searches = run.trust.searches || [];
     for (const u of searches) if (!run.trust.searches.includes(u) && run.trust.searches.length < SEEN_URLS) run.trust.searches.push(u);
     // Labels by ref, so a ref from before a redraw can be pointed to its new number.
-    if (!run.previous || String(run.previous.url || "").split("#")[0] !== address) run.labels = {};
-    for (const el of page.elements || []) run.labels[el.id] = TOOLS.elementLabel(el);
+    if (!run.previous || String(run.previous.url || "").split("#")[0] !== address) { run.labels = {}; run.controlNames = {}; }
+    if (!run.controlNames) run.controlNames = {};
+    for (const el of page.elements || []) { run.labels[el.id] = TOOLS.elementLabel(el); run.controlNames[el.id] = TOOLS.controlName(el); }
     // The user typed something into the page while the run waited for them:
     // a detail the profile lacks is offered to them to keep, once the run is over.
     if (run.waitSnapshot) {
@@ -1334,7 +1351,7 @@
       // What it touches, as the page shows it now, kept in case the user says no.
       return waitFor(run, fx, env, { kind: "approval", risk: verdict.kind, question: verdict.why, detail: [...(verdict.detail || []), run.current && run.current.goal && verdict.kind !== "share" ? `Why: ${run.current.goal}` : ""].filter(Boolean), action: act, confirm: verdict, mark: POLICY.declinedMark(act, page, run) });
     }
-    log(run, "executor", "Action", STEP.describe(act));
+    logAction(run, act);
     // A click the page shows no answer to may be made with Enter or Space there, where those are allowed as the click was.
     fx.push({ type: "act", action: act, ...(POLICY.keysToo(act, page, run, env.settings, store, env.extras && env.extras.tabs) ? { keys: true } : {}) });
     return fx;
@@ -1479,7 +1496,7 @@
       ids.push(id);
     }
     run.delegation = { ids, at: env.now || 0 };
-    log(run, "executor", "Action", STEP.describe(a));
+    logAction(run, a);
     run.journal.push({ k: "subtasks", ids, tasks: ids.map((id) => { const c = run.children.find((x) => x.id === id); return { id, task: c.task, url: c.url }; }) });
     status(run, "executor", `${ids.length} sub-task${ids.length === 1 ? "" : "s"} running…`);
     return startChildren(run, env, fx);
@@ -1745,7 +1762,7 @@
       log(run, "system", "Changed", clip(r.message, 300));
       const { approved: _was, approvedTo: _to, once: _once, ...again } = a;
       run.queue = [again, ...run.queue.slice(1)];
-      if (page) for (const el of page.elements || []) run.labels[el.id] = TOOLS.elementLabel(el);
+      if (page) for (const el of page.elements || []) { run.labels[el.id] = TOOLS.elementLabel(el); if (run.controlNames) run.controlNames[el.id] = TOOLS.controlName(el); }
       return page ? next(run, page, env, fx) : closeStep(run, fx, "changed");
     }
     // The same action again, with nothing on the page to show for it.
@@ -1951,7 +1968,7 @@
         if (w.confirm && w.confirm.kind === "share" && w.confirm.site && !run.trust.shared) run.trust.shared = [];
         if (w.confirm && w.confirm.kind === "share" && w.confirm.site && !run.trust.shared.includes(w.confirm.site)) run.trust.shared.push(w.confirm.site);
         log(run, "system", "Allowed", "You allowed this step.");
-        log(run, "executor", "Action", STEP.describe(a));
+        logAction(run, a);
         status(run, "executor", `Step ${run.step}…`);
         // What the user approved, by the control's words: the driver runs it
         // only while the control still says that.

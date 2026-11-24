@@ -199,22 +199,8 @@
     recall: "bookmark", remember: "bookmark", press: "keyboard", scroll: "scroll", navigate: "globe", back: "back",
     tabs: "tabs", wait: "clock", look: "eye", read: "doc", find: "search", ask_user: "message", done: "check", delegate: "split",
   };
-  const ACTION_VERB = {
-    click: "Click", click_at: "Click a point on the page", double_click: "Double-click", right_click: "Right-click", hold: "Press and hold", hover: "Point at", drag: "Drag", fill: "Fill in", fill_details: "Fill in your details",
-    recall: "Look up your details", remember: "Remember", press: "Press", scroll: "Scroll", navigate: "Open", back: "Go back",
-    tabs: "Switch tabs", wait: "Wait for the page", look: "Look at the screen", read: "Read further", find: "Search the page", ask_user: "Ask you", done: "Answer",
-    delegate: "Hand out sub-tasks",
-  };
-
-  /** "click [4] "Search"" as plain words: Click "Search". */
-  function plainAction(text) {
-    const kind = String(text || "").split(" ")[0];
-    const verb = ACTION_VERB[kind] || "Act on the page";
-    if (kind === "navigate") { const host = hostOf((String(text).match(/https?:\/\/\S+/) || [])[0]); return host ? `Open ${host}` : verb; }
-    if (kind === "press") { const key = String(text).split(" ").slice(-1)[0]; return key && key !== "press" ? `Press ${key}` : verb; }
-    const quoted = (String(text).match(/"([^"]{1,60})"/) || [])[1];
-    return quoted && /^(click|hover|drag|fill|find)$/.test(kind) ? `${verb} "${quoted}"` : verb;
-  }
+  /** An action as plain words, from the data the engine sends with it: Click "Search". */
+  const plainAction = (act) => (WORDS ? WORDS.actionWords(act) : "Act on the page");
 
   function hostOf(url) {
     try {
@@ -1496,16 +1482,22 @@
   }
 
   /** The step an action belongs to: the one under way, or a new one when the engine moved on. */
-  function stepForAction(text) {
+  function stepForAction(act) {
     const s = activeRun.step;
     if (s && (!activeRun.statusStep || activeRun.statusStep === s.n)) return s;
-    return newStep(activeRun.statusStep || (s ? s.n + 1 : 1), plainAction(text));
+    return newStep(activeRun.statusStep || (s ? s.n + 1 : 1), plainAction(act));
   }
 
-  function addAction(text) {
+  /**
+   * One action of a step. `act` is what the engine sends with it as data
+   * (its kind, element number and the control's own name). An entry from
+   * before that has only its words, which give the kind and nothing else.
+   */
+  function addAction(text, act) {
     clearPending();
-    const s = stepForAction(text);
-    const kind = String(text || "").split(" ")[0];
+    const a = act || { do: String(text || "").split(" ")[0] };
+    const s = stepForAction(a);
+    const kind = a.do;
     if (!s.kind && ACTION_ICON[kind]) {
       s.kind = kind;
       s.ic.textContent = "";
@@ -1516,10 +1508,10 @@
     s.moreBody.appendChild(item);
     s.more.hidden = false;
     s.toggle.hidden = false;
-    // The names the model gave the page's controls, so results can use them.
-    if (WORDS) activeRun.names = WORDS.namesIn(text, activeRun.names);
+    // The page's own names for its controls, so results can use them.
+    if (WORDS) activeRun.names = WORDS.namesFrom(a, activeRun.names);
     // Until its result is in, the step's sub-line says what it is doing.
-    s.summary.textContent = `${plainAction(text)}…`;
+    s.summary.textContent = `${plainAction(a)}…`;
     s.summary.classList.add("is-doing");
   }
 
@@ -1730,14 +1722,14 @@
   }
 
   // One log entry from the engine, placed in the timeline.
-  function addLogEntry(role, title, description, { collapsible = false, quiet = false } = {}) {
+  function addLogEntry(role, title, description, { collapsible = false, quiet = false, act = null } = {}) {
     if (!activeLogsWrapper || !activeRun) return;
     void collapsible;
     // What the run did for itself is kept for the saved log, not drawn as a step.
     if (quiet) { addEvent(role, title, description, true); return; }
     const step = /^Step (\d+)$/.exec(title || "");
     if (role === "executor" && step) newStep(Number(step[1]), description);
-    else if (role === "executor" && title === "Action") addAction(description);
+    else if (role === "executor" && title === "Action") addAction(description, act);
     else if (role === "executor" && title === "Result") addResult(description, false);
     else if (role === "error" && title === "Action Failed") addResult(description, true);
     else addEvent(role, title, description);
@@ -2798,7 +2790,7 @@
     if (entry.sub && (entry.k === "log" || entry.k === "status")) { withSub(entry.sub, () => drawEntry({ ...entry, sub: undefined }, live)); return; }
     if (entry.k === "ask" && entry.wait && entry.wait.sub && subs.get(entry.wait.sub)) setSubPhase(subs.get(entry.wait.sub), "waiting");
     if (entry.k === "ask_done" && entry.sub && subs.get(entry.sub) && subs.get(entry.sub).phase === "waiting") setSubPhase(subs.get(entry.sub), "running");
-    if (entry.k === "log") addLogEntry(entry.role, entry.title, entry.text, { collapsible: entry.fold, quiet: !!entry.quiet });
+    if (entry.k === "log") addLogEntry(entry.role, entry.title, entry.text, { collapsible: entry.fold, quiet: !!entry.quiet, act: entry.act || null });
     else if (entry.k === "provisional") drawProvisional(entry);
     else if (entry.k === "provisional_replaced") provisionalSentBack(entry);
     else if (entry.k === "status") setStatus(entry.role, entry.text);
