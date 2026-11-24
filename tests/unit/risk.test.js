@@ -137,7 +137,9 @@ test("the press check is shown each control as the site's markup names it, and i
   assert.deepEqual(T.readLabels(four, { commits: [], count: "4" }), ["none", "none", "none", "none"]);
   // A list a provider handed over as its JSON text is the same list.
   assert.deepEqual(T.readLabels(four, { commits: '[{"n": 2, "does": "pays"}]', unsure: "[4]", count: 4 }), ["none", "pay", "none", "unsure"]);
-  for (const bad of [null, [], { commits: [], unsure: [], count: 3 }, { commits: [{ n: 5, does: "pays" }], count: 4 }, { commits: [{ n: 1, does: "maybe" }], count: 4 }, { commits: [{ n: 1 }], count: 4 }, { commits: "1", count: 4 }, { commits: [], unsure: [9], count: 4 }]) {
+  // A control listed in commits by its number alone commits in a way not said: it is held, never thrown away with the rest.
+  assert.deepEqual(T.readLabels(four, { commits: [3, "1", { n: 2, does: "deletes" }], unsure: [], count: 4 }), ["unsure", "delete", "unsure", "none"]);
+  for (const bad of [null, [], { commits: [5], unsure: [], count: 4 }, { commits: [0], count: 4 }, { commits: [], unsure: [], count: 3 }, { commits: [{ n: 5, does: "pays" }], count: 4 }, { commits: [{ n: 1, does: "maybe" }], count: 4 }, { commits: [{ n: 1 }], count: 4 }, { commits: "1", count: 4 }, { commits: [], unsure: [9], count: 4 }]) {
     assert.equal(T.readLabels(four, bad), null, JSON.stringify(bad));
   }
   // The check on a form of one box keeps its own question, without the request.

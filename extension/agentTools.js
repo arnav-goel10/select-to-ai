@@ -1780,7 +1780,8 @@
    * What the check said of each entry it was asked about, in their order:
    * "pay", "send", "delete", "decide", "unsure" or "none" (not listed). Null
    * when the reply cannot be used: its count is not the number of entries,
-   * a number is not one of theirs, or a kind is not one of the four.
+   * a number is not one of theirs, or a kind is not one of the four. A
+   * control listed in commits by its number alone is "unsure": held.
    */
   function readLabels(entries, reply) {
     const n = (entries || []).length;
@@ -1798,6 +1799,14 @@
     if (!Array.isArray(commits) || !Array.isArray(unsure)) return null;
     const out = new Array(n).fill("none");
     for (const c of commits) {
+      // A bare number in commits says that control commits without saying
+      // how: it is held as one the check could not tell about.
+      if (Number.isInteger(int(c))) {
+        const at = int(c);
+        if (at < 1 || at > n) return null;
+        if (out[at - 1] === "none") out[at - 1] = "unsure";
+        continue;
+      }
       if (!c || typeof c !== "object") return null;
       const i = int(c.n);
       const does = DOES[String(c.does || "").trim().toLowerCase()];
