@@ -103,8 +103,12 @@ test("an unsure send on a page that hides text written to an AI is held as a sen
   assert.equal(held.verdict, "confirm");
   assert.equal(held.kind, "send");
   assert.equal(held.check, undefined);
-  // Even an opinion that it only asks does not let it through there.
-  assert.equal(POLICY.decide({ do: "click", ref: 5 }, page(true), { ...run, opinions: { "form|calc.example|https://calc.example/input|": { does: "none" } } }, {}).verdict, "confirm");
+  // Even an opinion that it only asks does not let it through there: the
+  // answer is filed under the key the clean page asked, which lets it
+  // through on that page.
+  const said = { [asked.check.key]: { does: "none" } };
+  assert.equal(POLICY.decide({ do: "click", ref: 5 }, page(false), { ...run, opinions: said }, {}).verdict, "allow");
+  assert.equal(POLICY.decide({ do: "click", ref: 5 }, page(true), { ...run, opinions: said }, {}).verdict, "confirm");
 });
 
 test("the press check is shown each control as the site's markup names it, and its reply is read strictly", () => {
@@ -732,8 +736,14 @@ test("a form with more boxes than the check is shown is held as a send with no c
   assert.equal(fewHeld.verdict, "confirm");
   assert.equal(fewHeld.kind, "send");
   assert.equal(fewHeld.check, undefined);
-  const anyKey = { [`shop.example|https://shop.example/q|Message to the seller`]: { does: "none" } };
-  assert.equal(P.decide({ do: "click", ref: 99 }, few.page, { ...few.run, opinions: anyKey }, ON).verdict, "confirm");
+  // The answer is filed under the key the same box listing is asked by
+  // when the structure counts no more boxes than it lists, where it lets
+  // the form through.
+  const whole = form(1);
+  const realKey = P.decide({ do: "click", ref: 99 }, whole.page, whole.run, ON).check.key;
+  const onFile = { [realKey]: { does: "none" } };
+  assert.equal(P.decide({ do: "click", ref: 99 }, whole.page, { ...whole.run, opinions: onFile }, ON).verdict, "allow");
+  assert.equal(P.decide({ do: "click", ref: 99 }, few.page, { ...few.run, opinions: onFile }, ON).verdict, "confirm");
   // No box listed at all: held, and the check is never shown an empty list.
   const none = form(1);
   none.page.elements = none.page.elements.filter((e) => e.submits);
