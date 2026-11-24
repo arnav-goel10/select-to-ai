@@ -31,7 +31,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { normaliseTasks, isInfra } = require("./judge.js");
-const { approvedHold } = require("./approver.js");
+const { approvedHold, allDeclinedRow, approvalCounts } = require("./approver.js");
 
 const CONFIG = require("./om2w-config.json");
 const PARTS = Object.freeze(["dev", "gate", "vault", "reserve"]);
@@ -239,37 +239,28 @@ function outcomeOf(row) {
 const OUTCOMES = Object.freeze(["passed", "failed", "blocked", "timed out", "held", "declined", "lost"]);
 
 /**
- * The outcome had every hold been declined, as the harness did before the
- * simulated approver: a run in which the approver allowed a hold counts as
- * declined, a failure, whatever it went on to do. One run gives both scores.
+ * The outcome with every hold declined, the headline: a run in which the
+ * simulated approver allowed a hold counts as declined, a failure, whatever
+ * it went on to do. With the approver off it is outcomeOf.
  */
 function outcomeAllDeclined(row) {
   return approvedHold(row) ? "declined" : outcomeOf(row);
 }
 
-/** How the held steps went: put to the approver, allowed on its yes, declined, and the runs with a hold it allowed. */
-function approvalCounts(rows) {
-  const c = { asked: 0, approved: 0, declined: 0, runsApproved: 0 };
-  for (const r of rows || []) {
-    for (const h of r.held || []) {
-      if (!h || h.by !== "approver") continue;
-      c.asked++;
-      if (h.allowed) c.approved++; else c.declined++;
-    }
-    if (approvedHold(r)) c.runsApproved++;
-  }
-  return c;
-}
+const NO_HOLDS = Object.freeze({ asked: 0, approved: 0, declined: 0, refused: 0, runsApproved: 0 });
 
 const add = (hist, key) => { hist[key] = (hist[key] || 0) + 1; };
 
 /** The counts of some finished runs: outcomes, histograms of the solved runs' seconds and model calls, tokens and spend. No task id, text or order. */
 function countsOf(rows) {
   const c = emptyCounts();
-  for (const r of rows || []) {
+  for (const raw of rows || []) {
+    // The headline counts score every hold declined (approver.js allDeclinedRow); with the approver off a row is as it is.
+    const r = allDeclinedRow(raw);
     c.runs++;
-    c.outcomes[outcomeOf(r)]++;
-    c.outcomesAllDeclined[outcomeAllDeclined(r)]++;
+    c.outcomes[outcomeAllDeclined(raw)]++;
+    // A run with the simulated approver on also counts as it went with its answers.
+    if (raw.approverOn) { c.approverRuns++; c.outcomesWithApprover[outcomeOf(raw)]++; }
     const calls = r.calls || (r.modelCalls || []).length || 0;
     if (r.success) {
       add(c.solvedSeconds, String(Math.floor((r.seconds || 0) / SECONDS_BIN) * SECONDS_BIN));
@@ -300,8 +291,10 @@ function emptyCounts() {
   return {
     runs: 0,
     outcomes: Object.fromEntries(OUTCOMES.map((o) => [o, 0])),
-    outcomesAllDeclined: Object.fromEntries(OUTCOMES.map((o) => [o, 0])),
-    holds: { asked: 0, approved: 0, declined: 0, runsApproved: 0 },
+    // The runs made with the simulated approver on, counted as they went with its answers, and how its holds went.
+    approverRuns: 0,
+    outcomesWithApprover: Object.fromEntries(OUTCOMES.map((o) => [o, 0])),
+    holds: { ...NO_HOLDS },
     solvedSeconds: {},
     solvedCalls: {},
     agentTokens: { prompt: 0, cached: 0, completion: 0 },
@@ -321,8 +314,9 @@ function mergeCounts(list) {
   for (const x of list || []) {
     c.runs += x.runs || 0;
     for (const o of OUTCOMES) c.outcomes[o] += (x.outcomes && x.outcomes[o]) || 0;
-    // A counts file from before the approver has no second set: every hold there was declined, so it is the same.
-    for (const o of OUTCOMES) c.outcomesAllDeclined[o] += ((x.outcomesAllDeclined || x.outcomes) && (x.outcomesAllDeclined || x.outcomes)[o]) || 0;
+    // A counts file from before the approver has none of these: no run of it had the approver on.
+    c.approverRuns += x.approverRuns || 0;
+    for (const o of OUTCOMES) c.outcomesWithApprover[o] += (x.outcomesWithApprover && x.outcomesWithApprover[o]) || 0;
     for (const k of Object.keys(c.holds)) c.holds[k] += (x.holds && x.holds[k]) || 0;
     for (const k of ["solvedSeconds", "solvedCalls"]) for (const [b, n] of Object.entries(x[k] || {})) c[k][b] = (c[k][b] || 0) + n;
     for (const k of Object.keys(c.agentTokens)) c.agentTokens[k] += (x.agentTokens && x.agentTokens[k]) || 0;
@@ -374,8 +368,12 @@ function histMedian(hist) {
 function report(counts, { planned = 0 } = {}) {
   const o = counts.outcomes;
   const reached = counts.runs - o.blocked - o.lost;
-  const d = counts.outcomesAllDeclined || o;
-  const reachedD = counts.runs - d.blocked - d.lost;
+  const rates = (x) => {
+    const got = counts.runs - x.blocked - x.lost;
+    return { strictRate: planned ? x.passed / planned : null, scoredRate: got > 0 ? x.passed / got : null };
+  };
+  // With the simulated approver on in any run: the same runs with its answers, and how its holds went. The headline above stays every hold declined.
+  const w = counts.approverRuns ? counts.outcomesWithApprover : null;
   return {
     planned,
     ran: counts.runs,
@@ -383,20 +381,17 @@ function report(counts, { planned = 0 } = {}) {
     ...Object.fromEntries(OUTCOMES.map((k) => [k === "timed out" ? "timedOut" : k, o[k]])),
     strictRate: planned ? o.passed / planned : null,
     scoredRate: reached > 0 ? o.passed / reached : null,
-    // The same run with every hold declined (outcomeAllDeclined).
-    allDeclined: {
-      ...Object.fromEntries(OUTCOMES.map((k) => [k === "timed out" ? "timedOut" : k, d[k]])),
-      strictRate: planned ? d.passed / planned : null,
-      scoredRate: reachedD > 0 ? d.passed / reachedD : null,
-    },
-    holds: { ...(counts.holds || { asked: 0, approved: 0, declined: 0, runsApproved: 0 }) },
+    ...(w ? {
+      withApprover: { runs: counts.approverRuns, ...Object.fromEntries(OUTCOMES.map((k) => [k === "timed out" ? "timedOut" : k, w[k]])), ...rates(w) },
+      holds: { ...NO_HOLDS, ...(counts.holds || {}) },
+      approverUSD: counts.approverUSD || 0,
+    } : {}),
     medianSecondsSolved: histMedian(counts.solvedSeconds),
     medianCallsSolved: histMedian(counts.solvedCalls),
     agentTokens: { ...counts.agentTokens, uncached: counts.agentTokens.prompt - counts.agentTokens.cached },
     judgeTokens: counts.judgeTokens,
     agentUSD: counts.agentUSD,
     judgeUSD: counts.judgeUSD,
-    approverUSD: counts.approverUSD || 0,
     spendUSD: counts.agentUSD + counts.judgeUSD + (counts.approverUSD || 0),
   };
 }
@@ -413,18 +408,18 @@ function reportMarkdown(r, meta = {}) {
   out.push(`| ${r.planned} | ${r.passed} | ${r.failed} | ${r.blocked} | ${r.timedOut} | ${r.held} | ${r.declined} | ${r.lost} | ${r.notRun} | ${pct(r.strictRate)} | ${pct(r.scoredRate)} |`);
   out.push("");
   out.push("Strict rate: passes over all planned runs, with blocked, declined, lost and not-run counted as failures. Scored rate: passes over the runs that reached the site (not blocked, not lost).");
-  // Two scores of the same runs: with the simulated approver, and with every hold declined.
-  const a = r.allDeclined;
-  const h = r.holds || { asked: 0, approved: 0, declined: 0, runsApproved: 0 };
-  if (a) {
+  // With the simulated approver on: the headline above is every hold declined, and the same runs with its answers follow.
+  const w = r.withApprover;
+  if (w) {
+    const h = r.holds;
     out.push("", "| scoring | passed | declined | strict rate | scored rate |", "| --- | --- | --- | --- | --- |");
-    out.push(`| with the simulated approver | ${r.passed} | ${r.declined} | ${pct(r.strictRate)} | ${pct(r.scoredRate)} |`);
-    out.push(`| every hold declined | ${a.passed} | ${a.declined} | ${pct(a.strictRate)} | ${pct(a.scoredRate)} |`, "");
-    out.push(`Held steps put to the approver: ${h.asked}, of which ${h.approved} approved and ${h.declined} declined; ${h.runsApproved} run(s) had a hold approved. With every hold declined those runs count as failed.`);
+    out.push(`| every hold declined (the headline) | ${r.passed} | ${r.declined} | ${pct(r.strictRate)} | ${pct(r.scoredRate)} |`);
+    out.push(`| with the simulated approver | ${w.passed} | ${w.declined} | ${pct(w.strictRate)} | ${pct(w.scoredRate)} |`, "");
+    out.push(`Simulated approver on in ${w.runs} of ${r.ran} run(s): ${h.asked} hold(s) put to it, ${h.approved} approved in ${h.runsApproved} run(s), ${h.declined} declined on its no, ${h.refused} declined by kind with no call. A run with an approved hold counts as declined in the headline.`);
   }
   out.push(`Per solved run: median ${r.medianSecondsSolved === null ? "-" : `${r.medianSecondsSolved} to ${r.medianSecondsSolved + SECONDS_BIN} s`}, median ${r.medianCallsSolved === null ? "-" : r.medianCallsSolved} model call(s).`);
   out.push(`Agent tokens: ${r.agentTokens.uncached} prompt uncached, ${r.agentTokens.cached} prompt cached, ${r.agentTokens.completion} output. Judge tokens: ${r.judgeTokens.input} input uncached, ${r.judgeTokens.cacheWrite} written to the cache, ${r.judgeTokens.cacheRead} read from it, ${r.judgeTokens.output} output.`);
-  out.push(`Real spend: ${usd(r.spendUSD)} (agent ${usd(r.agentUSD)}, judge ${usd(r.judgeUSD)}, approver ${usd(r.approverUSD)})${meta.capUSD ? `, cap $${Number(meta.capUSD).toFixed(2)}` : ""}.`);
+  out.push(`Real spend: ${usd(r.spendUSD)} (agent ${usd(r.agentUSD)}, judge ${usd(r.judgeUSD)}${r.withApprover ? `, approver ${usd(r.approverUSD)}` : ""})${meta.capUSD ? `, cap $${Number(meta.capUSD).toFixed(2)}` : ""}.`);
   // The never-send list: for dev, how many of its tasks; for a sealed part, the whole set's count only, which says nothing of where they were.
   if (Number.isFinite(meta.excluded)) out.push(`Excluded before the run: ${meta.excluded} task(s) ${meta.sealed ? "of the whole set" : "of this part"} on the never-send list (upstream issues 21, 25, 31 and 34), not run and not in the planned runs.`);
   if (meta.problems && meta.problems.length) out.push("", `**Check failed.** ${meta.problems.join(" ")}`);

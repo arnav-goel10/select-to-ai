@@ -24,6 +24,10 @@
  *   dryHeld, dryScripted, dryTyped  (fixture tasks) the fewest held actions,
  *            scripted presses and typing steps the run must record
  *   dryForm  (fixture tasks) a value one form control of the final page must hold
+ *   dryApprove, dryApproved, dryRefused  (fixture tasks, BENCH_APPROVER=on)
+ *            the approver's dry stand-in answers yes (true) or no (false),
+ *            and the fewest holds the run must allow on its yes and decline
+ *            by kind with no call (approver.js NOT_PUT_TO_APPROVER)
  *
  * `summary` reads every run.json under the folder (one per task run, written
  * by run.js), prints a table by family in Markdown, and writes
@@ -51,8 +55,9 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { isInfra, normaliseTasks, sampleTasks, taskList } = require("./judge.js");
+const { isInfra, normaliseTasks, sampleTasks, taskList, PAGE_STATES } = require("./judge.js");
 const { siteOf } = require("../../extension/agentTools.js");
+const { allDeclinedRow, approvalCounts, NOT_PUT_TO_APPROVER } = require("./approver.js");
 
 const FAMILIES = Object.freeze({
   "fact-lookup": "Look up a fact on a page",
@@ -306,31 +311,37 @@ function mergeReadings(map, got) {
   return map;
 }
 
-// The bounds on the page states the harness keeps for the judge: at most this
-// many, and this many characters of their text in all. The oldest go first.
-const PAGE_STATES = Object.freeze({ most: 30, chars: 400000 });
-
 const foldState = (p) => `${p.url}\n${p.title || ""}\n${String(p.text || "").replace(/\s+/g, " ").trim()}`;
 
 /**
  * Adds one capture of the page ({url, title, text}) to the states a run
- * saw, oldest first. A page that changed while its address stayed the same
- * (a next page of results drawn in place, a filter, a tab inside the page)
- * is a state of its own, so the judge sees each one and not only the last.
- * A capture the same as one already kept (same address, title and text) is
- * not kept twice: the earlier copy moves to the end, as the newest. Past
- * the bounds the oldest states go. Returns the list.
+ * saw, in the order first seen. A page that changed while its address stayed
+ * the same (a next page of results drawn in place, a filter, a tab inside the
+ * page) is a state of its own, so the judge sees each one and not only the
+ * last. A capture the same as a state already kept (same address, title and
+ * text) is no new state: that state keeps its place and is marked as seen
+ * again (lastSeen, the capture's number). Each text is cut to bounds.chars.
+ * Past bounds.most states, one goes: of the states of addresses that have
+ * another state kept, the one seen longest ago, or, when every address has
+ * one state, the state of the address seen longest ago. So the addresses seen last keep a state each,
+ * as many as bounds.most of them. Returns the list.
  */
 function keepPageState(states, seen, bounds = PAGE_STATES) {
   if (!seen || !seen.url) return states;
-  const state = { url: seen.url, title: seen.title || "", text: String(seen.text || "") };
+  const at = states.reduce((n, p) => Math.max(n, p.lastSeen || 0), 0) + 1;
+  const state = { url: seen.url, title: seen.title || "", text: String(seen.text || "").slice(0, bounds.chars) };
   const key = foldState(state);
-  const at = states.findIndex((p) => foldState(p) === key);
-  if (at >= 0) states.splice(at, 1);
-  states.push(state);
-  while (states.length > bounds.most) states.shift();
-  let chars = states.reduce((n, p) => n + p.text.length, 0);
-  while (states.length > 1 && chars > bounds.chars) chars -= states.shift().text.length;
+  const same = states.find((p) => foldState(p) === key);
+  if (same) { same.lastSeen = at; return states; }
+  states.push({ ...state, lastSeen: at });
+  while (states.length > bounds.most) {
+    const count = new Map();
+    for (const p of states) count.set(p.url, (count.get(p.url) || 0) + 1);
+    const shared = states.some((p) => count.get(p.url) > 1);
+    let drop = -1;
+    states.forEach((p, i) => { if ((!shared || count.get(p.url) > 1) && (drop < 0 || p.lastSeen < states[drop].lastSeen)) drop = i; });
+    states.splice(drop, 1);
+  }
   return states;
 }
 
@@ -569,6 +580,27 @@ const usd = (x) => `$${Number(x || 0).toFixed(4)}`;
 // A cap, in cents unless it is smaller than one.
 const capText = (x) => `$${Number(x) >= 0.01 ? Number(x).toFixed(2) : Number(x).toFixed(4)}`;
 
+/**
+ * With the simulated approver on (approver.js): what the summary adds. The
+ * table and its headline score every hold declined (a run with an approved
+ * hold counts as failed); this line gives the same runs with the approver's
+ * answers and the count of holds it approved. Numbers only.
+ */
+function approverSummary(rows, planned) {
+  const on = rows.filter((r) => r.approverOn).length;
+  if (!on) return null;
+  const w = familyTable(rows, planned).total;
+  return { runs: on, holds: approvalCounts(rows), withApprover: { tasks: w.tasks, passed: w.passed, failed: w.failed, timedOut: w.timedOut, blocked: w.blocked, lost: w.lost, notRun: w.notRun } };
+}
+
+/** approverSummary as one line of a summary. */
+function approverMarkdownLine(a) {
+  const w = a.withApprover;
+  const scored = w.passed + w.failed + w.timedOut;
+  const pct = (n, d) => (d ? ` (${(100 * n / d).toFixed(1)}%)` : "");
+  return `Simulated approver on in ${a.runs} run(s): ${a.holds.asked} hold(s) put to it, ${a.holds.approved} approved in ${a.holds.runsApproved} run(s), ${a.holds.refused} declined by kind with no call. The numbers above count every hold declined. With the approver's answers: passed ${w.passed} of ${scored} scored runs${pct(w.passed, scored)}; with blocked, lost and not-run tasks counted as failures, ${w.passed} of ${w.tasks}${pct(w.passed, w.tasks)}.`;
+}
+
 /** The table and its notes as Markdown, for a job summary. */
 function markdown(table, meta = {}) {
   const out = [];
@@ -597,6 +629,7 @@ function markdown(table, meta = {}) {
   const t = table.total;
   const scored = t.passed + t.failed + t.timedOut;
   out.push(`Passed ${t.passed} of ${scored} scored runs${scored ? ` (${(100 * t.passed / scored).toFixed(1)}%)` : ""}; with blocked, lost and not-run tasks counted as failures, ${t.passed} of ${t.tasks}${t.tasks ? ` (${(100 * t.passed / t.tasks).toFixed(1)}%)` : ""}.`);
+  if (meta.approver) out.push(approverMarkdownLine(meta.approver));
   const spend = t.agentUSD + t.judgeUSD + (t.replayUSD || 0) + (t.approverUSD || 0);
   out.push(`${meta.dry ? "Priced tokens of the scripted model and the judge stub, nothing spent" : "Model spend"}: ${usd(spend)} (agent ${usd(t.agentUSD)}, judge ${usd(t.judgeUSD)}${t.approverUSD ? `, approver ${usd(t.approverUSD)}` : ""}${t.replayUSD ? `, recipe replays ${usd(t.replayUSD)}` : ""})${meta.capUSD ? `, cap ${capText(meta.capUSD)}` : ""}.${meta.capReached ? " The spend cap stopped the run: the tasks under \"not run\" were never started." : ""}`);
   if (meta.spentUSD !== undefined && Math.abs(meta.spentUSD - spend) > 0.00005) out.push(`The shards counted ${usd(meta.spentUSD)} against the cap; the table adds up to ${usd(spend)}.`);
@@ -785,8 +818,21 @@ function checkDry(rows, tasks, shards) {
     if (t.dryForm && !(((row.formState && row.formState.controls) || []).some((c) => String(c.value || "") === t.dryForm))) problems.push(`${t.id}: no form control of the final page holds "${t.dryForm}" (${((row.formState && row.formState.controls) || []).length} control(s) read)`);
     // The run was started from the toolbar on its page, as a person starts it, so the browser would give the agent a picture of the page.
     if (got !== "lost" && !(row.picture && row.picture.granted)) problems.push(`${t.id}: the browser would not give the agent a picture of the page (${(row.picture && row.picture.why) || "not recorded"})`);
-    // Every hold the allow list did not decide has the approver's answer recorded (its stand-in's, or why it was not asked: the run's call limit).
-    for (const h of row.held || []) if (h && h.by !== "allow list" && !(h.approver && typeof h.approver.asks === "boolean")) problems.push(`${t.id}: a held step (${h.kind}) has no recorded answer from the approver`);
+    // The holds: answered by the approver only when it was on, never for a kind it is not asked about, and with what its stand-in was told to answer.
+    const held = (row.held || []).filter(Boolean);
+    for (const h of held) {
+      if (h.by === "approver" && !row.approverOn) problems.push(`${t.id}: a held step (${h.kind}) was answered by the approver, which was off`);
+      if (h.by === "approver" && !(h.approver && typeof h.approver.asks === "boolean")) problems.push(`${t.id}: a held step (${h.kind}) has no recorded answer from the approver`);
+      if (h.by === "approver" && NOT_PUT_TO_APPROVER.includes(h.kind)) problems.push(`${t.id}: a ${h.kind} hold was put to the approver`);
+      if (h.by === "approver" && typeof t.dryApprove === "boolean" && h.approver && h.approver.asks !== t.dryApprove) problems.push(`${t.id}: the approver's stand-in answered ${h.approver.asks ? "yes" : "no"}, and the fixture says ${t.dryApprove ? "yes" : "no"}`);
+      if (h.by === "approver" && h.allowed !== !!(h.approver && h.approver.asks)) problems.push(`${t.id}: a held step (${h.kind}) was ${h.allowed ? "allowed" : "declined"} against the approver's answer`);
+      if (h.by === "declined" && row.approverOn && !(h.approver && (h.approver.refused || h.approver.skipped))) problems.push(`${t.id}: a held step (${h.kind}) was declined with the approver on, and nothing says why`);
+    }
+    // A fixture that wants the yes path: at least this many holds allowed on the approver's yes.
+    if (t.dryApproved && held.filter((h) => h.by === "approver" && h.allowed).length < t.dryApproved) problems.push(`${t.id}: ${held.filter((h) => h.by === "approver" && h.allowed).length} hold(s) allowed on the approver's yes, expected at least ${t.dryApproved}`);
+    // A fixture of kinds never put to the approver: at least this many declined by kind, and no approver call made.
+    if (t.dryRefused && held.filter((h) => h.approver && h.approver.refused).length < t.dryRefused) problems.push(`${t.id}: ${held.filter((h) => h.approver && h.approver.refused).length} hold(s) declined by kind, expected at least ${t.dryRefused}`);
+    if (t.dryRefused && row.approverCalls) problems.push(`${t.id}: ${row.approverCalls} approver call(s) made in a run whose holds are never put to it`);
     // The judge's code path ran against the stub, and its tokens were counted.
     if (got !== "lost" && !(row.judgeUsage && row.judgeUsage.calls >= 1 && row.judgeCostUSD > 0)) problems.push(`${t.id}: the judge stub was not called, or its tokens were not counted`);
   }
@@ -812,7 +858,7 @@ function plannedRuns(all, { sample = 0, seed = 1, runs = 1, learn = "" } = {}) {
 }
 
 /** The extra dry legs: each proves one path the plain dry run does not reach. Problems as sentences. */
-function checkLeg(leg, { rows, planned, shards, learn, recipes }) {
+function checkLeg(leg, { rows, planned, shards, learn, recipes, approver = null }) {
   const problems = [];
   if (!shards.length) problems.push("no results file from any shard");
   if (leg === "cap") {
@@ -823,6 +869,22 @@ function checkLeg(leg, { rows, planned, shards, learn, recipes }) {
     if (!notRun && !ended) problems.push("every task ran to its end under a cap that should have stopped the run");
     for (const s of shards) if (!(s.spentUSD > 0)) problems.push("a shard counted no spend at all");
     for (const s of shards) if (s.capReached && !/spend cap/.test(String(s.stoppedEarly || "")) && !ended) problems.push("the cap was reached but the shard does not say it stopped for it");
+  }
+  if (leg === "approver") {
+    // The leg runs with BENCH_APPROVER=on: every run says so, the summary gives both scores, and the yes path and the refusal by kind both ran.
+    if (!rows.length || rows.some((r) => !r.approverOn && bucketOf(r) !== "lost")) problems.push("a run did not have the approver on");
+    if (!approver) problems.push("the summary has no line for the approver");
+    else {
+      if (!(approver.holds.approved >= 1)) problems.push("no hold was allowed on the approver's yes");
+      if (!(approver.holds.declined >= 1)) problems.push("no hold was declined on the approver's no");
+      if (!(approver.holds.refused >= 1)) problems.push("no hold was declined by kind without a call");
+      // The headline counts a run with an approved hold as failed, so the two scores differ by those runs.
+      const headline = rows.map(allDeclinedRow).filter((r) => r.success).length;
+      const passedApproved = rows.filter((r) => r.success && allDeclinedRow(r).approvedHold).length;
+      if (!(passedApproved >= 1)) problems.push("no run with an approved hold passed, so the yes path did not reach the end of a task");
+      if (approver.withApprover.passed - headline !== passedApproved) problems.push("the two scores do not differ by the passed runs with an approved hold");
+    }
+    for (const s of shards) if (!s.summaryWithApprover || !s.approver || !s.approver.enabled) problems.push("a shard's results file has no score with the approver");
   }
   if (leg === "learn") {
     if (!learn) problems.push("no run.json is from a learn pair");
@@ -1061,6 +1123,8 @@ function sealedReport(rows, planned, meta) {
     ungrounded: table.total.ungrounded,
     byFamily: byFamily.map((l) => ({ family: l.level, ...sealedCounts(l) })),
     byDifficulty: byDifficulty.map((l) => ({ difficulty: l.difficulty, ...sealedCounts(l) })),
+    // With the simulated approver on: the same runs with its answers, and how its holds went (approverSummary). The numbers above count every hold declined.
+    ...(meta.approver ? { approver: { runs: meta.approver.runs, holds: meta.approver.holds, withApprover: sealedCounts({ ...meta.approver.withApprover, agentUSD: 0, judgeUSD: 0 }) } } : {}),
   };
 }
 
@@ -1075,6 +1139,7 @@ function sealedMarkdown(report) {
   out.push("Nobody tunes the agent on this suite. Read these numbers, not the runs behind them: no task, answer or verdict is shown here or in the summary artifact.", "");
   out.push(`Passed ${t.passed} of ${t.passed + t.failed + t.timedOut} scored runs (${pct(t.passRate)}); with blocked, lost and not-run tasks counted as failures, ${t.passed} of ${t.tasks} (${pct(t.strictPassRate)}).`);
   out.push(`Failed ${t.failed}, timed out ${t.timedOut}, blocked by a human check ${t.blocked}, lost ${t.lost}, not run ${t.notRun}. Median ${dash(t.medianSeconds)} s a run. Model spend ${usd(t.spendUSD)}${m.capUSD ? `, cap ${capText(m.capUSD)}` : ""}${m.capReached ? " (the cap stopped the run)" : ""}.`);
+  if (report.approver) out.push(approverMarkdownLine(report.approver));
   out.push("");
   const head = (first) => [`| ${first} | tasks | passed | failed | timed out | blocked | lost | not run | pass rate |`, "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"];
   const row = (name, l) => `| ${name} | ${l.tasks} | ${l.passed} | ${l.failed} | ${l.timedOut} | ${l.blocked} | ${l.lost} | ${l.notRun} | ${pct(l.passRate)} |`;
@@ -1112,6 +1177,7 @@ const SEALED_LOG_LINES = [
   /^\d+ run\(s\) were lost to the browser, the provider or the judge and are left out of the rate\.$/,
   /^Success with the \d+ blocked and \d+ lost run\(s\) counted as failures: [\d.]+%\.$/,
   /^Steps taken by the helper \([\w.:/-]+\): \d+ of \d+( \([\d.]+%\))?\.$/,
+  /^Simulated approver \([\w.:/-]+\): \d+ hold\(s\) put to it, \d+ approved in \d+ run\(s\), \d+ declined by kind with no call\. Success with every hold declined ([\d.]+%|-), with the approver ([\d.]+%|-); with blocked and lost runs as failures ([\d.]+%|-) and ([\d.]+%|-)\.$/,
   /^Stopped early: a shard stopped early\.$/,
   /^The harness stopped with an error; a sealed run withholds the detail\.$/,
   /^Set BENCH_API_KEY\.$/,
@@ -1235,10 +1301,14 @@ function main(argv) {
       armChecked: shards.length > 0,
       armProblems: armProblems(arm, shards, rows, parseInt(flag("--shards") || "0", 10)),
     };
-    const table = familyTable(rows, planned);
+    // The headline counts every hold declined: a run in which the simulated approver allowed a hold counts as failed (approver.js allDeclinedRow).
+    const scoredRows = rows.map(allDeclinedRow);
+    const approver = approverSummary(rows, planned);
+    if (approver) meta.approver = approver;
+    const table = familyTable(scoredRows, planned);
     if (rest.includes("--sealed")) {
       let report;
-      try { report = sealedReport(rows, planned, meta); } catch (e) { console.error(e.message); process.exit(1); }
+      try { report = sealedReport(scoredRows, planned, meta); } catch (e) { console.error(e.message); process.exit(1); }
       const text = sealedMarkdown(report);
       const json = JSON.stringify(report, null, 2);
       // A sealed summary that names a task is not printed or written at all.
@@ -1252,16 +1322,16 @@ function main(argv) {
       if (rest.includes("--check-dry")) { const n = checkDry(rows, planned, shards).length; if (n) problems.push(`${n} dry-run problem(s)`); }
       for (const leg of (flag("--check") || "").split(",").filter(Boolean)) {
         if (leg === "sealed") { if (!rows.length) problems.push("no run.json to summarise"); continue; }
-        const n = checkLeg(leg, { rows, planned, shards, learn: learnTable(rows), recipes: recipeTable(rows) }).length;
+        const n = checkLeg(leg, { rows, planned, shards, learn: learnTable(rows), recipes: recipeTable(rows), approver }).length;
         if (n) problems.push(`${n} problem(s) in the ${leg} leg`);
       }
       if (problems.length) { console.error(`\nTrial check failed: ${problems.join("; ")}.`); process.exit(1); }
       if (flag("--check")) console.error(`\nDry leg check (${flag("--check")}): passed.`);
       return;
     }
-    const learn = learnTable(rows);
-    const recipes = recipeTable(rows);
-    const kinds = planned.some((t) => t.widget) ? groupTable(rows, planned, "widget") : null;
+    const learn = learnTable(scoredRows);
+    const recipes = recipeTable(scoredRows);
+    const kinds = planned.some((t) => t.widget) ? groupTable(scoredRows, planned, "widget") : null;
     const text = [markdown(table, meta), kinds ? kindMarkdown(kinds) : "", learn ? learnMarkdown(learn) : "", recipes ? recipeMarkdown(recipes) : ""].filter(Boolean).join("\n");
     console.log(text);
     const ran = new Set(rows.map((r) => r.slot || r.id));
@@ -1272,12 +1342,12 @@ function main(argv) {
       learn,
       recipes,
       byWidget: kinds || undefined,
-      runs: rows.map((r) => ({ id: r.id, slot: r.slot, family: r.family || r.level, outcome: bucketOf(r), ending: r.ending, steps: r.steps, seconds: r.seconds, tokens: tokensOf(r), costUSD: r.costUSD || 0, longPromptUSD: r.longPromptUSD || 0, lostAttemptsUSD: r.lostAttemptsUSD || 0, judgeCostUSD: r.judgeCostUSD || 0, patternMatch: r.patternMatch === undefined ? null : r.patternMatch, grounding: r.grounding || null, counters: r.counters || null, recipe: r.recipe || undefined, learn: r.learn ? { pair: r.learn.pair, phase: r.learn.phase } : undefined, failure: failureOf(r) })),
+      runs: scoredRows.map((r) => ({ id: r.id, slot: r.slot, family: r.family || r.level, outcome: bucketOf(r), ...(r.approvedHold ? { approvedHold: true } : {}), ending: r.ending, steps: r.steps, seconds: r.seconds, tokens: tokensOf(r), costUSD: r.costUSD || 0, longPromptUSD: r.longPromptUSD || 0, lostAttemptsUSD: r.lostAttemptsUSD || 0, judgeCostUSD: r.judgeCostUSD || 0, patternMatch: r.patternMatch === undefined ? null : r.patternMatch, grounding: r.grounding || null, counters: r.counters || null, recipe: r.recipe || undefined, learn: r.learn ? { pair: r.learn.pair, phase: r.learn.phase } : undefined, failure: failureOf(r) })),
       notRun: planned.filter((t) => !ran.has(t.slot || t.id)).map((t) => t.slot || t.id),
     }, null, 2));
     const problems = [...meta.armProblems];
     if (rest.includes("--check-dry")) problems.push(...checkDry(rows, planned, shards));
-    for (const leg of (flag("--check") || "").split(",").filter(Boolean)) problems.push(...checkLeg(leg, { rows, planned, shards, learn, recipes }));
+    for (const leg of (flag("--check") || "").split(",").filter(Boolean)) problems.push(...checkLeg(leg, { rows, planned, shards, learn: learnTable(rows), recipes: recipeTable(rows), approver }));
     if (problems.length) { console.error(`\nTrial check failed:\n${problems.join("\n")}`); process.exit(1); }
     if (rest.includes("--check-dry")) console.error(`\nDry run check: ${planned.length} fixture run(s) ended as expected.`);
     if (flag("--check")) console.error(`\nDry leg check (${flag("--check")}): passed.`);
@@ -1287,7 +1357,7 @@ function main(argv) {
   process.exit(1);
 }
 
-module.exports = { FAMILIES, DIFFICULTIES, SUITES, SEALED_SUITES, WIDGET_KINDS, WIDGET_SOURCES, PRACTICE_SUITE, siteOverlapProblems, widgetsShapeProblems, kindMarkdown, READING_CHECKS, SEALED_CRASH, readingCheckPages, SEALED_MIN_GROUP, SEALED_WITHHELD, HOLDOUT_ENCRYPTED, DRY_PORT, PRACTICE_SITES, validateTasks, taskSites, holdoutFile, holdoutProblems, holdoutShapeProblems, readSuites, groupTable, sealedReport, sealedMarkdown, sealedLogText, sealConsole, leaksIn, patternMatch, patternVerdict, learnPlan, plannedRuns, longPromptSurchargeUSD, spendOf, answerGrounding, engineReadingsInWorker, mergeReadings, PAGE_STATES, keepPageState, answerValues, engineExcerpts, READING, countersOf, judgeCostUSD, bucketOf, failureOf, familyTable, markdown, armProblems, learnTable, learnMarkdown, recipeTable, recipeMarkdown, readRows, readShards, checkDry, checkLeg, readFormControls };
+module.exports = { FAMILIES, DIFFICULTIES, SUITES, SEALED_SUITES, WIDGET_KINDS, WIDGET_SOURCES, PRACTICE_SUITE, siteOverlapProblems, widgetsShapeProblems, kindMarkdown, READING_CHECKS, SEALED_CRASH, readingCheckPages, SEALED_MIN_GROUP, SEALED_WITHHELD, HOLDOUT_ENCRYPTED, DRY_PORT, PRACTICE_SITES, validateTasks, taskSites, holdoutFile, holdoutProblems, holdoutShapeProblems, readSuites, groupTable, sealedReport, sealedMarkdown, sealedLogText, sealConsole, leaksIn, patternMatch, patternVerdict, learnPlan, plannedRuns, longPromptSurchargeUSD, spendOf, answerGrounding, engineReadingsInWorker, mergeReadings, PAGE_STATES, keepPageState, answerValues, engineExcerpts, READING, countersOf, judgeCostUSD, bucketOf, failureOf, familyTable, approverSummary, approverMarkdownLine, markdown, armProblems, learnTable, learnMarkdown, recipeTable, recipeMarkdown, readRows, readShards, checkDry, checkLeg, readFormControls };
 
 if (require.main === module) {
   const argv = process.argv.slice(2);

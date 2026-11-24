@@ -40,17 +40,19 @@
  *   BENCH_TIMEOUT_S    seconds per run (default 300)
  *   BENCH_ALLOW        confirmations the harness allows, by kind (default
  *                      "site,address": typing on and going to sites the task
- *                      did not name). Every other hold goes to the simulated
- *                      approver (approver.js): one cheap model call that sees
- *                      only the task and the card's description of the step,
- *                      and allows it only when the task as written asks for
- *                      it. It never allows paying, ordering, booking, sending
- *                      a message or deleting. Each hold is recorded with its
- *                      answer, and the summary gives the score with the
- *                      approver and the score with every hold declined.
+ *                      did not name). Everything else is refused, so a run
+ *                      never pays, sends or deletes anything on a live site,
+ *                      unless BENCH_APPROVER=on.
  *   BENCH_APPROVER, BENCH_APPROVER_MODEL, BENCH_APPROVER_CALLS
- *                      the approver: see approver.js. "off" declines every
- *                      hold outside BENCH_ALLOW, as before.
+ *                      the simulated approver (approver.js), off by default.
+ *                      "on": every hold outside BENCH_ALLOW whose kind is not
+ *                      one approver.js never puts to it (paying, deleting,
+ *                      secrets, frames, unchecked presses) goes to one cheap
+ *                      model call that sees only the task and the card's
+ *                      description of the step, and the step is allowed on
+ *                      its yes. The headline score is still every hold
+ *                      declined; every summary also gives the score with the
+ *                      approver and the count of holds it approved.
  *   BENCH_OUT          output folder (default tests/bench/out/<timestamp>).
  *                      A run already recorded there is reused, so a stopped
  *                      benchmark carries on where it left off.
@@ -351,7 +353,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
   if (inView !== "visible") problems.push(`the page was not in view while the agent worked (${inView || "unknown"})`);
 
   const screenshots = [];
-  // The text of each state of the pages the agent was on, oldest first: what
+  // The text of each state of the pages the agent was on, in the order first seen: what
   // it could have read, for the judge. A page that changed without its
   // address changing (a next page of results drawn in place) is a state of
   // its own (TRIAL.keepPageState), so no state the agent read is lost.
@@ -389,13 +391,14 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
 
   while (Date.now() - t0 < TIMEOUT_MS) {
     // The harness plays the user at a held step: it allows the kinds it was
-    // told to, and asks the approver about the rest (approver.js holdCardInPage).
+    // told to and declines the rest, unless the simulated approver is on
+    // (BENCH_APPROVER=on), which is asked about any kind it may answer for
+    // (approver.js settleHold).
     const card = await agentPage.evaluate(APPROVAL.holdCardInPage, [...ALLOW]);
     if (card && card.pending) {
-      const answer = hooks.approve ? await hooks.approve({ task: task.task, step: card.step || card.text }) : null;
-      const yes = !!(answer && answer.asks);
+      const { yes, record } = await APPROVAL.settleHold(card, task.task, hooks.approve || null);
       await agentPage.evaluate(APPROVAL.answerHoldInPage, yes).catch(() => false);
-      held.push({ kind: card.kind, allowed: yes, by: answer && !answer.skipped ? "approver" : "declined", text: card.text, step: card.step, ...(answer ? { approver: { asks: !!answer.asks, reason: answer.reason || "", model: answer.model || "", usd: answer.usd || 0, ...(answer.noAnswer ? { noAnswer: true } : {}), ...(answer.skipped ? { skipped: true } : {}) } } : {}) });
+      held.push(record);
     } else if (card) held.push(card);
     const state = await agentPage.evaluate((trace) => {
       // At a check-in the user says to keep going: the harness's own timeout is the limit.
@@ -501,6 +504,8 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
     modelCalls: trace ? (trace.modelCalls || []).map((c) => ({ purpose: c.purpose, by: c.by, model: c.model, ms: c.ms, prompt: c.prompt, completion: c.completion, cached: c.cached || 0 })) : [],
     ...(LEARN ? { known: trace ? trace.known || null : null } : {}),
     held,
+    // The simulated approver was on for this run (BENCH_APPROVER=on), so its holds were put to it.
+    ...(APPROVER.enabled ? { approverOn: true } : {}),
     // What the approver's calls cost (approver.js), counted in the spend.
     approverUSD: live.approverUSD || 0,
     approverCalls: live.approverCalls || 0,
@@ -511,7 +516,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
     finalTitle: final.title,
     finalText: final.text,
     formState,
-    // Every state of the pages it was on, oldest first, within TRIAL.PAGE_STATES.
+    // Every state of the pages it was on, in the order first seen, within TRIAL.PAGE_STATES.
     pages: pageStates,
     // The engine's reading of the pages, cut to the parts that bear on the answer (TRIAL.engineExcerpts).
     engineReadings: TRIAL.engineExcerpts([...readings.values()], answer),
@@ -723,7 +728,8 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
   // BENCH_JUDGE_BATCH: verdicts that are still out hold the most their calls can cost.
   const batch = JUDGE_BATCH ? new JudgeBatch(JUDGE, { ratesFor: findModelRates, pollMs: DRY ? 300 : 30000 }) : null;
   // Kept back from each run's own budget for its batch judge call, so the run leaves room for it.
-  const judgeRoom = batch ? batch.estimateUSD({ max_tokens: 8000, messages: [{ content: [{ type: "text", text: "x".repeat(60000) }, ...Array.from({ length: JUDGE.shots }, () => ({ type: "image" }))] }] }) : 0;
+  // Priced on the largest message the judge can be sent (judge.js judgeMessageMostChars), so the room covers any run's verdict.
+  const judgeRoom = batch ? batch.estimateUSD({ max_tokens: 8000, messages: [{ content: [{ type: "text", text: "x".repeat(J.judgeMessageMostChars(TRIAL.READING.total)) }, ...Array.from({ length: JUDGE.shots }, () => ({ type: "image" }))] }] }) : 0;
   // The approver's prices; the local stub in dry mode costs nothing.
   const approverRates = DRY ? () => [0, 0] : findModelRates;
   // Kept back from each run's own budget: the most its approver calls can cost, so the cap holds with them.
@@ -757,7 +763,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
     await worker.evaluate((v) => new Promise((r) => chrome.storage.sync.set({ agentCostBudget: v }, r)), Math.max(0, left).toFixed(4));
   };
   // A run the harness lost still spent what its model calls cost up to then (`live`, kept by runTask as it goes).
-  const lostRun = (task, r, why, live = {}) => ({ id: task.id, level: task.level, family: task.level, run: r, task: task.task, startUrl: task.url, ending: `harness error: ${String(why).slice(0, 120)}`, answer: "", history: [], steps: live.steps || 0, helperSteps: 0, seconds: 0, costUSD: live.costUSD || 0, approverUSD: live.approverUSD || 0, tokens: live.tokens || {}, screenshots: [], held: [] });
+  const lostRun = (task, r, why, live = {}) => ({ id: task.id, level: task.level, family: task.level, run: r, task: task.task, startUrl: task.url, ending: `harness error: ${String(why).slice(0, 120)}`, answer: "", history: [], steps: live.steps || 0, helperSteps: 0, seconds: 0, costUSD: live.costUSD || 0, approverUSD: live.approverUSD || 0, tokens: live.tokens || {}, screenshots: [], held: [], ...(APPROVER.enabled ? { approverOn: true } : {}) });
 
   /**
    * One run of a task under the cap. Each attempt gets what is left as its
@@ -779,7 +785,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
       const live = {};
       // Dry mode: the approver's stand-in answers as the fixture task says.
       if (DRY) judgeStub.approve = task.dryApprove === true;
-      try { run = await runTask(session.browser, session.extensionId, task, r, dir, live, { approve: (q) => approveHold(q, live) }); } catch (e) { run = lostRun(task, r, e.message, live); }
+      try { run = await runTask(session.browser, session.extensionId, task, r, dir, live, { approve: APPROVER.enabled ? (q) => approveHold(q, live) : null }); } catch (e) { run = lostRun(task, r, e.message, live); }
       const gone = /^harness error/.test(run.ending) && (BROWSER_GONE.test(run.ending) || !session.browser.connected);
       if (!gone || !retry) break;
       // The browser died: start another and give the task one more go.
@@ -1014,7 +1020,13 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
     if (judgeStub.server) await new Promise((resolve) => judgeStub.server.close(resolve));
   }
 
-  const s = summarise(rows);
+  // The headline: every hold declined, as the harness has always scored. A
+  // run in which the simulated approver allowed a hold counts as failed here
+  // (approver.js allDeclinedRow); with the approver off no row changes.
+  const s = summarise(rows.map(APPROVAL.allDeclinedRow));
+  // With the approver on: the same runs with its answers, and how its holds went.
+  const withApprover = APPROVER.enabled ? summarise(rows) : null;
+  const approvals = OM2W.approvalCounts(rows);
   const pct = (x) => `${(100 * x).toFixed(1)}%`;
   // A sealed part (BENCH_NO_FILES) shows no numbers of a shard: its counts go only to BENCH_COUNTS_OUT, and the summary reports the part whole.
   if (!NO_FILES) console.log(`\n| scored tasks | runs each | passed | success | success, blocked and lost as failures | solved at least once | solved every time | median steps (passed) | steps spent finding | median seconds | blocked by site | lost |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |`);
@@ -1026,10 +1038,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
     const helped = rows.reduce((n, r) => n + (r.helperSteps || 0), 0);
     console.log(`Steps taken by the helper (${HELPER_MODEL}): ${helped} of ${all}${all ? ` (${pct(helped / all)})` : ""}.`);
   }
-  // The two scores of one run: with the simulated approver, and with every hold declined (a run in which a hold was approved counted as failed).
-  const approvals = OM2W.approvalCounts(rows);
-  const allDeclined = summarise(rows.map((r) => (APPROVAL.approvedHold(r) ? { ...r, success: false } : r)));
-  if (!NO_FILES && !SEALED) console.log(`\nHeld steps: ${approvals.asked} put to the approver${APPROVER.enabled ? ` (${APPROVER.model})` : " (off: every one declined)"}, ${approvals.approved} approved, in ${approvals.runsApproved} run(s). Success with the approver ${pct(s.success)}; with every hold declined ${pct(allDeclined.success)}. With blocked and lost runs as failures: ${pct(s.successAllRuns)} and ${pct(allDeclined.successAllRuns)}.`);
+  if (withApprover && !NO_FILES) console.log(`\n${APPROVAL.approverLine(APPROVER.model, approvals, { allDeclined: s.success, withApprover: withApprover.success, allDeclinedAllRuns: s.successAllRuns, withApproverAllRuns: withApprover.successAllRuns })}`);
   if (s.lost && !NO_FILES) console.log(`${s.lost} run(s) were lost to the browser, the provider or the judge and are left out of the rate.`);
   if ((s.blocked || s.lost) && !NO_FILES) console.log(`Success with the ${s.blocked} blocked and ${s.lost} lost run(s) counted as failures: ${pct(s.successAllRuns)}.`);
   // Why a shard stopped can hold a lost run's error text: a sealed log says only that it did.
@@ -1044,7 +1053,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
     try { const p = require(path.join(EXT, "defaults.js")).modelProfile(MODEL); tier = `${p.tier}, ${p.pageBudget} characters of page text`; } catch (_e) { tier = "unknown"; }
     fs.writeFileSync(path.join(COUNTS_OUT, `om2w-counts-${SHARD ? `${SHARD[1]}of${SHARD[2]}` : "1of1"}.json`), JSON.stringify({ dry: DRY, sealed: SEALED, agent: `${PROVIDER} / ${MODEL}`, tier, judge: `${JUDGE.model}${batch ? ", batch" : ""}`, approver: APPROVER.enabled ? APPROVER.model : "off", debuggerAvailable, capUSD: MAX_USD, spentUSD: spent, capReached, stoppedEarly: !!stoppedEarly, counts: OM2W.countsOf(rows) }, null, 2));
   }
-  if (!NO_FILES) fs.writeFileSync(path.join(OUT, `results${SHARD ? `-${SHARD[1]}of${SHARD[2]}` : ""}.json`), JSON.stringify({ agent: { provider: PROVIDER, model: MODEL, tier: require(path.join(EXT, "defaults.js")).modelProfile(MODEL).tier, helperModel: HELPER_MODEL || undefined, url: CUSTOM_URL || undefined, extension: EXT, profile: CHATGPT ? CHATGPT.profile : undefined, debugger: DEBUGGER || "as built", debuggerAvailable, learning: LEARN || "off", recipes: RECIPES, disguise: false }, shard: SHARD ? `shard ${SHARD[1]} of ${SHARD[2]}` : "", judge: { model: JUDGE.model, url: JUDGE.url, vision: JUDGE.vision, shots: JUDGE.vision ? JUDGE.shots : 0, stubCalls: DRY ? judgeStub.calls : undefined }, approver: { enabled: APPROVER.enabled, model: APPROVER.model, maxCalls: APPROVER.maxCalls, ...approvals, stubCalls: DRY ? judgeStub.approverCalls : undefined }, dry: DRY, spentUSD: spent, capUSD: MAX_USD, capReached, runsPerTask: RUNS, planned: tasks.map((t) => t.id), summary: s, summaryAllDeclined: allDeclined, stoppedEarly, rows: rows.map((r) => ({ ...r, finalText: undefined, pages: undefined, engineReadings: undefined, screenshots: (r.screenshots || []).length })) }, null, 2));
+  if (!NO_FILES) fs.writeFileSync(path.join(OUT, `results${SHARD ? `-${SHARD[1]}of${SHARD[2]}` : ""}.json`), JSON.stringify({ agent: { provider: PROVIDER, model: MODEL, tier: require(path.join(EXT, "defaults.js")).modelProfile(MODEL).tier, helperModel: HELPER_MODEL || undefined, url: CUSTOM_URL || undefined, extension: EXT, profile: CHATGPT ? CHATGPT.profile : undefined, debugger: DEBUGGER || "as built", debuggerAvailable, learning: LEARN || "off", recipes: RECIPES, disguise: false }, shard: SHARD ? `shard ${SHARD[1]} of ${SHARD[2]}` : "", judge: { model: JUDGE.model, url: JUDGE.url, vision: JUDGE.vision, shots: JUDGE.vision ? JUDGE.shots : 0, stubCalls: DRY ? judgeStub.calls : undefined }, approver: { enabled: APPROVER.enabled, model: APPROVER.model, maxCalls: APPROVER.maxCalls, ...approvals, stubCalls: DRY ? judgeStub.approverCalls : undefined }, dry: DRY, spentUSD: spent, capUSD: MAX_USD, capReached, runsPerTask: RUNS, planned: tasks.map((t) => t.id), summary: s, ...(withApprover ? { summaryWithApprover: withApprover } : {}), stoppedEarly, rows: rows.map((r) => ({ ...r, finalText: undefined, pages: undefined, engineReadings: undefined, screenshots: (r.screenshots || []).length })) }, null, 2));
   // The spend cap doing its job is not a failure of the run.
   if (stoppedEarly && !capReached) process.exitCode = 2;
   if (sealedUnfinished) process.exitCode = 1;
