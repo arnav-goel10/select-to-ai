@@ -294,6 +294,26 @@ test("the Claude catalog names the current models and their list prices", () => 
   assert.equal(D.modelProfile("claude-haiku-5-5").thinks, true, "Haiku 5.5 thinks by default, so it gets thinking room and low effort");
 });
 
+test("DeepSeek's V4 line thinks by default wherever it is hosted, and the old names still think as before", () => {
+  for (const m of ["deepseek-flash", "deepseek-v4-pro", "deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash", "deepseek-ai/DeepSeek-V4.1-Flash", "deepseek-ai/DeepSeek-V4-Pro-0813", "deepseek-reasoner"]) {
+    assert.equal(D.modelProfile(m).thinks, true, m);
+    assert.equal(D.modelProfile(m).maxTokens, 6000, m);
+  }
+  assert.equal(D.modelProfile("deepseek-chat").thinks, false);
+});
+
+test("a retired DeepSeek name keeps its rate, and the new presets have their own", () => {
+  assert.deepEqual(D.findModelRates("deepseek-chat"), [0.00028, 0.00042]);
+  assert.deepEqual(D.findModelRates("deepseek-reasoner"), [0.00028, 0.00042]);
+  assert.deepEqual(D.findModelRates("deepseek-ai/DeepSeek-V4.1-Flash"), [0.0003, 0.0012]);
+  assert.deepEqual(D.findModelRates("deepseek-ai/DeepSeek-V4-Pro-0813"), [0.00132, 0.00396]);
+  assert.deepEqual(D.findModelRates("qwen/qwen3.8-27b"), [0.0008, 0.004]);
+  assert.deepEqual(D.findModelRates("qwen/qwen3.8-27b:free"), [0, 0]);
+  for (const p of ["deepseek", "together", "groq", "xai"]) for (const m of D.MODEL_PRESETS[p]) {
+    assert.notDeepEqual(D.findModelRates(m), D.MODEL_PRICES.default, `${p} preset ${m} has its own rate`);
+  }
+});
+
 test("cached prompt tokens are counted in the prompt and charged at a tenth, cache writes at 1.25 times", async () => {
   const seen = [];
   const out = await client([reply(200, anthropicCall({ goal: "go" }))], seen).call({ system: "s", user: "u", tool, tier: "pro" }, cfg({ ...ANTHROPIC, model: "claude-haiku-5-5", liteModel: "claude-haiku-5-5" }));

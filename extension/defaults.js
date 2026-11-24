@@ -325,8 +325,11 @@
     // (Haiku 5.5 and Sonnet 5.5 take only 1; Opus 4.7 and later take none).
     [CLAUDE_FIXED_SAMPLING, Object.freeze({ temperature: null })],
   ]);
-  // Models that think before they answer need room for both.
-  const THINKING_MODELS = /gpt-oss|nemotron|qwen|gemini|deepseek-r|magistral|claude-(fable|mythos|opus|sonnet|haiku-[5-9])|gpt-(5|6)|grok-4|:free|openrouter\/free/i;
+  // Models that think before they answer need room for both. DeepSeek's
+  // V4 line thinks by default ("Thinking mode is enabled by default", its
+  // thinking-mode guide, 24 Nov 2026), and deepseek-flash is its V4.1 Flash,
+  // so every deepseek-flash and deepseek-v4 id thinks, wherever it is hosted.
+  const THINKING_MODELS = /gpt-oss|nemotron|qwen|gemini|deepseek-(r|flash|v4)|magistral|claude-(fable|mythos|opus|sonnet|haiku-[5-9])|gpt-(5|6)|grok-4|:free|openrouter\/free/i;
 
   /** What a run on this model is given: listing size, actions per step, sampling, and whether it thinks. */
   function modelProfile(model) {
@@ -425,6 +428,17 @@
     // Peak-hour list prices, cache miss (DeepSeek pricing page, 24 Nov 2026).
     "deepseek-flash": [0.0003, 0.0012],
     "deepseek-v4-pro": [0.00132, 0.00396],
+    // The retired names, at the rate they had, for a setup that still has
+    // one saved.
+    "deepseek-chat": [0.00028, 0.00042],
+    "deepseek-reasoner": [0.00028, 0.00042],
+    // Together's serverless rate for its V4.1 Flash (its pricing page,
+    // 24 Nov 2026). Exact, so OpenRouter's cheaper deepseek/deepseek-v4.1-flash
+    // is not charged at it. Its V4 Pro id already matches deepseek-v4-pro,
+    // which Together prices the same.
+    "deepseek-ai/deepseek-v4.1-flash": [0.0003, 0.0012],
+    // Groq on-demand, Qwen3.8 27B (its models page, 24 Nov 2026).
+    "qwen/qwen3.8-27b": [0.0008, 0.004],
     // xAI
     // xAI's model list, 24 Nov 2026. A retired grok-4-1-fast name is
     // answered and billed as grok-4.3.
