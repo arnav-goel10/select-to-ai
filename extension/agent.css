@@ -32,6 +32,11 @@ body {
   position: relative;
 }
 
+/* The page arrives (from the popup, a right-click or a reload) with a short
+   slide from the side the panel opens on. */
+.main-container { animation: panel-in var(--dur-3) var(--ease-out) both; }
+@keyframes panel-in { from { opacity: 0; transform: translateX(10px); } }
+
 /* ------------------------------------------------------------ drawer */
 
 .sidebar-container {
