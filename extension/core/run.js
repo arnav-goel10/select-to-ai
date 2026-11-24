@@ -2269,7 +2269,26 @@
     const open = [...verdict.unmet, ...a.missing.map((q) => `"${clip(q, 100)}" is not in ${(run.dropped || []).length ? "the page text still kept" : "what was read"}`)];
     if (!open.length) open.push(verdict.reason || "the check did not say what");
     record(run, a, true, "Finished, not confirmed.");
-    return finish(run, fx, env, a, { verified: false, unconfirmed: open, note: `Part of this could not be confirmed: ${clip(open.join("; "), 300).replace(/[.\s]+$/, "")}.` });
+    return finish(run, fx, env, a, { verified: false, unconfirmed: open, note: unconfirmedNote(open) });
+  }
+
+  /**
+   * What the check could not confirm, as one sentence a person reads: each
+   * point without its own full stop, the later ones in lower case, joined
+   * with "; ", and cut after a whole point rather than in the middle of one.
+   */
+  function unconfirmedNote(open) {
+    const points = open.map((x) => String(x || "").replace(/\s+/g, " ").trim().replace(/[.;:,\s]+$/, "")).filter(Boolean);
+    const kept = [];
+    let length = 0;
+    for (const point of points) {
+      const text = kept.length && /^[A-Z][a-z]/.test(point) ? point.charAt(0).toLowerCase() + point.slice(1) : point;
+      if (kept.length && length + text.length > 300) break;
+      kept.push(text.length > 300 ? `${text.slice(0, text.lastIndexOf(" ", 299)).replace(/[.;:,\s]+$/, "")}…` : text);
+      length += text.length + 2;
+    }
+    const more = points.length - kept.length;
+    return `Part of this could not be confirmed: ${kept.join("; ")}${more ? `; and ${more} more point${more === 1 ? "" : "s"}` : ""}.`;
   }
 
   function finish(run, fx, env, a, check) {
