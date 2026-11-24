@@ -645,7 +645,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   const judgeRoom = batch ? batch.estimateUSD({ max_tokens: 8000, messages: [{ content: [{ type: "text", text: "x".repeat(60000) }, ...Array.from({ length: JUDGE.shots }, () => ({ type: "image" }))] }] }) : 0;
   /** What the cap is measured against: spent, and the most the verdicts still out can cost. */
   const committed = () => spent + (batch ? batch.reservedUSD : 0);
-  const capStop = () => { capReached = true; stoppedEarly = `the spend cap of $${MAX_USD >= 0.01 ? MAX_USD.toFixed(2) : MAX_USD.toFixed(4)} was reached ($${spent.toFixed(4)} spent); the remaining tasks were not started.`; };
+  const capStop = () => { capReached = true; stoppedEarly = `the spend cap of $${MAX_USD >= 0.01 ? MAX_USD.toFixed(2) : MAX_USD.toFixed(4)} was reached ($${spent.toFixed(4)} spent${batch && batch.reservedUSD ? `, $${batch.reservedUSD.toFixed(4)} held for verdicts still out` : ""}); the remaining tasks were not started.`; };
   /** Gives the next run what is left under the cap as its own cost budget. */
   const setRunBudget = async (left) => {
     const worker = await BENCH_PROFILE_LIB.workerOf(session.browser, session.extensionId);
