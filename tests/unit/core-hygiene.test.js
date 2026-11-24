@@ -3,9 +3,10 @@
 // it was tested on, or an incident from a test run: a rule written for one
 // site is a patch, and patches do not carry over to the next site.
 //
-// Which hosts, class names and task ids the agent's files may hold at all is
-// checked by structure in hygiene-hosts.test.js, against a reviewed allowlist,
-// over every file the worker loads and the engine injects.
+// Which hosts, site and brand names, class names and task ids the shipped
+// files may hold at all is checked in hygiene-hosts.test.js, which parses
+// every file the extension ships (the bare names this file once listed are
+// in its site-name dictionary), against a reviewed allowlist.
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
