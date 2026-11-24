@@ -69,17 +69,10 @@ customElements.define("x-feature", class extends HTMLElement { connectedCallback
 </script>
 </body></html>`;
 
-// No <main> and no role: a wrapper holds a column of links (whose id says
-// "content") beside the article (whose class says "sidebar"). The reader
-// goes by where the text is, not by what the parts are called.
-const NO_LANDMARK = `<!doctype html><html><body>
-<header><a href="/">Home</a> <a href="/about">About</a></header>
-<div id="main" class="wrap">
-  <div id="content" class="main-content">${Array.from({ length: 40 }, (_, i) => `<a href="/p/${i}">Related page number ${i}</a><br>`).join("")}</div>
-  <div class="sidebar"><h1>Mosses</h1><p>${Array.from({ length: 200 }, (_, i) => `Mosses grow on stone ${i}.`).join(" ")}</p><p>${Array.from({ length: 80 }, (_, i) => `Spores travel far ${i}.`).join(" ")}</p></div>
-</div>
-<footer>Footer links and copyright</footer>
-</body></html>`;
+// Pages with no landmark at all, in the shapes older sites take, and what of
+// each is and is not the main content (tests/fixtures/main-content). The unit
+// test reads the same files through a parsed DOM.
+const { CASES: NO_LANDMARK, html: fixtureHtml } = require("../fixtures/main-content/cases.js");
 
 async function scanOf(browser, html) {
   const page = await browser.newPage();
@@ -97,7 +90,8 @@ async function scanOf(browser, html) {
   const browser = await puppeteer.launch({ headless: true });
   const scan = await scanOf(browser, HTML);
   const comp = await scanOf(browser, COMPONENTS);
-  const noLandmark = await scanOf(browser, NO_LANDMARK);
+  const noLandmark = [];
+  for (const c of NO_LANDMARK) noLandmark.push({ c, text: (await scanOf(browser, fixtureHtml(c.file))).innerText.replace(/\s+/g, " ") });
   await browser.close();
   const text = scan.innerText;
   // Unseeable text must stay out of every reading of the page, not only the main one.
@@ -136,13 +130,20 @@ async function scanOf(browser, html) {
     ["a class name is never read as a rating", !/star-rating|class "/.test(text) && /Tipping the Velvet/.test(text)],
     ["bracketed numbers are the page's own text", /items\[12\]/.test(text) && /says \[3\]/.test(text)],
     ["a block is read whatever its class", /Notes block a site happens to call reference/.test(text)],
-    ["with no landmark, the text column is the main content, not the links its site calls content", /Mosses grow on stone 120\./.test(noLandmark.innerText) && !/Related page number 7\b/.test(noLandmark.innerText)],
+    ...noLandmark.flatMap(({ c, text: t }) => [
+      ...c.read.map((phrase) => [`with no landmark, ${c.shape}: "${phrase}" is read`, t.includes(phrase)]),
+      ...c.notRead.map((phrase) => [`with no landmark, ${c.shape}: "${phrase}" is left out`, !t.includes(phrase)]),
+    ]),
     ["a labelled box of pictures keeps its label and its pictures", /\[Product images\]/.test(text) && /\[image: Front cover of the guide\]/.test(text)],
     ["web components: the structured reading wins over a plain one full of menu and footer", comp.textFormat === "markdown"],
     ["web components: the global usage figure is read where it is drawn", /Global 96\.09%/.test(comp.innerText)],
   ];
   let failed = 0;
   for (const [name, ok] of checks) { console.log(`  ${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) failed++; }
-  if (failed) { console.log("\n" + text + "\n\n----- web components page -----\n" + comp.innerText); process.exit(1); }
+  if (failed) {
+    console.log("\n" + text + "\n\n----- web components page -----\n" + comp.innerText);
+    for (const { c, text: t } of noLandmark) console.log(`\n----- ${c.file} -----\n${t.slice(0, 1500)}`);
+    process.exit(1);
+  }
   console.log("\nALL LAYOUT CHECKS PASSED");
 })().catch((e) => { console.error(e); process.exit(1); });

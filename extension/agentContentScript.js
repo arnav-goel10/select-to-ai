@@ -782,12 +782,75 @@
     // section past the cap could be seen in its table of contents but never read.
     const PAGE_TEXT_LIMIT = 700000;
 
-    /** The length of an element's text outside its links: a menu or a column of related links has little. */
-    function proseLength(el) {
-        const all = (el.textContent || '').replace(/\s+/g, ' ').trim().length;
-        let links = 0;
-        for (const a of el.querySelectorAll('a')) links += (a.textContent || '').replace(/\s+/g, ' ').trim().length;
-        return Math.max(0, all - links);
+    // Tags whose text runs on inside the block around them.
+    const INLINE_TAGS = /^(A|ABBR|B|BDI|BDO|BR|CITE|CODE|DATA|DEL|DFN|EM|FONT|I|IMG|INS|KBD|LABEL|MARK|Q|S|SAMP|SMALL|SPAN|STRONG|SUB|SUP|TIME|TT|U|VAR|WBR)$/;
+    // Controls: their words are the page's machinery, not what it says.
+    const CONTROL_TAGS = /^(BUTTON|SELECT|OPTION|INPUT|TEXTAREA|MENU)$/;
+    // Tags whose text is never drawn as words on the page.
+    const UNREAD_TAGS = /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|SVG|IFRAME|OBJECT|CANVAS|HEAD)$/;
+    // Cells of a table or a definition list: data, where a value may well repeat.
+    const DATA_TAGS = /^(TD|TH|DD|DT)$/;
+
+    /**
+     * The page's text cut into blocks (a paragraph, a heading, a list item, a
+     * cell, a box with words of its own), each weighed as content or as
+     * chrome by shallow text features that hold on any site:
+     * - link density: a block that is mostly link text is a menu, a list of
+     *   related pages, a tag cloud or a pager;
+     * - controls and declared landmarks (nav, header, footer, aside and
+     *   their roles) are chrome;
+     * - repetition across the page: a short line that recurs ("Reply",
+     *   "Read more", "Posted by") is a label the page stamps on every item.
+     *   Table and list cells are data, where values recur, and are not judged so.
+     * Text inside open shadow roots is counted for the element hosting it.
+     * Returns the blocks with their weights (positive for content, negative
+     * for chrome), the elements in document order and each one's parent.
+     */
+    function textBlocks(root) {
+        const blocks = [];
+        const parentOf = new Map();
+        const order = [];
+        const walk = (el, block, inLink, chrome, candidate, depth) => {
+            if (depth > 400) return;
+            const kids = [...(el.childNodes || [])];
+            if (el.shadowRoot && el.shadowRoot.childNodes) kids.push(...[...el.shadowRoot.childNodes].map((n) => ({ n, shadow: true })));
+            for (const item of kids) {
+                const n = item && item.shadow ? item.n : item;
+                const inShadow = !!(item && item.shadow) || !candidate;
+                if (n.nodeType === 3) {
+                    const t = (n.textContent || '').replace(/\s+/g, ' ').trim();
+                    if (!t || !block) continue;
+                    block.text += (block.text ? ' ' : '') + t;
+                    if (inLink) block.links += t.length;
+                    continue;
+                }
+                if (n.nodeType !== 1) continue;
+                const tag = String(n.tagName || '').toUpperCase();
+                if (UNREAD_TAGS.test(tag) || n.hasAttribute('hidden') || n.getAttribute('aria-hidden') === 'true') continue;
+                // The extension's own badges are not the page.
+                if (n.id === 'select-to-ai-overlay-container') continue;
+                parentOf.set(n, el);
+                if (!inShadow) order.push(n);
+                const isChrome = chrome || CONTROL_TAGS.test(tag) || n.matches(BOILERPLATE);
+                const link = inLink || tag === 'A';
+                if (block && INLINE_TAGS.test(tag) && isChrome === block.chrome) { walk(n, block, link, isChrome, !inShadow, depth + 1); continue; }
+                const own = { el: n, text: '', links: 0, chrome: isChrome, data: DATA_TAGS.test(tag) };
+                blocks.push(own);
+                walk(n, own, link, isChrome, !inShadow, depth + 1);
+            }
+        };
+        const top = { el: root, text: '', links: 0, chrome: false, data: false };
+        blocks.push(top);
+        walk(root, top, false, false, true, 0);
+        const times = new Map();
+        for (const b of blocks) if (b.text) times.set(b.text, (times.get(b.text) || 0) + 1);
+        for (const b of blocks) {
+            const chars = b.text.length;
+            const linky = chars > 0 && b.links / chars > 0.5;
+            const stamped = !b.data && chars < 80 && times.get(b.text) > 1;
+            b.weight = !chars ? 0 : (b.chrome || linky || stamped ? -chars : chars);
+        }
+        return { blocks, order, parentOf };
     }
 
     /**
@@ -795,13 +858,18 @@
      * marks one with <main> or role="main" says so itself. An <article>
      * counts when it holds a fair share of the page's text: a listing has
      * one <article> per card, and taking one card as the page hid the rest.
-     * With neither, the reading follows the text down from the body: into
-     * the one container that holds all of the text outside menus, banners,
-     * footers and links, for as long as one does. A wrapper around the whole
-     * page is walked through, and so is a sidebar of links beside a content
-     * column. Any words beside it stop the walk, however few (a status line
-     * above a long list is part of the page), and so does a container whose
-     * text is held in its own paragraphs, headings and lists.
+     * With neither, each element is scored by what reading it would bring:
+     * all the content inside it, less half the chrome inside it (textBlocks).
+     * Half, because a stray list of links inside an article column costs
+     * less than losing the column's other paragraphs, while a sidebar or a
+     * menu beside the column, which brings chrome and little content, does
+     * not pay its way. Of elements that score the same, the deeper one is
+     * taken: a wrapper around the content adds nothing to it. From the best
+     * one the reading widens to the element around it while what that adds
+     * is more words than chrome: a status line above a list is part of the
+     * page, a sidebar of links is not, and a notice or a copyright line
+     * further out is never reached. Widening to the body, or a best part
+     * that holds under half the page's content, reads the whole page.
      * No class or id is read: what a site calls its parts says nothing
      * that holds on another site.
      */
@@ -816,24 +884,35 @@
         }
         const article = doc.querySelector('article');
         if (article && textLength(article) > 200 && textLength(article) >= bodyLength * 0.3) return article;
-        let node = body;
-        for (let depth = 0; depth < 16; depth++) {
-            let best = null;
-            let bestLength = 0;
-            let total = 0;
-            for (const kid of node.children) {
-                if (/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(kid.tagName) || kid.matches(BOILERPLATE)) continue;
-                const length = proseLength(kid);
-                total += length;
-                if (length > bestLength) { best = kid; bestLength = length; }
+        const { blocks, order, parentOf } = textBlocks(body);
+        const score = new Map();
+        const content = new Map();
+        const chrome = new Map();
+        const add = (map, n, v) => map.set(n, (map.get(n) || 0) + v);
+        for (const b of blocks) {
+            if (!b.weight) continue;
+            for (let n = b.el; n; n = parentOf.get(n)) {
+                add(score, n, b.weight > 0 ? b.weight : b.weight / 2);
+                add(b.weight > 0 ? content : chrome, n, Math.abs(b.weight));
             }
-            // A block of text (a paragraph, a heading, a list, a table) is content, not a container of it.
-            if (!best || bestLength < total || /^(P|H[1-6]|UL|OL|LI|DL|TABLE|PRE|BLOCKQUOTE|FIGURE)$/.test(best.tagName)) break;
-            node = best;
         }
-        if (node === body) return null;
-        const length = textLength(node);
-        return length > 200 && length >= bodyLength * 0.3 ? node : null;
+        const inside = (n, outer) => { for (let p = n; p; p = parentOf.get(p)) if (p === outer) return true; return false; };
+        let best = null;
+        let bestScore = 0;
+        for (const n of order) {
+            const s = score.get(n) || 0;
+            if (s > bestScore || (best && s === bestScore && inside(n, best))) { best = n; bestScore = s; }
+        }
+        if (!best) return null;
+        for (let up = parentOf.get(best); up; up = parentOf.get(best)) {
+            const words = (content.get(up) || 0) - (content.get(best) || 0);
+            const noise = (chrome.get(up) || 0) - (chrome.get(best) || 0);
+            if (!(words > 0 && words >= noise)) break;
+            best = up;
+        }
+        if (best === body) return null;
+        const held = content.get(best) || 0;
+        return held > 200 && held >= (content.get(body) || 0) * 0.5 ? best : null;
     }
 
     /**

@@ -212,7 +212,8 @@ test("the Markdown walk reads blocks whatever their class, and keeps bracketed n
 // text is. The fixtures give the parts misleading ids and classes, so a
 // reader that went by names would pick the wrong part.
 const pickMain = new Function([
-  constLine("BOILERPLATE"), source("proseLength"), source("pickMain"), "return pickMain;",
+  ...["BOILERPLATE", "INLINE_TAGS", "CONTROL_TAGS", "UNREAD_TAGS", "DATA_TAGS"].map(constLine),
+  source("textBlocks"), source("pickMain"), "return pickMain;",
 ].join("\n"))();
 const page = (...kids) => { const body = h("body", {}, ...kids); return { body, querySelector: (sel) => body.descendants().find((n) => n.matches(sel)) || null }; };
 const words = (n, w) => Array.from({ length: n }, (_, i) => `${w} ${i}.`).join(" ");
