@@ -5,7 +5,7 @@
   "description": "Privacy-first Chrome extension for sending selected text to AI assistants and running bounded browser workflows.",
   "scripts": {
     "check": "npm run check:fast && npm run check:browser",
-    "check:fast": "npm run check:syntax && npm run check:manifest && npm test && npm run benchmark",
+    "check:fast": "npm run check:syntax && npm run check:manifest && npm test && npm run test:recipes-unit && npm run benchmark",
     "check:browser": "npm run test:extract && npm run test:scan && npm run test:widgets && npm run test:card-keys && npm run test:v4 && npm run test:recipes-driver && npm run test:recipes-ext",
     "check:syntax": "node scripts/check-syntax.mjs",
     "check:manifest": "node scripts/validate-manifest.mjs",
@@ -27,6 +27,7 @@
     "bench:chatgpt-login": "node tests/bench/chatgpt-profile.js",
     "bench:recipes": "node bench/recipes/run.js",
     "test:recipes": "node --test tests/recipes/*.test.js",
+    "test:recipes-unit": "node --test packages/recipes/test/core.test.js packages/recipes/test/cli.test.js",
     "build:recipes": "node scripts/build-recipes.mjs",
     "test:recipes-ext": "node tests/e2e/recipes-extension.js",
     "test:recipes-driver": "node --test tests/recipes/extension-driver.test.js tests/recipes/extension-recording.test.js",
