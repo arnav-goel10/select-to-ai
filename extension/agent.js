@@ -88,6 +88,7 @@
   }
   const WORDS = globalThis.SELECT_TO_AI_RUNWORDS;
   const KEYS = globalThis.SELECT_TO_AI_KEYS;
+  const FEED = globalThis.SELECT_TO_AI_FEED;
 
   const credentialsWarning = document.getElementById("credentialsWarning");
   const openKeySettings = document.getElementById("openKeySettings");
@@ -2338,6 +2339,16 @@
   // Streamed text is drawn at most once a frame, from the latest message.
   let streamRaw = null;
   let streamQueued = false;
+  // The reply being written, joined from the parts the engine sends.
+  let streamText = "";
+  /** A part of the reply being written: the text added at `at` (0 starts it afresh). */
+  function onStreamPart(part) {
+    const joined = FEED.joinStream(streamText, part);
+    // A part that does not follow on waits for the next fresh start.
+    if (joined === null) return;
+    streamText = joined;
+    onStream(joined);
+  }
   function onStream(text) {
     streamRaw = String(text || "");
     if (streamQueued) return;
@@ -3181,6 +3192,9 @@
         replaying = false;
       }
       afterTrace();
+      // The reply being written so far, so the parts that follow join on to it.
+      streamText = "";
+      if (m.run && m.run.stream) onStreamPart({ at: 0, text: m.run.stream });
       scrollToBottom(true);
       requestAnimationFrame(() => requestAnimationFrame(() => chatContainer.classList.remove("is-replaying")));
       return;
@@ -3192,6 +3206,7 @@
       engineRunId = m.runId;
       engineStatus = "running";
       engineTrace = null;
+      streamText = "";
       engineJournal = [];
       engineWait = null;
       subs.clear();
@@ -3206,10 +3221,12 @@
     }
     if (m.runId !== engineRunId) return;
     if (m.type === "learned") { drawLearned(m.changes); return; }
-    if (m.type === "stream") { onStream(m.text); return; }
+    if (m.type === "stream") { onStreamPart(m); return; }
     if (m.type === "entries") {
       engineStatus = m.status;
-      engineTrace = m.trace;
+      // The trace comes whole once, then as what changed.
+      if (m.trace) engineTrace = m.trace;
+      else if (m.traceDelta && engineTrace) engineTrace = FEED.applyTrace(engineTrace, m.traceDelta);
       engineJournal.push(...m.entries);
       for (const entry of m.entries) drawEntry(entry, true);
       if (engineStatus !== "waiting" && !(engineWait && engineWait.sub)) engineWait = null;
