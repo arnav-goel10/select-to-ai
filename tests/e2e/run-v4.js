@@ -1495,6 +1495,8 @@ async function main() {
       let detail;
       try {
         const r = opts && opts.custom ? await opts.custom() : await play(name, startPath, user, opts);
+        // A scenario that drives its own run (not through play) ends on a run too, and the next page may show it.
+        if (r && r.trace && r.trace.id) lastFinishedRun = r.trace.id;
         detail = r.timedOut ? `timed out. answer: ${JSON.stringify(r.answer)} cards: ${JSON.stringify(r.seen.cards)}\n${r.log}` : await check(r);
       } catch (e) { detail = `harness error: ${e.message}`; }
       results.push({ title, detail });
