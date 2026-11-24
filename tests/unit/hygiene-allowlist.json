@@ -3074,17 +3074,6 @@
       "file": "core/policy.js",
       "kind": "markup test",
       "against": [
-        "id"
-      ],
-      "what": [
-        "div"
-      ],
-      "why": "Standard HTML and SVG tag names, the same on every site."
-    },
-    {
-      "file": "core/policy.js",
-      "kind": "markup test",
-      "against": [
         "role"
       ],
       "what": [
@@ -3101,6 +3090,7 @@
       "what": [
         "a",
         "button",
+        "div",
         "input",
         "select",
         "summary",
@@ -3624,7 +3614,7 @@
         "/claude-(?:fable|mythos|haiku-[5-9]|sonnet-[5-9]|opus-(?:[5-9]|4-[7-9]))/i",
         "/claude-(fable|opus|sonnet)|gpt-(5|6)(?![\\w.-]*(mini|nano))|gemini-[\\w.-]*pro|grok-4/i",
         "/gemini-3/i",
-        "/gpt-oss|nemotron|qwen|gemini|deepseek-r|magistral|claude-(fable|mythos|opus|sonnet|haiku-[5-9])|gpt-(5|6)|grok-4|:free|openrouter\\/free/i",
+        "/gpt-oss|nemotron|qwen|gemini|deepseek-(r|flash|v4)|magistral|claude-(fable|mythos|opus|sonnet|haiku-[5-9])|gpt-(5|6)|grok-4|:free|openrouter\\/free/i",
         "/qwen/i",
         ":free",
         "chatgpt",

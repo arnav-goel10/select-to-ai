@@ -59,6 +59,9 @@
 // page's text (textContent, innerText), an element read by its id as a
 // plain property of the window or the document (window.main), a name a
 // source never binds, and hosts under reserved names (.example, .test).
+// Nor are three ways of naming the property read: a template-literal key
+// (el[`id`]), a key held in a variable (el[k]), and a comparison made with
+// Object.is instead of ===.
 // A literal with no letter in it (punctuation, digits, white space) spells
 // no name and is never a finding. The extension's own class, id and value
 // names count as its own only where its .html and .css files declare them
@@ -733,6 +736,15 @@ function findings(src, names = readNames(), own = () => false) {
   // Literals held against an address: parts of an address, not selectors.
   const addressParts = new Set();
   const judged = new Set();
+  // The property an object literal holds a literal under, when it is one
+  // the kind follows: "div" in { id: -1, tagName: "div" } is a tag name,
+  // whichever property of the object the comparison read.
+  const heldUnder = (n, kind) => {
+    const p = n.parent;
+    if (!p || p.type !== "Property" || p.value !== n || p.computed || !p.parent || p.parent.type !== "ObjectExpression") return "";
+    const key = p.key.type === "Identifier" ? p.key.name : p.key.type === "Literal" ? String(p.key.value) : "";
+    return PROPS[kind].has(key) ? AGAINST[key] : "";
+  };
   // Each literal is reported once for every property it is held against.
   const judge = (kind, lits, against) => {
     for (const n of lits) {
@@ -740,7 +752,8 @@ function findings(src, names = readNames(), own = () => false) {
       if (spellsNothing(n)) continue;
       if (kind === "markup" && !n.regex && ownToken(literalText(n))) continue;
       if (kind === "address") addressParts.add(n);
-      for (const label of against) report(KIND_NAME[kind], shown(n), n.loc.start.line, label);
+      const under = heldUnder(n, kind);
+      for (const label of under ? [under] : against) report(KIND_NAME[kind], shown(n), n.loc.start.line, label);
     }
   };
   // Data a page's value is held against that the file never shows: a name

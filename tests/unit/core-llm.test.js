@@ -294,6 +294,26 @@ test("the Claude catalog names the current models and their list prices", () => 
   assert.equal(D.modelProfile("claude-haiku-5-5").thinks, true, "Haiku 5.5 thinks by default, so it gets thinking room and low effort");
 });
 
+test("DeepSeek's V4 line thinks by default wherever it is hosted, and the old names still think as before", () => {
+  for (const m of ["deepseek-flash", "deepseek-v4-pro", "deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash", "deepseek-ai/DeepSeek-V4.1-Flash", "deepseek-ai/DeepSeek-V4-Pro-0813", "deepseek-reasoner"]) {
+    assert.equal(D.modelProfile(m).thinks, true, m);
+    assert.equal(D.modelProfile(m).maxTokens, 6000, m);
+  }
+  assert.equal(D.modelProfile("deepseek-chat").thinks, false);
+});
+
+test("a retired DeepSeek name keeps its rate, and the new presets have their own", () => {
+  assert.deepEqual(D.findModelRates("deepseek-chat"), [0.00028, 0.00042]);
+  assert.deepEqual(D.findModelRates("deepseek-reasoner"), [0.00028, 0.00042]);
+  assert.deepEqual(D.findModelRates("deepseek-ai/DeepSeek-V4.1-Flash"), [0.0003, 0.0012]);
+  assert.deepEqual(D.findModelRates("deepseek-ai/DeepSeek-V4-Pro-0813"), [0.00132, 0.00396]);
+  assert.deepEqual(D.findModelRates("qwen/qwen3.8-27b"), [0.0008, 0.004]);
+  assert.deepEqual(D.findModelRates("qwen/qwen3.8-27b:free"), [0, 0]);
+  for (const p of ["deepseek", "together", "groq", "xai"]) for (const m of D.MODEL_PRESETS[p]) {
+    assert.notDeepEqual(D.findModelRates(m), D.MODEL_PRICES.default, `${p} preset ${m} has its own rate`);
+  }
+});
+
 test("cached prompt tokens are counted in the prompt and charged at a tenth, cache writes at 1.25 times", async () => {
   const seen = [];
   const out = await client([reply(200, anthropicCall({ goal: "go" }))], seen).call({ system: "s", user: "u", tool, tier: "pro" }, cfg({ ...ANTHROPIC, model: "claude-haiku-5-5", liteModel: "claude-haiku-5-5" }));
@@ -316,4 +336,53 @@ test("a model that refuses a temperature is asked again without it, and it is no
   assert.equal(bodies[1].temperature, undefined);
   await c.call({ system: "s", user: "u", tool, tier: "pro" }, cfg());
   assert.equal(seen.filter((x) => x.body).pop().body.temperature, undefined);
+});
+
+// Cached prompt tokens in each provider's own usage shape, as their API
+// docs gave them on 24 Nov 2026. Outside Anthropic the cached tokens are
+// already inside prompt_tokens, so the prompt count does not grow and the
+// prompt is charged at the full input rate.
+const cachedReply = (usage) => toolCall("step", { goal: "go" }, { usage: { completion_tokens: 20, ...usage } });
+const fullRate = (model, prompt, completion) => { const r = D.findModelRates(model); return (prompt / 1000) * r[0] + (completion / 1000) * r[1]; };
+for (const [name, provider, model, usage, cached, cacheWrite] of [
+  ["OpenAI", "openai", "gpt-5.4-mini", { prompt_tokens: 5000, prompt_tokens_details: { cached_tokens: 4096, cache_write_tokens: 512 } }, 4096, 512],
+  ["OpenRouter", "openrouter", "anthropic/claude-sonnet-4.6", { prompt_tokens: 194, prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 100, audio_tokens: 0 } }, 0, 100],
+  ["Groq", "groq", "openai/gpt-oss-120b", { prompt_tokens: 4641, prompt_tokens_details: { cached_tokens: 4608 } }, 4608, 0],
+  ["Cerebras", "cerebras", "qwen-3.8-27b", { prompt_tokens: 3000, prompt_tokens_details: { cached_tokens: 2800 } }, 2800, 0],
+  ["xAI", "xai", "grok-4-6", { prompt_tokens: 32, prompt_tokens_details: { text_tokens: 32, audio_tokens: 0, image_tokens: 0, cached_tokens: 8 } }, 8, 0],
+  ["DeepSeek", "deepseek", "deepseek-flash", { prompt_tokens: 1200, prompt_cache_hit_tokens: 1000, prompt_cache_miss_tokens: 200 }, 1000, 0],
+  ["Mistral", "mistral", "mistral-small-latest", { prompt_tokens: 1013, prompt_tokens_details: { cached_tokens: 1008 } }, 1008, 0],
+  ["Together", "together", "openai/gpt-oss-120b", { prompt_tokens: 3417, prompt_tokens_details: { cached_tokens: 3327 } }, 3327, 0],
+  ["Together, top-level field", "together", "openai/gpt-oss-120b", { prompt_tokens: 1200, cached_tokens: 1000 }, 1000, 0],
+]) {
+  test(`${name}: cached prompt tokens are read from its own usage fields`, async () => {
+    const out = await client([reply(200, cachedReply(usage))], []).call({ system: "s", user: "u", tool, tier: "pro" }, cfg({ provider, model, liteModel: model }));
+    assert.equal(out.usage.prompt, usage.prompt_tokens, "cached tokens are inside prompt_tokens, not added again");
+    assert.equal(out.usage.cached, cached);
+    assert.equal(out.usage.cacheWrite, cacheWrite);
+    assert.ok(Math.abs(out.usage.cost - fullRate(model, usage.prompt_tokens, 20)) < 1e-12, String(out.usage.cost));
+  });
+}
+
+test("the Responses API's cached tokens are read from input_tokens_details and not added to input_tokens", () => {
+  const u = { input_tokens: 15000, input_tokens_details: { cached_tokens: 12000, cache_write_tokens: 3000 }, output_tokens: 2 };
+  assert.deepEqual(LLM.cacheOf(u), { cached: 12000, cacheWrite: 3000, apart: false });
+});
+
+test("DeepSeek's prompt_tokens_details copy of the hit count is read the same", () => {
+  assert.equal(LLM.cacheOf({ prompt_tokens: 1200, prompt_tokens_details: { cached_tokens: 1000 }, prompt_cache_hit_tokens: 1000 }).cached, 1000);
+});
+
+test("a usage with no cached count, as Gemini's OpenAI endpoint sends it, reads as none cached", () => {
+  assert.deepEqual(LLM.cacheOf({ prompt_tokens: 800, completion_tokens: 20, total_tokens: 820 }), { cached: 0, cacheWrite: 0, apart: false });
+});
+
+test("Together's nested count wins over its top-level one, as its own example reads them", () => {
+  assert.equal(LLM.cacheOf({ prompt_tokens: 1200, prompt_tokens_details: { cached_tokens: 900 }, cached_tokens: 1000 }).cached, 900);
+  assert.equal(LLM.cacheOf({ prompt_tokens: 1200, cached_tokens: 1000 }).cached, 1000);
+});
+
+test("Anthropic's cache fields stay counted apart from input_tokens", () => {
+  assert.deepEqual(LLM.cacheOf({ input_tokens: 1000, cache_read_input_tokens: 6000, cache_creation_input_tokens: 50, output_tokens: 1 }), { cached: 6000, cacheWrite: 50, apart: true });
+  assert.deepEqual(LLM.cacheOf({ prompt_tokens: 100 }), { cached: 0, cacheWrite: 0, apart: false });
 });
