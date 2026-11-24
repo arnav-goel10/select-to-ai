@@ -326,6 +326,7 @@
   async function loadSettings(session) {
     const items = await storedItems();
     debuggerDisabled = items.agentDebuggerMode === "off";
+    if (!verdicts) verdicts = items[VERDICTS_KEY] && typeof items[VERDICTS_KEY] === "object" ? items[VERDICTS_KEY] : { items: {} };
     session.items = items;
     session.cfg = LLM.settingsFrom(items, Date.now());
     // What this model is shown and asked for in one step (defaults.js).
@@ -343,6 +344,45 @@
     session.extras.settings = { extraInstructions: String(items.agentExtraInstructions || "").slice(0, 2000) };
     await loadMemory();
     return items;
+  }
+
+  // ------------------------------------------------------- press verdicts
+  // What the page-blind press check said of each press entry, kept across
+  // runs in local storage: definite answers only (never a failure, a time
+  // out or an "unsure"), each stamped with the judge it came from (its
+  // prompt, tool and model, agentTools.js judgeStamp). A verdict from
+  // another judge, or one older than VERDICT_DAYS, is not used. At most
+  // VERDICTS_KEPT are kept; the one used longest ago goes first.
+  const VERDICTS_KEY = "agentPressVerdicts";
+  const VERDICT_DAYS = 30;
+  const VERDICTS_KEPT = 3000;
+  let verdicts = null;
+  const judgeOf = (session) => { const c = session.cfg || {}; return TOOLS.judgeStamp(`${c.provider || ""}/${c.helperModel || c.model || ""}`); };
+
+  /** The kept verdicts this session's judge may use: {key: does}. */
+  function verdictView(session) {
+    const out = {};
+    if (!verdicts || !verdicts.items || !session.cfg) return out;
+    const stamp = judgeOf(session);
+    const since = Date.now() - VERDICT_DAYS * 86400000;
+    for (const [key, v] of Object.entries(verdicts.items)) if (v && v.s === stamp && v.j >= since) out[key] = v.d;
+    return out;
+  }
+
+  /** Verdicts a run reached (set), or kept ones it used (used), written back. */
+  function keepVerdicts(session, fx) {
+    if (!session.cfg) return;
+    if (!verdicts) verdicts = { items: {} };
+    const now = Date.now();
+    const stamp = judgeOf(session);
+    for (const [key, does] of Object.entries(fx.set || {})) verdicts.items[key] = { d: does, s: stamp, j: now, u: now };
+    for (const key of fx.used || []) if (verdicts.items[key]) verdicts.items[key].u = now;
+    const keys = Object.keys(verdicts.items);
+    if (keys.length > VERDICTS_KEPT) {
+      keys.sort((a, b) => (verdicts.items[a].u || 0) - (verdicts.items[b].u || 0));
+      for (const key of keys.slice(0, keys.length - VERDICTS_KEPT)) delete verdicts.items[key];
+    }
+    quiet(chrome.storage.local.set({ [VERDICTS_KEY]: verdicts }));
   }
 
   // -------------------------------------------------------------------- view
@@ -385,7 +425,7 @@
       else if (!r || r.token !== event.ctoken) return;
     }
     const env = {
-      now: Date.now(), page: session.page, settings: session.settings, extras: session.extras, memory,
+      now: Date.now(), page: session.page, settings: session.settings, extras: session.extras, memory, pressCache: verdictView(session),
       childEnv: (id) => { const r = session.runners.get(id); return r ? { page: r.page, extras: r.extras } : { page: null, extras: {} }; },
     };
     const waiting = waitsOf(run);
@@ -423,6 +463,7 @@
     else if (fx.type === "act") toFront(session, fx.action).then(() => (RECIPES ? RECIPES.around(session, fx.action, () => act(session, fx.action, fx.keys === true)) : act(session, fx.action, fx.keys === true))).then(settledFor).then(pointed).then((result) => lookAgain(session, result, back)).then((result) => back({ type: "acted", result }), (e) => back({ type: "acted", result: { ok: false, message: String((e && e.message) || e) } })).finally(() => timed("act"));
     else if (fx.type === "attention") attention(rootOf(session), fx.wait, !!fx.again).catch((e) => console.error("Select to AI attention:", e));
     else if (fx.type === "memory") changeMemory(fx).catch((e) => console.error("Select to AI memory:", e));
+    else if (fx.type === "verdicts") keepVerdicts(session.parent || session, fx);
     else if (fx.type === "end") finished(session);
   }
 
@@ -827,6 +868,21 @@
    * page is read again, and when that control is gone or now says something
    * else, nothing is done and the run decides again on the page as it is.
    */
+  /**
+   * For a press on a control the page-blind check judges by its names
+   * (agentTools.js pressEntryOf), those names as the page was read: the
+   * content script presses only while the control still has them, so a
+   * label a script changes after the check is not pressed on its old
+   * verdict. The step is taken again on the page as it is now.
+   */
+  function namesOf(session, a) {
+    if (!a || a.ref === undefined) return {};
+    const page = session.page || {};
+    const el = (page.elements || []).find((e) => e.id === a.ref);
+    const judged = el && TOOLS.pressEntryOf(el, page);
+    return judged && judged.entry ? { names: { accName: String(el.accName || ""), text: String(el.text || "") } } : {};
+  }
+
   async function approvedChanged(session, a) {
     if (a.approved === undefined || a.ref === undefined) return null;
     const tab = await quiet(chrome.tabs.get(session.run.tabId));
@@ -916,27 +972,41 @@
   async function model(session, fx, back) {
     const run = session.run;
     const startedAt = Date.now();
-    session.abort = new AbortController();
+    // Calls may run side by side (a step and the page's press check): each
+    // has its own way to be stopped, and stopping the session stops them all.
+    const ctl = new AbortController();
+    const live = session.liveCalls || (session.liveCalls = new Set());
+    live.add(ctl);
+    session.abort = { abort: () => { for (const c of live) c.abort(); } };
     session.calling = true;
+    // A call given a time limit is stopped when it runs out, and reported as timed out.
+    let timedOut = false;
+    const timer = fx.timeoutMs > 0 ? setTimeout(() => { timedOut = true; ctl.abort(); }, fx.timeoutMs) : null;
+    // Only a step's reply is shown as it is written: the checks beside it are not.
+    const shows = !session.parent && fx.purpose !== "labels" && fx.purpose !== "opinion";
+    const tag = fx.tag !== undefined ? { tag: fx.tag } : {};
     let last = 0;
     try {
       const out = await clientFor().call({
-        system: fx.system, user: fx.user, tool: fx.tool, tier: fx.tier, effort: fx.effort, image: fx.image, reasks: fx.reasks, signal: session.abort.signal,
+        system: fx.system, user: fx.user, tool: fx.tool, tier: fx.tier, effort: fx.effort, image: fx.image, reasks: fx.reasks, signal: ctl.signal,
         // A sub-task's reply as it is written is not shown: its steps are.
-        onText: (text) => { const t = Date.now(); if (!session.parent && t - last > 150) { last = t; post(session, { type: "stream", runId: run.id, text: String(text).slice(-6000) }); } },
+        onText: (text) => { const t = Date.now(); if (shows && t - last > 150) { last = t; post(session, { type: "stream", runId: run.id, text: String(text).slice(-6000) }); } },
       }, session.cfg);
-      if (!session.parent) post(session, { type: "stream", runId: run.id, text: "" });
+      if (shows) post(session, { type: "stream", runId: run.id, text: "" });
       if (out.left) noteAllowance(out.provider, out.left);
-      back({ type: "model_replied", purpose: fx.purpose, reply: out.reply, usage: out.usage, ms: Date.now() - startedAt });
+      back({ type: "model_replied", purpose: fx.purpose, ...tag, reply: out.reply, usage: out.usage, ms: Date.now() - startedAt });
     } catch (e) {
-      if (!session.parent) post(session, { type: "stream", runId: run.id, text: "" });
+      if (shows) post(session, { type: "stream", runId: run.id, text: "" });
+      if (timedOut) { back({ type: "model_failed", purpose: fx.purpose, ...tag, kind: "timeout", message: "The check took too long.", usage: null, ms: Date.now() - startedAt }); return; }
       if (e && e.kind === "aborted") return;
       // A spent allowance: when it comes back, for the run to be held until then.
       const limit = e && e.kind === "limit" && e.limit ? { kind: e.limit.kind || "", resetAt: e.limit.resetAt || 0, short: e.limit.short || "" } : null;
       if (limit && limit.resetAt && e.provider) noteAllowance(e.provider, { remaining: 0, limit: e.limit.limit || 0, resetAt: limit.resetAt });
-      back({ type: "model_failed", purpose: fx.purpose, kind: (e && e.kind) || "model", message: (e && e.message) || "The model request failed.", usage: (e && e.usage) || null, waitMs: (e && e.waitMs) || 0, ...(limit ? { limit } : {}), ms: Date.now() - startedAt });
+      back({ type: "model_failed", purpose: fx.purpose, ...tag, kind: (e && e.kind) || "model", message: (e && e.message) || "The model request failed.", usage: (e && e.usage) || null, waitMs: (e && e.waitMs) || 0, ...(limit ? { limit } : {}), ms: Date.now() - startedAt });
     } finally {
-      session.calling = false;
+      if (timer) clearTimeout(timer);
+      live.delete(ctl);
+      session.calling = live.size > 0;
     }
   }
 
@@ -1158,12 +1228,12 @@
     switch (a.do) {
       // A press the user approved is made once: the page is not pressed another way when it shows no answer.
       // Any other is made with Enter or Space too only where those keys were allowed on it (keys).
-      case "click": return interact(session, a, { action: "click", id: a.ref, ...spotOf(a), ...(onceIf(a).once ? { once: true } : keys ? { keys: true } : {}) }, true);
+      case "click": return interact(session, a, { action: "click", id: a.ref, ...spotOf(a), ...namesOf(session, a), ...(onceIf(a).once ? { once: true } : keys ? { keys: true } : {}) }, true);
       case "hover": return interact(session, a, { action: "hover", id: a.ref, ...spotOf(a) }, false);
       // The other whole gestures on a control: each is the page's own sequence of events (agentContentScript.js).
-      case "double_click": return interact(session, a, { action: "double_click", id: a.ref, ...spotOf(a), ...onceIf(a) }, true);
-      case "right_click": return interact(session, a, { action: "right_click", id: a.ref, ...spotOf(a), ...onceIf(a) }, false);
-      case "hold": return interact(session, a, { action: "hold", id: a.ref, seconds: a.seconds, ...spotOf(a), ...onceIf(a) }, true);
+      case "double_click": return interact(session, a, { action: "double_click", id: a.ref, ...spotOf(a), ...namesOf(session, a), ...onceIf(a) }, true);
+      case "right_click": return interact(session, a, { action: "right_click", id: a.ref, ...spotOf(a), ...namesOf(session, a), ...onceIf(a) }, false);
+      case "hold": return interact(session, a, { action: "hold", id: a.ref, seconds: a.seconds, ...spotOf(a), ...namesOf(session, a), ...onceIf(a) }, true);
       case "click_at": {
         // What is at the point, as the decision on it saw it: the page
         // checks it is still that before it presses.
@@ -2318,6 +2388,9 @@
   // What the next call would be made with. Two settings that give the same are the same to a held run.
   const callWith = (cfg) => JSON.stringify([cfg.provider, cfg.apiKey, cfg.baseUrl, cfg.model, cfg.liteModel, cfg.helperModel, cfg.backup, cfg.keyProblem]);
   if (chrome.storage && chrome.storage.onChanged) chrome.storage.onChanged.addListener((changes) => {
+    // Reset in Settings removed the kept press verdicts: the copy held here goes too,
+    // so a run that ends later does not write them back.
+    if (changes && changes[VERDICTS_KEY] && changes[VERDICTS_KEY].newValue === undefined) verdicts = null;
     // The user agreed somewhere (Settings, the agent's page): a run kept held for want of that is tried.
     if (changes && changes.agentDataConsent) {
       for (const s of sessions.values()) if (s.holdNeeds) resumeHeld(s, null, "user").catch((e) => console.error("Select to AI engine:", e));
@@ -2645,5 +2718,5 @@
   }
 
   // release and attention are exported for the scripted tests, as wake is.
-  root.SELECT_TO_AI_ENGINE = Object.freeze({ sessions, effectOf, wake, loadMemory, changeMemory, release, joinFrame, scan, interact, attention });
+  root.SELECT_TO_AI_ENGINE = Object.freeze({ sessions, keptVerdicts: () => verdicts, effectOf, wake, loadMemory, changeMemory, release, joinFrame, scan, interact, attention });
 })(typeof globalThis !== "undefined" ? globalThis : this);

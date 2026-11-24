@@ -8,6 +8,9 @@ const assert = require("node:assert/strict");
 const LLM = require("../../extension/core/llm.js");
 const D = require("../../extension/defaults.js");
 const RUN = require("../../extension/core/run.js");
+// The page-blind press check, answered at once by a stand-in for its model.
+const JUDGE = require("../helpers/fake-judge.js");
+const advance = JUDGE.judging(RUN);
 
 const sse = (chunks) => chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("") + "data: [DONE]\n\n";
 /** A streamed tool call whose arguments are exactly `raw`, sent in two pieces as providers do. */
@@ -255,30 +258,30 @@ test("after a step's asks are used up, the run asks once at a time until it stop
   const page = { url: "https://shop.example/", title: "Shop", scrollY: 0, viewportHeight: 900, pageHeight: 900, visibleText: "Blue Widget $19", innerText: "Blue Widget $19", elements: [{ id: 3, tagName: "a", accName: "Blue Widget", url: "https://shop.example/p/blue-widget" }] };
   const env = { now: 1000, page, settings: { riskConfirmation: true, allowlist: "", verify: true }, extras: {} };
   const run = RUN.newRun({ id: "r1", task: "find blue widgets", tabId: 7, startUrl: page.url, marker: "PAGE-abcd1234", now: 1 });
-  RUN.advance(run, { type: "start" }, env);
-  let fx = RUN.advance(run, { type: "observed", page }, env);
+  advance(run, { type: "start" }, env);
+  let fx = advance(run, { type: "observed", page }, env);
   assert.equal(fx[0].type, "model");
   assert.equal(fx[0].reasks, undefined, "the first ask has the call's full budget");
-  const failed = () => RUN.advance(run, { type: "model_failed", purpose: "step", kind: "no_action", message: "The model kept replying without an action.", usage: { prompt: 50, completion: 5, cost: 0 } }, env);
+  const failed = () => advance(run, { type: "model_failed", purpose: "step", kind: "no_action", message: "The model kept replying without an action.", usage: { prompt: 50, completion: 5, cost: 0 } }, env);
   fx = failed();
   assert.equal(fx[0].type, "model");
   assert.equal(fx[0].reasks, 0, "the next ask is a single request");
   // A usable step gives the next step its full budget back.
-  fx = RUN.advance(run, { type: "model_replied", purpose: "step", reply: { memory: "", goal: "g", actions: [{ do: "click", ref: 3 }] }, usage: {} }, env);
+  fx = advance(run, { type: "model_replied", purpose: "step", reply: { memory: "", goal: "g", actions: [{ do: "click", ref: 3 }] }, usage: {} }, env);
   assert.equal(fx[0].type, "act", JSON.stringify(run.journal.slice(-2)));
-  RUN.advance(run, { type: "acted", result: { ok: true, message: "Done.", pageChanged: true } }, env);
-  fx = RUN.advance(run, { type: "observed", page }, env);
+  advance(run, { type: "acted", result: { ok: true, message: "Done.", pageChanged: true } }, env);
+  fx = advance(run, { type: "observed", page }, env);
   assert.equal(fx[0].reasks, undefined);
   // A call that names a step the run cannot use is still a call: the ask after it has its full budget.
   assert.equal(failed()[0].reasks, 0);
-  fx = RUN.advance(run, { type: "model_replied", purpose: "step", reply: { memory: "", goal: "g", actions: [{ do: "click", ref: 999 }] }, usage: {} }, env);
-  if (fx[0].type === "observe") fx = RUN.advance(run, { type: "observed", page }, env);
+  fx = advance(run, { type: "model_replied", purpose: "step", reply: { memory: "", goal: "g", actions: [{ do: "click", ref: 999 }] }, usage: {} }, env);
+  if (fx[0].type === "observe") fx = advance(run, { type: "observed", page }, env);
   assert.equal(fx[0].type, "model", JSON.stringify(fx));
   assert.equal(fx[0].reasks, undefined, "the model did call the tool");
-  fx = RUN.advance(run, { type: "model_replied", purpose: "step", reply: { memory: "", goal: "g", actions: [{ do: "click", ref: 3 }] }, usage: {} }, env);
+  fx = advance(run, { type: "model_replied", purpose: "step", reply: { memory: "", goal: "g", actions: [{ do: "click", ref: 3 }] }, usage: {} }, env);
   assert.equal(fx[0].type, "act");
-  RUN.advance(run, { type: "acted", result: { ok: true, message: "Done.", pageChanged: true } }, env);
-  RUN.advance(run, { type: "observed", page }, env);
+  advance(run, { type: "acted", result: { ok: true, message: "Done.", pageChanged: true } }, env);
+  advance(run, { type: "observed", page }, env);
   // Three in a row end the run: 4 + 1 + 1 requests at most.
   assert.equal(failed()[0].reasks, 0);
   assert.equal(failed()[0].reasks, 0);

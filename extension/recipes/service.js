@@ -93,8 +93,16 @@
     recordings.delete(runId);
   }
 
-  /** The agent's commit-like judgment of an action, as its own risk checks see it. */
-  function judgedCommit(a, page) {
+  /**
+   * The agent's commit-like judgment of an action, as its own risk checks
+   * see it: a step the page's structure holds, or a press the page-blind
+   * check has to judge. A press the check called harmless in this run is
+   * still recorded as a commit, so a replay never presses it free on an
+   * old answer. A link is the one exception, since the recording sees
+   * whether the browser followed it (mayHaveWritten): it is a commit only
+   * when the run's check said it commits. That answer can only tighten.
+   */
+  function judgedCommit(a, page, opinions) {
     const POLICY = need("SELECT_TO_AI_POLICY");
     const TOOLS = need("SELECT_TO_AI_TOOLS");
     if (!POLICY || !TOOLS || !page) return false;
@@ -104,8 +112,11 @@
     try {
       const risk = TOOLS.actionRisk(risky, page, null);
       if (risk && COMMIT_KINDS.has(risk.kind)) return true;
-      // A button whose effect its words do not make plain is held as a commit.
-      return !!TOOLS.pressCheckOf(risky, page);
+      const press = TOOLS.pressFor(risky, page);
+      if (!press || !press.entry) return false;
+      if (press.entry.kind !== "link") return true;
+      const said = opinions && opinions[press.entry.key];
+      return !!said && (said.unanswered || said.does !== "none");
     } catch (_) { return false; }
   }
 
@@ -184,8 +195,8 @@
   }
 
   /** The recorder call for one agent action. */
-  function recorderCall(r, a, page) {
-    const commit = judgedCommit(a, page) ? { class: "commit" } : {};
+  function recorderCall(r, a, page, opinions) {
+    const commit = judgedCommit(a, page, opinions) ? { class: "commit" } : {};
     switch (a.do) {
       case "navigate": return r.rec.goto(a.url);
       case "back": return r.rec.back();
@@ -251,7 +262,7 @@
         }
       }
       r.pending = doIt;
-      await recorderCall(r, a, session.page);
+      await recorderCall(r, a, session.page, run.opinions);
       r.steps++;
       // No view of what the press sent: when the recording cannot tell, it is a commit.
       const taped = r.rec.tape[r.rec.tape.length - 1];

@@ -6,6 +6,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const RUN = require("../../extension/core/run.js");
 const STEP = require("../../extension/core/step.js");
+const POLICY = require("../../extension/core/policy.js");
+// The page-blind press check, answered at once by a stand-in for its model.
+const JUDGE = require("../helpers/fake-judge.js");
 
 const shopPage = (host, item, price, extra) => ({
   url: `https://${host}/`, title: `${host} shop`, scrollY: 0, viewportHeight: 900, pageHeight: 900,
@@ -40,7 +43,16 @@ function harness(task, settings) {
   const run = RUN.newRun({ id: "r1", task, tabId: 7, startUrl: home.url, marker: "PAGE-abcd1234", now: 1 });
   RUN.advance(run, { type: "start" }, env());
   const first = RUN.advance(run, { type: "observed", page: home }, env());
-  const child = (id, event) => RUN.advance(run, { type: "child", child: id, event }, env());
+  // Each press check a sub-task asks is answered at once by the stand-in.
+  const child = (id, event) => {
+    const out = [];
+    for (const f of RUN.advance(run, { type: "child", child: id, event }, env())) {
+      if (f.type === "child_fx" && f.fx.type === "verdicts") continue;
+      if (f.type === "child_fx" && JUDGE.isCheck(f.fx)) { out.push(...child(f.child, { type: "model_replied", purpose: "labels", tag: f.fx.tag, reply: JUDGE.answer(f.fx), usage: {} })); continue; }
+      out.push(f);
+    }
+    return out;
+  };
   return { run, pages, env, first, child };
 }
 
@@ -124,9 +136,9 @@ test("delegate starts its sub-tasks, each answers, and the run carries on with b
   const t = RUN.trace(h.run);
   assert.equal(t.ownSteps, 2);
   assert.equal(t.steps, 2 + 2 + 2);
-  assert.equal(t.calls, 4, "two parent steps and one step in each sub-task");
+  assert.equal(t.calls, 6, "two parent steps, and in each sub-task one step and the press check on its page");
   assert.equal(t.children.length, 2);
-  assert.equal(t.children[0].calls, 1);
+  assert.equal(t.children[0].calls, 2);
   assert.ok(t.history.some((x) => x.sub === "r1-s2" && /^navigate/.test(x.action)));
   assert.ok(Math.abs(t.costUSD - 0.002) < 1e-9);
 });
@@ -207,7 +219,7 @@ test("the cost budget counts the sub-tasks' model calls, and stops them with the
 
 test("the model-call guard counts the sub-tasks' calls: their next steps wait for the user's say", () => {
   const h = harness("Price at two shops.");
-  h.run.callCeiling = 3;
+  h.run.callCeiling = 4;
   delegate(h, [{ task: "A", url: "https://a.example/" }, { task: "B", url: "https://b.example/" }]);
   for (const [id, host] of [["r1-s1", "a.example"], ["r1-s2", "b.example"]]) {
     h.child(id, { type: "spawned", tabId: id === "r1-s1" ? 101 : 102 });
@@ -218,10 +230,10 @@ test("the model-call guard counts the sub-tasks' calls: their next steps wait fo
   let fx = h.child("r1-s1", { type: "observed", page: h.pages["r1-s1"] });
   assert.equal(fx[0].fx.type, "model");
   fx = h.child("r1-s1", { type: "model_replied", reply: { note: "", goal: "look", do: "find", query: "price" }, usage: usage() });
-  assert.equal(h.run.usage.calls, 2);
+  assert.equal(h.run.usage.calls, 3, "the delegate step, the sub-task's press check and its step");
   fx = h.child("r1-s1", { type: "acted", result: { ok: true, message: "found" } });
   fx = h.child("r1-s1", { type: "observed", page: h.pages["r1-s1"] });
-  assert.equal(fx[0].fx.type, "model", "two calls of three: on it goes");
+  assert.equal(fx[0].fx.type, "model", "three calls of four: on it goes");
   h.child("r1-s1", { type: "model_replied", reply: { note: "", goal: "look", do: "find", query: "stock" }, usage: usage() });
   h.child("r1-s1", { type: "acted", result: { ok: true, message: "found" } });
   fx = h.child("r1-s1", { type: "observed", page: h.pages["r1-s1"] });
@@ -233,7 +245,8 @@ test("the model-call guard counts the sub-tasks' calls: their next steps wait fo
   fx = h.child("r1-s2", { type: "observed", page: h.pages["r1-s2"] });
   assert.deepEqual(fx, []);
   fx = RUN.advance(h.run, { type: "keep_going", id: h.run.wait.id }, h.env());
-  assert.deepEqual(fx.map((f) => `${f.child}:${f.fx.type}`).sort(), ["r1-s1:model", "r1-s2:model"]);
+  // The held press check on r1-s2's page goes out with its step.
+  assert.deepEqual(fx.map((f) => `${f.child}:${f.fx.type}:${f.fx.purpose}`).sort(), ["r1-s1:model:step", "r1-s2:model:labels", "r1-s2:model:step"]);
   assert.equal(h.run.status, "running");
 });
 
@@ -306,4 +319,19 @@ test("a run saved mid-delegation picks its sub-tasks back up", () => {
   const saved = JSON.parse(JSON.stringify(RUN.toStored(h.run)));
   const fx = RUN.advance(saved, { type: "resume" }, h.env());
   assert.deepEqual(fx.map((f) => (f.type === "spawn" ? `spawn ${f.child}` : `${f.child}:${f.fx.type}`)), ["r1-s1:observe", "spawn r1-s2"]);
+});
+
+test("what a sub-task's press check said is the run's: opening a link it said commits is held in the run too", () => {
+  const h = harness("Check the newsletter at shop A.");
+  delegate(h, [{ task: "Read the newsletter page at shop A.", url: "https://a.example/" }]);
+  const href = "https://a.example/news/unsubscribe?u=7";
+  const page = shopPage("a.example", "Newsletter", "free", { elements: [{ id: 3, tagName: "a", accName: "Unsubscribe", url: href }, { id: 4, tagName: "a", accName: "Archive", url: "https://a.example/news/archive" }], forms: [] });
+  playChild(h, "r1-s1", page, "The newsletter is free.", "Newsletter costs free");
+  assert.equal(h.run.children[0].state, "ended");
+  // The address was never on a page this run read itself.
+  const v = POLICY.decide({ do: "navigate", url: href }, home, h.run, { riskConfirmation: true });
+  assert.equal(v.verdict, "confirm", "held as the sub-task's press on the link would have been");
+  assert.equal(v.kind, "delete");
+  // A link it said commits nothing is opened as before.
+  assert.notEqual(POLICY.decide({ do: "navigate", url: "https://a.example/news/archive" }, home, h.run, { riskConfirmation: true }).verdict, "confirm");
 });

@@ -22,6 +22,7 @@
 
 const http = require("node:http");
 const { simplePdf } = require("../helpers/pdf-writer.js");
+const JUDGE = require("../helpers/fake-judge.js");
 
 // A two-page statement with Flate-compressed pages (pdfText scenario).
 const STATEMENT_PDF = simplePdf([
@@ -1001,18 +1002,22 @@ const FIXTURES = {
      <script>document.getElementById('file').addEventListener('dragstart', (e) => e.dataTransfer.setData('text/plain', 'report')); const bin = document.getElementById('bin'); bin.addEventListener('dragover', (e) => e.preventDefault()); bin.addEventListener('drop', (e) => { e.preventDefault(); window.binned = true; });</script>`,
   ),
 
-  // A field of chosen values with an x on each, and a saved record with a
-  // Remove button below it. Plain HTML: the x edits the field, the Remove
+  // A field of chosen values with an x on each, in a profile form that has
+  // its own Save, and a saved record with a Remove button below it. Plain
+  // HTML: the x stages an edit the form's Save would send, the Remove
   // deletes something saved.
   "/field-chips": pageShell(
     "Profile",
     `<h1>Profile</h1>
+     <form id="profile" action="/profile" method="post" onsubmit="event.preventDefault()">
      <label id="colours-label" for="colours-input">Favourite colours</label>
      <div id="colours" style="display:flex;gap:6px;align-items:center;border:1px solid #888;padding:4px;max-width:420px">
        <span class="chip" data-value="purple">Purple <button type="button" aria-label="Remove Purple">\u00d7</button></span>
        <span class="chip" data-value="red">Red <button type="button" aria-label="Remove Red">\u00d7</button></span>
        <input id="colours-input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="colours-label" style="flex:1">
      </div>
+     <button>Save profile</button>
+     </form>
      <h2>Saved addresses</h2>
      <ul><li>12 Harbour Road, Springfield <button type="button" id="forget">Remove</button></li></ul>
      <script>
@@ -1972,6 +1977,7 @@ function createE2EServer(port = 8907) {
           state.llmCalls = 0;
           state.models = [];
           state.opinions = [];
+          state.pressChecks = [];
           state.verdicts = 0;
           respond(200, JSON.stringify({ ok: true, task: scenarios[name].task }), "application/json");
         } catch (err) {
@@ -2003,7 +2009,7 @@ function createE2EServer(port = 8907) {
     if (pathname === "/control/log" && req.method === "GET") {
       respond(
         200,
-        JSON.stringify({ scenario: state.scenarioName, actions: state.actionLog, llmCalls: state.llmCalls, models: state.models || [], collected: state.collected || 0, prompts: state.prompts || [], learnCalls: state.learnCalls || 0, contextCalls: state.contextCalls || 0, addressedChecks: state.addressedChecks || 0, opinions: state.opinions || [] }),
+        JSON.stringify({ scenario: state.scenarioName, actions: state.actionLog, llmCalls: state.llmCalls, models: state.models || [], collected: state.collected || 0, prompts: state.prompts || [], learnCalls: state.learnCalls || 0, contextCalls: state.contextCalls || 0, addressedChecks: state.addressedChecks || 0, opinions: state.opinions || [], pressChecks: state.pressChecks || [] }),
         "application/json",
       );
       return;
@@ -2057,11 +2063,16 @@ function createE2EServer(port = 8907) {
           // The meaning check on a fact about to be kept, in a scenario that proposes one.
           state.addressedChecks = (state.addressedChecks || 0) + 1;
           sse = sseToolCall("addressed_check", { addressed: false });
-        } else if (toolName === "form_check" || toolName === "press_check") {
+        } else if (toolName === "form_check") {
           // A second opinion: what it was shown is kept, so a test can prove it never saw the page.
-          const said = scenario && scenario.opinion ? scenario.opinion(toolName, userText) : toolName === "form_check" ? { sends: true, why: "Scripted: it sends." } : { does: "nothing", why: "Scripted: nothing of note." };
+          const said = scenario && scenario.opinion ? scenario.opinion(toolName, userText) : { sends: true, why: "Scripted: it sends." };
           (state.opinions = state.opinions || []).push({ tool: toolName, text: systemText });
           sse = sseToolCall(toolName, said);
+        } else if (toolName === "press_check") {
+          // The page-blind press check, answered by the test's stand-in judge
+          // (tests/helpers/fake-judge.js) from the numbered entries it was sent.
+          (state.pressChecks = state.pressChecks || []).push({ text: systemText });
+          sse = sseToolCall(toolName, JUDGE.answer({ user: userText }, scenario && scenario.presses));
         } else if (toolName === "verdict") {
           const pass = scenario && scenario.verdicts ? scenario.verdicts[Math.min(state.verdicts, scenario.verdicts.length - 1)] !== false : true;
           state.verdicts = (state.verdicts || 0) + 1;

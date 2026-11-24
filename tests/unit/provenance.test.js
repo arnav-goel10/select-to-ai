@@ -159,9 +159,10 @@ test("what a page says decides no hold: ordinary steps go through, and risky one
     assert.equal(T.actionRisk({ action: "type", id: 6, text: "x" }, p, ctx()).kind, "secret", name);
     assert.equal(T.actionRisk({ action: "read", part: 1 }, p, ctx()), null);
   }
-  assert.equal(T.actionRisk({ action: "click", id: 2 }, plain, ctx()).kind, "pay");
-  assert.equal(T.actionRisk({ action: "click", id: 3 }, plain, ctx()).kind, "send");
-  assert.equal(T.actionRisk({ action: "click", id: 4 }, plain, ctx()).kind, "delete");
+  // What the buttons do is put to the page-blind check, asked the same question on every page.
+  const asked = (p) => T.labelsMessages(T.pressEntries(p), p.url).user;
+  for (const innerText of Object.values(texts)) assert.equal(asked(page("https://shop.example.com/item", { innerText, elements: items })), asked(plain));
+  assert.deepEqual(T.pressEntries(plain).map((e) => e.names[0]), ["Place order", "Send message", "Delete account", "Reviews"]);
 });
 
 const tab = (id, title, url, lastAccessed) => ({ id, title, url, lastAccessed: lastAccessed || id });

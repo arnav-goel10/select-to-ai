@@ -160,6 +160,7 @@
       key: { type: "string", description: "press: the key name." },
       times: { type: "integer", description: "press: how many times in a row, when more than once." },
       url: { type: "string", description: "navigate, tabs open: a full https address." },
+      commits: { type: "boolean", description: "Whether this action, if it works, commits the user to something: true when it pays, sends, submits, deletes, cancels, joins, leaves, accepts or rejects for them; false when it only moves, opens, shows, chooses or searches, or presses nothing." },
     };
     return {
       name: "step",
@@ -221,7 +222,7 @@
             },
           }),
         },
-        required: ["note", "goal", "do"],
+        required: ["note", "goal", "do", "commits"],
       },
     };
   }
@@ -287,7 +288,7 @@
   }
 
   // Every field the step tool has, at the top level or in an action.
-  const FIELDS = Object.freeze(["note", "rewrite_notes", "memory", "goal", "do", "ref", "fx", "fy", "to_ref", "to_text", "place", "to_fx", "to_fy", "distance", "x", "y", "value", "from", "key", "times", "url", "direction", "query", "part", "op", "tab", "seconds", "scope", "kind", "question", "success", "answer", "evidence", "tasks", "then"]);
+  const FIELDS = Object.freeze(["note", "rewrite_notes", "memory", "goal", "do", "commits", "ref", "fx", "fy", "to_ref", "to_text", "place", "to_fx", "to_fy", "distance", "x", "y", "value", "from", "key", "times", "url", "direction", "query", "part", "op", "tab", "seconds", "scope", "kind", "question", "success", "answer", "evidence", "tasks", "then"]);
   const PARAM_TAG = /<parameter=\s*["']?([A-Za-z_]+)["']?\s*>/g;
 
   /**
@@ -472,6 +473,9 @@
       }
     }
     if (name === "wait") out.seconds = Math.min(10, Math.max(0.5, Number(a.seconds) || 2));
+    // What the step says of a press: true holds it for the user (policy.js);
+    // false, or nothing said, leaves it to the checks.
+    if ((AIMED.includes(name) || name === "click_at" || name === "press") && (a.commits === true || a.commits === "true")) out.commits = true;
     // Looking for words is find, whichever of the two it was asked of.
     if (name === "read" && a.query !== undefined && String(a.query).trim()) { name = "find"; out.do = "find"; }
     if (name === "read" && asInt(a.part) !== null) out.part = Math.max(1, asInt(a.part));

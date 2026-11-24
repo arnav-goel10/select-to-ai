@@ -26,6 +26,22 @@ on:
         description: Run one live call per default model (uses repo secrets)
         type: boolean
         default: false
+      press_eval:
+        description: Put the press check to a live model (uses the Anthropic secret)
+        type: boolean
+        default: false
+      press_eval_model:
+        description: Model for the press check eval
+        type: string
+        default: claude-haiku-5-5
+      press_eval_repeat:
+        description: Times each page of the press check eval is asked
+        type: string
+        default: "3"
+      press_eval_cap:
+        description: Hard spend cap for the press check eval, in US dollars
+        type: string
+        default: "1"
 
 permissions:
   contents: read
@@ -386,3 +402,32 @@ jobs:
           XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+
+  # The page-blind press check (agentTools.js labelsMessages) on a live
+  # model, by hand only: per-control verdicts, false and missed holds, the
+  # batch latency against the 6 s wait, and the spend, which stops at the cap.
+  press-eval:
+    name: press-eval
+    if: github.event_name == 'workflow_dispatch' && inputs.press_eval
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Press check on a live model
+        run: node tests/decisions/press-eval.js
+        env:
+          PRESS_EVAL_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PRESS_EVAL_PROVIDER: anthropic
+          PRESS_EVAL_MODEL: ${{ inputs.press_eval_model }}
+          PRESS_EVAL_REPEAT: ${{ inputs.press_eval_repeat }}
+          PRESS_EVAL_CAP_USD: ${{ inputs.press_eval_cap }}
+          PRESS_EVAL_REPORT: press-eval.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: press-eval
+          path: press-eval.json
+          if-no-files-found: ignore

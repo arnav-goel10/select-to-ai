@@ -346,7 +346,10 @@ async function main() {
       ["article", "/article", async () => false, (r) => {
         if (!/9:30/.test(r.answer) || !/16:45/.test(r.answer)) return `answer: ${JSON.stringify(r.answer)}`;
         // One step and the check of its answer: an answer on the first step is checked like any other.
-        if (r.llmCalls !== 2) return `a question the page answers took ${r.llmCalls} model calls, not one step and one check`;
+        // The page's press check is sent beside the step, at most once for the page.
+        const pressChecks = r.models.filter((m) => m.tool === "press_check").length;
+        if (pressChecks > 1) return `the page's controls were checked ${pressChecks} times, not once`;
+        if (r.llmCalls - pressChecks !== 2) return `a question the page answers took ${r.llmCalls - pressChecks} model calls besides the press check, not one step and one check`;
         return null;
       }],
       // A request in Spanish about an English page: the step names the

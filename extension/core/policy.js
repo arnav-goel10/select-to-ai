@@ -8,12 +8,14 @@
  *
  * This is the part of the agent that stays rule-based on purpose. It reads
  * the page's structure and where an address came from, never the model's
- * reasons, so nothing a page says can talk it round. Where the rules
- * cannot settle a press (a button in words they cannot read, a form of one
- * box), the verdict carries a `check`: the run asks a second opinion that
- * is never shown the page, and decides again with its answer in
- * run.opinions. An opinion can hold a press the rules let through, and can
- * let a one-box form go without a prompt only by saying plainly that it asks.
+ * reasons, so nothing a page says can talk it round. A press the page's
+ * structure does not settle is decided by what a check that is shown only
+ * the control's markup names said of it (run.opinions, by press entry);
+ * until it has said, the verdict carries a `check` and the run waits for
+ * the page's batch or asks it alone. A form of one box is held as a send
+ * unless its own check says plainly that it asks. The step's own word
+ * that a press commits (commits: true) holds it; its word that a press
+ * does not commit grants nothing.
  *
  * Pure functions: no DOM, no chrome.* calls.
  */
@@ -320,7 +322,10 @@
     const labels = (run && run.labels) || {};
     const names = [...new Set([...found.map(TOOLS.elementLabel), ...refs.map((r) => labels[r]).filter(Boolean)])];
     const rows = [...new Set(found.map((e) => e.group).filter(Boolean))];
-    return { page: addressOf(page && page.url), keys: [...new Set(found.map(controlKey))], names, rows, urls: opensUrl(a) ? [opensUrl(a)] : [] };
+    // A link pressed is its address opened, so opening that address another way is the same step.
+    const links = found.filter((e) => TOOLS.pressKind(e) === "link").map((e) => { try { return addressOf(new URL(String(e.url || e.href), (page && page.url) || undefined).href); } catch (_e) { return ""; } });
+    const urls = [...new Set([opensUrl(a), ...links].filter(Boolean))];
+    return { page: addressOf(page && page.url), keys: [...new Set(found.map(controlKey))], names, rows, urls };
   }
 
   /**
@@ -348,8 +353,24 @@
    * a new action is held to this as well.
    */
   function decide(a, page, run, settings, store, tabs) {
-    const v = judge(a, page, run, settings, store, tabs);
-    if ((settings || {}).riskConfirmation === false || STRENGTH(v) > 2) return v;
+    let v = judge(a, page, run, settings, store, tabs);
+    // With confirmations off nothing is held for approval, so no press is
+    // looked up or waited on either.
+    if ((settings || {}).riskConfirmation === false) return v;
+    // Opening a link's own address is pressing that link another way: it
+    // is decided as a press on it too, and the stronger answer holds. A
+    // link the check said commits is held however it is opened.
+    const link = STRENGTH(v) < 2 ? linkOpened(a, page, run) : null;
+    if (link) {
+      const asPress = link.ref !== undefined ? decide({ do: "click", ref: link.ref }, page, run, settings, store, tabs) : entryVerdict(link.entry, run, link.entry.names[0] || a.url);
+      if (STRENGTH(asPress) > STRENGTH(v)) v = asPress;
+    }
+    if (STRENGTH(v) > 2) return v;
+    // The step said this press commits the user to something: it is held,
+    // whatever the check said. Saying it does not commits grants nothing.
+    if (a.commits === true && v.verdict === "allow" && pressing(a)) {
+      v = { verdict: "confirm", kind: "decide", why: TOOLS.RISK_TEXT.declared, detail: [] };
+    }
     // A key with no ref lands where the focus is: on the control the page
     // shows focused, or the one this step last used.
     const els = (page && page.elements) || [];
@@ -361,6 +382,61 @@
     const said = `You declined "${String(what).slice(0, 80)}" a moment ago. This would do it again${a.do === "click" ? "" : " another way"}.`;
     if (v.verdict === "confirm") return { ...v, detail: [said, ...(v.detail || [])] };
     return { verdict: "confirm", kind: hit.risk || "send", why: said, detail: [], declined: true };
+  }
+
+  /** True for an action that presses something: the pointer on a control or a point, a drag, or a key that presses or submits. */
+  function pressing(a) {
+    if (!a) return false;
+    if (POINTER_PRESSES.includes(a.do) || a.do === "click_at" || a.do === "drag") return true;
+    return a.do === "press" && activatingKey(a.key);
+  }
+
+  /**
+   * The link whose address a navigate or a new tab opens: one on this page
+   * with that exact address ({ref}), or one on a page read earlier whose
+   * check said it commits ({entry}, from run.linkIndex, which run.js keeps
+   * and a sub-task hands back). Null for any other address, which is
+   * judged by where it came from as before.
+   */
+  function linkOpened(a, page, run) {
+    if (!opensUrl(a)) return null;
+    const exact = TOOLS.exactUrl(String(a.url || ""));
+    if (!exact) return null;
+    const here = ((page && page.elements) || []).find((e) => TOOLS.pressKind(e) === "link" && TOOLS.linkAddress(e, page) === exact);
+    if (here) return { ref: here.id };
+    const seen = run && run.linkIndex && run.linkIndex[exact];
+    return seen && seen.key ? { entry: seen } : null;
+  }
+
+  /**
+   * What the run's checks said of a press entry, as a press risk: null for
+   * one that commits nothing, the risk for one that does, and {check} for
+   * one not yet judged. A press the check could not answer for, a button
+   * or a link, is held with the run's one card about the check being down
+   * (kind "unchecked"), never let through on the hope that it is harmless.
+   * Once the user has chosen on that card to carry on without the check
+   * (run.uncheckedOk, cleared when the check answers again), such a press
+   * is {unchecked}: it is decided as with confirmations off for it alone,
+   * so what the page's structure holds, the step's own word that it
+   * commits and the user's declines still hold it.
+   */
+  function entryRisk(entry, run, target) {
+    const said = ((run && run.opinions) || {})[entry.key];
+    if (!said) return { check: true };
+    if (said.unanswered) return run && run.uncheckedOk ? { unchecked: true } : { risk: { kind: "unchecked", why: TOOLS.RISK_TEXT.unchecked, target } };
+    if (said.does === "unsure") return { risk: { kind: "decide", why: TOOLS.RISK_TEXT.unsure, target } };
+    if (["pay", "send", "delete", "decide"].includes(said.does)) return { risk: { kind: said.does, why: TOOLS.RISK_TEXT[said.does], target }, opinion: VERB[said.does] };
+    return {};
+  }
+  const UNCHECKED = Object.freeze({ verdict: "allow", note: "The safety check was not answering, and you chose to carry on without it for this task, so this was not checked." });
+  const VERB = Object.freeze({ pay: "it spends money", send: "it sends something", delete: "it deletes something", decide: "it decides something for you" });
+
+  /** A verdict on pressing an entry alone, for a link opened by its address. */
+  function entryVerdict(entry, run, target) {
+    const r = entryRisk(entry, run, String(target || "").slice(0, 80));
+    if (r.check) return { verdict: "allow", check: { kind: "press", key: entry.key, entry } };
+    if (!r.risk) return r.unchecked ? UNCHECKED : ALLOW;
+    return { verdict: "confirm", kind: r.risk.kind, why: r.risk.why, detail: [`On: ${r.risk.target}`, ...(r.opinion ? [`Second check, from the link's names alone: ${r.opinion}.`] : []), ...(r.risk.kind === "unchecked" ? [TOOLS.RISK_TEXT.uncheckedChoice] : [])] };
   }
 
   function judge(a, page, run, settings, store, tabs) {
@@ -442,22 +518,18 @@
     let check = null;
     let opinion = "";
     if (!risk) {
-      // A button the rules found harmless but cannot read, or one that
-      // sends a form: allowed, unless a second opinion says it pays, sends
-      // or deletes. Until it has been asked, the run asks it first.
-      const press = TOOLS.pressCheckOf(risky, page);
-      if (!press) return ALLOW;
-      const said = opinions[press.key];
-      if (!said) return { verdict: "allow", check: { ...press, task: requestOf(run) } };
-      // The check could not be had: a button nothing could read is the
-      // user's to allow, not pressed in the hope that it is harmless.
-      if (said.unanswered) {
-        risk = { kind: "send", why: "What this button does could not be checked, so pressing it is yours to allow.", target: press.label };
-      } else {
-        if (!["pay", "send", "delete"].includes(said.does)) return ALLOW;
-        risk = { kind: said.does, why: TOOLS.RISK_TEXT[said.does], target: press.label };
-        opinion = said.why;
-      }
+      // A press the page's structure does not settle: allowed, unless the
+      // page-blind check on its entry says it commits. Until the check has
+      // answered, the run waits for it or asks it (run.js). A control the
+      // site's markup lets pass, or one with no name, presses free.
+      const press = TOOLS.pressFor(risky, page);
+      if (!press || !press.entry) return ALLOW;
+      const entry = press.entry;
+      const r = entryRisk(entry, run, (el && TOOLS.elementLabel(el)) || entry.names[0] || "");
+      if (r.check) return { verdict: "allow", check: { kind: "press", key: entry.key, entry } };
+      if (!r.risk) return r.unchecked ? UNCHECKED : ALLOW;
+      risk = r.risk;
+      opinion = r.opinion ? `from the control's names alone, ${r.opinion}` : "";
     } else if (risk.unsure && !(page && page.injection)) {
       // A form of one box: held as a send, unless a second opinion says it
       // asks the site something. On a page that hides text written to an
@@ -481,8 +553,10 @@
     // The button that pays is pressed by the user: the agent fills the form,
     // points at the button and waits. Other spending steps (to the basket,
     // to checkout) are approved in the panel.
-    const paysNow = risk.kind === "pay" && pressesOn(a, el) && el
-      && ((page.blockers || []).some((b) => b.kind === "payment") || els.some((e) => e.sensitive === "payment" && e.formId !== undefined && e.formId === el.formId));
+    // The submit of a form that holds card fields pays, whatever it is called.
+    const cardForm = !!el && els.some((e) => e.sensitive === "payment" && e.formId !== undefined && e.formId === el.formId);
+    const paysNow = pressesOn(a, el) && el
+      && ((risk.kind === "pay" && ((page.blockers || []).some((b) => b.kind === "payment") || cardForm)) || (el.submits === true && cardForm));
     if (paysNow) {
       return { verdict: "handoff", kind: "payment", press: a.ref, question: `Everything is filled in. Please check it and press "${TOOLS.elementLabel(el) || "the button"}" yourself; I'll carry on after.` };
     }
@@ -496,6 +570,7 @@
     if (risk.target) detail.push(`On: ${risk.target}`);
     if ((a.do === "fill" || a.do === "type") && risk.kind !== "secret") detail.push(`Text: ${String(a.value).slice(0, 160)}`);
     if (opinion) detail.push(`Second check: ${opinion}`);
+    if (risk.kind === "unchecked") detail.push(TOOLS.RISK_TEXT.uncheckedChoice);
     return { verdict: "confirm", kind: risk.kind, why: risk.why, detail, site: risk.site || "", url: risk.url || "", ...(check ? { check } : {}) };
   }
 

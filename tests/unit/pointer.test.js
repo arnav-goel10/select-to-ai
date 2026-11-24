@@ -172,7 +172,9 @@ const risky = (extra) => ({
   forms: [],
   ...extra,
 });
-const runFor = (task) => ({ task, trust: { sites: [], urls: [] }, openedTabs: [], opinions: {} });
+// The run, with what the page-blind press check said of every control of `p`, by a stand-in for its model.
+const JUDGE = require("../helpers/fake-judge.js");
+const runFor = (task, p) => ({ task, trust: { sites: [], urls: [] }, openedTabs: [], opinions: p ? JUDGE.judged(p) : {} });
 const settings = { riskConfirmation: true, allowlist: "" };
 
 test("a point is resolved to the smallest listed control drawn there, in page pixels", () => {
@@ -185,9 +187,11 @@ test("a point is resolved to the smallest listed control drawn there, in page pi
 });
 
 test("a press at a point on a pay button is held as a payment", () => {
-  const v = POLICY.decide({ do: "click_at", x: 460, y: 420 }, risky(), runFor("look at my account"), settings);
+  const v = POLICY.decide({ do: "click_at", x: 460, y: 420 }, risky(), runFor("look at my account", risky()), settings);
   assert.equal(v.verdict, "confirm");
   assert.equal(v.kind, "pay");
+  // Until the check has said, the press waits for it.
+  assert.ok(POLICY.decide({ do: "click_at", x: 460, y: 420 }, risky(), runFor("look at my account"), settings).check);
 });
 
 test("a press at a point on a drawing is allowed", () => {
@@ -196,9 +200,9 @@ test("a press at a point on a drawing is allowed", () => {
 });
 
 test("a drop onto a delete box is held as a delete, whether by its number or by where a drag lets go", () => {
-  assert.equal(POLICY.decide({ do: "drag", ref: 1, to_ref: 2 }, risky(), runFor("tidy up"), settings).kind, "delete");
+  assert.equal(POLICY.decide({ do: "drag", ref: 1, to_ref: 2 }, risky(), runFor("tidy up", risky()), settings).kind, "delete");
   // From the middle of [1] (140, 415 on the page), 75 px down is inside [2].
-  const by = POLICY.decide({ do: "drag", ref: 1, direction: "down", distance: 75 }, risky(), runFor("tidy up"), settings);
+  const by = POLICY.decide({ do: "drag", ref: 1, direction: "down", distance: 75 }, risky(), runFor("tidy up", risky()), settings);
   assert.equal(by.verdict, "confirm");
   assert.equal(by.kind, "delete");
   assert.deepEqual(POLICY.dropPoint({ do: "drag", ref: 1, direction: "down", distance: 75 }, risky()), { x: 140, y: 490 });
@@ -206,7 +210,7 @@ test("a drop onto a delete box is held as a delete, whether by its number or by 
 
 test("a knob that pays when slid across is held: the control pressed is checked as well as where it is let go", () => {
   const p = risky({ elements: [{ id: 5, tagName: "div", role: "slider", accName: "Slide to pay", rect: { x: 0, y: 0, w: 40, h: 40 } }] });
-  assert.equal(POLICY.decide({ do: "drag", ref: 5, direction: "right", distance: 200 }, p, runFor("look"), settings).kind, "pay");
+  assert.equal(POLICY.decide({ do: "drag", ref: 5, direction: "right", distance: 200 }, p, runFor("look", p), settings).kind, "pay");
 });
 
 test("a press at a point on a frame the agent cannot read is the user's to allow; on a human check it is handed over", () => {
@@ -229,9 +233,10 @@ test("the trace says whether each pointer action was real or made by script", ()
   const p = page();
   const env = { now: 1, page: p, settings, extras: {} };
   const run = RUN.newRun({ id: "r", task: "move apples", tabId: 1, startUrl: p.url, marker: "PAGE-1", now: 1 });
-  RUN.advance(run, { type: "start" }, env);
-  RUN.advance(run, { type: "observed", page: p }, env);
-  const fx = RUN.advance(run, { type: "model_replied", reply: { note: "", goal: "move", do: "drag", ref: 2, to_ref: 3 }, usage: {} }, env);
+  const advance = JUDGE.judging(RUN);
+  advance(run, { type: "start" }, env);
+  advance(run, { type: "observed", page: p }, env);
+  const fx = advance(run, { type: "model_replied", reply: { note: "", goal: "move", do: "drag", ref: 2, to_ref: 3 }, usage: {} }, env);
   assert.equal(fx.find((f) => f.type === "act").action.do, "drag");
   RUN.advance(run, { type: "acted", result: { ok: true, pageChanged: true, pointer: "real", message: "Dragged [2] onto [3]." } }, env);
   const t = RUN.trace(run);

@@ -545,6 +545,22 @@
         return '';
     }
 
+    /**
+     * How a control's names differ from the ones the page was read with
+     * ({accName, text}, as the scan writes them), or "" when they are the same.
+     */
+    function namesChanged(el, was) {
+        if (!was || typeof was !== 'object') return '';
+        const drawn = typeof el.innerText === 'string' ? el.innerText : el.textContent;
+        const text = (el.tagName === 'SELECT' || sensitiveKind(el) ? '' : (drawn || el.value || '')).replace(/\s+/g, ' ').trim().substring(0, 80);
+        const accName = accessibleName(el);
+        const flat = (t) => String(t || '').replace(/\s+/g, ' ').trim();
+        if (flat(accName) === flat(was.accName) && flat(text) === flat(was.text)) return '';
+        const now = flat(accName) || flat(text);
+        const then = flat(was.accName) || flat(was.text);
+        return `now reads "${now.slice(0, 80)}" where the page was read with "${then.slice(0, 80)}"`;
+    }
+
     const CONTROL_SELECTOR = 'input:not([type="hidden"]), select, textarea, button, a[href], [role="button"], [role="link"], [role="checkbox"], [role="radio"], [role="switch"], [role="textbox"], [role="combobox"], [role="slider"], [role="spinbutton"], [contenteditable="true"]';
 
     /** A field a person names by the words printed next to it. */
@@ -1377,22 +1393,31 @@
         return '';
     }
 
-    /** What a form is for, from its structure: a search or lookup, something that sends what was typed, or one box that may do either. */
+    /**
+     * What a form is, from its structure: how it is sent (method), whether
+     * the site marks it as a search (a search role or element around it, or
+     * a box of type search), the names and types of its boxes, whether it
+     * has a control of its own that submits it, and whether it is one box
+     * that may ask or post. A search is a marked form sent by GET; any
+     * other GET form is judged by its submit's names and its boxes.
+     */
     function describeForm(form) {
         const controls = Array.from(form.elements || []);
+        const shown = (c) => { const r = c.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
         const typed = controls.filter((c) => {
             if (c.tagName === 'TEXTAREA') return true;
             return c.tagName === 'INPUT' && !/^(hidden|submit|button|reset|image|checkbox|radio|file|range|color)$/.test((c.type || 'text').toLowerCase());
-        }).filter((c) => { const r = c.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+        }).filter(shown);
         const kinds = typed.map((c) => (c.tagName === 'TEXTAREA' ? 'textarea' : (c.type || 'text').toLowerCase()));
-        const isSearchBox = form.getAttribute('role') === 'search' || !!form.closest('[role="search"]') || kinds.includes('search');
-        // A GET form reads something: a search, a lookup, an advanced search
-        // with a date range (arXiv and GitHub, held as sends on 1 Oct 2026).
-        // A message box, an email or phone field, or a password sends
-        // something whatever the method says.
-        const plainLookup = (form.getAttribute('method') || 'get').toLowerCase() === 'get'
-            && typed.length > 0 && kinds.every((k) => /^(text|search|number|date|month|week|time|datetime-local)$/.test(k))
-            && !controls.some((c) => sensitiveKind(c));
+        const method = (form.getAttribute('method') || 'get').trim().toLowerCase();
+        const marked = form.getAttribute('role') === 'search' || !!form.closest('[role="search"], search') || kinds.includes('search');
+        // The boxes the form sends, as the site names them, for the press check.
+        const boxes = controls.filter((c) => /^(INPUT|TEXTAREA|SELECT)$/.test(c.tagName) && !/^(hidden|submit|button|reset|image)$/.test((c.type || '').toLowerCase()) && shown(c))
+            .slice(0, 8).map((c) => ({
+                name: String(accessibleName(c) || c.getAttribute('placeholder') || c.getAttribute('title') || c.getAttribute('name') || '').replace(/\s+/g, ' ').trim().slice(0, 60),
+                type: c.tagName === 'INPUT' ? (c.type || 'text').toLowerCase() : c.tagName.toLowerCase(),
+            }));
+        const hasSubmit = controls.some((c) => (c.tagName === 'BUTTON' && (c.getAttribute('type') || 'submit').toLowerCase() === 'submit') || (c.tagName === 'INPUT' && /^(submit|image)$/.test((c.type || '').toLowerCase())));
         // One box for words or numbers and nothing else of the person's: no
         // second box, no file, no tick box, no secret field, and a box whose
         // autocomplete names none of their details. Such a form may ask the
@@ -1410,7 +1435,11 @@
         let crossOrigin = false;
         try { crossOrigin = !!form.getAttribute('action') && new URL(form.action, location.href).origin !== location.origin; } catch (_) { /* ignore */ }
         return {
-            search: isSearchBox || plainLookup,
+            search: marked && method === 'get',
+            marked,
+            method,
+            hasSubmit,
+            boxes,
             oneBox,
             action,
             fields: typed.length,
@@ -1659,6 +1688,67 @@
         // Items side by side in one list share its key, so a run of them can be told.
         if (inner) return { key: groupKey(inner.node), kind: inner.kind, label: label(inner), list: inner.kind === 'item' && inner.node.parentElement ? groupKey(inner.node.parentElement) : null };
         return null;
+    }
+
+    /**
+     * The dialog a control sits in, as the dialog's own markup names it:
+     * {name, alert, modal}, or null. The name is the dialog's aria-label,
+     * else what its aria-labelledby points to, else its first heading or
+     * legend, on one line of up to 80 characters: never its text, nor the
+     * name of a card inside it. A layer drawn on top of the page with no
+     * dialog markup is named the same way, or not at all.
+     */
+    function dialogOfControl(el) {
+        let node = null;
+        for (let n = el.parentElement, depth = 0; n && n !== document.body && depth < 30; n = n.parentElement, depth++) {
+            const role = n.getAttribute('role') || '';
+            if (n.tagName === 'DIALOG' || role === 'dialog' || role === 'alertdialog' || n.getAttribute('aria-modal') === 'true') { node = n; break; }
+        }
+        const layer = node ? null : overlayOf(el);
+        const holder = node || (layer && layer.node);
+        if (!holder) return null;
+        const clean = (t) => String(t || '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+        let name = clean(holder.getAttribute('aria-label'));
+        if (!name && holder.getAttribute('aria-labelledby')) {
+            name = clean(holder.getAttribute('aria-labelledby').split(/\s+/).map((i) => document.getElementById(i)).filter(Boolean).map((n) => n.innerText || n.textContent || '').join(' '));
+        }
+        if (!name) {
+            const head = holder.querySelector('h1, h2, h3, h4, h5, h6, [role="heading"], legend');
+            name = clean(head && (head.innerText || head.textContent));
+        }
+        let modal = false;
+        try { modal = holder.getAttribute('aria-modal') === 'true' || (holder.tagName === 'DIALOG' && holder.matches(':modal')); } catch (_) { /* no :modal */ }
+        return { name, alert: (holder.getAttribute('role') || '') === 'alertdialog', modal };
+    }
+
+    /**
+     * The form a control's press only stages a value in, or null; it counts
+     * when that form has its own control to submit it: a native radio, box or option, a cell or
+     * option of a picker a field owns (a calendar's days, its Today, a
+     * suggestion), and the "x" on a picked value. Nothing leaves until that
+     * submit, which is judged on its own. The same controls outside such a
+     * form are judged, since a switch in a settings table saves at once.
+     */
+    function stagedOwner(el, picked) {
+        let owner = null;
+        const type = (el.type || '').toLowerCase();
+        if (el.tagName === 'INPUT' && (type === 'radio' || type === 'checkbox')) owner = el;
+        else if (el.tagName === 'OPTION') owner = el.closest('select');
+        else if (picked) owner = el;
+        else {
+            // A popup a field says it controls or owns, holding this control.
+            for (let n = el, depth = 0; n && n !== document.body && depth < 10; n = n.parentElement, depth++) {
+                if (!n.id) continue;
+                const field = document.querySelector(`[aria-controls~="${CSS.escape(n.id)}"], [aria-owns~="${CSS.escape(n.id)}"]`);
+                if (field && field !== el && field.matches(ENTRY)) {
+                    const role = el.getAttribute('role') || '';
+                    const picks = /^(gridcell|option)$/.test(role) || !!el.closest('[role="gridcell"], [role="option"]') || !!n.querySelector('[role="grid"], table');
+                    if (picks) owner = field;
+                    break;
+                }
+            }
+        }
+        return (owner && (owner.form || owner.closest('form'))) || null;
     }
 
     /**
@@ -2315,7 +2405,15 @@
                 entry.value = "";
             }
             if (overlayOf(el)) entry.onTop = true;
-            if (inPickedValues(el, fieldFacts)) entry.inField = true;
+            const picked = inPickedValues(el, fieldFacts);
+            if (picked) entry.inField = true;
+            // What the press check and its passes read from markup (agentTools.js pressEntryOf).
+            const inDialog = dialogOfControl(el);
+            if (inDialog) entry.dialog = inDialog;
+            if ((el.getAttribute('role') || '') === 'tab' && el.closest('[role="tablist"]')) entry.inTablist = true;
+            if (el.hasAttribute('popovertarget')) entry.popover = true;
+            const stage = stagedOwner(el, picked);
+            if (stage && forms[formIdOf(stage)].hasSubmit) entry.staged = true;
             // The control the keyboard is on, where a key with no ref lands.
             if (el === deepFocus) entry.focused = true;
             const group = groupOf(el, nameKey && labelCount.get(nameKey) > 1 ? nameKey : '');
@@ -4604,6 +4702,10 @@
             if (!pageLevelKey) {
                 const conn = requireConnected(el);
                 if (!conn.ok) return conn.error;
+                // A press let through on what a check said of the control's
+                // names is made only while it still has those names.
+                const moved = namesChanged(el, data.names);
+                if (moved) return { success: false, changed: true, error: `[${id}] ${moved}, so it was not pressed. Look at the page again before pressing it.` };
                 // Highlight before acting
                 highlightTarget(id);
             }

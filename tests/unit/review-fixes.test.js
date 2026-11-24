@@ -7,6 +7,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const POLICY = require("../../extension/core/policy.js");
 const RUN = require("../../extension/core/run.js");
+// The page-blind press check, answered at once by a stand-in for its model.
+const JUDGE = require("../helpers/fake-judge.js");
+const advance = JUDGE.judging(RUN);
 
 // ------------------------------------------------------------ keys
 const contact = (focusOn) => ({
@@ -21,7 +24,7 @@ const contact = (focusOn) => ({
   ].map((e) => (e.id === focusOn ? { ...e, focused: true } : e)),
   forms: [{ id: 0, fields: 2, search: false }],
 });
-const keyRun = (task, focusRef) => ({ task, trust: { sites: ["shop.example"], urls: [] }, openedTabs: [], opinions: {}, focusRef });
+const keyRun = (task, focusRef) => ({ task, trust: { sites: ["shop.example"], urls: [] }, openedTabs: [], opinions: JUDGE.judged(contact()), focusRef });
 const on = { riskConfirmation: true, allowlist: "" };
 const noSubmit = "Fill in the contact form on shop.example but don't submit it";
 const sendTask = "Send a message to shop.example support";
@@ -66,11 +69,11 @@ test("the run remembers the control a step left the focus on, and the press carr
   const page = contact();
   const env = { now: 1, page, settings: { riskConfirmation: true, allowlist: "", verify: false }, extras: {} };
   const run = RUN.newRun({ id: "k1", task: noSubmit, tabId: 7, startUrl: page.url, marker: "PAGE-abcd1234", now: 1 });
-  RUN.advance(run, { type: "start" }, env);
-  RUN.advance(run, { type: "observed", page }, env);
-  let fx = RUN.advance(run, { type: "model_replied", reply: { note: "", goal: "fill", do: "fill", ref: 1, value: "Hello", then: [{ do: "press", key: "Enter" }] }, usage: { prompt: 1, completion: 1, cost: 0, model: "m" } }, env);
+  advance(run, { type: "start" }, env);
+  advance(run, { type: "observed", page }, env);
+  let fx = advance(run, { type: "model_replied", reply: { note: "", goal: "fill", do: "fill", ref: 1, value: "Hello", then: [{ do: "press", key: "Enter" }] }, usage: { prompt: 1, completion: 1, cost: 0, model: "m" } }, env);
   assert.equal(fx.find((f) => f.type === "act").action.do, "fill");
-  fx = RUN.advance(run, { type: "acted", result: { ok: true, message: "Typed." } }, env);
+  fx = advance(run, { type: "acted", result: { ok: true, message: "Typed." } }, env);
   // Enter would go to the message box the fill left the focus in: refused, not pressed.
   assert.equal(fx.some((f) => f.type === "act"), false);
   const refused = run.history[run.history.length - 1].actions.find((x) => x.do === "press");
@@ -93,11 +96,11 @@ function family(task) {
   const h = { now: 1000 };
   h.env = () => ({ now: h.now, page: home, settings: { riskConfirmation: true, allowlist: "", verify: false }, extras: {}, childEnv: (id) => ({ page: pages[id] || null, extras: {} }) });
   h.run = RUN.newRun({ id: "r1", task, tabId: 7, startUrl: home.url, marker: "PAGE-abcd1234", now: 1 });
-  RUN.advance(h.run, { type: "start" }, h.env());
-  RUN.advance(h.run, { type: "observed", page: home }, h.env());
+  advance(h.run, { type: "start" }, h.env());
+  advance(h.run, { type: "observed", page: home }, h.env());
   h.pages = pages;
-  h.child = (id, event) => RUN.advance(h.run, { type: "child", child: id, event }, h.env());
-  h.delegate = (hosts) => RUN.advance(h.run, { type: "model_replied", reply: { note: "", goal: "each", do: "delegate", tasks: hosts.map((x) => ({ task: `price at ${x}`, url: `https://${x}/` })) }, usage: use }, h.env());
+  h.child = (id, event) => advance(h.run, { type: "child", child: id, event }, h.env());
+  h.delegate = (hosts) => advance(h.run, { type: "model_replied", reply: { note: "", goal: "each", do: "delegate", tasks: hosts.map((x) => ({ task: `price at ${x}`, url: `https://${x}/` })) }, usage: use }, h.env());
   return h;
 }
 
@@ -113,7 +116,7 @@ test("answer now while sub-tasks are queued and starting ends the delegation, wi
     h.child("r1-s1", { type: "acted", result: { ok: true, pageChanged: true, message: "ok" } });
   }
   assert.equal(h.run.wait.kind, "check_in");
-  const fx = RUN.advance(h.run, { type: "wrap_up", id: h.run.wait.id }, h.env());
+  const fx = advance(h.run, { type: "wrap_up", id: h.run.wait.id }, h.env());
   assert.equal(fx.some((f) => f.type === "spawn"), false, "nothing is started only to be stopped");
   assert.ok(fx.some((f) => f.type === "observe"), "the run takes its last step");
   assert.equal(h.run.delegation, null);
@@ -133,11 +136,11 @@ test("what the user said and declined in a sub-task is the parent's, and no rout
   h.child("r1-s1", { type: "model_replied", reply: { note: "", goal: "order", do: "click", ref: 2 }, usage: use });
   const wait = h.run.children[0].run.wait;
   assert.equal(wait.kind, "approval");
-  RUN.advance(h.run, { type: "declined", id: wait.id }, h.env());
+  advance(h.run, { type: "declined", id: wait.id }, h.env());
   h.child("r1-s1", { type: "observed", page: h.pages["r1-s1"] });
   h.child("r1-s1", { type: "model_replied", reply: { note: "", goal: "ask", do: "ask_user", kind: "question", question: "Which colour?" }, usage: use });
   const ask = h.run.children[0].run.wait;
-  RUN.advance(h.run, { type: "answered", id: ask.id, text: "Blue please", keep: true }, h.env());
+  advance(h.run, { type: "answered", id: ask.id, text: "Blue please", keep: true }, h.env());
   h.child("r1-s1", { type: "observed", page: h.pages["r1-s1"] });
   h.child("r1-s1", { type: "model_replied", reply: { note: "", goal: "done", do: "done", success: true, answer: "Widget costs $19.", evidence: ["Widget costs $19."] }, usage: use });
   assert.equal(h.run.children[0].state, "ended");
@@ -184,7 +187,7 @@ function fakeWorker(attachRefused, saved) {
   root.self = root;
   vm.createContext(root);
   const EXT = path.join(__dirname, "../../extension");
-  for (const f of ["config.js", "defaults.js", "security.js", "commonWords.js", "publicSuffixes.js", "agentTools.js", "agentPrompt.js", "usageLimits.js", "pageSearch.js", "core/step.js", "core/observe.js", "core/memory.js", "core/context.js", "core/policy.js", "core/run.js", "core/llm.js", "core/learn.js", "core/view.js", "core/inject.js", "engine.js"]) {
+  for (const f of ["config.js", "defaults.js", "security.js", "publicSuffixes.js", "agentTools.js", "agentPrompt.js", "usageLimits.js", "pageSearch.js", "core/step.js", "core/observe.js", "core/memory.js", "core/context.js", "core/policy.js", "core/run.js", "core/llm.js", "core/learn.js", "core/view.js", "core/inject.js", "engine.js"]) {
     vm.runInContext(fs.readFileSync(path.join(EXT, f), "utf8"), root, { filename: f });
   }
   const pressKey = (tabId, extra) => new Promise((resolve) => {
@@ -276,10 +279,11 @@ test("an address-bar request is a new task: with a run waiting on a question, th
 // ------------------------------------------------------------ second opinions
 const T = require("../../extension/agentTools.js");
 test("a press's second opinion holds for that page and form, not for the same words elsewhere on the site", () => {
-  const at = (url, formId) => ({ url, elements: [{ id: 1, tagName: "button", accName: "Weiter", formId }], forms: formId === undefined ? [] : [{ id: formId, search: true, fields: 1, action: `${url}/next` }] });
-  const cart = T.pressCheckOf({ action: "click", id: 1 }, at("https://shop.example/cart"));
-  assert.notEqual(cart.key, T.pressCheckOf({ action: "click", id: 1 }, at("https://shop.example/checkout/review")).key);
-  assert.notEqual(cart.key, T.pressCheckOf({ action: "click", id: 1 }, at("https://shop.example/cart", 3)).key);
+  const at = (url, formId) => ({ url, elements: [{ id: 1, tagName: "button", accName: "Weiter", formId }], forms: formId === undefined ? [] : [{ id: formId, method: "post", fields: 1, action: `${url}/next` }] });
+  const entry = (p) => T.pressEntryOf(p.elements[0], p).entry;
+  const cart = entry(at("https://shop.example/cart"));
+  assert.notEqual(cart.key, entry(at("https://shop.example/checkout/review")).key);
+  assert.notEqual(cart.key, entry(at("https://shop.example/cart", 3)).key);
   // "Nothing" said of the button on the cart page lets it through there, and not on the review step.
   const run = { task: "buy the widget", trust: { sites: ["shop.example"], urls: [] }, openedTabs: [], opinions: { [cart.key]: { does: "none" } } };
   const here = POLICY.decide({ do: "click", ref: 1 }, at("https://shop.example/cart"), run, on);
@@ -304,18 +308,18 @@ test("a failed check of the answer and a failed model call still count what they
   const page = shop("a.example");
   const env = { now: 1, page, settings: { riskConfirmation: true, allowlist: "", verify: true }, extras: {} };
   const run = RUN.newRun({ id: "u1", task: "What does the widget cost?", tabId: 7, startUrl: page.url, marker: "PAGE-abcd1234", now: 1 });
-  RUN.advance(run, { type: "start" }, env);
-  RUN.advance(run, { type: "observed", page }, env);
-  const fx = RUN.advance(run, { type: "model_replied", reply: { note: "", goal: "answer", do: "done", success: true, answer: "It costs $19.", evidence: ["Widget costs $19."] }, usage: { prompt: 10, completion: 1, cost: 0.001, model: "m" } }, env);
+  advance(run, { type: "start" }, env);
+  advance(run, { type: "observed", page }, env);
+  const fx = advance(run, { type: "model_replied", reply: { note: "", goal: "answer", do: "done", success: true, answer: "It costs $19.", evidence: ["Widget costs $19."] }, usage: { prompt: 10, completion: 1, cost: 0.001, model: "m" } }, env);
   assert.equal(fx[0].purpose, "verify");
-  RUN.advance(run, { type: "model_failed", purpose: "verify", kind: "model", message: "no", usage: { prompt: 20, completion: 2, cost: 0.002, model: "m" } }, env);
-  assert.equal(run.usage.calls, 2);
+  advance(run, { type: "model_failed", purpose: "verify", kind: "model", message: "no", usage: { prompt: 20, completion: 2, cost: 0.002, model: "m" } }, env);
+  assert.equal(run.usage.calls, 3, "the step, the page's press check and the failed check");
   assert.ok(Math.abs(run.usage.cost - 0.003) < 1e-12);
 
   const other = RUN.newRun({ id: "u2", task: "What does the widget cost?", tabId: 7, startUrl: page.url, marker: "PAGE-abcd1234", now: 1 });
-  RUN.advance(other, { type: "start" }, env);
-  RUN.advance(other, { type: "observed", page }, env);
-  RUN.advance(other, { type: "model_failed", kind: "model", message: "The provider broke off.", usage: { prompt: 30, completion: 0, cost: 0.004, model: "m" } }, env);
+  advance(other, { type: "start" }, env);
+  advance(other, { type: "observed", page }, env);
+  advance(other, { type: "model_failed", kind: "model", message: "The provider broke off.", usage: { prompt: 30, completion: 0, cost: 0.004, model: "m" } }, env);
   assert.equal(other.status, "failed");
   assert.ok(Math.abs(other.usage.cost - 0.004) < 1e-12);
 });
@@ -324,20 +328,20 @@ test("an approved press runs only on the control that was approved; a changed co
   const before = shop("a.example");
   const env = (page) => ({ now: 1, page, settings: { riskConfirmation: true, allowlist: "", verify: false }, extras: {} });
   const run = RUN.newRun({ id: "a1", task: "Order the widget at a.example", tabId: 7, startUrl: before.url, marker: "PAGE-abcd1234", now: 1 });
-  RUN.advance(run, { type: "start" }, env(before));
-  RUN.advance(run, { type: "observed", page: before }, env(before));
-  RUN.advance(run, { type: "model_replied", reply: { note: "", goal: "order", do: "click", ref: 2 }, usage: use }, env(before));
+  advance(run, { type: "start" }, env(before));
+  advance(run, { type: "observed", page: before }, env(before));
+  advance(run, { type: "model_replied", reply: { note: "", goal: "order", do: "click", ref: 2 }, usage: use }, env(before));
   assert.equal(run.wait.kind, "approval");
-  let fx = RUN.advance(run, { type: "approved", id: run.wait.id }, env(before));
+  let fx = advance(run, { type: "approved", id: run.wait.id }, env(before));
   const act = fx.find((f) => f.type === "act").action;
   assert.equal(act.approved, "Place order", "the driver is told what was approved");
   // While the user decided, the page put another control under that number.
   const after = { ...before, elements: [before.elements[0], { id: 2, tagName: "button", accName: "Delete account" }] };
-  fx = RUN.advance(run, { type: "acted", result: { ok: false, changed: true, message: "[2] now says \"Delete account\"" } }, env(after));
+  fx = advance(run, { type: "acted", result: { ok: false, changed: true, message: "[2] now says \"Delete account\"" } }, env(after));
   assert.equal(run.status, "waiting");
   assert.equal(run.wait.kind, "approval");
   assert.equal(run.wait.risk, "delete");
-  fx = RUN.advance(run, { type: "approved", id: run.wait.id }, env(after));
+  fx = advance(run, { type: "approved", id: run.wait.id }, env(after));
   assert.equal(fx.find((f) => f.type === "act").action.approved, "Delete account");
 });
 

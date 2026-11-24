@@ -92,7 +92,12 @@ test("look can be given one control, to picture it", () => {
 test("a double click, a right click and a long press are judged as the press they are", () => {
   const POLICY = require("../../extension/core/policy.js");
   const page = { url: "https://shop.example/", title: "Shop", innerText: "Account", elements: [{ id: 7, tagName: "button", text: "Delete account" }, { id: 8, tagName: "div", text: "Press and hold", role: "button" }, { id: 9, tagName: "span", text: "report.pdf" }] };
-  const run = { task: "tidy my account", trust: { sites: [], urls: [] }, opinions: {} };
+  const JUDGE = require("../helpers/fake-judge.js");
+  // What the page-blind press check said, by a stand-in for its model, of the
+  // page's controls and of the places named by their words below.
+  const place = (words) => TOOLS.pressEntryOf({ id: -1, tagName: "div", text: words, accName: words }, page).entry;
+  const named = { [place("Delete forever").key]: { does: "delete" }, [place("Attachments").key]: { does: "none" } };
+  const run = { task: "tidy my account", trust: { sites: [], urls: [] }, opinions: JUDGE.judged(page, null, named) };
   const settings = { riskConfirmation: true };
   for (const kind of ["click", "hold", "right_click"]) {
     assert.equal(POLICY.decide({ do: kind, ref: 7 }, page, run, settings, null).verdict, "confirm", `${kind} on a delete button is held`);
@@ -113,9 +118,10 @@ test("a double click, a right click and a long press are judged as the press the
 // ------------------------------------------------------------ the engine
 
 test("the engine sends each gesture to the page with its spot and where it lets go", () => {
-  assert.match(ENGINE, /case "double_click": return interact\(session, a, \{ action: "double_click", id: a\.ref, \.\.\.spotOf\(a\), \.\.\.onceIf\(a\) \}, true\);/);
-  assert.match(ENGINE, /case "right_click": return interact\(session, a, \{ action: "right_click", id: a\.ref, \.\.\.spotOf\(a\), \.\.\.onceIf\(a\) \}, false\);/);
-  assert.match(ENGINE, /case "hold": return interact\(session, a, \{ action: "hold", id: a\.ref, seconds: a\.seconds, \.\.\.spotOf\(a\), \.\.\.onceIf\(a\) \}, true\);/);
+  // A press the check judges by the control's names carries those names, for the page to press only while it still has them.
+  assert.match(ENGINE, /case "double_click": return interact\(session, a, \{ action: "double_click", id: a\.ref, \.\.\.spotOf\(a\), \.\.\.namesOf\(session, a\), \.\.\.onceIf\(a\) \}, true\);/);
+  assert.match(ENGINE, /case "right_click": return interact\(session, a, \{ action: "right_click", id: a\.ref, \.\.\.spotOf\(a\), \.\.\.namesOf\(session, a\), \.\.\.onceIf\(a\) \}, false\);/);
+  assert.match(ENGINE, /case "hold": return interact\(session, a, \{ action: "hold", id: a\.ref, seconds: a\.seconds, \.\.\.spotOf\(a\), \.\.\.namesOf\(session, a\), \.\.\.onceIf\(a\) \}, true\);/);
   assert.match(ENGINE, /case "hover": return interact\(session, a, \{ action: "hover", id: a\.ref, \.\.\.spotOf\(a\) \}, false\);/);
   assert.match(ENGINE, /toText: a\.to_text, toWords: place\.words, \.\.\.spotOf\(a\), \.\.\.dropSpot\(a\), \.\.\.onceIf\(a\)/);
   // A look at one control asks the page for its own picture before the tab's.
@@ -476,11 +482,13 @@ test("an approved gesture or drag is marked to be made once, and a drag only ont
     forms: [],
   };
   const env = { now: 1000, page, settings: { riskConfirmation: true, allowlist: "", verify: true }, extras: {} };
+  // The page-blind press check, answered at once by a stand-in for its model.
+  const advance = require("../helpers/fake-judge.js").judging(RUN);
   const approve = (action) => {
     const run = RUN.newRun({ id: "r1", task: "tidy up my files", tabId: 7, startUrl: page.url, marker: "PAGE-abcd1234", now: 1 });
-    RUN.advance(run, { type: "start" }, env);
-    RUN.advance(run, { type: "observed", page }, env);
-    RUN.advance(run, { type: "model_replied", reply: { memory: "", goal: "g", actions: [action] }, usage: {} }, env);
+    advance(run, { type: "start" }, env);
+    advance(run, { type: "observed", page }, env);
+    advance(run, { type: "model_replied", reply: { memory: "", goal: "g", actions: [action] }, usage: {} }, env);
     assert.equal(run.status, "waiting", `${action.do} waits for the user`);
     return RUN.advance(run, { type: "approved", id: run.wait.id }, env)[0].action;
   };
@@ -550,7 +558,11 @@ test("a place named by its words holds them as whole words, and is never a conta
 
 test("a drop on a place named by part of its words is judged by all the words on it", () => {
   const page = { url: "https://files.example/", title: "Files", innerText: "Files", elements: [{ id: 9, tagName: "span", text: "report.pdf" }] };
-  const run = { task: "tidy up my files", trust: { sites: [], urls: [] }, opinions: {} };
+  // What the page-blind press check says of each place by its words, as a model would.
+  const place = (words) => TOOLS.pressEntryOf({ id: -1, tagName: "div", text: words, accName: words }, page).entry.key;
+  const opinions = { [place("report.pdf")]: { does: "none" }, [place("forever")]: { does: "none" }, [place("Delete forever")]: { does: "delete" }, [place("Archive")]: { does: "none" }, [place("Archive 2024")]: { does: "none" } };
+  opinions[TOOLS.pressEntryOf(page.elements[0], page).entry.key] = { does: "none" };
+  const run = { task: "tidy up my files", trust: { sites: [], urls: [] }, opinions };
   const settings = { riskConfirmation: true };
   const a = { do: "drag", ref: 9, to_text: "forever" };
   assert.equal(POLICY.decide(a, page, run, settings, null).verdict, "allow", "the words alone sound harmless");

@@ -976,12 +976,19 @@
 
   // Load non-sensitive settings from sync storage and credentials locally.
   // Keys that versions before 3.1 saved in sync storage are moved to local storage.
+  // What loadSettings reads, by area: only a change to one of these is a reason to read them again.
+  const LOCAL_SETTINGS = ["agentProviderPause", "agentAllowance", "chatgptAccount", "agentDataConsent"];
+  function readsSettings(changes, area) {
+    const read = area === "sync" ? [...CONFIG.STORAGE.SETTINGS, ...CONFIG.STORAGE.API_KEYS] : area === "local" ? [...CONFIG.STORAGE.API_KEYS, ...LOCAL_SETTINGS] : [];
+    return Object.keys(changes || {}).some((k) => read.includes(k));
+  }
+
   function loadSettings(callback = null) {
     const syncedKeys = CONFIG.STORAGE.API_KEYS;
     chrome.storage.sync.get(
       [...CONFIG.STORAGE.SETTINGS, ...syncedKeys],
       (syncItems) => {
-        chrome.storage.local.get([...syncedKeys, "agentProviderPause", "agentAllowance", "chatgptAccount", "agentDataConsent"], (localItems) => {
+        chrome.storage.local.get([...syncedKeys, ...LOCAL_SETTINGS], (localItems) => {
           const migratedKeys = {};
           syncedKeys.forEach((key) => {
             if (!localItems[key] && syncItems[key]) migratedKeys[key] = syncItems[key];
@@ -990,7 +997,10 @@
           if (Object.keys(migratedKeys).length > 0) {
             chrome.storage.local.set(migratedKeys);
           }
-          chrome.storage.sync.remove(syncedKeys);
+          // Keys left in sync by an old version are taken out once; a write
+          // on every read would use up sync's per-minute write allowance.
+          const leftInSync = syncedKeys.filter((key) => syncItems[key] !== undefined);
+          if (leftInSync.length) chrome.storage.sync.remove(leftInSync);
 
       config.agentActiveProvider =
         items.agentActiveProvider || DEFAULTS.activeProvider;
@@ -1103,6 +1113,8 @@
       // The count of requests left changes with every call: only the pill is redrawn.
       if (namespace === "local" && changes.agentAllowance) { allowance = changes.agentAllowance.newValue || null; paintAllowance(); }
       if (namespace === "local" && Object.keys(changes).every((k) => k === "agentAllowance" || k === "agentCrossSessionMemory" || k === CONFIG.STORAGE.SIDE_PANEL_STATE)) return;
+      // Stores the engine writes as it works (kept press verdicts, memory, recipes) are not settings.
+      if (!readsSettings(changes, namespace)) return;
       loadSettings();
     }
   });
@@ -2254,6 +2266,12 @@
       button("Fill them in", "confirm-risk-btn primary-btn btn btn-primary", () => enginePost({ type: "approve", id: wait.id }));
       button("Always on this site", "confirm-always-btn secondary-btn btn", () => enginePost({ type: "approve", id: wait.id, always: true }));
       button("Don't", "abort-risk-btn secondary-btn btn btn-ghost", () => enginePost({ type: "decline", id: wait.id }));
+    } else if (approval && wait.risk === "unchecked") {
+      // One card for the run, not one per press: carry on without the check, or stop.
+      title.textContent = "The safety check is not answering";
+      card.setAttribute("aria-label", title.textContent);
+      button("Carry on without it", "confirm-risk-btn primary-btn btn btn-primary", () => enginePost({ type: "approve", id: wait.id }));
+      button("Stop the task", "abort-risk-btn secondary-btn btn", () => enginePost({ type: "decline", id: wait.id }));
     } else if (approval) {
       button("Allow this step", "confirm-risk-btn primary-btn btn btn-primary", () => enginePost({ type: "approve", id: wait.id }));
       button("Don't do this", "abort-risk-btn secondary-btn btn", () => enginePost({ type: "decline", id: wait.id }));
