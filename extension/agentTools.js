@@ -694,8 +694,8 @@
   /**
    * The element list, with controls that belong together listed under the
    * card, form or dialog they share:
-   *   item "Sony WH-1000XM5 $348 ★4.7":
-   *     [14] a "Sony WH-1000XM5" → /p/123
+   *   item "Aster wireless headphones $348 ★4.7":
+   *     [14] a "Aster wireless headphones" → /p/123
    *     [15] button "Add to cart"
    * A control alone in its card or dialog says so on its own line.
    */

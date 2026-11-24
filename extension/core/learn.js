@@ -484,7 +484,7 @@ Call the learned tool.`;
           items: {
             type: "object",
             properties: {
-              action: { type: "string", enum: ["add", "update", "supersede", "nothing"], description: "add: a new fact, including a second service or place used alongside one already kept. update: an existing one (id) said again, said better, or widened (\"Uses Gmail for personal mail and Outlook for work\"). supersede: an existing one (id) that the user's words say is no longer true (\"not Gmail\", \"I switched\", \"no longer\"); text is what is true now, or empty. nothing: no change." },
+              action: { type: "string", enum: ["add", "update", "supersede", "nothing"], description: "add: a new fact, including a second service or place used alongside one already kept. update: an existing one (id) said again, said better, or widened (\"Keeps family dates in the shared calendar and work meetings in the office one\"). supersede: an existing one (id) that the user's words say is no longer true (\"not that calendar\", \"I switched\", \"no longer\"); text is what is true now, or empty. nothing: no change." },
               id: { type: "string", description: "update or supersede: the id of the existing fact or preference." },
               kind: { type: "string", enum: ["fact", "preference"], description: "fact: about the user's life. preference: how they want things done." },
               text: { type: "string", description: "The fact, short, said so that it holds beyond this task, with what it is for when the user says (\"for work\"). It may add common knowledge about what they said (a city's country, a service's site)." },
@@ -507,7 +507,7 @@ Add a fact only when the user's words (or the site a checked task was done on, f
 
 Never keep: what the task found (results, prices, times, dates of a one-off plan), passwords, codes, card or identity numbers. About other people, keep only who they are to the user and what the user would need for tasks (a sister's city, to send her a gift). Mark sensitive anything touching health, religion, politics, sexuality, finances or legal matters, of the user or of anyone else.
 
-Decide against the list you are shown. A fact already there, said again or said better: update it by id. People often use several services for the same kind of thing (Gmail for personal mail, Outlook for work): a second one is an add, or an update by id that widens the fact ("Uses Gmail for personal mail and Outlook for work"). Supersede by id, with what is true now, only when the user's words say the old fact no longer holds ("not Gmail", "I switched", "no longer"). A lasting correction of how they want things done is a preference. Never add a second copy of a fact.
+Decide against the list you are shown. A fact already there, said again or said better: update it by id. People often use several services for the same kind of thing (a shared calendar for family dates, the office one for work): a second one is an add, or an update by id that widens the fact ("Keeps family dates in the shared calendar and work meetings in the office one"). Supersede by id, with what is true now, only when the user's words say the old fact no longer holds ("not that calendar", "I switched", "no longer"). A lasting correction of how they want things done is a preference. Never add a second copy of a fact.
 
 Write facts, not rules: what is true of the user, never what the assistant should do. Most tasks add nothing; then return an empty list. Call the context tool.`;
 
