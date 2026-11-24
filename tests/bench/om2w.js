@@ -4,8 +4,8 @@
  * The rules and every pinned value are in om2w-config.json.
  *
  *   node tests/bench/om2w.js fetch --out <file>
- *   node tests/bench/om2w.js split --dataset <file> --part dev|gate|vault|reserve|all --out <file> [--no-holdout]
- *   node tests/bench/om2w.js summary <dir> --part <part> --planned <runs> [--arm shipped] [--shards N] [--commit sha] [--census]
+ *   node tests/bench/om2w.js split --dataset <file> --part dev|gate|vault|reserve|all --out <file> --digest-key-file <file> [--bootstrap] [--excluded-out <file>] [--no-holdout]
+ *   node tests/bench/om2w.js summary <dir> --part <part> --planned <runs> --planned-tasks <tasks> [--excluded N] [--arm shipped] [--shards N] [--commit sha] [--census]
  *
  * `fetch` reads the gated task file from Hugging Face at the pinned revision
  * with HF_TOKEN, checks its size and git blob hash against the config, and
@@ -30,7 +30,7 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
-const { hashUnit, normaliseTasks, isInfra } = require("./judge.js");
+const { normaliseTasks, isInfra } = require("./judge.js");
 
 const CONFIG = require("./om2w-config.json");
 const PARTS = Object.freeze(["dev", "gate", "vault", "reserve"]);
@@ -65,31 +65,102 @@ function om2wTasks(list) {
   }));
 }
 
+/** A number in [0, 1) from a hash of some text: the same text, the same number, on any machine. */
+function unitOf(text) {
+  return parseInt(crypto.createHash("sha256").update(String(text)).digest("hex").slice(0, 13), 16) / 2 ** 52;
+}
+
+/** The part a number in [0, 1) falls in: the first whose cut is above it. `cuts` is [[part, cut], ...], rising, ending at 1. */
+function partByCut(u, cuts) {
+  for (const [part, cut] of cuts) if (u < cut) return part;
+  return cuts[cuts.length - 1][0];
+}
+
+/** The cuts of the sealed parts alone, with their shares of the whole kept in proportion. */
+function sealedCuts(cuts, sealedParts) {
+  let prev = 0;
+  const widths = [];
+  for (const [part, cut] of cuts) { if (sealedParts.includes(part)) widths.push([part, cut - prev]); prev = cut; }
+  const total = widths.reduce((a, [, w]) => a + w, 0);
+  let at = 0;
+  return widths.map(([part, w], i) => [part, i === widths.length - 1 ? 1 : (at += w / total)]);
+}
+
+/**
+ * One site's part, from the seed, the site and the two clash sets only: no
+ * other site and no other task moves it. Rule 2 (a holdout site) goes to a
+ * sealed part by a second hash, and wins over rule 1 (a read suite's site),
+ * which goes to dev. Every other site falls by its own hash against the cuts.
+ * Returns {part, rule}, rule being 1, 2 or 3.
+ */
+function partOfSite(site, { seed = CONFIG.split.seed, cuts = CONFIG.split.cuts, sealedParts = CONFIG.split.sealedParts, devSites = new Set(), sealedSites = new Set() } = {}) {
+  if (sealedSites.has(site)) return { part: partByCut(unitOf(`${seed}:sealed:${site}`), sealedCuts(cuts, sealedParts)), rule: 2 };
+  if (devSites.has(site)) return { part: "dev", rule: 1 };
+  return { part: partByCut(unitOf(`${seed}:${site}`), cuts), rule: 3 };
+}
+
+/** Whether a task is on the never-send list: the first 32 characters of its id, as the upstream issues give them. */
+function neverSend(task, ids = CONFIG.neverSend.ids) {
+  const head = String(task.id || "").slice(0, 32).toLowerCase();
+  return ids.some((x) => String(x).slice(0, 32).toLowerCase() === head);
+}
+
 /**
  * The split, by site. `devSites` are sites a read suite uses (rule 1),
  * `sealedSites` the sites of the sealed holdout suite (rule 2, which wins).
- * The rest go, in the order of hashUnit(seed:site), to the part least full
- * against its target. Returns {parts: {dev: [tasks], ...}, siteParts: Map,
- * moved: {toDev, toSealed}}. The same input always gives the same split.
+ * Each site's part is its own (partOfSite). Tasks on the never-send list are
+ * left out of every part and counted in `excluded`; their sites stay in the
+ * map. Returns {parts: {dev: [tasks], ...}, siteParts: Map, moved: {toDev,
+ * toSealed}, excluded: {dev: n, ...}}. The same input always gives the same split.
  */
-function splitBySite(tasks, { seed = CONFIG.split.seed, targets = CONFIG.split.targets, devSites = new Set(), sealedSites = new Set(), siteOf = siteOfUrl } = {}) {
-  const bySite = new Map();
+function splitBySite(tasks, { seed = CONFIG.split.seed, cuts = CONFIG.split.cuts, devSites = new Set(), sealedSites = new Set(), siteOf = siteOfUrl, never = CONFIG.neverSend.ids } = {}) {
+  const parts = Object.fromEntries(PARTS.map((p) => [p, []]));
+  const excluded = Object.fromEntries(PARTS.map((p) => [p, 0]));
+  const siteParts = new Map();
+  const moved = { toDev: 0, toSealed: 0 };
+  const sealedParts = CONFIG.split.sealedParts;
   for (const t of tasks) {
     const site = siteOf(t.url) || "(none)";
-    if (!bySite.has(site)) bySite.set(site, []);
-    bySite.get(site).push(t);
+    if (!siteParts.has(site)) {
+      const { part, rule } = partOfSite(site, { seed, cuts, sealedParts, devSites, sealedSites });
+      siteParts.set(site, part);
+      const byHash = partByCut(unitOf(`${seed}:${site}`), cuts);
+      if (rule === 1 && byHash !== "dev") moved.toDev++;
+      if (rule === 2 && !sealedParts.includes(byHash)) moved.toSealed++;
+    }
+    const part = siteParts.get(site);
+    if (neverSend(t, never)) excluded[part]++;
+    else parts[part].push(t);
   }
-  const order = [...bySite.keys()].sort((a, b) => hashUnit(`${seed}:${a}`) - hashUnit(`${seed}:${b}`) || a.localeCompare(b));
-  const parts = Object.fromEntries(PARTS.map((p) => [p, []]));
-  const siteParts = new Map();
-  const put = (site, part) => { siteParts.set(site, part); parts[part].push(...bySite.get(site)); };
-  const leastFull = (names) => names.reduce((best, p) => (parts[p].length / (targets[p] || 1) < parts[best].length / (targets[best] || 1) ? p : best), names[0]);
-  const sealedParts = CONFIG.split.sealedParts;
-  const moved = { toDev: 0, toSealed: 0 };
-  for (const site of order) if (sealedSites.has(site)) { put(site, leastFull(sealedParts)); moved.toSealed++; }
-  for (const site of order) if (!siteParts.has(site) && devSites.has(site)) { put(site, "dev"); moved.toDev++; }
-  for (const site of order) if (!siteParts.has(site)) put(site, leastFull(PARTS));
-  return { parts, siteParts, moved };
+  for (const p of PARTS) parts[p].sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  return { parts, siteParts, moved, excluded };
+}
+
+/**
+ * A keyed digest (HMAC-SHA256) of the site-to-part map and the seed. Keyed,
+ * so the committed value says nothing about which site is where, nor lets
+ * anyone test a guess at the holdout's sites.
+ */
+function splitDigest(siteParts, key, seed = CONFIG.split.seed) {
+  if (!key || String(key).length < 32) throw new Error("the split digest needs a key of 32 or more characters");
+  const map = [...siteParts.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return crypto.createHmac("sha256", String(key)).update(JSON.stringify({ seed, map })).digest("hex");
+}
+
+/**
+ * Whether a split may be used: its digest against the committed one.
+ * Committed and equal: ok. Committed and different: refused, always. Not
+ * committed: refused, unless this is the one-time bootstrap, which is itself
+ * refused once a value is committed. Returns {ok, bootstrap, message}.
+ */
+function checkSplitDigest(digest, { committed = CONFIG.split.digest, bootstrap = false } = {}) {
+  if (committed) {
+    if (bootstrap) return { ok: false, message: "The split digest is already committed (om2w-config.json split.digest), so bootstrap_split is refused: it is for the first census only." };
+    if (digest === committed) return { ok: true, message: `Split digest ${digest.slice(0, 16)}, the committed one.` };
+    return { ok: false, message: `The split is not the committed one: its digest ${digest.slice(0, 16)} is not ${committed.slice(0, 16)}. A read suite, the holdout, the dataset revision, the cuts or the seed changed and moved a site. Nothing was run. Find what changed; commit a new digest only on purpose, before any result of the new split is seen.` };
+  }
+  if (bootstrap) return { ok: true, bootstrap: true, message: `BOOTSTRAP: the split digest is not committed yet. This split's digest is ${digest}. Commit it as split.digest in tests/bench/om2w-config.json before any run: until then only a bootstrap census can run, and once it is committed bootstrap is refused.` };
+  return { ok: false, message: "The split digest is not committed yet (om2w-config.json split.digest is empty). Nothing was run. Run the census once with bootstrap_split ticked, and commit the digest it prints." };
 }
 
 /** The sites of every read suite (rule 1) and of the holdout (rule 2), from trial.js readSuites. */
@@ -274,6 +345,8 @@ function reportMarkdown(r, meta = {}) {
   out.push(`Per solved run: median ${r.medianSecondsSolved === null ? "-" : `${r.medianSecondsSolved} to ${r.medianSecondsSolved + SECONDS_BIN} s`}, median ${r.medianCallsSolved === null ? "-" : r.medianCallsSolved} model call(s).`);
   out.push(`Agent tokens: ${r.agentTokens.uncached} prompt uncached, ${r.agentTokens.cached} prompt cached, ${r.agentTokens.completion} output. Judge tokens: ${r.judgeTokens.input} input uncached, ${r.judgeTokens.cacheWrite} written to the cache, ${r.judgeTokens.cacheRead} read from it, ${r.judgeTokens.output} output.`);
   out.push(`Real spend: ${usd(r.spendUSD)} (agent ${usd(r.agentUSD)}, judge ${usd(r.judgeUSD)})${meta.capUSD ? `, cap $${Number(meta.capUSD).toFixed(2)}` : ""}.`);
+  // The never-send list: for dev, how many of its tasks; for a sealed part, the whole set's count only, which says nothing of where they were.
+  if (Number.isFinite(meta.excluded)) out.push(`Excluded before the run: ${meta.excluded} task(s) ${meta.sealed ? "of the whole set" : "of this part"} on the never-send list (upstream issues 21, 25, 31 and 34), not run and not in the planned runs.`);
   if (meta.problems && meta.problems.length) out.push("", `**Check failed.** ${meta.problems.join(" ")}`);
   return out.join("\n");
 }
@@ -344,9 +417,31 @@ async function fetchDataset(out, env = process.env) {
   return om2wTasks(JSON.parse(bytes.toString("utf8"))).length;
 }
 
+/**
+ * The two keys a job derives from HOLDOUT_KEY, written to files in `dir`
+ * (mode 600) and never printed: `split-digest`, the same in every run, keys
+ * the split's digest; `sealed`, one per workflow run, encrypts what a sealed
+ * shard or a census shard hands to the summary.
+ */
+function deriveKeys(dir, env = process.env) {
+  const k = env.HOLDOUT_KEY || "";
+  if (k.length < 16) throw new Error("HOLDOUT_KEY is not set: the split digest and the sealed counts are keyed from it.");
+  const run = String(env.GITHUB_RUN_ID || "");
+  if (!/^\d+$/.test(run)) throw new Error("GITHUB_RUN_ID is not set: the sealed key is one workflow run's.");
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const mac = (label) => crypto.createHmac("sha256", k).update(label).digest("hex");
+  fs.writeFileSync(path.join(dir, "split-digest"), mac("om2w-split-digest-v1"), { mode: 0o600 });
+  fs.writeFileSync(path.join(dir, "sealed"), mac(`om2w-sealed-run-v1:${run}`), { mode: 0o600 });
+}
+
 async function main(argv) {
   const [cmd, target] = argv;
   const flag = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : ""; };
+  if (cmd === "keys") {
+    deriveKeys(flag("--out"));
+    console.log("Keys derived for the split digest and this run's sealed files.");
+    return;
+  }
   if (cmd === "fetch") {
     const out = flag("--out");
     if (!out) throw new Error("fetch needs --out");
@@ -360,14 +455,27 @@ async function main(argv) {
     const tasks = om2wTasks(JSON.parse(fs.readFileSync(flag("--dataset"), "utf8")));
     const T = require("./trial.js");
     const suites = T.readSuites();
-    if (!suites.holdout && !argv.includes("--no-holdout")) throw new Error("No plain holdout file: rule 2 needs it (the workflow decrypts it). --no-holdout splits without it, for a local look only.");
+    const local = argv.includes("--no-holdout");
+    if (!suites.holdout && !local) throw new Error("No plain holdout file: rule 2 needs it (the workflow decrypts it). --no-holdout splits without it, for a local look only.");
     const { devSites, sealedSites } = clashSites(suites);
-    const { parts, siteParts, moved } = splitBySite(tasks, { devSites, sealedSites });
+    const { parts, siteParts, moved, excluded } = splitBySite(tasks, { devSites, sealedSites });
     const sites = (p) => [...siteParts.values()].filter((x) => x === p).length;
-    console.log(`Split by site (seed ${CONFIG.split.seed}): ${PARTS.map((p) => `${p} ${parts[p].length} tasks on ${sites(p)} sites`).join(", ")}. Rule 1 moved ${moved.toDev} site(s) to dev, rule 2 moved ${moved.toSealed} to the sealed side.`);
+    const left = PARTS.reduce((n, p) => n + excluded[p], 0);
+    console.log(`Split by site (seed ${CONFIG.split.seed}): ${PARTS.map((p) => `${p} ${parts[p].length} tasks on ${sites(p)} sites`).join(", ")}. Rule 1 moved ${moved.toDev} site(s) to dev, rule 2 moved ${moved.toSealed} to the sealed side. The never-send list left out ${left} task(s) of the whole set${part === "dev" ? `, ${excluded.dev} of them in dev` : ""}.`);
+    // The digest: every job checks the map against the committed value. Only a local look (--no-holdout) skips it, and its split is not the workflow's.
+    if (local) console.log("A local look without the holdout: the digest is not checked, and this split is not the workflow's.");
+    else {
+      const keyFile = flag("--digest-key-file");
+      if (!keyFile) throw new Error("split needs --digest-key-file: every job checks the split against the committed digest.");
+      const check = checkSplitDigest(splitDigest(siteParts, fs.readFileSync(keyFile, "utf8").trim()), { bootstrap: argv.includes("--bootstrap") });
+      if (!check.ok) { console.error(`::error::${check.message}`); if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n**${check.message}**\n`); process.exit(1); }
+      console.log(check.bootstrap ? `::warning::${check.message}` : check.message);
+      if (check.bootstrap && process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n**${check.message}**\n`);
+    }
     const chosen = part === "all" ? PARTS.flatMap((p) => parts[p].map((t) => ({ ...t, part: p }))) : parts[part].map((t) => ({ ...t, part }));
     fs.mkdirSync(path.dirname(flag("--out")), { recursive: true });
     fs.writeFileSync(flag("--out"), JSON.stringify(chosen), { mode: 0o600 });
+    if (flag("--excluded-out")) fs.writeFileSync(flag("--excluded-out"), JSON.stringify({ all: left, dev: excluded.dev }));
     return;
   }
   if (cmd === "summary") {
@@ -385,6 +493,15 @@ async function main(argv) {
     const files = readJsonFiles(target, /^om2w-counts-.*\.json$/);
     const counts = mergeCounts(files.map((f) => f.counts));
     const planned = parseInt(flag("--planned") || "0", 10);
+    // A sealed part is reported only as one group of enough tasks that no task's own result can be read from it.
+    const plannedTasks = parseInt(flag("--planned-tasks") || "0", 10);
+    const least = CONFIG.split.sealedReportMinTasks;
+    if (sealed && plannedTasks < least && !(files.length && files.every((f) => f.dry))) {
+      const why = `A sealed part is reported only for ${least} tasks or more, and this run planned ${plannedTasks}: nothing of it is shown.`;
+      console.log(why);
+      fs.writeFileSync(path.join(target, "om2w-summary.json"), JSON.stringify({ part, sealed, withheld: why }, null, 2));
+      process.exit(1);
+    }
     const r = report(counts, { planned });
     const first = files[0] || {};
     const problems = [];
@@ -394,7 +511,8 @@ async function main(argv) {
       if (files.some((f) => f.debuggerAvailable !== false)) problems.push("A shard's build has chrome.debugger, or did not say, in the shipped arm.");
       if (counts.realInputs) problems.push(`${counts.realInputs} real input event(s) in the shipped arm.`);
     }
-    const text = reportMarkdown(r, { part, sealed, dry: files.some((f) => f.dry), arm: flag("--arm"), agent: first.agent, tier: first.tier, judge: first.judge, revision: CONFIG.dataset.revision, commit: flag("--commit"), capUSD: files.reduce((a, f) => a + (f.capUSD || 0), 0), problems });
+    const excluded = flag("--excluded") === "" ? null : parseInt(flag("--excluded"), 10);
+    const text = reportMarkdown(r, { part, sealed, dry: files.some((f) => f.dry), arm: flag("--arm"), agent: first.agent, tier: first.tier, judge: first.judge, revision: CONFIG.dataset.revision, commit: flag("--commit"), capUSD: files.reduce((a, f) => a + (f.capUSD || 0), 0), excluded, problems });
     console.log(text);
     fs.writeFileSync(path.join(target, "om2w-summary.json"), JSON.stringify({ part, sealed, report: r, problems }, null, 2));
     if (problems.length) process.exit(1);
@@ -403,7 +521,7 @@ async function main(argv) {
   throw new Error("Usage: om2w.js fetch --out <file> | split --dataset <file> --part <part> --out <file> | summary <dir> --part <part> --planned N [--census]");
 }
 
-module.exports = { CONFIG, PARTS, OUTCOMES, CENSUS_CLASSES, SECONDS_BIN, siteOfUrl, gitBlobSha1, checkDataset, om2wTasks, splitBySite, clashSites, engineWidgetSelectors, censusClass, outcomeOf, countsOf, emptyCounts, mergeCounts, histMedian, report, reportMarkdown, censusReport, censusMarkdown, fetchDataset };
+module.exports = { CONFIG, PARTS, OUTCOMES, CENSUS_CLASSES, SECONDS_BIN, siteOfUrl, gitBlobSha1, checkDataset, om2wTasks, unitOf, partByCut, sealedCuts, partOfSite, neverSend, splitBySite, splitDigest, checkSplitDigest, deriveKeys, clashSites, engineWidgetSelectors, censusClass, outcomeOf, countsOf, emptyCounts, mergeCounts, histMedian, report, reportMarkdown, censusReport, censusMarkdown, fetchDataset };
 
 if (require.main === module) {
   // Every error here is ours and names no task, but a stack can hold a path: print the message only.

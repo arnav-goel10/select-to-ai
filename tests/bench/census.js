@@ -120,5 +120,6 @@ process.on("unhandledRejection", () => { console.error(WITHHELD); process.exit(1
   }
   const name = `om2w-census-${SHARD ? `${SHARD[1]}of${SHARD[2]}` : "1of1"}.json`;
   fs.writeFileSync(path.join(OUT, name), JSON.stringify({ dry: DRY, counts, devSites }, null, 2));
-  console.log(`\nCensus: ${done} page(s). ${Object.entries(counts).map(([p, c]) => `${p}: ${O.CENSUS_CLASSES.map((k) => `${k} ${c[k]}`).join(", ")}`).join("; ")}.`);
+  // A shard's own counts of a sealed part are never shown: they go, encrypted, to the summary, which reports the part whole.
+  console.log(`\nCensus: ${done} page(s). ${Object.entries(counts).filter(([p]) => OPEN_PARTS.has(p)).map(([p, c]) => `${p}: ${O.CENSUS_CLASSES.map((k) => `${k} ${c[k]}`).join(", ")}`).join("; ") || "no open part in this shard"}.`);
 })().catch(() => { console.error(WITHHELD); process.exit(1); });
