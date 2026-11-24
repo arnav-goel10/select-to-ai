@@ -165,9 +165,10 @@ test("a model is given the room its listed tier says, and the sampling its maker
   assert.equal(D.modelProfile("gemini-3.1-flash-lite").tier, "small");
   assert.equal(D.modelProfile("openai/gpt-oss-120b").tier, "standard");
   assert.equal(D.modelProfile("openai/gpt-oss-20b").tier, "small");
-  // A model the extension does not list is standard: its name is not read for a size.
-  for (const id of ["ministral-8b-latest", "gpt-5.5-mini", "nvidia/nemotron-3-ultra-550b-a55b", "meta/llama-4-maverick", "gemma4:e4b", "acme-haiku-tiny", "claude-opus-9", ""]) {
-    assert.equal(D.modelProfile(id).tier, "standard", id);
+  // A model the extension does not list keeps the tier it always had, worked
+  // out from the table (tests/unit/model-tiers.test.js holds the wide list).
+  for (const [id, tier] of [["ministral-8b-latest", "small"], ["gpt-5.5-mini", "small"], ["nvidia/nemotron-3-ultra-550b-a55b", "frontier"], ["meta/llama-4-maverick", "standard"], ["gemma4:e4b", "small"], ["acme-haiku-tiny", "small"], ["claude-opus-9", "frontier"], ["", "standard"]]) {
+    assert.equal(D.modelProfile(id).tier, tier, id);
   }
   assert.equal(D.modelProfile("gemini-3.5-flash").temperature, 1);
   assert.equal(D.modelProfile("gpt-6").temperature, null);

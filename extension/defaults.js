@@ -243,8 +243,7 @@
   // free backups and siblings), set by hand per model and reviewed here,
   // not guessed from words in its name. Every listed model is in one of
   // the three lists (tests/unit/defaults.test.js). A model the extension
-  // does not list, typed by the user, gets the standard tier, whatever
-  // its name says.
+  // does not list, typed by the user, is placed by tierOf below.
   const MODEL_TIERS = Object.freeze({
     small: Object.freeze([
       "anthropic/claude-haiku-4.5", "claude-haiku-4-5", "claude-haiku-5-5", "gemini-3.1-flash-lite",
@@ -268,9 +267,91 @@
     ]),
   });
   const TIER_OF = new Map(Object.entries(MODEL_TIERS).flatMap(([tier, ids]) => ids.map((id) => [id, tier])));
+
+  // What a model id says about the model, read by its structure. An id
+  // names a model and often how it is served: a provider prefix
+  // ("anthropic/"), a release date ("-20260115", "-2026-03-01", "-2506"),
+  // a route tag (":free"), a release stage ("-latest", "-preview"), dots or
+  // hyphens between version numbers. Its line is what is left once those
+  // and the version numbers are taken out: "claude-opus", "gpt-mini",
+  // "gemini-flash-lite". Its size is the parameter count it states, in
+  // billions ("70b"; "e4b" is an effective size; "a12b", the active part
+  // of a mixture, is not the model's size).
+  const RELEASE_STAGE = new Set(["latest", "preview", "exp", "experimental", "beta", "alpha"]);
+  function modelParts(id) {
+    const full = String(id || "").toLowerCase();
+    let size = 0;
+    for (const m of full.matchAll(/(?:^|[^a-z0-9.])(\d+(?:\.\d+)?)b(?![a-z0-9])/g)) size = Math.max(size, parseFloat(m[1]));
+    const effective = /(?:^|[^a-z0-9])e(\d+(?:\.\d+)?)b(?![a-z0-9])/.exec(full);
+    if (!size && effective) size = parseFloat(effective[1]);
+    const name = full.slice(full.lastIndexOf("/") + 1).replace(/:.*$/, "").replace(/[-@](?:\d{8}|\d{4}-\d{2}-\d{2}|\d{4})$/, "");
+    const line = [];
+    const version = [];
+    for (const token of name.split(/[-._\s]+/).filter(Boolean)) {
+      if (/^\d+$/.test(token)) { version.push(token); continue; }
+      if (/^[a-z]?\d+(?:\.\d+)?b$|^\d+k$/.test(token) || RELEASE_STAGE.has(token)) continue;
+      const m = /^([a-z]+)(\d+)$/.exec(token);
+      if (m) { if (m[1] !== "v") line.push(m[1]); version.push(m[2]); continue; }
+      if (/^\d/.test(token)) { version.push(token); continue; }
+      line.push(token);
+    }
+    return { line: line.join("-"), version: version.join("-"), major: version.length ? parseInt(version[0], 10) : null, size, tokens: line };
+  }
+  // The listed models, by line and version, and each line's tiers by major version.
+  const LISTED = Object.entries(MODEL_TIERS).flatMap(([tier, ids]) => ids.map((id) => ({ id, tier, ...modelParts(id) })));
+  const BY_RELEASE = new Map(LISTED.map((m) => [`${m.line}@${m.version}`, m.tier]));
+  // A word a maker puts in a smaller model's id: a word of a small listed
+  // model's line that no larger listed model's line has ("mini" in
+  // gpt-mini, "lite" in gemini-flash-lite, "haiku" in claude-haiku).
+  // Worked out from the table, not written down.
+  const SMALLER_VARIANT = (() => {
+    const larger = new Set(LISTED.filter((m) => m.tier !== "small").flatMap((m) => m.tokens));
+    return new Set(LISTED.filter((m) => m.tier === "small").flatMap((m) => m.tokens).filter((t) => !larger.has(t)));
+  })();
+  // Lines whose releases the extension lists none of, or not the older
+  // ones still in use: the tier each takes, from which major release on.
+  const MODEL_LINES = Object.freeze({
+    "claude-opus": Object.freeze({ tier: "frontier", since: 4 }),
+    "claude-fable": Object.freeze({ tier: "frontier", since: 0 }),
+    "gemini-pro": Object.freeze({ tier: "frontier", since: 1 }),
+    "mistral-tiny": Object.freeze({ tier: "small", since: 0 }),
+  });
+
+  /**
+   * A model's tier, from what the table declares:
+   * 1. a listed model, or a listed model written another way (a provider
+   *    prefix, a release date, a route tag, dots for hyphens);
+   * 2. the size its id states: 200 billion or more is frontier, under 40
+   *    small, between them standard;
+   * 3. a smaller variant of any line, by the word its maker marks it with;
+   * 4. a release of a listed or declared line, or of a line it extends
+   *    ("gpt-codex" of gpt): the tier of that line's latest listed release
+   *    not newer than it, else the line's declared tier from its first
+   *    release on. A release older than any listed (gpt-4o of gpt) is not
+   *    taken for one;
+   * 5. otherwise standard: an unknown model is given middle room, neither
+   *    starved nor flooded.
+   */
+  function tierOf(id) {
+    const listed = TIER_OF.get(String(id || ""));
+    if (listed) return listed;
+    const p = modelParts(id);
+    const same = BY_RELEASE.get(`${p.line}@${p.version}`);
+    if (same) return same;
+    if (p.size) return p.size >= 200 ? "frontier" : p.size < 40 ? "small" : "standard";
+    if (p.tokens.some((t) => SMALLER_VARIANT.has(t))) return "small";
+    for (let n = p.tokens.length; n > 0; n--) {
+      const line = p.tokens.slice(0, n).join("-");
+      const releases = p.major === null ? [] : LISTED.filter((m) => m.line === line && m.major !== null && m.major <= p.major).sort((a, b) => b.major - a.major);
+      if (releases.length) return releases[0].tier;
+      const declared = MODEL_LINES[line];
+      if (declared && (p.major === null ? declared.since === 0 : p.major >= declared.since)) return declared.tier;
+    }
+    return "standard";
+  }
   /** The listing size, page budget and actions per step for a model, by its tier. */
   function limitsFor(id) {
-    return TIER_LIMITS[TIER_OF.get(String(id || "")) || "standard"];
+    return TIER_LIMITS[tierOf(id)];
   }
 
   // Claude models that think adaptively (thinking: {type: "adaptive"}) and
@@ -494,6 +575,7 @@
     siblingModel,
     modelProfile,
     MODEL_TIERS,
+    MODEL_LINES,
     MODEL_PRICES,
     VISION_MODEL_PATTERNS,
     findModelRates,
