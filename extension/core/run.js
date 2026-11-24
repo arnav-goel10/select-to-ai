@@ -52,11 +52,19 @@
   // The page-blind check on presses (agentTools.js pressEntries): at most
   // this many entries a call, in the order worth judging first; the rest
   // are judged alone if pressed. A step that presses an entry still being
-  // judged waits for the call, which is given up this long after it was
-  // asked; a press asked about alone is given up after SINGLE_WAIT_MS.
+  // judged waits for the call. The call goes out beside the step, so the
+  // wait a person feels is only what it takes past the step: it is given
+  // up LABELS_WAIT_MS past the time this run's recent steps took (pressWait),
+  // and a press asked about alone SINGLE_WAIT_MS past it. Measured on 24 Nov
+  // 2026 (docs/agent-v4-status.md): Claude answered a page in 2 to 4 s, but
+  // free NVIDIA models took a median of 7 to 11 s, so a fixed 6 s threw
+  // away most of their answers, and with them the check.
   const LABELS_CAP = 200;
   const LABELS_WAIT_MS = 6000;
   const SINGLE_WAIT_MS = 8000;
+  // Steps whose time sets the wait, and the most that time may add to it.
+  const STEP_TIMES = 3;
+  const STEP_TIME_MOST = 60000;
   const INVALID_LIMIT = 3; // unusable replies in a row before the run gives up on the model
   const EVIDENCE_ROUNDS = 2;
   const VERIFY_ROUNDS = 2;
@@ -521,7 +529,19 @@
     const tag = `presses-${run.step}-${(run.pressAsks = (run.pressAsks || 0) + 1)}`;
     run.pressBatches = [...(run.pressBatches || []), { tag, keys: batch.map((e) => e.key), entries: batch }];
     const m = TOOLS.labelsMessages(batch, page.url);
-    fx.push({ type: "model", system: m.system, user: m.user, tool: m.tool, tier: run.helper ? "helper" : "pro", purpose: "labels", tag, timeoutMs: LABELS_WAIT_MS, effort: "default" });
+    fx.push({ type: "model", system: m.system, user: m.user, tool: m.tool, tier: run.helper ? "helper" : "pro", purpose: "labels", tag, timeoutMs: pressWait(run, LABELS_WAIT_MS), effort: "default" });
+  }
+
+  /**
+   * How long a press check is given: `least`, plus the longest of this
+   * run's last few steps on the same connection (stepTimes). A model that
+   * takes long over a step takes long over the check too, and the check
+   * runs beside the step, so this keeps the wait past the step near
+   * `least` for a slow model as for a fast one.
+   */
+  function pressWait(run, least) {
+    const took = Math.max(0, ...(run.stepTimes || []));
+    return least + Math.min(took, STEP_TIME_MOST);
   }
 
   /** A link the check said commits, kept by its whole address for opening it by that address later. */
@@ -1095,6 +1115,8 @@
     const fx = [];
     if (run.status !== "running") return fx;
     addUsage(run, event.usage);
+    // How long the step took, for how long a press check is given (pressWait).
+    if (Number(event.ms) > 0) run.stepTimes = [...(run.stepTimes || []), Number(event.ms)].slice(-STEP_TIMES);
     const budget = (env.settings && env.settings.costBudget) || 0;
     if (budget > 0 && run.usage.cost >= budget) {
       return end(run, fx, env, { state: "error", kind: "budget", text: `Cost budget reached: this task has used $${run.usage.cost.toFixed(4)} of the $${budget.toFixed(4)} limit set in Settings.` });
@@ -1354,7 +1376,7 @@
     status(run, "executor", check.kind === "form" ? "Checking what this form does…" : "Checking what this button does…");
     // A press is asked about alone the same way as on a page: the same entry, question and tool.
     const m = press ? TOOLS.labelsMessages([check.entry], check.url) : TOOLS.opinionMessages(check);
-    fx.push({ type: "model", system: m.system, user: m.user, tool: m.tool, tier: run.helper ? "helper" : "pro", purpose: "opinion", effort: "default", ...(press ? { timeoutMs: SINGLE_WAIT_MS } : {}) });
+    fx.push({ type: "model", system: m.system, user: m.user, tool: m.tool, tier: run.helper ? "helper" : "pro", purpose: "opinion", effort: "default", ...(press ? { timeoutMs: pressWait(run, SINGLE_WAIT_MS) } : {}) });
     return fx;
   }
 

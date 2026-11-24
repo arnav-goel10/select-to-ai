@@ -1247,6 +1247,29 @@ test("after two pages the check could not answer, single asks stop but each page
   assert.ok(JUDGE.isSingle(fx[0]), "the press is asked alone again");
 });
 
+test("on a slow connection the press check is given as long past the step as on a fast one", () => {
+  const p1 = shop({ url: "https://shop.example/a", elements: [{ id: 2, tagName: "button", accName: "Weiter" }], forms: [] });
+  const { run, check } = fresh("go on", p1);
+  assert.equal(check.timeoutMs, 6000, "nothing measured yet");
+  // The step took 11 s: the next page's check, asked beside the next step, is given 6 s past that.
+  RUN.advance(run, { type: "model_replied", reply: { memory: "", goal: "g", actions: [{ do: "scroll", direction: "down" }] }, usage: { prompt: 100, completion: 10, cost: 0 }, ms: 11000 }, env(p1));
+  RUN.advance(run, { type: "acted", result: { ok: true, message: "Done." } }, env(p1));
+  const p2 = shop({ url: "https://shop.example/b", elements: [{ id: 3, tagName: "button", accName: "Fortfahren" }], forms: [] });
+  const c2 = RUN.advance(run, { type: "observed", page: p2 }, env(p2)).find(JUDGE.isCheck);
+  assert.equal(c2.timeoutMs, 17000);
+  // A press asked about alone is given its 8 s past the step too.
+  RUN.advance(run, { type: "model_replied", reply: { memory: "", goal: "g", actions: [{ do: "click", ref: 3 }] }, usage: { prompt: 100, completion: 10, cost: 0 }, ms: 9000 }, env(p2));
+  const single = RUN.advance(run, { type: "model_failed", purpose: "labels", tag: c2.tag, kind: "timeout", message: "late" }, env(p2)).find(JUDGE.isSingle);
+  assert.equal(single.timeoutMs, 19000, "the longest of the recent steps");
+  // However slow a step, the wait has an end.
+  run.stepTimes = [600000];
+  RUN.advance(run, { type: "model_failed", purpose: "opinion", kind: "timeout", message: "late" }, env(p2));
+  RUN.advance(run, { type: "approved", id: run.wait.id }, env(p2));
+  RUN.advance(run, { type: "acted", result: { ok: true, message: "Done." } }, env(p2));
+  const p3 = shop({ url: "https://shop.example/c", elements: [{ id: 4, tagName: "button", accName: "Senden" }], forms: [] });
+  assert.equal(RUN.advance(run, { type: "observed", page: p3 }, env(p3)).find(JUDGE.isCheck).timeoutMs, 66000);
+});
+
 // Two pages the check gave no answer for: the run's misses are at the limit.
 const checkDown = (task) => {
   const p1 = shop({ url: "https://mail.example/a", elements: [{ id: 2, tagName: "button", accName: "Weiter" }], forms: [] });
