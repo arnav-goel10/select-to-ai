@@ -10,7 +10,11 @@
  * action is taken as done and the site is shown answering it with nothing
  * that fits (its own search results, empty), and the second step is asked.
  * A step leaves when it opens an address, or presses a link, on another
- * site, or hands the work to sub-tasks.
+ * site, or hands the work to sub-tasks, and the engine's own gate
+ * (core/policy.js decide, with the engine's default of asking before risky
+ * steps) lets that action run. A leave the gate holds for the user's
+ * approval is "held": in the product the run stops there, so it is not
+ * counted as leaving.
  *
  * The bar, from the decision this set checks:
  *   on   the site can answer: the first action stays on it in at least 9 of 10
@@ -39,6 +43,9 @@ const RUN = require(path.join(EXT, "core/run.js"));
 const STEP = require(path.join(EXT, "core/step.js"));
 const CONTEXT = require(path.join(EXT, "core/context.js"));
 const KNOWN = require(path.join(EXT, "core/memory.js"));
+const POLICY = require(path.join(EXT, "core/policy.js"));
+// The engine's default settings for the gate (extension/engine.js).
+const GATE = { riskConfirmation: true, allowlist: "" };
 const { CASES, pagesOf } = require("./start-site-cases.js");
 
 const MODEL = process.env.START_EVAL_MODEL || "claude-haiku-5-5";
@@ -73,8 +80,8 @@ function look(run, page) {
   run.trust.urls = [...new Set([...run.trust.urls, page.url, ...(page.elements || []).map((el) => el.url)].filter(Boolean))];
 }
 
-/** Where an action goes: "away" to another site, "here" on this one, or how it ends the step. */
-function whereTo(a, run, page) {
+/** Where an action asks to go: "away" to another site, "here" on this one, or how it ends the step. */
+function aimOf(a, run, page) {
   const away = (url) => { const s = TOOLS.siteOf(url); return s && s !== run.startSite; };
   if (a.do === "navigate") return away(a.url) ? "away" : "here";
   if (a.do === "tabs") return a.op === "open" && away(a.url) ? "away" : "here";
@@ -85,6 +92,33 @@ function whereTo(a, run, page) {
   }
   if (a.do === "done" || a.do === "ask_user") return a.do;
   return "here";
+}
+
+/**
+ * Where an action goes in the product: as aimOf, except that a leave the
+ * gate does not allow is "held", since the run then waits for the user.
+ */
+function whereTo(a, run, page) {
+  const aim = aimOf(a, run, page);
+  if (aim !== "away") return aim;
+  return POLICY.decide(a, page, run, GATE, null).verdict === "allow" ? "away" : "held";
+}
+
+/**
+ * Where a step goes: its first action that leaves or is held decides,
+ * since the actions run in order and a held one stops the step there.
+ */
+function stepWhere(wheres) {
+  return wheres.find((w) => w === "away" || w === "held") || wheres[0];
+}
+
+/**
+ * Whether a pair went as its group should: an "on" pair's first step
+ * neither leaves nor is held leaving; an "off" pair leaves, with the gate's
+ * leave, within its steps.
+ */
+function scored(group, wheres) {
+  return group === "on" ? wheres[0] !== "away" && wheres[0] !== "held" : wheres.includes("away");
 }
 
 async function main() {
@@ -118,7 +152,7 @@ async function main() {
     if (!checked.ok) return { error: `unusable reply: ${String(checked.error).slice(0, 160)}` };
     const actions = checked.step.actions;
     const wheres = actions.map((a) => whereTo(a, run, page));
-    const where = wheres.includes("away") ? "away" : wheres[0];
+    const where = stepWhere(wheres);
     return { actions, where, goal: checked.step.goal || "", said: actions.map((a) => STEP.describe(a, a.ref !== undefined ? run.labels[a.ref] : "")).join(", then ") };
   }
 
@@ -144,7 +178,7 @@ async function main() {
       else row.steps.push({ where: second.where, did: second.said });
     }
     const wheres = row.steps.map((s) => s.where);
-    row.right = c.group === "on" ? wheres[0] !== "away" : wheres.includes("away");
+    row.right = scored(c.group, wheres);
     if (row.error && c.group === "off" && !row.right) row.right = null;
     console.log(`${row.right === true ? "ok   " : row.right === null ? "LOST " : "WRONG"} [${c.group}] ${c.name} on ${row.site}: ${row.steps.map((s, i) => `step ${i + 1} ${s.where}: ${s.did}`).join(" | ")}${row.error ? ` (${row.error})` : ""}`);
   }
@@ -162,6 +196,8 @@ async function main() {
   console.log(`  on the site          first action stays on it in ${on.right} of ${on.asked} (bar ${BAR.on} of 10)${on.lost ? `, ${on.lost} with no usable step` : ""}`);
   console.log(`  unrelated tab        leaves within two steps in ${off.right} of ${off.asked} (bar ${BAR.off} of 10)${off.lost ? `, ${off.lost} with no usable step` : ""}`);
   console.log(`  steps before leaving ${offStays.filter((n) => n === 0).length} left at step 1, ${offStays.filter((n) => n === 1).length} at step 2`);
+  const held = rows.filter((r) => r.steps.some((s) => s.where === "held")).length;
+  console.log(`  held by the gate     ${held} pair${held === 1 ? "" : "s"} had a step that asked to leave and waited for the user's approval`);
   console.log(`  spend                $${spent.toFixed(4)} (cap $${CAP.toFixed(2)}${capped ? ", reached" : ""})`);
   if (process.env.START_EVAL_REPORT) fs.writeFileSync(process.env.START_EVAL_REPORT, JSON.stringify({ model: `anthropic/${cfg.model}`, spent, capped, bar: BAR, on, off, rows }, null, 2));
   // The bar is for the whole set; a run cut short by the cap or by lost calls proves nothing either way.
@@ -175,4 +211,4 @@ async function main() {
 
 if (require.main === module) main().catch((e) => { console.error(e); process.exit(1); });
 
-module.exports = { whereTo };
+module.exports = { whereTo, stepWhere, scored, GATE };
