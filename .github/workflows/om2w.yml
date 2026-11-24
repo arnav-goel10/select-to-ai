@@ -66,7 +66,7 @@ on:
         type: string
         default: "12"
       limit:
-        description: "How many tasks of the part (all, or a number; 3 or more on a sealed part)"
+        description: "How many tasks of the part (all, or a number; a sealed part always runs all)"
         type: string
         default: all
       max_usd:
@@ -185,9 +185,9 @@ jobs:
             [[ "$limit" =~ ^[1-9][0-9]{0,3}$ ]] || fail "limit must be all or a whole number"
             sample="$limit"
           fi
-          # A sealed part is reported as one group of $report_min tasks or more, and each shard runs $sealed_min or more.
-          if [ "$sealed" = "true" ] && [ "$sample" -gt 0 ] && [ "$sample" -lt "$report_min" ]; then fail "a sealed part needs a limit of $report_min or more: a smaller one would show a few tasks' own results"; fi
-          if [ "$sealed" = "true" ] && [ "$sample" -gt 0 ] && [ "$shards" -gt $((sample / sealed_min)) ]; then shards=$((sample / sealed_min)); fi
+          # A sealed part runs whole: two runs of different limits could be differenced to read one task.
+          # The summary reports it only when every planned run was counted, over $report_min tasks or more.
+          if [ "$sealed" = "true" ] && [ "$sample" -gt 0 ]; then fail "a sealed part runs whole: limit must be all, since two limits could be differenced to show one task's result"; fi
           # The split must be the committed one. Until a digest is committed, the one-time bootstrap census only.
           if [ "$bootstrap" = "true" ]; then
             if [ -n "$digest" ]; then fail "bootstrap_split is refused: the split digest is already committed (tests/bench/om2w-config.json split.digest)"; fi
@@ -234,7 +234,7 @@ jobs:
               if [ "$bootstrap" = "true" ]; then echo "" ; echo "**BOOTSTRAP of the split digest.** This census prints the digest to commit as split.digest. No run can start until it is committed, and once it is, bootstrap is refused."; fi
             else
               echo "Real run of part \`$part\`: agent \`anthropic\` / \`$model\`, judge \`$judge_model\` through the batch API, both with \`ANTHROPIC_API_KEY\`. $runs run(s) each, $timeout_s s per task, arm \`$arm\`, $shards shard(s), spend cap \$$cap (\$$per per shard). A canary of three fixture tasks runs first."
-              if [ "$sealed" = "true" ]; then echo "Sealed part: each shard writes counts only, encrypted for the summary, no file of any run, and its log shows no numbers of the shard. The summary reports the part whole."; else echo "Dev: the runs are uploaded encrypted with OM2W_DEV_KEY. Open them with scripts/om2w-dev-results.sh <run id>."; fi
+              if [ "$sealed" = "true" ]; then echo "Sealed part: each shard writes counts only, encrypted for the summary, no file of any run, and its log shows no numbers of the shard. The summary reports the part only whole, when every planned run was counted, and a shard that did not finish writes no counts."; else echo "Dev: the runs are uploaded encrypted with OM2W_DEV_KEY. Open them with scripts/om2w-dev-results.sh <run id>."; fi
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 

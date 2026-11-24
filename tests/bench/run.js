@@ -114,7 +114,10 @@
  *                      for the judge only, and no results file is written.
  *                      BENCH_COUNTS_OUT is then the only output, and the log
  *                      shows no numbers of the shard. A shard of fewer than
- *                      BENCH_SEALED_MIN_TASKS tasks (default 5) is refused.
+ *                      BENCH_SEALED_MIN_TASKS tasks (default 5) is refused,
+ *                      and so are BENCH_SAMPLE and BENCH_ONLY: a sealed part
+ *                      runs whole. A shard that did not record every run it
+ *                      planned writes no counts and exits 1.
  *   BENCH_RUN_ROOM_USD with BENCH_JUDGE_BATCH and BENCH_MAX_USD: before a run,
  *                      the verdicts still out are waited for if what they
  *                      hold would leave less than this for the run. The cap
@@ -477,6 +480,8 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   const profileMeta = CHATGPT ? BENCH_PROFILE_LIB.readMeta(CHATGPT.profile) : null;
   if (CHATGPT && !profileMeta) { console.error(`${CHATGPT.profile} is not a profile made by chatgpt-profile.js. ${BENCH_PROFILE_LIB.LOGIN_HINT}`); process.exit(1); }
   const file = process.env.BENCH_TASKS || path.join(__dirname, DRY ? "fixture-tasks.json" : "smoke-tasks.json");
+  // A sealed part runs whole: a sample or a pick of it could be differenced against another to read one task.
+  if (NO_FILES && (parseInt(process.env.BENCH_SAMPLE || "0", 10) > 0 || ONLY.length)) refuse("A sealed part runs whole: BENCH_SAMPLE and BENCH_ONLY are refused. Nothing was run.");
   const allTasks = normaliseTasks(JSON.parse(fs.readFileSync(file, "utf8")));
   // BENCH_LEARN=pairs: the task that starts each pair; its second run is found from it.
   let tasks = LEARN === "pairs" ? TRIAL.learnPlan(allTasks).map((p) => p.a) : allTasks;
@@ -953,7 +958,10 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   // Why a shard stopped can hold a lost run's error text: a sealed log says only that it did.
   if (stoppedEarly) console.log(SEALED ? "Stopped early: a shard stopped early." : `Stopped early: ${stoppedEarly}`);
   // BENCH_COUNTS_OUT: the counts of this shard, the only output of a sealed part.
-  if (COUNTS_OUT) {
+  // A sealed shard that did not record every run it planned (the cap, a crash, lost runs in a row) writes no counts.
+  const sealedUnfinished = NO_FILES && !OM2W.sealedShardComplete(rows, tasks.length * RUNS);
+  if (sealedUnfinished) console.log("A sealed shard that did not finish every run writes no counts: nothing of it is reported.");
+  if (COUNTS_OUT && !sealedUnfinished) {
     fs.mkdirSync(COUNTS_OUT, { recursive: true });
     let tier = "";
     try { const p = require(path.join(EXT, "defaults.js")).modelProfile(MODEL); tier = `${p.tier}, ${p.pageBudget} characters of page text`; } catch (_e) { tier = "unknown"; }
@@ -962,4 +970,5 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}) {
   if (!NO_FILES) fs.writeFileSync(path.join(OUT, `results${SHARD ? `-${SHARD[1]}of${SHARD[2]}` : ""}.json`), JSON.stringify({ agent: { provider: PROVIDER, model: MODEL, helperModel: HELPER_MODEL || undefined, url: CUSTOM_URL || undefined, extension: EXT, profile: CHATGPT ? CHATGPT.profile : undefined, debugger: DEBUGGER || "as built", debuggerAvailable, learning: LEARN || "off", recipes: RECIPES, disguise: DISGUISE }, shard: SHARD ? `shard ${SHARD[1]} of ${SHARD[2]}` : "", judge: { model: JUDGE.model, url: JUDGE.url, vision: JUDGE.vision, shots: JUDGE.vision ? JUDGE.shots : 0, stubCalls: DRY ? judgeStub.calls : undefined }, dry: DRY, spentUSD: spent, capUSD: MAX_USD, capReached, runsPerTask: RUNS, planned: tasks.map((t) => t.id), summary: s, stoppedEarly, rows: rows.map((r) => ({ ...r, finalText: undefined, pages: undefined, engineReadings: undefined, screenshots: (r.screenshots || []).length })) }, null, 2));
   // The spend cap doing its job is not a failure of the run.
   if (stoppedEarly && !capReached) process.exitCode = 2;
+  if (sealedUnfinished) process.exitCode = 1;
 })().catch((e) => { console.error(SEALED ? "The harness stopped with an error; a sealed run withholds the detail." : e); process.exit(1); });

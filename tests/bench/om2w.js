@@ -299,6 +299,34 @@ function mergeCounts(list) {
   return c;
 }
 
+/**
+ * Whether a sealed shard may write its counts: only when every run it planned was recorded.
+ * A shard the cap or an error stopped early writes nothing, so no run of a few tasks is ever counted.
+ */
+function sealedShardComplete(rows, plannedRuns) {
+  return plannedRuns > 0 && (rows || []).length === plannedRuns;
+}
+
+/**
+ * Why a sealed report is withheld, or "" when it may be shown. A sealed part is reported only whole:
+ * every planned shard left its counts, no shard stopped early, the runs counted are exactly the runs
+ * planned, and they cover at least `least` tasks. A report of part of a plan could be differenced
+ * against another (a rising cap, a crash) to read one task's outcome, so none is ever shown.
+ * The minimum size is waived for a dry run on the fixture pages only; the whole-plan rule is not.
+ */
+function sealedWithheld({ files = [], counts, planned = 0, plannedTasks = 0, shards = 0, least }) {
+  const dry = files.length > 0 && files.every((f) => f.dry);
+  const runs = (counts && counts.runs) || 0;
+  const perTask = plannedTasks > 0 && planned > 0 && planned % plannedTasks === 0 ? planned / plannedTasks : 0;
+  if (!perTask) return `A sealed part is reported only against a plan of whole tasks, and this one gave ${planned} run(s) over ${plannedTasks} task(s): nothing of it is shown.`;
+  if (plannedTasks < least && !dry) return `A sealed part is reported only for ${least} tasks or more, and this run planned ${plannedTasks}: nothing of it is shown.`;
+  if (!shards || files.length !== shards) return `A sealed part is reported only when every shard left its counts, and ${files.length} of ${shards || "an unknown number of"} did: nothing of it is shown.`;
+  if (files.some((f) => f.stoppedEarly || f.capReached)) return "A sealed part is reported only when no shard stopped early, and one did: nothing of it is shown.";
+  if (runs !== planned) return `A sealed part is reported only when every planned run was counted, and ${runs} of ${planned} were: nothing of it is shown.`;
+  if (runs / perTask < least && !dry) return `A sealed part is reported only for ${least} tasks or more counted: nothing of it is shown.`;
+  return "";
+}
+
 /** The median of a histogram {value: count}, as the value of the middle entry (a bin's lower edge for seconds). */
 function histMedian(hist) {
   const entries = Object.entries(hist || {}).map(([k, n]) => [Number(k), n]).sort((a, b) => a[0] - b[0]);
@@ -493,19 +521,20 @@ async function main(argv) {
     const files = readJsonFiles(target, /^om2w-counts-.*\.json$/);
     const counts = mergeCounts(files.map((f) => f.counts));
     const planned = parseInt(flag("--planned") || "0", 10);
-    // A sealed part is reported only as one group of enough tasks that no task's own result can be read from it.
+    // A sealed part is reported only whole, as one group of enough tasks that no task's own result can be read from it.
     const plannedTasks = parseInt(flag("--planned-tasks") || "0", 10);
-    const least = CONFIG.split.sealedReportMinTasks;
-    if (sealed && plannedTasks < least && !(files.length && files.every((f) => f.dry))) {
-      const why = `A sealed part is reported only for ${least} tasks or more, and this run planned ${plannedTasks}: nothing of it is shown.`;
-      console.log(why);
-      fs.writeFileSync(path.join(target, "om2w-summary.json"), JSON.stringify({ part, sealed, withheld: why }, null, 2));
-      process.exit(1);
+    const shards = parseInt(flag("--shards") || "0", 10);
+    if (sealed) {
+      const why = sealedWithheld({ files, counts, planned, plannedTasks, shards, least: CONFIG.split.sealedReportMinTasks });
+      if (why) {
+        console.log(why);
+        fs.writeFileSync(path.join(target, "om2w-summary.json"), JSON.stringify({ part, sealed, withheld: why }, null, 2));
+        process.exit(1);
+      }
     }
     const r = report(counts, { planned });
     const first = files[0] || {};
     const problems = [];
-    const shards = parseInt(flag("--shards") || "0", 10);
     if (shards && files.length !== shards) problems.push(`${files.length} of ${shards} shard(s) left a counts file.`);
     if (flag("--arm") === "shipped") {
       if (files.some((f) => f.debuggerAvailable !== false)) problems.push("A shard's build has chrome.debugger, or did not say, in the shipped arm.");
@@ -521,7 +550,7 @@ async function main(argv) {
   throw new Error("Usage: om2w.js fetch --out <file> | split --dataset <file> --part <part> --out <file> | summary <dir> --part <part> --planned N [--census]");
 }
 
-module.exports = { CONFIG, PARTS, OUTCOMES, CENSUS_CLASSES, SECONDS_BIN, siteOfUrl, gitBlobSha1, checkDataset, om2wTasks, unitOf, partByCut, sealedCuts, partOfSite, neverSend, splitBySite, splitDigest, checkSplitDigest, deriveKeys, clashSites, engineWidgetSelectors, censusClass, outcomeOf, countsOf, emptyCounts, mergeCounts, histMedian, report, reportMarkdown, censusReport, censusMarkdown, fetchDataset };
+module.exports = { CONFIG, PARTS, OUTCOMES, CENSUS_CLASSES, SECONDS_BIN, siteOfUrl, gitBlobSha1, checkDataset, om2wTasks, unitOf, partByCut, sealedCuts, partOfSite, neverSend, splitBySite, splitDigest, checkSplitDigest, deriveKeys, clashSites, engineWidgetSelectors, censusClass, outcomeOf, countsOf, emptyCounts, mergeCounts, sealedShardComplete, sealedWithheld, histMedian, report, reportMarkdown, censusReport, censusMarkdown, fetchDataset };
 
 if (require.main === module) {
   // Every error here is ours and names no task, but a stack can hold a path: print the message only.

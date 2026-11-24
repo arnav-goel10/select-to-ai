@@ -301,12 +301,19 @@ test("the summary reads counts files only, never a run's own file", () => {
     fs.mkdirSync(path.join(dir, "x", "run1"), { recursive: true });
     fs.writeFileSync(path.join(dir, "x", "run1", "run.json"), JSON.stringify({ id: "taskZZZ", task: "do not show me", success: true }));
     const sum = (...a) => spawnSync(process.execPath, [path.join(ROOT, "tests/bench/om2w.js"), "summary", dir, ...a], { encoding: "utf8" });
-    const r = sum("--part", "gate", "--planned", "20", "--planned-tasks", "10", "--arm", "shipped", "--shards", "2");
+    // Dev: a part of a plan is reported, with what did not run counted as such.
+    const r = sum("--part", "dev", "--planned", "20", "--planned-tasks", "10", "--arm", "shipped", "--shards", "2");
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /\| 20 \| 1 \| 1 \| 0 \| 0 \| 0 \| 0 \| 0 \| 18 \| 5\.0% \| 50\.0% \|/);
     assert.ok(!r.stdout.includes("taskZZZ") && !r.stdout.includes("do not show me"));
-    const short = sum("--part", "gate", "--planned", "20", "--planned-tasks", "10", "--shards", "3");
+    const short = sum("--part", "dev", "--planned", "20", "--planned-tasks", "10", "--shards", "3");
     assert.equal(short.status, 1, "a shard that left no counts file fails the summary");
+    // Sealed: the same two runs under a plan of 20 are withheld whole, a missing shard too.
+    for (const shards of ["2", "3"]) {
+      const g = sum("--part", "gate", "--planned", "20", "--planned-tasks", "10", "--shards", shards);
+      assert.equal(g.status, 1, shards);
+      assert.ok(!/\| \d+ \| \d+ \|/.test(g.stdout), g.stdout);
+    }
     // A sealed part of fewer than the minimum tasks is never reported, whatever the limit and the shards.
     for (const n of ["1", "3", "9", ""]) {
       const few = sum("--part", "gate", "--planned", "4", "--planned-tasks", n, "--shards", "2");
@@ -317,6 +324,89 @@ test("the summary reads counts files only, never a run's own file", () => {
     // Dev has no minimum.
     assert.equal(sum("--part", "dev", "--planned", "2", "--planned-tasks", "1", "--shards", "2").status, 0);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// A sealed shard's counts file as run.js writes it, holding `n` runs.
+function sealedCountsDir(shardRuns, extra = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "om2w-seal-"));
+  shardRuns.forEach((n, i) => {
+    const rows = Array.from({ length: n }, (_, k) => row({ success: k % 3 === 0 }));
+    fs.writeFileSync(path.join(dir, `om2w-counts-${i + 1}of${shardRuns.length}.json`), JSON.stringify({ debuggerAvailable: false, capUSD: 1, spentUSD: 0.1, capReached: false, stoppedEarly: false, ...extra, counts: O.countsOf(rows) }));
+  });
+  return dir;
+}
+const sealedSum = (dir, ...a) => spawnSync(process.execPath, [path.join(ROOT, "tests/bench/om2w.js"), "summary", dir, "--part", "gate", ...a], { encoding: "utf8" });
+const showsNumbers = (out) => /\| \d+ \| \d+ \|/.test(out) || /passed \d|scored rate|median/i.test(out);
+
+test("the reviewer's case: one run counted under a sealed plan of 10 is withheld, with a non-zero exit", () => {
+  const dir = sealedCountsDir([1], { capReached: true, stoppedEarly: true });
+  try {
+    const r = sealedSum(dir, "--planned", "10", "--planned-tasks", "10", "--shards", "1", "--arm", "shipped");
+    assert.equal(r.status, 1, r.stdout);
+    assert.match(r.stdout, /nothing of it is shown/);
+    assert.ok(!showsNumbers(r.stdout), r.stdout);
+    const saved = JSON.parse(fs.readFileSync(path.join(dir, "om2w-summary.json"), "utf8"));
+    assert.ok(saved.withheld && !("report" in saved));
+    // The same run without the cap flags is still withheld: the runs counted, not the flags, decide.
+    fs.writeFileSync(path.join(dir, "om2w-counts-1of1.json"), JSON.stringify({ debuggerAvailable: false, counts: O.countsOf([row({ success: true })]) }));
+    const r2 = sealedSum(dir, "--planned", "10", "--planned-tasks", "10", "--shards", "1");
+    assert.equal(r2.status, 1);
+    assert.ok(!showsNumbers(r2.stdout), r2.stdout);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("sealed runs with a rising cap cannot be differenced: nothing is shown until every planned run is counted", () => {
+  // A cap raised a step at a time stops the shards after 1, 2, ... runs. Every one of those is withheld
+  // with the same words, so no two outputs differ by one task. Only the whole part is reported.
+  const said = new Set();
+  for (let k = 1; k < 12; k++) {
+    const dir = sealedCountsDir([Math.ceil(k / 2), Math.floor(k / 2)]);
+    try {
+      const r = sealedSum(dir, "--planned", "12", "--planned-tasks", "12", "--shards", "2");
+      assert.equal(r.status, 1, `${k} run(s)`);
+      assert.ok(!showsNumbers(r.stdout), r.stdout);
+      said.add(r.stdout.replace(/\d+ of 12/, "N of 12"));
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  }
+  assert.equal(said.size, 1, [...said].join("\n"));
+  const whole = sealedCountsDir([6, 6]);
+  try {
+    const r = sealedSum(whole, "--planned", "12", "--planned-tasks", "12", "--shards", "2", "--arm", "shipped");
+    assert.equal(r.status, 0, r.stdout);
+    assert.ok(showsNumbers(r.stdout));
+  } finally { fs.rmSync(whole, { recursive: true, force: true }); }
+  // Every planned run counted, but a shard says it stopped early: withheld.
+  const flagged = sealedCountsDir([6, 6], { stoppedEarly: true });
+  try { assert.equal(sealedSum(flagged, "--planned", "12", "--planned-tasks", "12", "--shards", "2").status, 1); } finally { fs.rmSync(flagged, { recursive: true, force: true }); }
+  // The helpers, directly: more runs than planned, a plan of part tasks, and the minimum on the runs counted.
+  const C = (n) => ({ runs: n });
+  const f = (n) => Array.from({ length: n }, () => ({}));
+  assert.equal(O.sealedWithheld({ files: f(1), counts: C(10), planned: 10, plannedTasks: 10, shards: 1, least: 10 }), "");
+  assert.notEqual(O.sealedWithheld({ files: f(1), counts: C(11), planned: 10, plannedTasks: 10, shards: 1, least: 10 }), "");
+  assert.notEqual(O.sealedWithheld({ files: f(1), counts: C(9), planned: 9, plannedTasks: 9, shards: 1, least: 10 }), "");
+  assert.notEqual(O.sealedWithheld({ files: f(1), counts: C(15), planned: 15, plannedTasks: 10, shards: 1, least: 10 }), "");
+  assert.notEqual(O.sealedWithheld({ files: f(1), counts: C(10), planned: 10, plannedTasks: 10, shards: 0, least: 10 }), "");
+  // A dry run on the fixture pages is let off the minimum size only, never the whole-plan rule.
+  assert.equal(O.sealedWithheld({ files: [{ dry: true }], counts: C(7), planned: 7, plannedTasks: 7, shards: 1, least: 10 }), "");
+  assert.notEqual(O.sealedWithheld({ files: [{ dry: true }], counts: C(6), planned: 7, plannedTasks: 7, shards: 1, least: 10 }), "");
+});
+
+test("a sealed shard that did not finish every run writes no counts, and a sealed part runs whole", () => {
+  assert.equal(O.sealedShardComplete(Array(10).fill({}), 10), true);
+  for (const n of [0, 1, 4, 9, 11]) assert.equal(O.sealedShardComplete(Array(n).fill({}), 10), false, String(n));
+  assert.equal(O.sealedShardComplete([], 0), false);
+  // run.js asks it before it writes the counts, and fails the shard when it says no.
+  const src = fs.readFileSync(path.join(ROOT, "tests/bench/run.js"), "utf8");
+  assert.match(src, /const sealedUnfinished = NO_FILES && !OM2W\.sealedShardComplete\(rows, tasks\.length \* RUNS\);/);
+  assert.match(src, /if \(COUNTS_OUT && !sealedUnfinished\) \{/);
+  assert.match(src, /if \(sealedUnfinished\) process\.exitCode = 1;/);
+  // A sample or a pick of a sealed part is refused before anything runs.
+  const go = (env) => spawnSync(process.execPath, [path.join(ROOT, "tests/bench/run.js")], { encoding: "utf8", env: { PATH: process.env.PATH, BENCH_DRY: "1", BENCH_QUIET: "sealed", BENCH_NO_FILES: "1", BENCH_TASKS: path.join(ROOT, "tests/bench/fixture-tasks.json"), BENCH_OUT: path.join(os.tmpdir(), "om2w-never"), ...env }, timeout: 20000 });
+  for (const env of [{ BENCH_SAMPLE: "10" }, { BENCH_SAMPLE: "11" }, { BENCH_ONLY: "a,b,c,d,e" }]) {
+    const r = go(env);
+    assert.equal(r.status, 1, JSON.stringify(env));
+    assert.match(r.stderr, /A sealed part runs whole/);
+  }
 });
 
 test("run.js refuses a run with no files that is not sealed, and a batch judge with learning or recipes", () => {
@@ -565,12 +655,16 @@ test("the om2w plan step refuses an input with a line break, so no input can add
 });
 
 test("a sealed part never runs a shard of a few tasks, and the cap never rounds to nothing", { skip: process.platform === "win32" }, () => {
-  // The reviewer's case: gate, limit 10, 12 shards gave one task a shard. Now: 10 / 5 = 2 shards.
-  const g = plan({ IN_MODE: "run", IN_PART: "gate", IN_LIMIT: "10", IN_SHARDS: "12" });
+  // A sealed part runs whole: any limit is refused, so runs of rising limits cannot be differenced.
+  for (const part of ["gate", "vault"]) for (const limit of ["2", "9", "10", "11", "30", "500"]) {
+    const r = plan({ IN_MODE: "run", IN_PART: part, IN_LIMIT: limit, IN_SHARDS: "12" });
+    assert.equal(r.status, 1, `${part} ${limit}`);
+    assert.match(r.said, /a sealed part runs whole/);
+    assert.equal(r.raw, "");
+  }
+  const g = plan({ IN_MODE: "run", IN_PART: "gate", IN_LIMIT: "all", IN_SHARDS: "12" });
   assert.equal(g.status, 0, g.said);
-  assert.equal(g.outputs.shard_count, "2");
-  const v = plan({ IN_MODE: "run", IN_PART: "vault", IN_LIMIT: "30", IN_SHARDS: "12" });
-  assert.equal(v.outputs.shard_count, "6");
+  assert.deepEqual([g.outputs.sample, g.outputs.shard_count], ["0", "12"]);
   // Dev is not held to it.
   assert.equal(plan({ IN_MODE: "run", IN_PART: "dev", IN_LIMIT: "10", IN_SHARDS: "12" }).outputs.shard_count, "10");
   // $0.0005 over 12 shards rounds to $0.0000 a shard: refused, never read as no cap.
