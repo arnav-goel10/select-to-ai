@@ -1343,8 +1343,9 @@
     // go (a button, a choice not checked, a disabled choice, and the parts
     // of a form that hold no value of their own, such as a label of a box
     // or a group box), and "unknown" for a value the check cannot be shown
-    // (a file, a secret field, or a region or control the page makes of
-    // its own).
+    // (a file, a secret field, a dropdown that takes several options whose
+    // chosen ones are not all listed, or a region or control the page makes
+    // of its own).
     const sentAs = (e) => {
       const tag = String(e.tagName || "").toLowerCase();
       const type = String(e.inputType || "text").toLowerCase();
@@ -1353,7 +1354,13 @@
       // A label of a native radio or tick box stands for it (controlKind).
       if (e.controlKind) return !e.disabled && e.ariaChecked === "true" ? "choice" : "none";
       if (tag === "textarea") return "box";
-      if (tag === "select") return e.disabled ? "none" : "choice";
+      if (tag === "select") {
+        if (e.disabled) return "none";
+        // A dropdown that takes several options: every one chosen is shown,
+        // and one whose chosen options are not all listed cannot be.
+        if (e.multiple) return Array.isArray(e.selectedAll) && !e.selectedMore ? "choice" : "unknown";
+        return "choice";
+      }
       if (tag === "input") {
         if (type === "hidden" || /^(submit|button|reset|image)$/.test(type)) return "none";
         if (!/^(hidden|submit|button|reset|image|checkbox|radio|file|range|color)$/.test(type)) return "box";
@@ -1363,22 +1370,31 @@
         return "choice";
       }
       // Only a box, a dropdown or a text area carries a value into a form.
-      // Anything else that names a role of a control is one the page makes
-      // of its own, and what it sends cannot be shown.
-      const role = String(e.role || "").toLowerCase();
-      if (/checkbox|radio|switch/.test(role) || role === "textbox" || role === "combobox" || role === "slider" || role === "spinbutton") return "unknown";
+      // Anything else the page marks as holding a state or a value is a
+      // control the page makes of its own, and what it sends cannot be
+      // shown: the same rule as describeForm's count of such controls.
+      const role = String(e.role || "").trim().toLowerCase();
+      if (PAGE_CONTROL_ROLES.has(role)) return "unknown";
+      if ([e.ariaHaspopup, e.ariaPressed, e.ariaChecked, e.ariaSelected].some((v) => v !== undefined && v !== null)) return "unknown";
+      if (tag.includes("-")) return "unknown";
       return "none";
     };
     const sentBy = (form, as) => els.filter((e) => e.formId === form.id && sentAs(e) === as);
     // The boxes for words, numbers or dates of a form, as listed.
     const boxesOf = (form) => sentBy(form, "box");
     const nameOf = (box) => clip(box.accName || box.label || box.placeholder || box.title || box.name || box.htmlId || "", 70);
-    // What a choice is set to: checked, for a radio or tick box, or the
-    // page's own words for the option or value chosen.
+    // What a choice is set to, as the lines the check is shown: checked,
+    // for a radio or tick box, or the page's own words for the option or
+    // value chosen. A dropdown that takes several options gives one line
+    // for each option chosen (one line with nothing chosen when none is).
     const chosenOf = (c) => {
       const type = String(c.inputType || "").toLowerCase();
-      if (c.controlKind || type === "checkbox" || type === "radio") return { name: nameOf(c), checked: true };
-      return { name: nameOf(c), chosen: clip((String(c.tagName || "").toLowerCase() === "select" && c.selected) || c.value || "", 120) };
+      if (c.controlKind || type === "checkbox" || type === "radio") return [{ name: nameOf(c), checked: true }];
+      if (String(c.tagName || "").toLowerCase() === "select" && c.multiple) {
+        const all = (c.selectedAll || []).map((t) => clip(t || "", 120));
+        return (all.length ? all : [""]).map((chosen) => ({ name: nameOf(c), chosen }));
+      }
+      return [{ name: nameOf(c), chosen: clip((String(c.tagName || "").toLowerCase() === "select" && c.selected) || c.value || "", 120) }];
     };
     // A form whose boxes hold nothing of the person's may ask the site
     // something (a calculator, a lookup, a tracking box) or post words for
@@ -1389,14 +1405,19 @@
     // sends with what is chosen in it, and the submitting control's name.
     // The first box is the one typed in, when there is one.
     //
-    // The check is shown every control whose value goes out with the form,
-    // at most FORM_BOXES_SHOWN of them, and only those the page lists. A
-    // form that carries more than that, no box listed, a control the check
-    // cannot be shown, a control the page makes of its own, or more boxes or
-    // choices than are listed (one hidden behind an editor, or past the
-    // listing's end) is
-    // held as the certain send its structure makes it, so nothing the
-    // check was never shown can go out on its answer.
+    // The check is shown each typed box with its text and each choice with
+    // what is chosen in it (every chosen option of a dropdown that takes
+    // several), at most FORM_BOXES_SHOWN lines, and only those the page
+    // lists. A form is held as the certain send its structure makes it when
+    // it carries more than that, no box listed, a listed control the check
+    // cannot be shown (sentAs "unknown"), any control the page makes of its
+    // own (describeForm counts each element other than a native box,
+    // dropdown or option that the page marks as holding a state or a
+    // value), or more boxes or choices than are listed (one hidden behind
+    // an editor, or past the listing's end). Two things still go out
+    // unshown: a plain hidden field, which the page sets and the person
+    // never does, and a control of the page's own that carries no mark of
+    // being one, which no structure can tell from any other element.
     const unsureSend = (form, button, typedIn) => {
       const all = boxesOf(form);
       const choices = sentBy(form, "choice");
@@ -1404,7 +1425,8 @@
       const blind = sentBy(form, "unknown").length > 0
         || (form.built || 0) > 0
         || (form.choices !== undefined && choices.length < form.choices);
-      if (blind || all.length === 0 || all.length < counted || Math.max(all.length, counted) + Math.max(choices.length, form.choices || 0) > FORM_BOXES_SHOWN) return risk("send", button || typedIn);
+      const picked = choices.flatMap(chosenOf);
+      if (blind || all.length === 0 || all.length < counted || Math.max(all.length, counted) + Math.max(picked.length, form.choices || 0) > FORM_BOXES_SHOWN) return risk("send", button || typedIn);
       const boxes = typedIn && all.includes(typedIn) ? [typedIn, ...all.filter((b) => b !== typedIn)] : all;
       const box = boxes[0];
       const r = risk("send", button || box);
@@ -1413,7 +1435,6 @@
       let to = "";
       if (form.crossOrigin) { try { to = new URL(String(form.action || "")).hostname; } catch (_e) { /* no address */ } }
       const shown = boxes.map((b) => ({ name: nameOf(b), ref: b.id, text: clip(b.value || "", 300) }));
-      const picked = choices.map(chosenOf);
       r.unsure = {
         host,
         to,
@@ -1473,6 +1494,11 @@
     }
     return null;
   }
+
+  // The roles of a control, or of a choice in a list, that a page gives to
+  // an element it builds of its own (contentRisk sentAs, and the same list
+  // in agentContentScript.js describeForm).
+  const PAGE_CONTROL_ROLES = new Set(["textbox", "searchbox", "combobox", "listbox", "option", "checkbox", "radio", "radiogroup", "switch", "slider", "spinbutton", "menuitemradio", "menuitemcheckbox"]);
 
   // The most boxes of one form the form check is shown (contentRisk).
   const FORM_BOXES_SHOWN = 8;
@@ -1841,7 +1867,7 @@
 
   // Raised when the question changes in a way the text alone may not show,
   // so verdicts kept under the old question are never used for the new one.
-  const JUDGE_VERSION = "reaches-undo-2";
+  const JUDGE_VERSION = "reaches-undo-3";
 
   /**
    * A stamp for the press check as it is asked now: its version, system

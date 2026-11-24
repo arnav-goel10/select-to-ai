@@ -70,3 +70,39 @@ test("a form counts the choices it sends and the controls the page builds inside
   assert.equal(g.choices, 0);
   assert.equal(g.built, 4);
 });
+
+test("a control the page builds is counted by what it marks itself as holding, not by a list of a few roles", () => {
+  const boxes = [control("input", { type: "text", value: "Plan" }), control("textarea", { value: "Q3" }), control("button", { type: "submit" })];
+  const hiddenValue = control("input", { type: "hidden", value: "everyone" });
+  // A custom element with no value, name or state of its own: a wrapper for layout.
+  const wrapper = () => ({ tagName: "APP-CARD", attrs: {}, isContentEditable: false, getAttribute() { return null; } });
+  const shapes = {
+    // A dropdown button backed by a hidden field (the Headless UI Listbox shape).
+    "a button that opens a list": [[hiddenValue], [control("button", { type: "button", attrs: { "aria-haspopup": "listbox", "aria-expanded": "false" } })]],
+    "a list with a chosen option": [[hiddenValue], [control("div", { attrs: { role: "listbox" } }), control("div", { attrs: { role: "option", "aria-selected": "true" } })]],
+    "a toggle button": [[hiddenValue], [control("button", { type: "button", attrs: { "aria-pressed": "true" } })]],
+    "a checked menu radio": [[hiddenValue], [control("div", { attrs: { role: "menuitemradio", "aria-checked": "true" } })]],
+    "a radio group": [[], [control("div", { attrs: { role: "radiogroup" } })]],
+    "a search box": [[], [control("div", { attrs: { role: "searchbox" } })]],
+    "a value on a plain element": [[], [control("div", { attrs: { "aria-valuenow": "20" } })]],
+    // Form-associated custom elements: in form.elements, with no role on the host.
+    "a custom switch the form lists": [[control("md-switch", { checked: true, attrs: { name: "notify" } })], []],
+    "a custom dropdown the form lists": [[control("my-select", { value: "everyone", attrs: { name: "visibility" } })], []],
+    "a custom element with a name inside": [[], [control("my-select", { attrs: { name: "visibility" } })]],
+  };
+  for (const [name, [listed, inside]] of Object.entries(shapes)) {
+    const f = describe([...boxes, ...listed], [...listed, ...inside]);
+    assert.equal(f.plain, true, name);
+    assert.ok(f.built >= 1, `${name} is counted as a control the page builds`);
+  }
+  // Not counted: a layout wrapper, an option of a native dropdown and a plain element.
+  const quiet = describe(boxes, [
+    wrapper(),
+    control("option", { attrs: { "aria-selected": "true" } }),
+    control("div"),
+  ]);
+  assert.equal(quiet.built, 0);
+  // One element counted once, when the form lists it and it sits inside too.
+  const both = control("my-select", { attrs: { name: "visibility" } });
+  assert.equal(describe([...boxes, both], [both]).built, 1);
+});

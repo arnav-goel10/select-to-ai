@@ -1443,17 +1443,36 @@
         // What else goes out with it that the page offers and one picks
         // from: each dropdown, each checked radio or tick box, each slider
         // and colour, shown or not. And the controls the page builds of its
-        // own inside it (an editable region, a dropdown, a tick box or a
-        // slider made of plain elements), whose value a script may send with
-        // it. The form check is shown the first as listed and never the
-        // second, so a form with a choice left out of the listing, or with a
-        // control of the page's own, is held (agentTools.js unsureSend).
+        // own inside it, whose value a script may send with it: any element
+        // other than a native box, dropdown or option that the page marks as
+        // holding a state or a value. That is an editable region, an element
+        // with a role of a control or of a choice in a list, an element
+        // carrying aria-haspopup (whatever its value), aria-pressed,
+        // aria-checked, aria-selected or aria-valuenow, and a custom element (a tag with a hyphen) that
+        // the form lists among its controls or that carries a name, a value
+        // or a checked state. The form check is shown the first as listed
+        // and never the second, so a form with a choice left out of the
+        // listing, or with a control of the page's own, is held
+        // (agentTools.js unsureSend).
         const kindOf = (c) => (c.type || '').toLowerCase();
         const choices = controls.filter((c) => !c.disabled && (c.tagName === 'SELECT'
             || (c.tagName === 'INPUT' && /^(hidden|submit|button|reset|image|checkbox|radio|file|range|color)$/.test(kindOf(c))
                 && !/^(hidden|submit|button|reset|image)$/.test(kindOf(c)) && (c.checked || !/^(checkbox|radio)$/.test(kindOf(c)))))).length;
-        const built = Array.from(form.querySelectorAll('[contenteditable], [role="textbox"], [role="combobox"], [role="checkbox"], [role="radio"], [role="switch"], [role="slider"], [role="spinbutton"]'))
-            .filter((n) => !/^(INPUT|TEXTAREA|SELECT)$/.test(n.tagName) && (n.isContentEditable || !!n.getAttribute('role'))).length;
+        const listed = new Set(controls);
+        const controlRoles = new Set(['textbox', 'searchbox', 'combobox', 'listbox', 'option', 'checkbox', 'radio', 'radiogroup', 'switch', 'slider', 'spinbutton', 'menuitemradio', 'menuitemcheckbox']);
+        const holdsState = (n) => {
+            const tag = String(n.tagName || '');
+            if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag) || tag === 'OPTION') return false;
+            if (n.isContentEditable) return true;
+            if (controlRoles.has(String(n.getAttribute('role') || '').trim().toLowerCase())) return true;
+            if (n.getAttribute('aria-haspopup') !== null || n.getAttribute('aria-pressed') !== null || n.getAttribute('aria-checked') !== null
+                || n.getAttribute('aria-selected') !== null || n.getAttribute('aria-valuenow') !== null) return true;
+            if (tag.includes('-')) {
+                return listed.has(n) || n.getAttribute('name') !== null || typeof n.checked === 'boolean' || typeof n.value === 'string';
+            }
+            return false;
+        };
+        const built = new Set([...controls, ...Array.from(form.querySelectorAll('*'))].filter(holdsState)).size;
         // Where the form goes, without its query: the same form on the same
         // page has the same address from one look at the page to the next.
         let action = '';
@@ -2490,6 +2509,14 @@
             if (tag === 'select') {
                 const opts = Array.from(el.options || []);
                 entry.selected = opts[el.selectedIndex] ? opts[el.selectedIndex].text.trim() : "";
+                // A dropdown that takes several options sends every one
+                // chosen, not only the first.
+                if (el.multiple) {
+                    const picked = opts.filter((o) => o.selected).map((o) => o.text.trim());
+                    entry.multiple = true;
+                    entry.selectedAll = picked.slice(0, 12);
+                    if (picked.length > 12) entry.selectedMore = picked.length - 12;
+                }
                 entry.options = opts.map((o) => o.text.trim()).filter(Boolean).slice(0, 12);
                 if (opts.length > 12) entry.options.push(`+${opts.length - 12} more`);
             }

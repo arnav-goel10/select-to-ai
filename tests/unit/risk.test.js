@@ -823,9 +823,67 @@ test("a form's choices go out with it: the check is shown each one, and a form w
   certain(page(many, { choices: 7 }));
 });
 
+test("a form with a sharing control the page builds, or a dropdown of several options, is never let through on an answer it was not shown", () => {
+  const formBase = { id: 0, method: "post", search: false, action: "https://notes.example/save", plain: true, oneBox: false, fields: 2, choices: 0, built: 0 };
+  const els = (extra) => [
+    { id: 2, tagName: "input", inputType: "text", accName: "Title", formId: 0, value: "Plan" },
+    { id: 3, tagName: "textarea", accName: "Notes", formId: 0, value: "Q3 numbers" },
+    btn("Save", { id: 5, formId: 0, submits: true }),
+    ...(extra || []),
+  ];
+  const page = (extra, form) => ({ url: "https://notes.example/new", elements: els(extra), forms: [{ ...formBase, ...(form || {}) }] });
+  const run = { task: "x", trust: { sites: ["notes.example"], urls: [] }, openedTabs: [], typed: { 2: "Plan", 3: "Q3 numbers" } };
+  // The answer the plain two-box form is asked by, on file as own_record and undo yes.
+  const plainAsk = P.decide({ do: "click", ref: 5 }, page(), run, ON);
+  assert.ok(plainAsk.check, "the plain form is asked");
+  const onFile = { [plainAsk.check.key]: T.readOpinion(plainAsk.check, { reaches: "own_record", undo: "yes", why: "a note" }) };
+  assert.equal(P.decide({ do: "click", ref: 5 }, page(), { ...run, opinions: onFile }, ON).verdict, "allow");
+  const certain = (pg, what) => {
+    const v = P.decide({ do: "click", ref: 5 }, pg, { ...run, opinions: onFile }, ON);
+    assert.equal(v.verdict, "confirm", what);
+    assert.equal(v.kind, "send", what);
+    assert.equal(v.check, undefined, what);
+  };
+  // A custom dropdown (a button that opens a list over a hidden field), as
+  // describeForm counts it, and as the listing shows the button.
+  certain(page([], { built: 1 }), "a built control counted");
+  certain(page([{ id: 8, tagName: "button", accName: "Visible to: Everyone in the company", formId: 0, ariaHaspopup: "listbox", ariaExpanded: "false" }]), "a button that opens a list");
+  certain(page([{ id: 8, tagName: "button", accName: "Email this to all members", formId: 0, ariaPressed: "true" }]), "a toggle button");
+  certain(page([{ id: 8, tagName: "md-switch", accName: "Notify everyone", formId: 0, ariaChecked: "true" }]), "a custom element of the form");
+  certain(page([{ id: 8, tagName: "div", role: "menuitemradio", accName: "Public", formId: 0, ariaChecked: "true" }]), "a checked menu radio");
+  // A plain button of the form sends nothing: still asked, under the same key.
+  const quiet = P.decide({ do: "click", ref: 5 }, page([{ id: 8, tagName: "button", accName: "Help", formId: 0 }]), run, ON);
+  assert.equal(quiet.check && quiet.check.key, plainAsk.check.key);
+
+  // A dropdown that takes several options: the check is shown every option chosen.
+  const share = (chosen, more) => ({ id: 4, tagName: "select", accName: "Share with", formId: 0, multiple: true, selected: chosen[0] || "", selectedAll: chosen, ...(more ? { selectedMore: more } : {}), options: ["Only me", "Everyone in the company"] });
+  const two = page([share(["Only me", "Everyone in the company"])], { choices: 1 });
+  const asked = P.decide({ do: "click", ref: 5 }, two, run, ON);
+  assert.ok(asked.check, "asked");
+  const shown = T.opinionMessages(asked.check).user;
+  assert.match(shown, /It also sends 2 choices the page offers/);
+  assert.match(shown, /\n1\. "Share with": "Only me"\n2\. "Share with": "Everyone in the company"/);
+  const sharedOnFile = { [asked.check.key]: T.readOpinion(asked.check, { reaches: "own_record", undo: "yes", why: "a note" }) };
+  assert.equal(P.decide({ do: "click", ref: 5 }, two, { ...run, opinions: sharedOnFile }, ON).verdict, "allow");
+  // Clearing or adding an option is another send: asked again.
+  const one = page([share(["Only me"])], { choices: 1 });
+  const again = P.decide({ do: "click", ref: 5 }, one, { ...run, opinions: sharedOnFile }, ON);
+  assert.equal(again.verdict, "confirm");
+  assert.ok(again.check, "asked again");
+  assert.notEqual(again.check.key, asked.check.key);
+  // Nothing chosen is shown as nothing chosen.
+  assert.match(T.opinionMessages(P.decide({ do: "click", ref: 5 }, page([share([])], { choices: 1 }), run, ON).check).user, /"Share with": ""/);
+  // More options chosen than are listed, or a listing that does not say which: held.
+  certain(page([share(["Only me", "Everyone in the company"], 3)], { choices: 1 }), "options chosen past the listing");
+  certain(page([{ ...share([]), selectedAll: undefined }], { choices: 1 }), "a dropdown of several options with no chosen list");
+  // Its chosen options count toward the most the check is shown.
+  const many = ["A", "B", "C", "D", "E", "F", "G"];
+  certain(page([share(many)], { choices: 1 }), "two boxes and seven options chosen");
+});
+
 test("the press verdicts kept under the old question are not used for the new one", () => {
   const src = require("node:fs").readFileSync(require.resolve("../../extension/agentTools.js"), "utf8");
-  assert.match(src, /const JUDGE_VERSION = "reaches-undo-2";/);
+  assert.match(src, /const JUDGE_VERSION = "reaches-undo-3";/);
   assert.match(src, /\[JUDGE_VERSION, OPINION_SYSTEM, PRESS_QUESTION, JSON\.stringify\(PRESS_TOOL\), String\(model \|\| ""\)\]/);
   assert.equal(T.judgeStamp("anthropic/x"), T.judgeStamp("anthropic/x"));
 });
