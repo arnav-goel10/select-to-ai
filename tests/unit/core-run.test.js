@@ -1916,15 +1916,15 @@ test("notes past their room are kept, and the model is asked once to rewrite the
   fx = noted(run, page, { note: `6 ${line}` });
   const all = run.memory;
   assert.ok(all.length > STEP.NOTES_ROOM && all.endsWith(`6 ${line}`), "nothing is cut");
-  assert.match(fx[0].user, new RegExp(`Your notes are ${all.length} characters, past their room of ${STEP.NOTES_ROOM}\\. Rewrite them shorter with rewrite_notes this step`));
+  assert.match(fx[0].user, new RegExp(`Your notes are ${all.length} characters, past their room of ${STEP.NOTES_ROOM}\\. rewrite_notes replaces them with a shorter version\\.`));
   fx = noted(run, page, { note: "" });
   assert.match(fx[0].user, new RegExp(`Your notes are ${all.length} characters, past their room of ${STEP.NOTES_ROOM}\\.`));
-  assert.doesNotMatch(fx[0].user, /Rewrite them shorter/, "asked once");
+  assert.doesNotMatch(fx[0].user, /past their room[^\n]*rewrite_notes/, "said once");
   noted(run, page, { note: `8 ${line}` });
   assert.ok(run.memory.length <= STEP.NOTES_LIMIT);
   fx = noted(run, page, { note: `9 ${line}` });
   assert.ok(!run.memory.includes(`9 ${line}`), "a note past the limit is not added");
-  assert.match(fx[0].user, new RegExp(`Your last note \\(982 characters\\) was not added: your notes are at their limit of ${STEP.NOTES_LIMIT} characters\\. Rewrite them shorter with rewrite_notes, with that note in\\.`));
+  assert.match(fx[0].user, new RegExp(`Your last note \\(982 characters\\) was not added: your notes are at their limit of ${STEP.NOTES_LIMIT} characters\\. rewrite_notes replaces them with a shorter version\\.`));
   // Rewritten within the room, the ask comes again the next time they pass it.
   noted(run, page, { rewrite_notes: "short" });
   assert.equal(run.notesFull, "");

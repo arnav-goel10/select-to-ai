@@ -209,7 +209,7 @@ In this browser your pointer and your keys are made by script: the page is sent 
     // Why this step is the last one, when it is.
     const w = run.wrapUp;
     if (run.finalStep && w && w.by === "stuck") facts.push(`You have taken ${w.steps} steps in a row without getting anywhere: ${w.why}. This is the last step: only done or ask_user can be used now.`);
-    else if (run.finalStep && w && w.by === "declined") facts.push(`The user declined "${String(w.what || "a step").slice(0, 80)}", and you have asked about it again. This is the last step: finish now with done, saying what you did, what you did not do and why.`);
+    else if (run.finalStep && w && w.by === "declined") facts.push(`The user declined "${String(w.what || "a step").slice(0, 80)}", and you have asked about it again. This is the last step: only done or ask_user can be used now.`);
     else if (run.finalStep && w) facts.push("The user chose to have the answer now, with what you have found so far. This is the last step: only done or ask_user can be used now.");
     else if (run.finalStep) facts.push("This is the last step: only done or ask_user can be used now.");
     // The notes' room, so a long comparison can be kept within it. Notes
@@ -217,8 +217,8 @@ In this browser your pointer and your keys are made by script: the page is sent 
     const room = STEP.NOTES_ROOM;
     const used = String(run.memory || "").length;
     if (run.notesCut > 0) facts.push(`Your rewritten notes were longer than their room of ${room} characters: the last ${run.notesCut} characters you wrote were cut off.`);
-    if (run.notesRefused > 0) facts.push(`Your last note (${run.notesRefused} characters) was not added: your notes are at their limit of ${STEP.NOTES_LIMIT} characters. Rewrite them shorter with rewrite_notes, with that note in.`);
-    else if (used > room && run.notesFull === "ask") facts.push(`Your notes are ${used} characters, past their room of ${room}. Rewrite them shorter with rewrite_notes this step: keep what the answer needs, drop what is done with.`);
+    if (run.notesRefused > 0) facts.push(`Your last note (${run.notesRefused} characters) was not added: your notes are at their limit of ${STEP.NOTES_LIMIT} characters. rewrite_notes replaces them with a shorter version.`);
+    else if (used > room && run.notesFull === "ask") facts.push(`Your notes are ${used} characters, past their room of ${room}. rewrite_notes replaces them with a shorter version.`);
     else if (used > room) facts.push(`Your notes are ${used} characters, past their room of ${room}.`);
     else if (used && !run.notesCut) facts.push(`Your notes use ${used} of the ${room} characters they have room for.`);
     const older = (run.history || []).length - HISTORY_FULL;
@@ -243,7 +243,7 @@ In this browser your pointer and your keys are made by script: the page is sent 
     // What the helper model did in the steps it took, said once when it hands back.
     if (run.handBack) facts.push(run.handBack.replace(/\n/g, "\n  "));
     for (const b of (page && page.blockers) || []) {
-      if (b.kind === "human_check" && b.away) facts.push(`This page is a human check on ${b.away}, a site you opened yourself that the request does not need. It is not handed to the user: go back and finish from what you have already read, saying what you could not confirm.`);
+      if (b.kind === "human_check" && b.away) facts.push(`This page is a human check on ${b.away}, a site you opened yourself that the request does not need. It is not handed to the user.`);
       else if (b.kind === "human_check") facts.push(b.whole === false ? "This page has a human-check widget. Only the user can complete it." : "This page is a check that a person is visiting. Only the user can pass it.");
       // A sign-in box in the corner of a page that can be read without it is not in the way.
       if (b.kind === "sign_in" && b.whole) facts.push("This page is a sign-in form.");
@@ -670,10 +670,10 @@ In this browser your pointer and your keys are made by script: the page is sent 
         ? "The pointer made by script brought nothing up; putting the focus on it did."
         : "Nothing came up under the pointer made by script, or with the focus on it. What opens only under the real mouse cannot be opened by script.";
     }
-    if (ways.by && ways.seen) return `No change was seen after pointer events on it. It was then pressed with ${PRESS_WAYS[ways.by] || ways.by}, and the page changed: check that the change is the one you wanted.`;
+    if (ways.by && ways.seen) return `No change was seen after pointer events on it. It was then pressed with ${PRESS_WAYS[ways.by] || ways.by}, and the page changed. The key went to the page as well as to the control, so the change may not be the press's.`;
     if (ways.by) return `No change was seen after pointer events on it. It was then pressed with ${PRESS_WAYS[ways.by] || ways.by}: the page took that, though it shows no change either.`;
     const others = ways.tried.slice(1).map((w) => PRESS_WAYS[w] || w).join(", ");
-    return `No change was seen after a press made by script in any of the ways tried: pointer events, ${others}. It may have nothing to do here, it may have done something that cannot be seen from here, or it may take only a real press. Do not press it again by script. If it has to be pressed, the user can press it once for you: ask_user with kind "press" and ref ${ref}.`;
+    return `No change was seen after a press made by script in any of the ways tried: pointer events, ${others}. It may have nothing to do here, it may have done something that cannot be seen from here, or it may take only a real press. Another press by script is made the same ways. The user can press it once: ask_user with kind "press" and ref ${ref} hands it to them.`;
   }
 
   /**
