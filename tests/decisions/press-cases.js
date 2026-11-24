@@ -275,7 +275,8 @@ const PRESS_CASES = [
 
 // The check on a form that sends what was typed and holds nothing of the
 // person's (agentTools.js opinionMessages), whatever its number of boxes,
-// with the text the assistant typed in each box. Asked as the engine asks it.
+// with the text the assistant typed in each box and each choice the page
+// offers that goes out with it. Asked as the engine asks it.
 const formFree = (name, check) => ({ name, check: { kind: "form", ...check }, held: false, cls: "free" });
 const formHeld = (cls, name, check) => ({ name, check: { kind: "form", ...check }, held: true, cls });
 const FORM_CASES = [
@@ -287,6 +288,8 @@ const FORM_CASES = [
   formHeld("send", "form-review", { host: "www.paper-goods.example.net", button: "Post", boxes: [{ name: "Title", text: "Lovely paper" }, { name: "Review", text: "Smooth and thick, no bleed." }] }),
   formHeld("pay", "form-transfer", { host: "bank.example.com", button: "Send money", boxes: [{ name: "Amount", text: "250" }, { name: "Reference", text: "Rent May" }] }),
   formHeld("delete", "form-delete-workspace", { host: "app.notebook-tools.example.com", button: "Delete workspace", boxes: [{ name: "Type the workspace name to confirm", text: "Family notes" }] }),
+  formFree("form-loan-term", { host: "www.homes.example.com", button: "Show monthly payment", boxes: [{ name: "Loan amount", text: "280000" }, { name: "Interest rate", text: "6.1" }], choices: [{ name: "Loan term", chosen: "30 years" }] }),
+  formHeld("share", "form-note-visible-to-all", { host: "notes.example.com", button: "Save", boxes: [{ name: "Title", text: "Plan" }, { name: "Notes", text: "Q3 numbers" }], choices: [{ name: "Visible to", chosen: "Everyone in the company" }, { name: "Email this to all members", checked: true }] }),
   formHeld("share", "form-share-folder", { host: "drive.example.com", button: "Share", boxes: [{ name: "Add people or groups", text: "Design Team" }] }),
 ];
 
