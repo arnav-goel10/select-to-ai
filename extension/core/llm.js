@@ -293,6 +293,30 @@
   }
 
   /**
+   * Cached prompt tokens in a reply's usage, in each provider's own shape,
+   * as their API docs gave them on 24 Nov 2026:
+   * - Anthropic: cache_read_input_tokens and cache_creation_input_tokens,
+   *   counted apart from input_tokens (apart: true).
+   * - OpenAI, OpenRouter, Groq, Cerebras, xAI and Mistral chat completions:
+   *   prompt_tokens_details.cached_tokens, plus cache_write_tokens on
+   *   OpenAI and OpenRouter, all inside prompt_tokens.
+   * - The Responses API (ChatGPT sign-in): input_tokens_details, the same
+   *   two fields, inside input_tokens.
+   * - DeepSeek: prompt_cache_hit_tokens, inside prompt_tokens.
+   * - Mistral also sends num_cached_tokens, and documents a
+   *   prompt_token_details spelling beside prompt_tokens_details.
+   * @returns {{cached: number, cacheWrite: number, apart: boolean}}
+   */
+  function cacheOf(u) {
+    const n = (v) => Number(v) || 0;
+    const details = u.prompt_tokens_details || u.input_tokens_details || u.prompt_token_details || null;
+    const apart = u.input_tokens !== undefined && u.prompt_tokens === undefined && !u.input_tokens_details;
+    if (apart) return { cached: n(u.cache_read_input_tokens), cacheWrite: n(u.cache_creation_input_tokens), apart };
+    const cached = n(details && details.cached_tokens) || n(u.prompt_cache_hit_tokens) || n(u.num_cached_tokens);
+    return { cached, cacheWrite: n(details && details.cache_write_tokens), apart };
+  }
+
+  /**
    * A Responses stream's outcome in the shape every other provider's has.
    * Only response.completed (or response.incomplete, which says why) is a
    * reply; response.failed carries a plan-usage error that can arrive after
@@ -664,13 +688,14 @@
       if (completion === undefined) completion = Math.ceil((res.text.length + res.reasoning.length + (res.argChars || 0)) / 4);
       // On ChatGPT the user's plan pays: nothing is charged per token.
       const rates = provider === "chatgpt" ? [0, 0] : DEFAULTS.findModelRates(model);
-      // Anthropic counts cached prompt tokens apart from input_tokens: a
-      // cache read costs a tenth of the input rate, a cache write 1.25 times.
-      const cached = Number(u.cache_read_input_tokens) || 0;
-      const cacheWrite = Number(u.cache_creation_input_tokens) || 0;
+      const { cached, cacheWrite, apart } = cacheOf(u);
       const uncached = prompt;
-      if (u.input_tokens !== undefined) prompt = uncached + cached + cacheWrite;
-      const promptCost = u.input_tokens !== undefined ? uncached + cached * 0.1 + cacheWrite * 1.25 : prompt;
+      if (apart) prompt = uncached + cached + cacheWrite;
+      // Anthropic: a cache read costs a tenth of the input rate, a cache
+      // write 1.25 times. Elsewhere the discount differs by provider and
+      // model and is not in the rate table, so the prompt is still charged
+      // at the full input rate there, which can only overstate the cost.
+      const promptCost = apart ? uncached + cached * 0.1 + cacheWrite * 1.25 : prompt;
       return { prompt, completion, cached, cacheWrite, cost: (promptCost / 1000) * rates[0] + (completion / 1000) * rates[1], estimated, model: res.served || model };
     }
 
@@ -954,7 +979,7 @@
     return { call };
   }
 
-  const api = Object.freeze({ createClient, repairArguments, readLoose, settingsFrom, keyProblem, modelFits, providerName, buildRequest, effortFields, errorText, ModelError });
+  const api = Object.freeze({ createClient, repairArguments, readLoose, settingsFrom, keyProblem, modelFits, providerName, buildRequest, effortFields, errorText, cacheOf, ModelError });
   root.SELECT_TO_AI_LLM = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
