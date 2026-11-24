@@ -131,7 +131,7 @@ gh workflow run om2w.yml --ref <branch> -f mode=run -f part=gate -f runs=2 -f sh
 scripts/om2w-dev-results.sh <run id>   # on the owner's machine: a dev run's files, decrypted
 ```
 
-Dry mode (the box, or any push that touches the bench) needs no key and fetches nothing. Four legs run on the fixture pages: `batch` (the batch judge, its cache written then read, its files encrypted and opened again), `sealed-counts` (counts only, encrypted, no file of a run, a log that names no task and shows no shard numbers), `census` (the fixture human check classed blocked) and `batch-cap` (a cap that must stop the run with spend and holds under it).
+Dry mode (the box, or any push that touches the bench) needs no key and fetches nothing. Four legs run on the fixture pages: `batch` (the batch judge, its cache written then read, its files encrypted and opened again), `sealed-counts` (counts only, encrypted, no file of a run, a log that names no task and shows no shard numbers), `census` (the fixture human check classed blocked) and `batch-cap` (a cap that leaves room for a few runs once their verdicts are in: the shard must wait for them rather than stop on holds, then stop with spend and holds under the cap).
 
 ## Keys
 

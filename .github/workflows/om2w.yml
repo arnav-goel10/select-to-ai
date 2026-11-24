@@ -599,8 +599,9 @@ jobs:
   # opened again. "sealed-counts": the sealed path, which must leave counts
   # only, encrypted, and a log that names no task and shows no shard numbers.
   # "census": the census, headful under xvfb, which must class the fixture
-  # human check as blocked. "batch-cap": a cap that leaves room for about one
-  # run and its verdict, which must stop the run with the spend counted.
+  # human check as blocked. "batch-cap": a cap that leaves room for a few runs
+  # once their verdicts are in, which must wait for those verdicts rather than
+  # stop on holds, then stop the run with the spend counted.
   dry-legs:
     name: dry om2w leg (${{ matrix.leg }})
     needs: [plan, build]
@@ -643,7 +644,7 @@ jobs:
           case "$LEG" in
             batch) BENCH_OUT=tests/bench/out/leg BENCH_COUNTS_OUT=tests/bench/out/leg xvfb-run -a -s "-screen 0 1920x1080x24" node tests/bench/run.js | tee tests/bench/out/leg-run.log ;;
             sealed-counts) BENCH_QUIET=sealed BENCH_NO_FILES=1 BENCH_OUT="$RUNNER_TEMP/leg/out" BENCH_COUNTS_OUT="$RUNNER_TEMP/leg/counts" xvfb-run -a -s "-screen 0 1920x1080x24" node tests/bench/run.js | tee tests/bench/out/leg-run.log ;;
-            batch-cap) BENCH_MAX_USD=0.03 BENCH_OUT=tests/bench/out/leg BENCH_COUNTS_OUT=tests/bench/out/leg xvfb-run -a -s "-screen 0 1920x1080x24" node tests/bench/run.js | tee tests/bench/out/leg-run.log ;;
+            batch-cap) BENCH_MAX_USD=0.022 BENCH_OUT=tests/bench/out/leg BENCH_COUNTS_OUT=tests/bench/out/leg xvfb-run -a -s "-screen 0 1920x1080x24" node tests/bench/run.js | tee tests/bench/out/leg-run.log ;;
             census) CENSUS_TASKS=tests/bench/fixture-tasks.json CENSUS_OUT=tests/bench/out/leg CENSUS_WAIT_S=2 xvfb-run -a -s "-screen 0 1920x1080x24" node tests/bench/census.js | tee tests/bench/out/leg-run.log ;;
           esac
       - name: Check what it left
@@ -685,7 +686,8 @@ jobs:
             batch-cap)
               node tests/bench/trial.js summary tests/bench/out/leg --tasks tests/bench/fixture-tasks.json --suite "fixture, dry om2w leg batch-cap" --arm shipped --commit "$GITHUB_SHA" --check cap | tee -a "$GITHUB_STEP_SUMMARY"
               # What was spent and what was still held never passed the cap.
-              node -e "const r = JSON.parse(require('fs').readFileSync('tests/bench/out/leg/om2w-counts-1of1.json', 'utf8')); if (!(r.spentUSD <= r.capUSD)) { console.error('spent ' + r.spentUSD + ' over the cap ' + r.capUSD); process.exit(1); } console.log('spent ' + r.spentUSD.toFixed(4) + ' of a cap of ' + r.capUSD);"
+              # The shard waited for its verdicts instead of stopping on holds: more than one run was judged before the cap stopped it.
+              node -e "const r = JSON.parse(require('fs').readFileSync('tests/bench/out/leg/om2w-counts-1of1.json', 'utf8')); if (!(r.spentUSD <= r.capUSD)) { console.error('spent ' + r.spentUSD + ' over the cap ' + r.capUSD); process.exit(1); } if (!(r.capReached && r.counts.runs >= 2 && r.counts.runs < 7)) { console.error('the cap did not stop the run after the verdicts were in: ' + r.counts.runs + ' run(s)'); process.exit(1); } console.log('spent ' + r.spentUSD.toFixed(4) + ' of a cap of ' + r.capUSD + ' over ' + r.counts.runs + ' judged run(s)');"
               ;;
             census)
               node tests/bench/om2w.js summary tests/bench/out/leg --census --shards 1 --dry | tee -a "$GITHUB_STEP_SUMMARY"
