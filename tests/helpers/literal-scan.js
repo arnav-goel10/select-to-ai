@@ -1,34 +1,52 @@
 "use strict";
 // Test-only. Finds what in a JavaScript source could be a rule for one site
 // or one page. The source is parsed (acorn), so a literal is found however
-// the patch is spelled: in a regex with or without a dot, in an array, a Set
-// or an object, behind a name, in a selector with a tag before it.
+// the patch is spelled. What decides a finding is what a literal is held
+// against, never what a variable or a function is called.
 //
 // Findings, each { kind, what, line }:
+// - "markup test": a string or regex literal compared with, tested against,
+//   searched in, switched on or looked up by a value read through a
+//   property named id, name, className, classList, dataset, tagName (or
+//   nodeName, localName, htmlFor), or an attribute's value (getAttribute),
+//   on any receiver whatever it is called.
+// - "address test": the same, for a property named host, hostname, origin,
+//   href, pathname, url (or URL, domain, search, hash, pendingUrl, baseURI,
+//   documentURI, referrer, searchParams), for the global location, and for
+//   new URL().
+// - "title test": the same, for a property named title.
+//   A value counts as read through such a property when it is the read
+//   itself, or is carried over from one: destructuring, a name bound to it,
+//   a function parameter it is passed as, an item of it, a Set, Map or
+//   array built from it, a conversion or a piece of it, a callback walking
+//   it, what a function of the file returns from it.
+// - "selector": a name a selector picks by, in a literal passed as, or
+//   built into, an argument of querySelector, querySelectorAll, matches,
+//   closest, getElementById, getElementsByClassName, getElementsByName,
+//   hasAttribute, getAttribute and their kin, or written anywhere as a whole
+//   selector. The selector is parsed fully: classes, ids, every attribute
+//   by name (and value), custom elements' tags, and everything inside
+//   :is(), :not(), :has(), :where() and the like. A dataset read
+//   (el.dataset.asin, "asin" in el.dataset) is the data attribute it reads.
+//   A form's or an attribute list's lookup by name (form.elements["q"],
+//   attributes.getNamedItem("id")) and an XPath given to evaluate() are too.
+// - "text test": a literal used in includes, startsWith, endsWith, indexOf,
+//   lastIndexOf, match, matchAll, test, exec or search where the other side
+//   is not provably the extension's own text (a literal, or a name bound
+//   only to literals).
 // - "host": a dotted name ending in a real top-level domain (the Public
 //   Suffix List), in any literal or comment.
 // - "site name": a name from the site-name dictionary
 //   (tests/hygiene/site-names.txt), as a word, as two words written apart
 //   ("Hacker News"), or as a name in code, in any literal or comment.
-// - "markup test": any string or regex literal compared with, tested
-//   against, searched in or switched on what a page's markup names: an
-//   element's id, name, className, classList, dataset or its class, id,
-//   name and data-* attributes, or a custom element's tag.
-// - "address test": any string or regex literal compared with, tested
-//   against, searched in or switched on a location, host, hostname, origin
-//   or URL value.
-// - "title test": any string or regex literal held against a page's or a
-//   tab's title, which says which page it is.
-// - "selector": a selector handed to the page, or written anywhere, that
-//   picks by a class, an id, a name or data attribute's value, or a custom
-//   element's tag; and the literals a selector is built from at run time.
 // - "class test": a page's class handed to a function of the file to read a
 //   meaning from.
-// - "unused data": a list of strings that nothing in the file reads, which
-//   is either dead or waiting to be used.
-// Values are followed through simple names, destructuring, for-of loops,
-// iteration callbacks (forEach, some, map ...) and the constants they are
-// bound to. The extension's own class and id names are not findings.
+// - "unused data": a regex, or a list of strings, that nothing in the file
+//   reads, which is either dead or waiting to be used.
+// A literal with no letter in it (punctuation, digits, white space) spells
+// no name and is never a finding. The extension's own class, id and value
+// names count as its own only where its .html and .css files declare them
+// (the `own` argument). Every other exception is a scoped allowlist entry.
 
 const fs = require("node:fs");
 const path = require("node:path");
@@ -56,8 +74,6 @@ function readNames(file = path.join(ROOT, "tests/hygiene/site-names.txt")) {
 // Names kept for examples, tests and private networks, never a real site
 // (RFC 2606, RFC 6761, RFC 6762, RFC 8375, and ICANN's .internal).
 const RESERVED_HOST = /(?:^|\.)(?:example|test|invalid|localhost|local|internal|lan|onion|home\.arpa)$|(?:^|\.)example\.(?:com|net|org)$/;
-// The extension's own elements and settings carry this prefix.
-const OWN = /select-?to-?ai/i;
 const HTML_TAGS = new Set("a abbr address area article aside audio b base bdi bdo blockquote body br button canvas caption cite code col colgroup data datalist dd del details dfn dialog div dl dt em embed fieldset figcaption figure footer form h1 h2 h3 h4 h5 h6 head header hgroup hr html i iframe img input ins kbd label legend li link main map mark menu meta meter nav noscript object ol optgroup option output p param picture pre progress q rp rt ruby s samp script section select slot small source span strong style sub summary sup svg table tbody td template textarea tfoot th thead time title tr track u ul var video wbr math".split(" "));
 
 const HOST_RE = /(?<![\w.@-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+([a-z]{2,63}))(?![\w-])/gi;
@@ -66,55 +82,160 @@ const flatWords = (text) => String(text).toLowerCase().match(/[a-z0-9]+/g) || []
 
 /** The text a regex literal's pattern spells, with escapes for punctuation undone and class escapes dropped. */
 function regexText(pattern) {
-  return pattern.replace(/\\[bBdDsSwWnrtfv0]/g, " ").replace(/\\(.)/g, "$1");
+  return pattern.replace(/\\[pP]\{[^}]*\}/g, " ").replace(/\\[bBdDsSwWnrtfv0]/g, " ").replace(/\\(.)/g, "$1");
 }
 
 /** A custom element's tag (it has a hyphen), not the extension's own. */
-const customTag = (t, own = () => false) => /^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/i.test(String(t)) && !OWN.test(t) && !own(String(t).toLowerCase());
+const customTag = (t, own = () => false) => /^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/i.test(String(t)) && !own(String(t).toLowerCase());
 
-/** The selector compounds a string spells, when the whole string reads as a selector list; else null. */
-function selectorCompounds(text, bareTags = false) {
-  const s = String(text).trim();
-  if (!s || s.length > 400 || (!bareTags && !/[.#[]/.test(s))) return null;
-  const out = [];
-  for (const part of s.split(",")) {
-    const compounds = part.trim().split(/\s*[>+~]\s*|\s+/).filter(Boolean);
-    if (!compounds.length) return null;
-    for (const c of compounds) {
-      const m = /^(\*|[a-z][a-z0-9]*(?:-[a-z0-9]+)*)?((?:[.#][A-Za-z_-][\w-]*|\[[^\]]+\]|::?[a-z-]+(?:\([^)]*\))?)*)$/.exec(c);
-      if (!m || (!m[1] && !m[2])) return null;
-      if (m[1] && m[1] !== "*" && !HTML_TAGS.has(m[1].toLowerCase()) && !m[1].includes("-")) return null;
-      out.push({ tag: m[1] || "", rest: m[2] || "" });
-    }
-  }
-  return out;
-}
-
-// Attributes whose values name a site's own markup, not a value a standard defines.
-const MARKUP_ATTR = (a) => /^(class|id|name|for|form|list|headers|itemid|data-.+)$/i.test(a);
+// Pseudo-classes whose argument is itself a selector list.
+const SELECTOR_PSEUDO = /^(?:is|not|has|where|matches|-webkit-any|-moz-any|any|host|host-context|slotted|current|past|future|nth-child|nth-last-child)$/i;
 
 /**
- * What a selector string picks by a site's own names: classes, ids, the
- * values of attributes a site names (class, id, name, data-*), and custom
- * elements' tags. `bareTags` reads a plain tag list too (a selector call's
- * argument), so "ytd-app" is found there.
+ * A selector list parsed fully, or null when the text is not one. Returns
+ * the names it picks by: `tag.class`, `tag#id`, `tag[attr]`,
+ * `tag[attr=value]` and custom tags, including those inside pseudo-class
+ * arguments. `bareTags` accepts a plain tag list ("ytd-app", "div").
  */
-function selectorNames(text, own = () => false, bareTags = false) {
-  const compounds = selectorCompounds(text, bareTags);
-  if (!compounds) return [];
-  const out = [];
-  for (const { tag, rest } of compounds) {
-    if (tag && customTag(tag, own)) out.push(tag.toLowerCase());
-    for (const m of rest.replace(/\[[^\]]*\]|\([^)]*\)/g, " ").matchAll(/([.#])([A-Za-z_-][\w-]*)/g)) {
-      // A colour written #rrggbb is not an id.
-      if (m[1] === "#" && /^(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(m[2])) continue;
-      out.push(`${tag}${m[1]}${m[2]}`);
+function parseSelector(text, bareTags = false) {
+  const s = String(text);
+  let i = 0;
+  const names = [];
+  let marked = false;
+  const ident = () => {
+    const m = /^-?(?:[A-Za-z_]|\\.|[^\x00-\x7f])(?:[\w-]|\\.|[^\x00-\x7f])*/.exec(s.slice(i));
+    if (!m) return null;
+    i += m[0].length;
+    return m[0].replace(/\\(.)/g, "$1");
+  };
+  const ws = () => { while (i < s.length && /\s/.test(s[i])) i++; };
+  const fail = () => { throw new Error("not a selector"); };
+  const list = (relative) => {
+    const out = [];
+    for (;;) {
+      ws();
+      out.push(complex(relative));
+      ws();
+      if (s[i] !== ",") break;
+      i++;
     }
-    for (const m of rest.matchAll(/\[\s*([\w-]+)\s*([~^$*|]?=)\s*["']?([^"'\]]*)["']?\s*\]/g)) {
-      if (MARKUP_ATTR(m[1])) out.push(`${tag}[${m[1]}${m[2]}${m[3]}]`);
+    return out;
+  };
+  const complex = (relative) => {
+    ws();
+    if (relative && /[>+~]/.test(s[i])) { i++; ws(); }
+    compound();
+    for (;;) {
+      const at = i;
+      ws();
+      if (i >= s.length || s[i] === "," || s[i] === ")") { i = at; ws(); return; }
+      if (/[>+~]/.test(s[i])) { i++; ws(); compound(); continue; }
+      if (i === at) fail();
+      compound();
     }
-  }
-  return out.filter((n) => !OWN.test(n) && !own(n));
+  };
+  const compound = () => {
+    let tag = "";
+    let any = false;
+    if (s[i] === "*") { i++; tag = "*"; any = true; }
+    else if (/[A-Za-z]/.test(s[i] || "")) {
+      tag = ident();
+      if (!tag) fail();
+      if (!HTML_TAGS.has(tag.toLowerCase()) && !tag.includes("-")) fail();
+      if (tag.includes("-")) names.push({ name: tag.toLowerCase(), tag: true });
+      any = true;
+    }
+    const t = tag === "*" ? "" : tag.toLowerCase();
+    for (;;) {
+      const c = s[i];
+      if (c === "." || c === "#") {
+        i++;
+        const n = ident() || (c === "#" ? (/^[\w-]+/.exec(s.slice(i)) || [""])[0] : "");
+        if (!n) fail();
+        if (c === "#" && !/^[A-Za-z_-]/.test(n)) i += n.length;
+        names.push({ name: `${t}${c}${n}`, value: n, colour: c === "#" && /^(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(n) });
+        marked = true;
+        any = true;
+        continue;
+      }
+      if (c === "[") {
+        i++;
+        ws();
+        const attr = ident();
+        if (!attr) fail();
+        ws();
+        let op = "";
+        let value = null;
+        const m = /^[~^$*|]?=/.exec(s.slice(i));
+        if (m) {
+          op = m[0];
+          i += op.length;
+          ws();
+          if (s[i] === '"' || s[i] === "'") {
+            const q = s[i];
+            const end = s.indexOf(q, i + 1);
+            if (end < 0) fail();
+            value = s.slice(i + 1, end);
+            i = end + 1;
+          } else {
+            value = ident();
+            if (value === null) { const d = /^[\w-]+/.exec(s.slice(i)); if (!d) fail(); value = d[0]; i += d[0].length; }
+          }
+          ws();
+          if (/^[is]\b/i.test(s.slice(i)) && s[i + 1] !== "-") { i++; ws(); }
+        }
+        if (s[i] !== "]") fail();
+        i++;
+        names.push({ name: value === null ? `${t}[${attr}]` : `${t}[${attr}${op}${value}]`, attr, value });
+        marked = true;
+        any = true;
+        continue;
+      }
+      if (c === ":") {
+        i++;
+        const element = s[i] === ":";
+        if (element) i++;
+        const p = ident();
+        if (!p) fail();
+        if (s[i] === "(") {
+          i++;
+          if (!element && SELECTOR_PSEUDO.test(p)) {
+            if (/^nth-/i.test(p)) {
+              const of = /^[^)]*?\bof\b/i.exec(s.slice(i));
+              if (of) { i += of[0].length; list(false); } else { const close = s.indexOf(")", i); if (close < 0) fail(); i = close; }
+            } else list(/^has$/i.test(p));
+          } else {
+            let depth = 1;
+            while (i < s.length && depth) { if (s[i] === "(") depth++; else if (s[i] === ")") depth--; if (depth) i++; }
+            if (depth) fail();
+          }
+          ws();
+          if (s[i] !== ")") fail();
+          i++;
+        }
+        marked = true;
+        any = true;
+        continue;
+      }
+      break;
+    }
+    if (!any) fail();
+  };
+  try {
+    if (!s.trim() || s.length > 2000) return null;
+    list(false);
+    ws();
+    if (i !== s.length) return null;
+  } catch (_e) { return null; }
+  if (!marked && !bareTags) return null;
+  return names;
+}
+
+/** What a selector string picks by a site's own names; [] when it is not a selector. */
+function selectorNames(text, own = () => false, bareTags = false, colours = true) {
+  const parsed = parseSelector(text, bareTags);
+  if (!parsed) return [];
+  return parsed.filter((n) => !(colours && n.colour)).map((n) => n.name).filter((n) => !own(n));
 }
 
 function parse(src) {
@@ -142,43 +263,56 @@ function nodesOf(ast) {
   visit(ast, null);
   return out;
 }
+const childrenOf = (x) => {
+  const out = [];
+  for (const k of Object.keys(x)) { if (k === "parent" || k === "loc") continue; const c = x[k]; if (Array.isArray(c)) out.push(...c); else if (c && typeof c.type === "string") out.push(c); }
+  return out;
+};
 
 const isFn = (n) => n && /Function/.test(n.type);
 const propName = (m) => (m && m.type === "MemberExpression" ? (m.computed ? (m.property.type === "Literal" ? String(m.property.value) : "") : m.property.name) : "");
+const calleeName = (n) => (n.callee.type === "Identifier" ? n.callee.name : propName(n.callee));
 const isLiteral = (n) => n && ((n.type === "Literal" && (typeof n.value === "string" || n.regex)) || n.type === "TemplateLiteral");
 const literalText = (n) => (n.type === "TemplateLiteral" ? n.quasis.map((q) => q.value.cooked || "").join(" ") : n.regex ? regexText(n.regex.pattern) : n.value);
 /** How a literal is written down in a finding: a string as itself, a regex as /pattern/flags. */
 const shown = (n) => (n.regex ? `/${n.regex.pattern}/${n.regex.flags}` : n.type === "TemplateLiteral" ? n.quasis.map((q) => q.value.cooked || "").join("${}") : String(n.value));
+/** A literal with no letter in it spells no name. */
+const spellsNothing = (n) => {
+  const t = n.regex ? regexText(n.regex.pattern.replace(/\[(?:\\.|[^\]\\])*\]/g, (c) => (/^\[[^\]\\-]\]$/.test(c) ? c.slice(1, -1) : " "))) : String(literalText(n)).replace(/\\[pP]\{[^}]*\}/g, " ");
+  return !/\p{L}/u.test(t);
+};
 
-// Words that are an address's syntax, the same for every site.
-const URL_SYNTAX = new Set(["http", "https", "s", "www", "ws", "wss", "file", "ftp", "data", "blob", "about", "javascript", "mailto", "tel", "chrome", "extension", "null"]);
-// How a page's markup is read, and how an address or a host is.
-const CLASS_PROPS = new Set(["className", "classList", "dataset"]);
-// Read off an element: its id and name are the site's.
-const ELEMENT_NAME_PROPS = new Set(["id", "name"]);
-const TAG_PROPS = new Set(["tagName", "nodeName", "localName"]);
-const HOST_PROPS = new Set(["host", "hostname", "origin", "domain"]);
-const URL_PROPS = new Set(["href", "url", "pathname", "search", "pendingUrl", "baseURI", "documentURI", "referrer", "searchParams"]);
+// What is compared, by the property it is read through, on any receiver.
+const PROPS = {
+  markup: new Set(["id", "name", "className", "classList", "dataset", "tagName", "nodeName", "localName", "htmlFor"]),
+  address: new Set(["host", "hostname", "origin", "href", "pathname", "url", "URL", "domain", "search", "hash", "pendingUrl", "baseURI", "documentURI", "referrer", "searchParams"]),
+  title: new Set(["title"]),
+};
+const KIND_NAME = { markup: "markup test", address: "address test", title: "title test" };
+const KINDS = Object.keys(PROPS);
+// Calls that hand back what a host is.
 const HOST_CALLS = new Set(["siteOf", "hostOf", "registrable", "registrableDomain"]);
-const HOST_NAME = /^(?:host|hostname|domain|site|origin)s?$|(?:Host|Hostname|Domain|Origin)s?$/;
-const URL_NAME = /^(?:url|href|pathname|address)s?$|(?:Url|URL|Href)s?$/;
-const COMPARE = new Set(["test", "exec", "match", "matchAll", "includes", "indexOf", "lastIndexOf", "startsWith", "endsWith", "has", "search", "contains", "some", "every", "find", "findIndex", "filter", "replace", "replaceAll", "localeCompare"]);
+// Ways one value is held against another.
+const COMPARE = new Set(["test", "exec", "match", "matchAll", "includes", "indexOf", "lastIndexOf", "startsWith", "endsWith", "has", "search", "contains", "some", "every", "find", "findIndex", "findLast", "findLastIndex", "filter", "replace", "replaceAll", "localeCompare", "get", "hasOwnProperty"]);
+// The ones that search one text in another, for "text test".
+const TEXT_SEARCH = new Set(["includes", "startsWith", "endsWith", "indexOf", "lastIndexOf", "match", "matchAll", "test", "exec", "search"]);
 // Calls that walk a list and hand each item to a callback.
-const ITERATE = new Set(["forEach", "some", "every", "find", "findIndex", "filter", "map", "flatMap", "reduce"]);
-const SELECTOR_CALLS = new Set(["querySelector", "querySelectorAll", "closest", "matches", "webkitMatchesSelector", "getElementById", "getElementsByClassName", "getElementsByTagName", "getElementsByName"]);
+const ITERATE = new Set(["forEach", "some", "every", "find", "findIndex", "findLast", "findLastIndex", "filter", "map", "flatMap", "reduce", "sort"]);
+// Calls handed a selector, an id, a class or a name.
+const SELECTOR_CALLS = new Set(["querySelector", "querySelectorAll", "closest", "matches", "webkitMatchesSelector", "msMatchesSelector"]);
+const NAME_CALLS = new Set(["getElementById", "getElementsByClassName", "getElementsByName"]);
+const ATTR_CALLS = new Set(["getAttribute", "hasAttribute", "getAttributeNode", "toggleAttribute", "getAttributeNS", "hasAttributeNS", "getNamedItem", "namedItem"]);
+// Calls that carry a value over: a conversion, a piece, a list built from it.
+const CARRY_METHODS = /^(toLowerCase|toUpperCase|toLocaleLowerCase|toLocaleUpperCase|trim|trimStart|trimEnd|toString|valueOf|normalize|replace|replaceAll|slice|substring|substr|split|at|item|get|getAll|keys|values|entries|join|concat|flat|filter|find|findLast|reverse|toSorted|toReversed|match|matchAll|padStart|padEnd|charAt|forEach)$/;
+const CARRY_FUNCS = /^(String|decodeURIComponent|decodeURI|encodeURIComponent|encodeURI|escape|unescape)$/;
+const STATIC_CARRY = /^(from|of|keys|values|entries|fromEntries|assign|freeze)$/;
 // Calls that only convert or take apart a value: not a function reading it for a meaning.
 const BUILTIN_CALLS = new Set(["String", "Number", "Boolean", "Array", "from", "trim", "toLowerCase", "toUpperCase", "split", "slice", "replace", "replaceAll", "concat", "join", "push", "add", "set", "get", "has", "delete", "includes", "test", "match", "matchAll", "exec", "startsWith", "endsWith", "indexOf", "contains", "some", "every", "filter", "map", "find", "toggle", "remove", "item", "forEach", "log", "warn", "error", "stringify", "assign", "keys", "values", "entries", "max", "min", "trimStart", "trimEnd", "padStart", "substring", "substr", "charAt", "at", "search"]);
-// Constants that say what they hold is classes or ids: SKIP_CLASS, ROW_CLASSES, HIDE_IDS.
-const CLASSY_NAME = /(?:^|_)(?:CLASS(?:ES|NAMES?)?|IDS)(?:_|$)/;
-const ATTR_CALLS = new Set(["getAttribute", "hasAttribute", "getAttributeNode", "toggleAttribute"]);
-// Names and reads that hold a page element: el, node, link, row, box.parentElement, querySelector(...).
-const ELEMENT_NAME = /^(?:el|elem|element|node|kid|child|cand|link|anchor|btn|img|li|td|tr)$|(?:El|Elem|Element|Node)s?$/;
-const ELEMENT_PROPS = new Set(["parentElement", "parentNode", "firstElementChild", "lastElementChild", "nextElementSibling", "previousElementSibling", "target", "currentTarget", "relatedTarget", "activeElement", "body", "documentElement", "offsetParent", "firstChild", "lastChild", "nextSibling", "previousSibling", "assignedSlot", "labels", "form", "control"]);
-const ELEMENT_CALLS = new Set(["querySelector", "closest", "getElementById", "elementFromPoint", "elementsFromPoint", "item", "namedItem", "deepElementAt", "composedPath"]);
 
 /**
  * Findings for one source: [{ kind, what, line }]. `names` is the
- * dictionary from readNames, with any extra names joined in.
+ * dictionary from readNames, with any extra names joined in; `own` says
+ * whether a name is one the extension's own pages and styles declare.
  */
 function findings(src, names = readNames(), own = () => false) {
   const { ast, comments } = parse(src);
@@ -221,12 +355,13 @@ function findings(src, names = readNames(), own = () => false) {
     for (const w of namesIn(c.value)) report("site name", w, c.loc.start.line);
   }
 
-  // What each name is bound to: the value it is given, in the function that
-  // declares it (blocks are not told apart, which can only find more). A
-  // constant reached through an object (TOOLS.SKIP, { SKIP: [...] }) is
-  // bound by its name file-wide. Destructured names are bound to the read
-  // they stand for, loop variables to what they loop over, and a callback's
-  // first parameter to the list it is called on.
+  // What each name is bound to, in the function that declares it (blocks
+  // are not told apart, which can only find more). A constant reached
+  // through an object (TOOLS.SKIP, { SKIP: [...] }) is bound by its name
+  // file-wide. Destructured names are bound to the read they stand for,
+  // loop variables to what they loop over, a callback's parameters to the
+  // list it is called on, and a function's parameters to every value the
+  // file calls it with.
   const CONSTANT = /^[A-Z][A-Z0-9_]*$/;
   const scopeOf = (n) => { for (let p = n.parent; p; p = p.parent) if (isFn(p) || p.type === "Program") return p; return null; };
   const scopes = new Map();
@@ -238,11 +373,13 @@ function findings(src, names = readNames(), own = () => false) {
   const constants = new Map();
   const add = (map, name, node) => { if (!name || !node || isFn(node)) return; if (!map.has(name)) map.set(name, []); map.get(name).push(node); };
   // A synthetic read: `from.key`, or one item of `from` (key null).
-  const readOf = (from, key, at) => ({ type: key ? "MemberExpression" : "ItemOf", object: from, property: key ? { type: "Identifier", name: key } : null, computed: false, start: at.start, end: at.end, loc: at.loc, parent: at.parent });
+  const readOf = (from, key, at) => ({ type: key ? "MemberExpression" : "ItemOf", object: from, property: key ? { type: "Identifier", name: key } : null, computed: false, start: at.start, end: at.end, loc: at.loc, parent: at.parent, synthetic: true });
+  const UNKNOWN = { type: "Unknown" };
   const bindPattern = (scope, pattern, value) => {
     if (!pattern) return;
     if (pattern.type === "Identifier") { add(declared(scope), pattern.name, value); return; }
-    if (pattern.type === "AssignmentPattern") { bindPattern(scope, pattern.left, value); return; }
+    if (pattern.type === "AssignmentPattern") { bindPattern(scope, pattern.left, value); add(declared(scope), pattern.left.type === "Identifier" ? pattern.left.name : "", pattern.right); return; }
+    if (pattern.type === "RestElement") { bindPattern(scope, pattern.argument, value); return; }
     if (pattern.type === "ObjectPattern") {
       for (const p of pattern.properties) {
         if (p.type === "RestElement") { bindPattern(scope, p.argument, value); continue; }
@@ -251,27 +388,43 @@ function findings(src, names = readNames(), own = () => false) {
       }
       return;
     }
-    if (pattern.type === "ArrayPattern") { for (const e of pattern.elements) bindPattern(scope, e && e.type === "RestElement" ? e.argument : e, readOf(value, null, pattern)); }
+    if (pattern.type === "ArrayPattern") { for (const e of pattern.elements) bindPattern(scope, e, readOf(value, null, pattern)); }
   };
+  const functionsNamed = new Map();
+  const nameOfFn = (n) => (n.id ? n.id.name : n.parent && n.parent.type === "VariableDeclarator" && n.parent.id.type === "Identifier" ? n.parent.id.name : n.parent && n.parent.type === "AssignmentExpression" && n.parent.left.type === "Identifier" ? n.parent.left.name : n.parent && n.parent.type === "Property" && !n.parent.computed && n.parent.key.type === "Identifier" ? n.parent.key.name : "");
+  for (const n of all) if (isFn(n)) { const name = nameOfFn(n); if (name) { if (!functionsNamed.has(name)) functionsNamed.set(name, []); functionsNamed.get(name).push(n); } }
   for (const n of all) {
     if (n.type === "VariableDeclarator") {
       if (n.id.type === "Identifier") add(declared(scopeOf(n)), n.id.name, n.init || { type: "Empty" });
       else if (n.init) bindPattern(scopeOf(n), n.id, n.init);
     }
+    // Every parameter is a name of its function; a destructured one stands for the reads it makes.
+    if (isFn(n)) for (const p of n.params) bindPattern(n, p.type === "RestElement" ? p.argument : p, UNKNOWN);
+    if (n.type === "FunctionDeclaration" && n.id) add(declared(scopeOf(n)), n.id.name, UNKNOWN);
+    if (n.type === "CatchClause" && n.param) bindPattern(scopeOf(n), n.param, UNKNOWN);
+    if (n.type === "ClassDeclaration" && n.id) add(declared(scopeOf(n)), n.id.name, UNKNOWN);
     // for (const c of el.classList): c is one item of el.classList.
     if ((n.type === "ForOfStatement" || n.type === "ForInStatement") && n.left) {
       const target = n.left.type === "VariableDeclaration" ? n.left.declarations[0].id : n.left;
       const scope = scopeOf(n.body) || scopeOf(n);
-      if (n.type === "ForOfStatement") bindPattern(scope, target, readOf(n.right, null, n.right));
+      bindPattern(scope, target, n.type === "ForOfStatement" ? readOf(n.right, null, n.right) : { type: "KeyOf", object: n.right });
     }
     // el.classList.forEach((c) => ...): c is one item of el.classList.
     if (n.type === "CallExpression" && n.callee.type === "MemberExpression" && ITERATE.has(propName(n.callee))) {
       const fn = n.arguments[0];
       if (isFn(fn) && fn.params.length) {
-        const at = propName(n.callee) === "reduce" ? 1 : 0;
+        const method = propName(n.callee);
+        const at = method === "reduce" ? 1 : 0;
         if (fn.params[at]) bindPattern(fn, fn.params[at], readOf(n.callee.object, null, n.callee.object));
+        if (method === "sort" && fn.params[1]) bindPattern(fn, fn.params[1], readOf(n.callee.object, null, n.callee.object));
       }
     }
+    // A function of the file called with a value: its parameter holds that value.
+    if ((n.type === "CallExpression" || n.type === "NewExpression") && n.callee.type === "Identifier" && functionsNamed.has(n.callee.name)) {
+      for (const fn of functionsNamed.get(n.callee.name)) fn.params.forEach((p, i) => { if (n.arguments[i]) bindPattern(fn, p.type === "RestElement" ? p.argument : p, n.arguments[i].type === "SpreadElement" ? readOf(n.arguments[i].argument, null, n.arguments[i]) : n.arguments[i]); });
+    }
+    // An immediately called function, or a callback handed straight to a call: same.
+    if (n.type === "CallExpression" && isFn(n.callee)) n.callee.params.forEach((p, i) => { if (n.arguments[i]) bindPattern(n.callee, p, n.arguments[i]); });
   }
   for (const n of all) {
     if (n.type === "AssignmentExpression" && n.left.type === "Identifier") add(declared(declareIn(n, n.left.name)), n.left.name, n.right);
@@ -280,6 +433,7 @@ function findings(src, names = readNames(), own = () => false) {
   }
   const isPropertyKey = (n) => n.parent && n.parent.type === "MemberExpression" && n.parent.property === n && !n.parent.computed;
   const isObjectKey = (n) => n.parent && n.parent.type === "Property" && n.parent.key === n && !n.parent.computed && !n.parent.shorthand;
+  const isFnParam = (n) => n.parent && isFn(n.parent) && n.parent.params.includes(n);
   /** The binding a name or a constant member resolves to: { key, values }, or null. */
   const binding = (n) => {
     if (n.type === "Identifier" && !isPropertyKey(n)) {
@@ -287,7 +441,7 @@ function findings(src, names = readNames(), own = () => false) {
         const m = scopes.get(s);
         if (m && m.has(n.name)) return { key: m.get(n.name), values: m.get(n.name) };
       }
-      // A callback's own parameter: its scope is the function itself.
+      // A function's own parameter: its scope is the function itself.
       for (let p = n.parent; p; p = p.parent) if (isFn(p) && scopes.has(p) && scopes.get(p).has(n.name)) return { key: scopes.get(p).get(n.name), values: scopes.get(p).get(n.name) };
       if (constants.has(n.name)) return { key: constants.get(n.name), values: constants.get(n.name) };
       return null;
@@ -295,185 +449,138 @@ function findings(src, names = readNames(), own = () => false) {
     if (n.type === "MemberExpression" && !n.computed && CONSTANT.test(n.property.name) && constants.has(n.property.name)) return { key: constants.get(n.property.name), values: constants.get(n.property.name) };
     return null;
   };
+  /** Whether a name is bound in the file (a global such as `location` is not). */
+  const bound = (n) => !!binding(n) || [...functionsNamed.keys()].includes(n.name);
 
-  /**
-   * Whether an expression is a page element: a name that says so (el,
-   * node, link), a read that gives one (parentElement, event.target,
-   * querySelector()), an item of a list of them, or a name bound to one.
-   */
-  const elementish = (n, depth = 0) => {
-    if (!n || depth > 8) return false;
-    if (n.type === "Identifier") {
-      if (ELEMENT_NAME.test(n.name)) return true;
-      const b = binding(n);
-      return !!b && b.values.some((v) => v !== n && elementish(v, depth + 1));
-    }
-    if (n.type === "MemberExpression") {
-      if (ELEMENT_PROPS.has(propName(n))) return true;
-      if (n.computed && /^(children|childNodes|elements|labels)$/.test(propName(n.object))) return true;
-      return false;
-    }
-    if (n.type === "ItemOf") return /querySelectorAll|getElementsBy|children|childNodes|elements|composedPath/.test(src.slice(n.object.start, n.object.end));
-    if (n.type === "CallExpression") return ELEMENT_CALLS.has(n.callee.type === "Identifier" ? n.callee.name : propName(n.callee));
-    if (n.type === "LogicalExpression" || n.type === "ConditionalExpression") return elementish(n.right || n.consequent, depth + 1) || elementish(n.alternate || n.left, depth + 1);
-    return false;
-  };
-  const rootLike = (n) => /getRootNode|shadowRoot|[Rr]oot$/.test(src.slice(n.object.start, n.object.end));
-
-  /** Whether a member read, on its own, gives one of the kinds. */
-  const memberKind = (n, kind) => {
-    const p = propName(n);
-    if (kind === "class") return CLASS_PROPS.has(p) || (n.object.type === "MemberExpression" && propName(n.object) === "dataset");
-    if (kind === "id") return ELEMENT_NAME_PROPS.has(p) && elementish(n.object);
-    if (kind === "tag") return TAG_PROPS.has(p);
-    // A page's or a tab's title says which page it is.
-    if (kind === "title") return p === "title" && !elementish(n.object);
-    // A shadow root's host is an element, not an address's.
-    if (kind === "host") return HOST_PROPS.has(p) && !(p === "host" && rootLike(n));
-    if (kind === "url") return URL_PROPS.has(p) || (p === "src" && elementish(n.object)) || (n.object.type === "Identifier" && n.object.name === "location");
-    return false;
-  };
-  const attrKind = (n, kind) => {
-    const a = n.arguments[0] && n.arguments[0].type === "Literal" ? String(n.arguments[0].value).toLowerCase() : "";
-    return (kind === "class" && (a === "class" || a.startsWith("data-"))) || (kind === "id" && MARKUP_ATTR(a) && a !== "class" && !a.startsWith("data-")) || (kind === "url" && (a === "href" || a === "src" || a === "action"));
-  };
-
-  /**
-   * Whether an expression reads a page's markup ("class", "tag"), a host
-   * ("host") or an address ("url"): directly, or through a name that holds
-   * such a read. Callbacks are looked into; other functions are not.
-   */
-  const holds = { class: new Set(), id: new Set(), tag: new Set(), host: new Set(), url: new Set(), title: new Set() };
-  const KINDS = Object.keys(holds);
+  const holds = { markup: new Set(), address: new Set(), title: new Set() };
   const held = (n, kind) => { const b = binding(n); return !!b && holds[kind].has(b.key); };
-  const reads = (node, kind, intoFns = true) => {
-    let hit = false;
-    const stack = [node];
-    while (stack.length && !hit) {
-      const n = stack.pop();
-      if (!n || typeof n.type !== "string") continue;
-      if (!intoFns && isFn(n)) continue;
-      if (n.type === "UnaryExpression" && n.operator === "typeof") continue;
-      if (n.type === "CallExpression" && ATTR_CALLS.has(propName(n.callee)) && n.arguments[0] && n.arguments[0].type === "Literal") { if (attrKind(n, kind)) hit = true; continue; }
-      if (n.type === "MemberExpression" && memberKind(n, kind)) hit = true;
-      if (n.type === "CallExpression" && kind === "host" && HOST_CALLS.has(n.callee.type === "Identifier" ? n.callee.name : propName(n.callee))) hit = true;
-      if ((n.type === "Identifier" && !isPropertyKey(n)) || n.type === "MemberExpression") if (held(n, kind)) hit = true;
-      // A function's name is not a value read: addressOrigin(u) is not an origin.
-      if (n.type === "Identifier" && !isPropertyKey(n) && !isObjectKey(n) && !(n.parent && n.parent.type === "CallExpression" && n.parent.callee === n)) {
-        if (kind === "host" && HOST_NAME.test(n.name)) hit = true;
-        if (kind === "url" && URL_NAME.test(n.name)) hit = true;
-      }
-      for (const key of Object.keys(n)) {
-        if (key === "parent" || key === "loc") continue;
-        const v = n[key];
-        if (Array.isArray(v)) stack.push(...v);
-        else if (v && typeof v.type === "string") stack.push(v);
-      }
-    }
-    return hit;
-  };
+  const ADDRESS_ATTR = /^(href|src|action|formaction|srcset|cite|data|poster|ping)$/i;
+  const attrIsAddress = (n) => n.arguments[0] && n.arguments[0].type === "Literal" && ADDRESS_ATTR.test(String(n.arguments[0].value));
   /**
-   * Whether a value is itself markup, a host or an address, or is carried
-   * over from one: a property read off one, an item of one, a conversion of
-   * one (String(), trim, toLowerCase, a template, a + join), one branch of a
-   * condition. What a function of the file returns when handed one is not.
+   * Whether a value is read through one of the kind's properties, or is
+   * carried over from such a read.
    */
-  const carries = (n, kind) => {
-    if (!n || typeof n.type !== "string") return false;
+  const carries = (n, kind, depth = 0) => {
+    if (!n || typeof n.type !== "string" || depth > 30) return false;
+    const deeper = (x) => carries(x, kind, depth + 1);
     switch (n.type) {
       case "Identifier":
         if (isPropertyKey(n)) return false;
-        return held(n, kind) || (kind === "host" && HOST_NAME.test(n.name)) || (kind === "url" && (URL_NAME.test(n.name) || n.name === "location"));
-      case "ItemOf": return carries(n.object, kind);
+        if (held(n, kind)) return true;
+        // The page's own address, as a global.
+        return kind === "address" && n.name === "location" && !binding(n);
+      case "ItemOf": case "KeyOf": return deeper(n.object);
       case "MemberExpression": {
-        if (memberKind(n, kind)) return true;
-        const p = propName(n);
-        // A part of an address other than its host is not a host: url.pathname, url.protocol.
-        if (kind === "host" && /^(pathname|search|hash|protocol|port|href|searchParams|username|password)$/.test(p)) return held(n, kind);
-        if (n.computed && n.property.type !== "Literal" && !/^\d/.test(String(n.property.value))) return held(n, kind) || carries(n.object, kind);
-        return held(n, kind) || (!/^(length|size)$/.test(p) && carries(n.object, kind));
-      }
-      case "CallExpression": {
-        const callee = n.callee.type === "Identifier" ? n.callee.name : propName(n.callee);
-        if (ATTR_CALLS.has(callee)) return attrKind(n, kind);
-        if (kind === "host" && HOST_CALLS.has(callee)) return true;
-        if (n.callee.type === "Identifier" && /^(String|decodeURIComponent|decodeURI)$/.test(callee)) return carries(n.arguments[0], kind);
-        if (n.callee.type === "MemberExpression" && /^(toLowerCase|toUpperCase|trim|trimStart|trimEnd|toString|normalize|replace|replaceAll|slice|substring|substr|split|from|item|at|get|getAll|keys|values|entries)$/.test(callee)) return callee === "from" ? carries(n.arguments[0], kind) : carries(n.callee.object, kind);
-        // A function of the file that hands back a page's markup: tokens(el) returning el's classes.
-        if (n.callee.type === "Identifier" && MARKUP_KINDS.has(kind)) return returnsKind(n.callee.name, kind);
+        if (PROPS[kind].has(propName(n)) && !(n.computed && n.property.type !== "Literal")) return true;
+        if (held(n, kind)) return true;
+        // An item of such a value, or its value itself (attr.value, classList.value), carries it on.
+        if (n.computed || /^(value|nodeValue|baseVal|animVal|input|groups)$/.test(propName(n))) return deeper(n.object);
         return false;
       }
-      // new URL(x) is an address; its host is read off it by name (.hostname).
-      case "NewExpression": return n.callee.type === "Identifier" && n.callee.name === "URL" && kind === "url";
-      case "ConditionalExpression": return carries(n.consequent, kind) || carries(n.alternate, kind);
-      case "LogicalExpression": return carries(n.left, kind) || carries(n.right, kind);
-      case "BinaryExpression": return n.operator === "+" && (carries(n.left, kind) || carries(n.right, kind));
-      case "TemplateLiteral": return n.expressions.some((e) => carries(e, kind));
-      case "AwaitExpression": case "SpreadElement": case "ChainExpression": return carries(n.argument || n.expression, kind);
-      case "ArrayExpression": return n.elements.some((e) => carries(e, kind));
-      case "AssignmentExpression": return carries(n.right, kind);
+      case "CallExpression": {
+        const callee = calleeName(n);
+        if (n.callee.type === "MemberExpression" && ATTR_CALLS.has(callee) && /^get/.test(callee)) return kind === "address" ? attrIsAddress(n) : kind === "markup" && !attrIsAddress(n);
+        if (kind === "address" && HOST_CALLS.has(callee)) return true;
+        if (n.callee.type === "Identifier" && CARRY_FUNCS.test(callee)) return deeper(n.arguments[0]);
+        if (n.callee.type === "MemberExpression" && n.callee.object.type === "Identifier" && /^(Object|Array|JSON|Reflect)$/.test(n.callee.object.name) && STATIC_CARRY.test(callee)) return n.arguments.some(deeper);
+        if (n.callee.type === "MemberExpression" && callee === "exec") return deeper(n.arguments[0]);
+        if (n.callee.type === "MemberExpression" && CARRY_METHODS.test(callee)) return deeper(n.callee.object);
+        if (n.callee.type === "MemberExpression" && /^(map|flatMap)$/.test(callee)) return isFn(n.arguments[0]) ? returns(n.arguments[0], kind, depth) : deeper(n.callee.object);
+        // CSS.escape(x), x.toString(): the value itself.
+        if (n.callee.type === "MemberExpression" && /^(escape)$/.test(callee)) return deeper(n.arguments[0]);
+        // A function of the file that hands back such a value.
+        if (n.callee.type === "Identifier" && functionsNamed.has(callee)) return functionsNamed.get(callee).some((fn) => returns(fn, kind, depth));
+        if (isFn(n.callee)) return returns(n.callee, kind, depth);
+        return false;
+      }
+      case "NewExpression": {
+        const c = n.callee.type === "Identifier" ? n.callee.name : "";
+        if (kind === "address" && /^(URL|URLSearchParams)$/.test(c)) return true;
+        if (/^(Set|Map|WeakSet|WeakMap|Array|String)$/.test(c)) return n.arguments.some(deeper);
+        return false;
+      }
+      case "ConditionalExpression": return deeper(n.consequent) || deeper(n.alternate);
+      case "LogicalExpression": return deeper(n.left) || deeper(n.right);
+      case "BinaryExpression": return n.operator === "+" && (deeper(n.left) || deeper(n.right));
+      case "TemplateLiteral": return n.expressions.some(deeper);
+      case "TaggedTemplateExpression": return deeper(n.quasi);
+      case "AwaitExpression": case "SpreadElement": case "ChainExpression": case "ParenthesizedExpression": return deeper(n.argument || n.expression);
+      case "ArrayExpression": return n.elements.some(deeper);
+      case "ObjectExpression": return n.properties.some((p) => (p.type === "SpreadElement" ? deeper(p.argument) : false));
+      case "AssignmentExpression": return deeper(n.right);
+      case "SequenceExpression": return deeper(n.expressions[n.expressions.length - 1]);
       default: return false;
     }
   };
-  // What the file's own named functions return, read once each.
-  const MARKUP_KINDS = new Set(["class", "id", "tag"]);
-  const functionsNamed = new Map();
-  for (const n of all) {
-    if (!isFn(n)) continue;
-    const name = n.id ? n.id.name : n.parent && n.parent.type === "VariableDeclarator" && n.parent.id.type === "Identifier" ? n.parent.id.name : "";
-    if (name) functionsNamed.set(name, n);
-  }
   const returning = new Map();
-  const returnsKind = (name, kind) => {
-    const fn = functionsNamed.get(name);
-    const key = `${name}|${kind}`;
-    if (!fn) return false;
-    if (returning.has(key)) return returning.get(key);
-    returning.set(key, false);
-    let out = false;
-    if (fn.body.type !== "BlockStatement") out = carries(fn.body, kind);
+  /** Whether a function returns a value carrying the kind. */
+  const returns = (fn, kind, depth = 0) => {
+    const key = fn;
+    if (!returning.has(key)) returning.set(key, {});
+    const memo = returning.get(key);
+    if (kind in memo) return memo[kind];
+    memo[kind] = false;
+    let found = false;
+    if (fn.body.type !== "BlockStatement") found = carries(fn.body, kind, depth + 1);
     else {
       const stack = [fn.body];
-      while (stack.length && !out) {
+      while (stack.length && !found) {
         const x = stack.pop();
         if (!x || typeof x.type !== "string" || (isFn(x) && x !== fn)) continue;
-        if (x.type === "ReturnStatement" && x.argument && carries(x.argument, kind)) out = true;
-        for (const k of Object.keys(x)) { if (k === "parent" || k === "loc") continue; const c = x[k]; if (Array.isArray(c)) stack.push(...c); else if (c && typeof c.type === "string") stack.push(c); }
+        if (x.type === "ReturnStatement" && x.argument && carries(x.argument, kind, depth + 1)) found = true;
+        stack.push(...childrenOf(x));
       }
     }
-    returning.set(key, out);
-    return out;
+    memo[kind] = found;
+    return found;
   };
-  /** A side of a comparison reads one: a callback is looked into, any other value must carry one. */
+  /** Whether a callback reads the kind anywhere in its body, or another value carries it. */
+  const reads = (node, kind) => {
+    const stack = [node];
+    while (stack.length) {
+      const x = stack.pop();
+      if (!x || typeof x.type !== "string") continue;
+      if (x.type === "UnaryExpression" && x.operator === "typeof") continue;
+      if ((x.type === "MemberExpression" || x.type === "Identifier" || x.type === "CallExpression" || x.type === "NewExpression") && carries(x, kind)) return true;
+      stack.push(...childrenOf(x));
+    }
+    return false;
+  };
   const side = (n, kind) => (isFn(n) ? reads(n.body, kind) : carries(n, kind));
 
   // Names that hold what such a read gave: `const cls = String(el.className)`.
   const allBindings = [...[...scopes.values()].flatMap((m) => [...m.values()]), ...constants.values()];
-  for (let round = 0, grew = true; grew && round < 8; round++) {
+  for (let round = 0, grew = true; grew && round < 12; round++) {
     grew = false;
+    returning.clear();
     for (const values of allBindings) for (const kind of KINDS) if (!holds[kind].has(values) && values.some((v) => carries(v, kind))) { holds[kind].add(values); grew = true; }
   }
+  returning.clear();
 
   /**
    * The literals one side of a comparison holds: the literal itself, or the
-   * data a name is bound to (a string, a regex, an array, a Set, an object
-   * of them, followed through other names). A literal built into a longer
-   * expression (a message, a call's other arguments) is not one.
+   * data a name is bound to (a string, a regex, an array, a Set, a Map or
+   * an object of them, followed through other names), and the literals a
+   * value is built from. `keys` takes an object's keys too.
    */
-  const operandLiterals = (node, seenBindings = new Set(), keys = false) => {
-    const out = [];
+  const operandLiterals = (node, keys = false, seenBindings = new Set()) => {
+    const lits = [];
     const visit = (n) => {
-      if (!n) return;
-      if (isLiteral(n)) { if (n.type !== "TemplateLiteral" || !n.expressions.length) out.push(n); else n.expressions.forEach(visit); return; }
+      if (!n || typeof n.type !== "string") return;
+      if (isLiteral(n)) { if (n.type !== "TemplateLiteral" || !n.expressions.length) lits.push(n); else { lits.push(...n.quasis.filter((q) => (q.value.cooked || "").trim()).map((q) => ({ type: "Literal", value: q.value.cooked, loc: q.loc, start: q.start, end: q.end }))); n.expressions.forEach(visit); } return; }
       if (n.type === "ArrayExpression") { n.elements.forEach(visit); return; }
-      if (n.type === "SpreadElement" || n.type === "ChainExpression") { visit(n.argument || n.expression); return; }
-      if (n.type === "ItemOf") { visit(n.object); return; }
-      if (n.type === "ObjectExpression") { for (const p of n.properties) if (p.type === "Property") { visit(p.value); if (!p.computed && p.key.type === "Literal") visit(p.key); if (keys && !p.computed && p.key.type === "Identifier") out.push({ type: "Literal", value: p.key.name, loc: p.key.loc, start: p.key.start, end: p.key.end }); } return; }
-      if (n.type === "NewExpression" && n.callee.type === "Identifier" && /^(Set|Map|RegExp)$/.test(n.callee.name)) { n.arguments.forEach(visit); return; }
-      if (n.type === "CallExpression" && n.callee.type === "Identifier" && /^(RegExp|String)$/.test(n.callee.name)) { n.arguments.forEach(visit); return; }
-      if (n.type === "CallExpression" && n.callee.type === "MemberExpression" && /^(from|of|concat|join|flat|map|toLowerCase|toUpperCase|trim)$/.test(propName(n.callee))) { visit(n.callee.object); n.arguments.forEach(visit); return; }
+      if (n.type === "SpreadElement" || n.type === "ChainExpression" || n.type === "AwaitExpression") { visit(n.argument || n.expression); return; }
+      if (n.type === "ItemOf" || n.type === "KeyOf") { visit(n.object); return; }
+      if (n.type === "ObjectExpression") { for (const p of n.properties) if (p.type === "Property") { visit(p.value); if (!p.computed && p.key.type === "Literal") visit(p.key); if (keys && !p.computed && p.key.type === "Identifier") lits.push({ type: "Literal", value: p.key.name, loc: p.key.loc, start: p.key.start, end: p.key.end }); } return; }
+      if (n.type === "NewExpression" && n.callee.type === "Identifier" && /^(Set|Map|String)$/.test(n.callee.name)) { n.arguments.forEach(visit); return; }
+      // A regex built at run time: its pattern, not its flags.
+      if ((n.type === "NewExpression" || n.type === "CallExpression") && n.callee.type === "Identifier" && n.callee.name === "RegExp") { visit(n.arguments[0]); return; }
+      if (n.type === "CallExpression" && n.callee.type === "Identifier" && n.callee.name === "String") { n.arguments.forEach(visit); return; }
+      if (n.type === "CallExpression" && n.callee.type === "MemberExpression" && /^(from|of|concat|join|flat|map|flatMap|toLowerCase|toUpperCase|trim|split|escape|fromEntries|keys|values|entries|freeze|filter|slice|replace|replaceAll)$/.test(propName(n.callee))) { visit(n.callee.object); n.arguments.forEach(visit); return; }
       if (n.type === "ConditionalExpression" || n.type === "LogicalExpression") { visit(n.consequent || n.left); visit(n.alternate || n.right); return; }
       if (n.type === "BinaryExpression" && n.operator === "+") { visit(n.left); visit(n.right); return; }
+      if (n.type === "MemberExpression" && n.computed && n.property.type === "Literal") { visit(n.object); return; }
+      if (n.type === "MemberExpression" && !n.computed && !binding(n)) { const b = binding(n.object); if (b && !seenBindings.has(b.key)) { seenBindings.add(b.key); for (const v of b.values) if (v.type === "ObjectExpression") for (const p of v.properties) if (p.type === "Property" && !p.computed && (p.key.name || p.key.value) === n.property.name) visit(p.value); } return; }
       // A callback brings the data it holds the item against: SKIP in (c) => SKIP.has(c).
       if (isFn(n)) {
         const inner = [n.body];
@@ -482,7 +589,7 @@ function findings(src, names = readNames(), own = () => false) {
           if (!x || typeof x.type !== "string" || isFn(x)) continue;
           if (x.type === "CallExpression" && x.callee.type === "MemberExpression" && COMPARE.has(propName(x.callee))) { visit(x.callee.object); x.arguments.forEach(visit); }
           if (x.type === "BinaryExpression" && /^[!=]==?$/.test(x.operator)) { visit(x.left); visit(x.right); }
-          for (const k of Object.keys(x)) { if (k === "parent" || k === "loc") continue; const c = x[k]; if (Array.isArray(c)) inner.push(...c); else if (c && typeof c.type === "string") inner.push(c); }
+          inner.push(...childrenOf(x));
         }
         return;
       }
@@ -490,11 +597,54 @@ function findings(src, names = readNames(), own = () => false) {
       if (b && !seenBindings.has(b.key)) { seenBindings.add(b.key); b.values.forEach(visit); }
     };
     visit(node);
-    return out;
+    return lits;
+  };
+
+  /** The keys a lookup table holds: an object's keys, a Map's first items, a Set's or a list's items. */
+  const keyLiterals = (node, seenB = new Set()) => {
+    const lits = [];
+    const visit = (n) => {
+      if (!n || typeof n.type !== "string") return;
+      if (n.type === "ObjectExpression") {
+        for (const p of n.properties) {
+          if (p.type === "SpreadElement") { visit(p.argument); continue; }
+          if (p.computed) { lits.push(...operandLiterals(p.key)); continue; }
+          lits.push(p.key.type === "Literal" ? p.key : { type: "Literal", value: p.key.name, loc: p.key.loc, start: p.key.start, end: p.key.end });
+        }
+        return;
+      }
+      if (n.type === "ArrayExpression") { for (const e of n.elements) if (e) { if (e.type === "ArrayExpression") { if (e.elements[0]) lits.push(...operandLiterals(e.elements[0])); } else if (e.type === "SpreadElement") visit(e.argument); else lits.push(...operandLiterals(e)); } return; }
+      if (n.type === "NewExpression" && n.callee.type === "Identifier" && /^(Set|Map|WeakSet|WeakMap)$/.test(n.callee.name)) { visit(n.arguments[0]); return; }
+      if (n.type === "CallExpression" && n.callee.type === "MemberExpression" && /^(freeze|fromEntries|assign|from)$/.test(propName(n.callee))) { n.arguments.forEach(visit); return; }
+      if (n.type === "ConditionalExpression" || n.type === "LogicalExpression") { visit(n.consequent || n.left); visit(n.alternate || n.right); return; }
+      if (isLiteral(n)) { lits.push(...operandLiterals(n)); return; }
+      const b = binding(n);
+      if (b && !seenB.has(b.key)) { seenB.add(b.key); b.values.forEach(visit); }
+    };
+    visit(node);
+    return lits;
+  };
+
+  /** Whether a value is provably the extension's own text: a literal, or built only from literals. */
+  const ownTextValue = (n, depth = 0, seenB = new Set()) => {
+    if (!n || depth > 20) return false;
+    if (isLiteral(n)) return n.type !== "TemplateLiteral" || n.expressions.every((e) => ownTextValue(e, depth + 1, seenB));
+    if (n.type === "Literal") return true;
+    if (n.type === "ArrayExpression") return n.elements.every((e) => e && ownTextValue(e, depth + 1, seenB));
+    if (n.type === "BinaryExpression" && n.operator === "+") return ownTextValue(n.left, depth + 1, seenB) && ownTextValue(n.right, depth + 1, seenB);
+    if (n.type === "ConditionalExpression") return ownTextValue(n.consequent, depth + 1, seenB) && ownTextValue(n.alternate, depth + 1, seenB);
+    if (n.type === "CallExpression" && n.callee.type === "MemberExpression" && /^(toLowerCase|toUpperCase|trim|join|slice)$/.test(propName(n.callee))) return ownTextValue(n.callee.object, depth + 1, seenB);
+    if (n.type === "Identifier" || n.type === "MemberExpression") {
+      const b = binding(n);
+      if (!b || seenB.has(b.key)) return false;
+      seenB.add(b.key);
+      return b.values.length > 0 && b.values.every((v) => ownTextValue(v, depth + 1, seenB));
+    }
+    return false;
   };
 
   /** Whether an expression is a page's class itself (not something worked out from it). */
-  const isClassValue = (a) => {
+  const isClassValue = (a, seenB = new Set()) => {
     let n = a;
     for (let i = 0; n && i < 6; i++) {
       if (n.type === "SpreadElement") { n = n.argument; continue; }
@@ -506,77 +656,104 @@ function findings(src, names = readNames(), own = () => false) {
     }
     if (!n) return false;
     if (n.type === "MemberExpression" && /^(className|classList)$/.test(propName(n))) return true;
-    if (n.type === "CallExpression" && ATTR_CALLS.has(propName(n.callee)) && n.arguments[0] && /^(class|id)$/i.test(String(n.arguments[0].value))) return true;
-    return (n.type === "Identifier" || n.type === "MemberExpression") && held(n, "class");
+    if (n.type === "CallExpression" && n.callee.type === "MemberExpression" && ATTR_CALLS.has(propName(n.callee)) && n.arguments[0] && /^(class|id)$/i.test(String(n.arguments[0].value))) return true;
+    if (n.type === "Identifier" || n.type === "MemberExpression") {
+      const b = binding(n);
+      if (!b || seenB.has(b.key)) return false;
+      seenB.add(b.key);
+      return b.values.some((v) => v !== n && v.type !== "Unknown" && isClassValue(v, seenB));
+    }
+    return false;
   };
   const snippet = (n) => src.slice(n.start, n.end).replace(/\s+/g, " ").slice(0, 100);
   // The extension's own name, or nothing at all, is not a site's.
-  const ownText = (t) => { const s = String(t).trim(); return !s || s.split(/[\s,]+/).every((x) => !x || OWN.test(x) || own(x)); };
+  const ownToken = (t) => { const s = String(t).trim(); return !s || s.split(/[\s,]+/).every((x) => !x || own(x)); };
 
-  // Literals held against a host or an address: parts of an address, not selectors.
+  // Literals held against an address: parts of an address, not selectors.
   const addressParts = new Set();
-  // A literal that spells no name at all (punctuation, whitespace, digits,
-  // an address's syntax: a scheme, "www") cannot be one site's.
-  const namesNothing = (n) => {
-    const t = n.regex ? regexText(n.regex.pattern.replace(/\[(?:\\.|[^\]])*\]/g, " ")) : String(literalText(n));
-    return flatWords(t).every((w) => /^\d+$/.test(w) || URL_SYNTAX.has(w));
-  };
+  const judged = new Set();
   const judge = (kind, lits) => {
     for (const n of lits) {
-      const line = n.loc.start.line;
-      if (namesNothing(n)) continue;
-      if (kind === "class" || kind === "id") {
-        if (!n.regex && ownText(literalText(n))) continue;
-        if (n.regex && OWN.test(n.regex.pattern) && !/[|]/.test(n.regex.pattern)) continue;
-        report("markup test", shown(n), line);
-        continue;
-      }
-      if (kind === "tag") {
-        // A standard tag is the same on every site; a custom element's is one site's.
-        const tokens = n.regex ? regexText(n.regex.pattern).match(/[A-Za-z][\w-]*/g) || [] : [String(literalText(n))];
-        if (tokens.some((t) => customTag(t, own))) report("markup test", shown(n), line);
-        continue;
-      }
-      if (kind === "title") { report("title test", shown(n), line); continue; }
-      addressParts.add(n);
-      report("address test", shown(n), line);
+      judged.add(n);
+      if (spellsNothing(n)) continue;
+      if (kind === "markup" && !n.regex && ownToken(literalText(n))) continue;
+      if (kind === "address") addressParts.add(n);
+      report(KIND_NAME[kind], shown(n), n.loc.start.line);
     }
   };
-  const compareMarkup = (kind, lits, n) => {
-    judge(kind, lits);
-    if (kind === "class" && !lits.length) report("class test", snippet(n), n.loc.start.line);
+  // Data a page's value is held against that the file never shows: a name
+  // bound nowhere in it (SKIP.test(cls), with SKIP from another script).
+  const GLOBALS = /^(document|window|self|globalThis|location|navigator|chrome|console|undefined|NaN|Infinity|Set|Map|WeakSet|WeakMap|URL|URLSearchParams|RegExp|String|Object|Array|Number|Boolean|JSON|Math|CSS|Reflect|Symbol|Promise|Date|Error|Node|Element|HTMLElement|SVGElement|Intl|crypto|performance|history|screen|module|require|exports)$/;
+  const rootName = (x) => { let r = x; while (r && (r.type === "MemberExpression" || r.type === "ChainExpression")) r = r.type === "ChainExpression" ? r.expression : r.object; return r && r.type === "Identifier" ? r : null; };
+  const unseen = (sides, at) => {
+    for (const x of sides) {
+      if (!x || isFn(x) || !(x.type === "Identifier" || x.type === "MemberExpression")) continue;
+      const r = rootName(x);
+      if (!r || GLOBALS.test(r.name) || binding(r) || functionsNamed.has(r.name) || (x.type === "MemberExpression" && binding(x))) continue;
+      report("unseen data", snippet(at), at.loc.start.line);
+    }
   };
+  const selectorFinding = (name, line) => { if (name && !own(name)) report("selector", name, line); };
+  /** A literal handed to a selector call: every name it picks by, or, as a piece of a built one, its bare name. */
+  const selectorLiteral = (lit, built, bareTags) => {
+    judged.add(lit);
+    const text = String(literalText(lit));
+    const parsed = parseSelector(text, bareTags);
+    if (parsed) { for (const p of parsed) selectorFinding(p.name, lit.loc.start.line); return; }
+    if (built || !parsed) for (const piece of text.split(/[\s,>+~()[\]="'^$*|:]+/)) {
+      const bare = piece.replace(/^[.#]/, "");
+      if (/\p{L}/u.test(bare) && !HTML_TAGS.has(bare.toLowerCase()) && !own(bare) && !own(piece)) selectorFinding(piece, lit.loc.start.line);
+    }
+  };
+  const kebab = (s) => `data-${String(s).replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`;
+  const isDataset = (n) => n && n.type === "MemberExpression" && propName(n) === "dataset";
 
   for (const n of all) {
     if (n.type === "CallExpression" && n.callee.type === "MemberExpression") {
       const method = propName(n.callee);
-      // Selectors handed to the page: by a site's class, id, named attribute or custom tag.
+      // Selectors, ids, classes and attribute names handed to the page.
       if (SELECTOR_CALLS.has(method)) {
         for (const a of n.arguments) {
-          const lits = operandLiterals(a);
-          // A selector built at run time ("." + name): the names it is built from are a site's.
-          // A selector built at run time from names: each bare name it is built from is a class or id it picks by.
-          const built = a.type !== "Literal" && !(a.type === "TemplateLiteral" && !a.expressions.length);
-          for (const lit of lits) {
-            const text = literalText(lit);
-            if (method === "getElementById" || method === "getElementsByClassName" || method === "getElementsByName") { for (const t of String(text).split(/\s+/)) if (t && !OWN.test(t) && !own(t)) report("selector", t, lit.loc.start.line); continue; }
-            if (method === "getElementsByTagName") { if (customTag(text, own)) report("selector", String(text).toLowerCase(), lit.loc.start.line); continue; }
-            for (const s of selectorNames(text, own, true)) report("selector", s, lit.loc.start.line);
-            const bare = String(text).trim();
-            if (built && /^[A-Za-z_-][\w-]*$/.test(bare) && !HTML_TAGS.has(bare.toLowerCase()) && !ownText(bare)) report("selector", bare, lit.loc.start.line);
+          const built = !(a.type === "Literal" || (a.type === "TemplateLiteral" && !a.expressions.length));
+          for (const lit of operandLiterals(a)) if (!lit.regex) selectorLiteral(lit, built, true);
+        }
+      }
+      if (NAME_CALLS.has(method)) for (const a of n.arguments) for (const lit of operandLiterals(a)) { judged.add(lit); if (!lit.regex) for (const t of String(literalText(lit)).split(/\s+/)) if (t && /\p{L}/u.test(t) && !own(t)) selectorFinding(method === "getElementById" ? `#${t}` : method === "getElementsByClassName" ? `.${t}` : `[name=${t}]`, lit.loc.start.line); }
+      if (method === "getElementsByTagName") for (const a of n.arguments) for (const lit of operandLiterals(a)) { judged.add(lit); if (customTag(literalText(lit), own)) selectorFinding(String(literalText(lit)).toLowerCase(), lit.loc.start.line); }
+      if (ATTR_CALLS.has(method) && n.arguments[0]) {
+        const a = method.endsWith("NS") ? n.arguments[1] : n.arguments[0];
+        for (const lit of operandLiterals(a)) { judged.add(lit); if (!lit.regex && /\p{L}/u.test(String(literalText(lit))) && !own(String(literalText(lit)))) selectorFinding(method === "namedItem" ? `[name=${literalText(lit)}]` : `[${literalText(lit)}]`, lit.loc.start.line); }
+      }
+      // An XPath handed to the page.
+      if (method === "evaluate" && n.arguments[0]) for (const lit of operandLiterals(n.arguments[0])) { judged.add(lit); for (const m of String(literalText(lit)).matchAll(/@([\w-]+)\s*(?:=\s*["']([^"']*)["'])?|contains\(\s*@([\w-]+)\s*,\s*["']([^"']*)["']/g)) selectorFinding(`[${m[1] || m[3]}${m[2] || m[4] ? `=${m[2] || m[4]}` : ""}]`, lit.loc.start.line); }
+      // One thing held against another: x.test(y), x.includes(y), SET.has(y), MAP.get(y), xs.some(cb).
+      if (COMPARE.has(method)) {
+        const sides = method === "replace" || method === "replaceAll" ? [n.callee.object, n.arguments[0]] : [n.callee.object, ...n.arguments];
+        // A callback is a comparison only where it judges each item.
+        const judging = /^(some|every|find|findIndex|findLast|findLastIndex|filter)$/.test(method);
+        const keyed = /^(has|get|hasOwnProperty)$/.test(method);
+        for (const kind of KINDS) {
+          if (keyed) {
+            if (n.arguments[0] && !isFn(n.arguments[0]) && carries(n.arguments[0], kind) && !carries(n.callee.object, kind)) { judge(kind, keyLiterals(n.callee.object)); unseen([n.callee.object], n); }
+            else if (carries(n.callee.object, kind) && n.arguments[0] && !isFn(n.arguments[0])) judge(kind, operandLiterals(n.arguments[0]));
+            continue;
+          }
+          const tainted = sides.filter((s) => s && (isFn(s) ? judging && side(s, kind) : carries(s, kind)));
+          if (!tainted.length) continue;
+          const others = sides.filter((s) => s && !tainted.includes(s) && (!isFn(s) || judging));
+          judge(kind, others.flatMap((s) => operandLiterals(s)));
+          unseen(others, n);
+          // A callback's body holding the item against data: (c) => SKIP.has(c).
+          for (const fn of sides.filter((s) => isFn(s) && judging)) {
+            const stack = [fn.body];
+            while (stack.length) { const x = stack.pop(); if (!x || typeof x.type !== "string" || isFn(x)) continue; if (x.type === "CallExpression" && x.callee.type === "MemberExpression" && COMPARE.has(propName(x.callee))) unseen([x.callee.object, ...x.arguments].filter((y) => !carries(y, kind)), n); stack.push(...childrenOf(x)); }
           }
         }
       }
-      // One thing held against another: x.test(y), x.includes(y), SET.has(y), xs.some(cb).
-      if (COMPARE.has(method)) {
-        const sides = method === "replace" || method === "replaceAll" ? [n.callee.object, n.arguments[0]] : [n.callee.object, ...n.arguments];
-        for (const kind of KINDS) {
-          const tainted = sides.filter((s) => s && side(s, kind));
-          if (!tainted.length) continue;
-          const lits = sides.filter((s) => s && !tainted.includes(s)).flatMap((s) => operandLiterals(s));
-          if (kind === "class" && method === "has" && !lits.length) continue;
-          compareMarkup(kind, lits, n);
-        }
+      // Object.hasOwn(T, x), Reflect.has(T, x).
+      if (/^(hasOwn|has)$/.test(method) && n.callee.object.type === "Identifier" && /^(Object|Reflect)$/.test(n.callee.object.name) && n.arguments.length === 2) {
+        for (const kind of KINDS) if (carries(n.arguments[1], kind)) judge(kind, keyLiterals(n.arguments[0]));
+        for (const kind of KINDS) if (carries(n.arguments[0], kind)) judge(kind, operandLiterals(n.arguments[1]));
       }
     }
     if (n.type === "BinaryExpression" && /^[!=]==?$/.test(n.operator)) {
@@ -584,61 +761,62 @@ function findings(src, names = readNames(), own = () => false) {
         for (const [a, b] of [[n.left, n.right], [n.right, n.left]]) {
           if (!side(a, kind) || side(b, kind)) continue;
           judge(kind, operandLiterals(b));
+          unseen([b], n);
         }
       }
     }
-    // M[c] with c a page's class: the keys of M are what it is held against.
-    if (n.type === "MemberExpression" && n.computed && n.property.type !== "Literal") {
-      for (const kind of KINDS) if (carries(n.property, kind) && !carries(n.object, kind)) judge(kind, operandLiterals(n.object, new Set(), true));
+    if (n.type === "MemberExpression" && n.computed) {
+      // M[c] with c such a value: the keys of M are what it is held against.
+      if (n.property.type !== "Literal") for (const kind of KINDS) if (carries(n.property, kind) && !carries(n.object, kind)) judge(kind, keyLiterals(n.object));
+      // byId["main"], attrs["data-x"], form.elements["q"]: a lookup by a literal in such a value.
+      if (n.property.type === "Literal" && typeof n.property.value === "string") {
+        if (/^(attributes|elements|all|forms|images|links|anchors|embeds|plugins|scripts)$/.test(propName(n.object)) && /\p{L}/u.test(n.property.value) && !own(n.property.value)) { judged.add(n.property); selectorFinding(propName(n.object) === "attributes" ? `[${n.property.value}]` : `[name=${n.property.value}]`, n.loc.start.line); }
+        for (const kind of KINDS) if (carries(n.object, kind) && !PROPS[kind].has(n.property.value)) judge(kind, [n.property]);
+      }
     }
-    // "navbox" in M, with the page's class on the left.
-    if (n.type === "BinaryExpression" && n.operator === "in") for (const kind of KINDS) if (carries(n.left, kind)) judge(kind, operandLiterals(n.right, new Set(), true));
+    // A dataset read is the data attribute it reads.
+    if (n.type === "MemberExpression" && isDataset(n.object) && !(n.parent && n.parent.type === "AssignmentExpression" && n.parent.left === n)) {
+      const key = n.computed ? (n.property.type === "Literal" ? String(n.property.value) : "") : n.property.name;
+      if (key) { if (n.computed) judged.add(n.property); selectorFinding(kebab(key), n.loc.start.line); }
+      else for (const lit of operandLiterals(n.property)) { judged.add(lit); selectorFinding(kebab(literalText(lit)), lit.loc.start.line); }
+    }
+    if (n.type === "VariableDeclarator" && n.id.type === "ObjectPattern" && isDataset(n.init)) for (const p of n.id.properties) if (p.type === "Property" && !p.computed) selectorFinding(kebab(p.key.name || p.key.value), p.loc.start.line);
+    // "navbox" in M, with the page's value on the left; "asin" in el.dataset.
+    if (n.type === "BinaryExpression" && n.operator === "in") {
+      for (const kind of KINDS) if (carries(n.left, kind)) judge(kind, keyLiterals(n.right));
+      if (isDataset(n.right)) for (const lit of operandLiterals(n.left)) { judged.add(lit); selectorFinding(kebab(literalText(lit)), lit.loc.start.line); }
+      else for (const kind of KINDS) if (carries(n.right, kind)) judge(kind, operandLiterals(n.left));
+    }
     if (n.type === "SwitchStatement") {
       for (const kind of KINDS) if (carries(n.discriminant, kind)) judge(kind, n.cases.filter((c) => c.test).flatMap((c) => operandLiterals(c.test)));
     }
     // A page's class handed to a function of the file's own, to be read for a meaning.
-    if (n.type === "CallExpression" && !BUILTIN_CALLS.has(n.callee.type === "Identifier" ? n.callee.name : propName(n.callee)) && n.arguments.some(isClassValue)) {
+    if (n.type === "CallExpression" && !BUILTIN_CALLS.has(calleeName(n)) && n.arguments.some((a) => isClassValue(a))) {
       report("class test", snippet(n), n.loc.start.line);
     }
   }
 
-  // A helper that hands its parameter to a markup or address test:
-  // `const has = (el, c) => el.classList.contains(c)`. What it is called
-  // with is what is tested.
-  const helpers = new Map();
+  // A literal searched for in, or searching, a text that is not provably the extension's own.
+  const searched = new Set();
   for (const n of all) {
-    if (!isFn(n) || !n.params.length) continue;
-    const name = n.id ? n.id.name : n.parent && n.parent.type === "VariableDeclarator" && n.parent.id.type === "Identifier" ? n.parent.id.name : "";
-    if (!name) continue;
-    const params = n.params.map((p) => (p.type === "Identifier" ? p.name : ""));
-    const tested = new Map();
-    const inner = [n.body];
-    while (inner.length) {
-      const x = inner.pop();
-      if (!x || typeof x.type !== "string") continue;
-      const sidesOf = x.type === "CallExpression" && x.callee.type === "MemberExpression" && COMPARE.has(propName(x.callee)) ? [x.callee.object, ...x.arguments] : x.type === "BinaryExpression" && /^[!=]==?$/.test(x.operator) ? [x.left, x.right] : null;
-      if (sidesOf) for (const kind of KINDS) if (sidesOf.some((s) => side(s, kind))) for (const s of sidesOf) if (s.type === "Identifier" && params.includes(s.name) && !side(s, kind)) tested.set(params.indexOf(s.name), kind);
-      for (const k of Object.keys(x)) { if (k === "parent" || k === "loc") continue; const c = x[k]; if (Array.isArray(c)) inner.push(...c); else if (c && typeof c.type === "string") inner.push(c); }
+    if (n.type !== "CallExpression" || n.callee.type !== "MemberExpression" || !TEXT_SEARCH.has(propName(n.callee))) continue;
+    const pairs = [[n.callee.object, n.arguments[0]], [n.arguments[0], n.callee.object]];
+    for (const [litSide, other] of pairs) {
+      if (!litSide || !other) continue;
+      const lits = operandLiterals(litSide).filter((l) => !judged.has(l));
+      if (!lits.length || ownTextValue(other)) continue;
+      for (const l of lits) { searched.add(l); if (!spellsNothing(l)) report("text test", shown(l), l.loc.start.line); }
     }
-    if (tested.size) helpers.set(name, tested);
-  }
-  for (const n of all) {
-    if (n.type !== "CallExpression" || n.callee.type !== "Identifier" || !helpers.has(n.callee.name)) continue;
-    for (const [i, kind] of helpers.get(n.callee.name)) if (n.arguments[i]) judge(kind, operandLiterals(n.arguments[i]));
   }
 
-  // A name that says it holds classes or ids: what it holds is class or id tokens.
-  for (const m of scopes.values()) for (const [name, values] of m) if (CLASSY_NAME.test(name)) judge("class", values.flatMap((v) => operandLiterals(v)));
-  for (const [name, values] of constants) if (CLASSY_NAME.test(name)) judge("class", values.flatMap((v) => operandLiterals(v)));
-
-  // A list of strings that nothing reads: dead data, or a rule waiting to be used.
+  // A regex, or a list of strings, that nothing reads: dead data, or a rule waiting to be used.
   const referenced = new Set();
   for (const n of all) if (n.type === "Identifier" && !(n.parent && n.parent.type === "VariableDeclarator" && n.parent.id === n) && !isPropertyKey(n) && !isObjectKey(n)) referenced.add(n.name);
   for (const n of all) {
     if (n.type !== "VariableDeclarator" || n.id.type !== "Identifier" || !n.init || referenced.has(n.id.name)) continue;
     const init = n.init.type === "NewExpression" && n.init.arguments[0] ? n.init.arguments[0] : n.init;
-    if (init.type !== "ArrayExpression" || init.elements.length < 2 || !init.elements.every((e) => e && e.type === "Literal" && typeof e.value === "string")) continue;
-    report("unused data", n.id.name, n.loc.start.line);
+    const data = (init.type === "Literal" && init.regex) || (init.type === "ArrayExpression" && init.elements.length >= 2 && init.elements.every((e) => e && e.type === "Literal" && (typeof e.value === "string" || e.regex)));
+    if (data) report("unused data", n.id.name, n.loc.start.line);
   }
 
   // Names in code (a variable, a property, an object's key) that are a site's: { amazon: ..., github: ... }.
@@ -648,12 +826,11 @@ function findings(src, names = readNames(), own = () => false) {
     for (const w of name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/)) if (names.names.has(w)) report("site name", w, n.loc.start.line);
   }
   // A selector written anywhere, not only where it is handed to the page.
-  // A string held against an address's fragment (location.hash === "#help")
-  // is a fragment, not a selector.
-  const fragments = new Set();
-  for (const n of all) if (n.type === "BinaryExpression" && /^[!=]==?$/.test(n.operator)) for (const [a, b] of [[n.left, n.right], [n.right, n.left]]) if (propName(a) === "hash" && isLiteral(b)) fragments.add(b);
-  for (const n of literals) if (!n.regex && !fragments.has(n) && !addressParts.has(n)) for (const s of selectorNames(literalText(n), own)) report("selector", s, n.loc.start.line);
+  // A string held against an address (location.hash === "#help") is part
+  // of an address, not a selector.
+  for (const n of literals) if (!n.regex && !(n.type === "TemplateLiteral" && n.expressions.length) && !addressParts.has(n) && !judged.has(n) && !searched.has(n)) for (const s of selectorNames(literalText(n), own)) report("selector", s, n.loc.start.line);
+  void bound; void isFnParam; void UNKNOWN;
   return out.sort((a, b) => a.line - b.line);
 }
 
-module.exports = { findings, readNames, selectorNames, parse };
+module.exports = { findings, readNames, selectorNames, parseSelector, parse };

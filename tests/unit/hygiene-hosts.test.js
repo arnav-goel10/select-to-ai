@@ -4,26 +4,30 @@
 // and it makes a score better without making the agent better.
 //
 // This test is there to make the next such patch fail CI in every shape a
-// careful reviewer would try. It is a static check, so a determined author
-// can always get past it (by building a name at run time, by matching page
-// text, by reading a value a long way from where it is tested), and code
-// review stays the backstop. What it does:
-// - Every file the extension ships is parsed (tests/helpers/literal-scan.js).
-// - Any string or regex literal that is compared with, tested against,
-//   searched in or switched on an element's id, name, className, classList,
-//   dataset or class, id, name and data-* attributes, a custom element's
-//   tag, a selector call's argument, or a location, host, hostname, origin
-//   or URL value is a finding, through simple names, destructuring, for-of
-//   loops, iteration callbacks and the constants they hold. A literal that
-//   spells no name (punctuation, digits, an address's syntax such as
-//   "https" or "www") is not.
-// - Any host, and any site or brand name from tests/hygiene/site-names.txt
+// careful reviewer would try. It is a static check, so code review stays
+// the backstop for what it cannot see (named below, in OUT_OF_REACH and in
+// the pull request). What decides a finding is what a literal is held
+// against, never what a variable is called. Every file the extension ships
+// is parsed (tests/helpers/literal-scan.js), and a finding is:
+// - any string or regex literal compared with, tested against, searched in,
+//   switched on or looked up by a value read through a property named id,
+//   name, className, classList, dataset, tagName, title, host, hostname,
+//   origin, href, pathname or url (and their kin), on any receiver, followed
+//   through destructuring, names, parameters, Sets, Maps, lists and
+//   callbacks;
+// - a literal passed as, or built into, an argument of a selector call
+//   (querySelector, matches, closest, getElementById, getAttribute and the
+//   rest) or a dataset read, with the selector parsed fully: classes, ids,
+//   every attribute by name, and what is inside :is(), :not(), :has() and
+//   :where();
+// - a literal used in includes, startsWith, endsWith, indexOf, match or test
+//   where the other side is not provably the extension's own text;
+// - any host, and any site or brand name from tests/hygiene/site-names.txt
 //   (a public top-site list kept for this test only, joined with the hosts
-//   of the repository's own task files), is a finding in any literal or
-//   comment.
-// - The extension's own class, id and name values count as its own only
-//   where its .html and .css files declare them.
-// Each finding must be covered by an entry in
+//   of the repository's own task files), in any literal or comment.
+// A literal with no letter in it is not a finding. The extension's own
+// class, id, name and data attribute names count as its own only where its
+// .html and .css files declare them. Every other exception is an entry in
 // tests/unit/hygiene-allowlist.json, and an entry is one file, one kind of
 // finding and one purpose: a host allowed for the welcome page is not
 // allowed in the agent, and a name allowed in text is not allowed when it
@@ -34,13 +38,15 @@ const fs = require("node:fs");
 const path = require("node:path");
 const acorn = require("acorn");
 const { readNames } = require("../helpers/literal-scan.js");
+const { renameIdentifiers, namesIn } = require("../helpers/rename-ids.js");
+const { FRESH, OUT_OF_REACH, INPLACE } = require("../hygiene/reviewer-shapes.js");
 
 const ROOT = path.join(__dirname, "../..");
 const EXT = path.join(ROOT, "extension");
 const ALLOW = JSON.parse(fs.readFileSync(path.join(__dirname, "hygiene-allowlist.json"), "utf8"));
 
 const { filesIn, taskSiteNames, scanWith } = require("../hygiene/shipped.js");
-const { scan } = scanWith();
+const { scan, scanFor } = scanWith();
 const SHIPPED = filesIn(EXT, /\.js$/);
 const WHOLE_FILES = new Set(ALLOW.files.map((f) => f.file));
 
@@ -147,6 +153,8 @@ const FURTHER = [
 ];
 
 const SHAPES = [...Object.values(ROUND_ONE), ...ROUND_THREE, ...BYPASSES, ...FURTHER];
+// The fourth round's fresh shapes, apart from the few no static check reaches.
+const REACHABLE = FRESH.filter((src) => !(src in OUT_OF_REACH));
 
 test("every shape a reviewer tried is found by the scan on its own", () => {
   assert.equal(Object.keys(ROUND_ONE).length, 15);
@@ -157,33 +165,84 @@ test("every shape a reviewer tried is found by the scan on its own", () => {
   assert.deepEqual(missed, [], "patch shapes the scan does not find");
   // Shapes removed from this repository earlier, as they were written.
   assert.ok(scan("const MAIN_SELECTORS = ['main', '[role=\"main\"]', 'article', '#mw-content-text', '#content', '#main', '.main-content', '#main-content'];").some((f) => f.kind === "selector" && f.what === "#mw-content-text"));
+  assert.ok(scan("const MAIN_SELECTORS = ['main', 'article', ':is(#mw-content-text, #content, #main)'];").some((f) => f.kind === "selector" && f.what === "#mw-content-text"), "inside :is()");
   assert.ok(scan("return CHALLENGE_TITLE.test(title) || /\\/sorry\\/index/.test(String(page.url || \"\"));").some((f) => f.kind === "address test"));
   assert.ok(scan("const KNOWN_SITES = { amazon: \"https://www.amazon.com/\", wiki: \"https://en.wikipedia.org/\" };").some((f) => f.kind === "host"));
   assert.ok(scan("// the guessed area (caniuse.com's div#main)").some((f) => f.what === "caniuse.com"), "comments are read too");
+});
+
+test("every fresh shape from the fourth round is found, apart from the few named as out of reach", () => {
+  assert.equal(FRESH.length, 179);
+  assert.equal(new Set(FRESH).size, 179, "no shape twice");
+  const missed = REACHABLE.filter((src) => !scan(src).length);
+  assert.deepEqual(missed, [], "fresh shapes the scan does not find");
+  // The out-of-reach list is exactly true: each one is a fresh shape, has a reason, and is not found.
+  for (const [src, why] of Object.entries(OUT_OF_REACH)) {
+    assert.ok(FRESH.includes(src), src);
+    assert.ok(why.length > 40 && !why.includes("\n"), `${src} has a one-line reason`);
+    assert.deepEqual(scan(src), [], `${src} is out of reach, or it would be found`);
+  }
+  assert.ok(Object.keys(OUT_OF_REACH).length <= 2, "a short list");
+  // The second one, bound in a file the way real code binds it, is found.
+  assert.ok(scan('const host = location.hostname; if (host.split(".").slice(-2)[0] === "shopdemo") x();').some((f) => f.kind === "address test" && f.what === "shopdemo"));
+});
+
+test("every shape is found with every name in it renamed to a neutral one", () => {
+  // card, part, block, cur, c, h, at: a shape caught only because a variable
+  // was called el, host or url would be lost here.
+  const missed = [];
+  for (const src of [...SHAPES, ...REACHABLE]) {
+    const renamed = renameIdentifiers(src);
+    for (const name of namesIn(renamed)) assert.match(name, /^(?:card|part|block|cur|c|h|at)\d*$/, `${src} is renamed: ${renamed}`);
+    if (!scan(renamed).length) missed.push(renamed);
+  }
+  assert.deepEqual(missed, [], "renamed shapes the scan does not find");
+  assert.equal(renameIdentifiers('if (el.id === "mw-content-text") main = el;'), 'if (card.id === "mw-content-text") part = card;');
+  assert.equal(renameIdentifiers("const { className } = el;"), "const { className: card } = part;");
 });
 
 test("every shape a reviewer tried fails the full gate, whichever shipped file it is written into", () => {
   // The gate as CI runs it, with each file's own allowlist entries: a shape
   // must leave a finding no entry for that file covers.
   const passes = [];
-  for (const src of SHAPES) {
-    const found = scan(src);
-    for (const file of SHIPPED) if (!WHOLE_FILES.has(file) && !gate(file, found).length) passes.push(`${file}: ${src}`);
+  for (const src of [...SHAPES, ...REACHABLE]) {
+    const found = scanFor(src);
+    for (const file of SHIPPED) if (!WHOLE_FILES.has(file) && !gate(file, found(file)).length) passes.push(`${file}: ${src}`);
   }
-  assert.deepEqual(passes, [], "shapes the gate lets through");
+  // The one file whose own entry already allows the same read: the recipes'
+  // page script reads the data-testid attribute as a stable name for a
+  // control, so a shape that reads that attribute and nothing else is that
+  // read. Every other file lets neither through.
+  assert.deepEqual(passes, [
+    'recipes/vendor/page.js: if (el.attributes["data-testid"].value === "price") x();',
+    'recipes/vendor/page.js: document.querySelectorAll("[data-testid]")',
+  ], "shapes the gate lets through");
   // Written into the files whose entries come closest (the welcome page, the
   // provider list, the right-click menu, the search hosts) and scanned in
   // place, each shape still adds a finding the file's entries do not cover.
   for (const file of ["welcome.js", "defaults.js", "config.js", "contentScript.js", "agentTools.js", "core/run.js"]) {
     const base = fs.readFileSync(path.join(EXT, file), "utf8");
-    const before = gate(file, scan(base)).length;
-    for (const src of SHAPES) assert.ok(gate(file, scan(`${base}\n${src}\n`)).length > before, `${file} lets through: ${src}`);
+    const before = gate(file, scan(base, file)).length;
+    for (const src of SHAPES) assert.ok(gate(file, scan(`${base}\n${src}\n`, file)).length > before, `${file} lets through: ${src}`);
   }
+});
+
+test("the removed rules, written into the content script's own functions, fail the gate", () => {
+  // Beside the line that skips the extension's own badge layer by its id, and
+  // in pickMain, in the file's own idiom and gated with that file's entries.
+  for (const { file, anchor, line } of INPLACE) {
+    const base = fs.readFileSync(path.join(EXT, file), "utf8");
+    assert.ok(base.includes(anchor), `the anchor is in ${file}: ${anchor}`);
+    const before = gate(file, scan(base, file)).length;
+    const after = gate(file, scan(base.replace(anchor, `${anchor}\n${line}`), file));
+    assert.ok(after.length > before, `${file} lets through: ${line.trim()}`);
+  }
+  assert.equal(INPLACE.length, 9);
 });
 
 test("an allowlist entry covers one file and one use", () => {
   // The welcome page's suggested sites and the provider hosts, used anywhere else.
-  const elsewhere = (src, file) => gate(file, scan(src));
+  const elsewhere = (src, file) => gate(file, scan(src, file));
   assert.deepEqual(elsewhere('const t = "Summarise the front page of news.ycombinator.com";', "welcome.js"), [], "the welcome page may suggest the site");
   assert.notDeepEqual(elsewhere('const t = "Summarise the front page of news.ycombinator.com";', "agent.js"), [], "no other file may name it");
   assert.notDeepEqual(elsewhere('const t = "Read wikipedia.org";', "agentContentScript.js"), []);
@@ -207,23 +266,29 @@ test("an allowlist entry covers one file and one use", () => {
   }
 });
 
-test("what spells no site is not reported", () => {
+test("what spells no site is not reported, and the web's own words are still findings", () => {
   const clean = [
     'const a = "https://shop.example/cart"; const b = TOOLS.siteOf(u); // see chrome.tabs.query',
-    "if (u.protocol === \"https:\" || /^chrome:\\/\\//.test(url)) return;",
-    "const TAGS = new Set([\"SCRIPT\", \"STYLE\"]); if (TAGS.has(el.tagName)) skip();",
-    "if (/^(button|link|menuitem)$/.test(el.getAttribute(\"role\") || \"\")) return;",
-    "const box = el.closest('[role=\"dialog\"], [aria-modal=\"true\"]');",
-    "if (n.id && /^select-to-ai-/.test(n.id)) return null;",
-    "const color = \"#1a2b3c\"; el.style.color = color;",
-    "const root = node.getRootNode(); if (root.host === el) return;",
-    "if (url.endsWith(\"/\") || /^www\\./.test(host)) x();",
-    "if (el.tagName === \"INPUT\" || el.matches(\"input, textarea, [contenteditable]\")) x();",
+    'const color = "#1a2b3c"; el.style.color = color;',
+    'if (s.includes(":") || /^\\d+$/.test(s) || s.indexOf("/") > 0) x();',
+    'el.querySelectorAll("div > p, ul li, table td");',
+    'if (el.id === "") return;',
   ];
   for (const src of clean) assert.deepEqual(scan(src), [], src);
-  // A literal held against a host is a finding even when it names no public
-  // site: the file's allowlist entry says why it is there.
-  assert.ok(scan("if (host === \"localhost\" || host.endsWith(\".local\")) return true;").some((f) => f.kind === "address test" && f.what === "localhost"));
+  // Standard names (a scheme, a tag, a role, an ARIA attribute) and the
+  // extension's own prefix are still findings: each file's allowlist entry
+  // says why it is there, and nothing is let through by a built-in list.
+  const found = [
+    'if (u.protocol === "https:" || /^chrome:\\/\\//.test(url)) return;',
+    'const TAGS = new Set(["SCRIPT", "STYLE"]); if (TAGS.has(el.tagName)) skip();',
+    'if (/^(button|link|menuitem)$/.test(el.getAttribute("role") || "")) return;',
+    "const box = el.closest('[role=\"dialog\"], [aria-modal=\"true\"]');",
+    "if (n.id && /^select-to-ai-/.test(n.id)) return null;",
+    'if (url.endsWith("/") || /^www\\./.test(host)) x();',
+    'if (el.tagName === "INPUT" || el.matches("input, textarea, [contenteditable]")) x();',
+    'if (host === "localhost" || host.endsWith(".local")) return true;',
+  ];
+  for (const src of found) assert.notDeepEqual(scan(src), [], src);
 });
 
 test("no file the extension ships holds a finding its allowlist entries do not cover", () => {
@@ -232,7 +297,7 @@ test("no file the extension ships holds a finding its allowlist entries do not c
   const used = new Set();
   for (const file of SHIPPED) {
     if (WHOLE_FILES.has(file)) continue;
-    for (const f of scan(fs.readFileSync(path.join(EXT, file), "utf8"))) {
+    for (const f of scan(fs.readFileSync(path.join(EXT, file), "utf8"), file)) {
       if (covered(file, f)) { used.add(`${file}|${f.kind}|${f.what}`); continue; }
       hits.push(`${file}:${f.line}: ${f.kind} ${f.what}`);
     }

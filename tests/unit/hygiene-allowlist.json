@@ -10,506 +10,3497 @@
     {
       "file": "agent.js",
       "kind": "address test",
-      "what": ["#memory", "#recipes", "/\\/sidepanel\\.html$/", "autostart", "handoff", "task"],
+      "what": [
+        "/^www\\./"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "agent.js",
+      "kind": "address test",
+      "what": [
+        "#memory",
+        "#recipes",
+        "/\\/sidepanel\\.html$/",
+        "autostart",
+        "fresh",
+        "handoff",
+        "tabId",
+        "task"
+      ],
       "why": "The extension's own pages: their sections in the address fragment and the query parts they are opened with."
     },
     {
       "file": "agent.js",
       "kind": "host",
-      "what": ["chatgpt.com", "claude.ai"],
+      "what": [
+        "chatgpt.com",
+        "claude.ai"
+      ],
       "why": "Assistants the right-click menu sends a selection to."
     },
     {
       "file": "agent.js",
       "kind": "host",
-      "what": ["cloud.cerebras.ai", "opencode.ai"],
+      "what": [
+        "cloud.cerebras.ai",
+        "opencode.ai"
+      ],
       "why": "Provider endpoints and key pages for the models the user picks from."
     },
     {
       "file": "agent.js",
       "kind": "host",
-      "what": ["www.w3.org"],
+      "what": [
+        "www.w3.org"
+      ],
       "why": "The SVG namespace URI the script makes its icons with, not a site."
     },
     {
       "file": "agent.js",
       "kind": "markup test",
-      "what": ["checking", "collapsed"],
+      "what": [
+        "collapsed"
+      ],
       "why": "The state of the extension's own elements, which this script sets itself."
     },
     {
       "file": "agent.js",
       "kind": "selector",
-      "what": [".assistant", ".confirmation-bubble", ".keep-answer-box", ".needs-you", "recipesEmpty"],
+      "what": [
+        "[open]"
+      ],
+      "why": "Standard HTML and WAI-ARIA attributes and their standard values, read the same on every site."
+    },
+    {
+      "file": "agent.js",
+      "kind": "selector",
+      "what": [
+        "#recipesEmpty",
+        ".assistant",
+        ".confirmation-bubble",
+        ".keep-answer-box",
+        ".needs-you",
+        ".tl-quiet"
+      ],
       "why": "The extension's own elements, which this script makes and styles itself."
     },
     {
       "file": "agent.js",
+      "kind": "selector",
+      "what": [
+        "select-to-ai-memory",
+        "select-to-ai-memory.json"
+      ],
+      "why": "The file name the extension's own memory is saved under."
+    },
+    {
+      "file": "agent.js",
       "kind": "site name",
-      "what": ["chatgpt", "perplexity"],
+      "what": [
+        "chatgpt",
+        "perplexity"
+      ],
       "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
     },
     {
       "file": "agent.js",
       "kind": "site name",
-      "what": ["anthropic", "deepseek", "google", "groq", "mistral", "openai", "openrouter"],
+      "what": [
+        "anthropic",
+        "deepseek",
+        "google",
+        "groq",
+        "mistral",
+        "openai",
+        "openrouter"
+      ],
       "why": "Providers the user can pick for the agent: their ids, endpoints, key pages and model names."
+    },
+    {
+      "file": "agent.js",
+      "kind": "text test",
+      "what": [
+        "/^https?:$/"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "agent.js",
+      "kind": "text test",
+      "what": [
+        "/^(AIza|AQ\\.)/",
+        "/^(oc_sk_|sk-)/",
+        "csk-",
+        "gsk_",
+        "sk-",
+        "sk-ant-",
+        "sk-or-",
+        "xai-"
+      ],
+      "why": "Key names and the key formats each provider issues, to check a key the user typed."
+    },
+    {
+      "file": "agent.js",
+      "kind": "text test",
+      "what": [
+        "/^(gpt-oss|qwen|llama|zai|glm)/",
+        "/^(gpt-|o\\d|chatgpt-)/",
+        "/^(llama|llama3|llama-3|mixtral|gemma|qwen|deepseek|moonshot|gpt-oss)/",
+        "claude-",
+        "codestral",
+        "deepseek-",
+        "devstral",
+        "gemini-",
+        "grok-",
+        "magistral",
+        "ministral",
+        "mistral"
+      ],
+      "why": "Model and provider id patterns, read from the model the user picked, never from a page."
+    },
+    {
+      "file": "agent.js",
+      "kind": "text test",
+      "what": [
+        "ChatGPT",
+        "Claude",
+        "Gemini",
+        "Perplexity"
+      ],
+      "why": "The assistants the right-click menu lists by name."
+    },
+    {
+      "file": "agent.js",
+      "kind": "text test",
+      "what": [
+        "agentAllowance",
+        "agentDataConsent",
+        "agentProviderPause",
+        "chatgptAccount"
+      ],
+      "why": "The extension's own setting names."
+    },
+    {
+      "file": "agent.js",
+      "kind": "text test",
+      "what": [
+        "approval",
+        "pause"
+      ],
+      "why": "The kinds of wait, outcome and correction the run itself records."
+    },
+    {
+      "file": "agent.js",
+      "kind": "text test",
+      "what": [
+        "Done",
+        "Not confirmed",
+        "Problem",
+        "Stopped",
+        "error",
+        "idle",
+        "success",
+        "unconfirmed"
+      ],
+      "why": "The outcome labels of the extension's own runs."
+    },
+    {
+      "file": "agent.js",
+      "kind": "text test",
+      "what": [
+        "\"\\s*:\\s*\"",
+        "/\"answer\"\\s*:/",
+        "/\"do\"\\s*:\\s*\"done\"/",
+        "/^(On|Why|Address):\\s*(.*)$/s",
+        "/^Looking at the page/",
+        "/^Step (\\d+)/",
+        "/^Step \\d+/",
+        "answer",
+        "goal"
+      ],
+      "why": "The status lines and step fields the extension's own engine sends."
+    },
+    {
+      "file": "agent.js",
+      "kind": "title test",
+      "what": [
+        "/^Step (\\d+)$/",
+        "Action",
+        "Action Failed",
+        "Allowed",
+        "Answer Now",
+        "Carrying On",
+        "Check Failed",
+        "Check Inconclusive",
+        "Check Passed",
+        "Checking Answer",
+        "Checking In",
+        "Declined",
+        "Helper Model",
+        "Hidden Text",
+        "Keep Going",
+        "Main Model",
+        "Not Getting Anywhere",
+        "Not Held",
+        "Provider Asked To Wait",
+        "Quote Not Found",
+        "Result",
+        "Second Check",
+        "Step Not Usable",
+        "Task Started",
+        "Text Aimed at AI",
+        "You Added"
+      ],
+      "why": "The titles of the extension's own log entries, which it writes itself."
     },
     {
       "file": "agentBar.js",
       "kind": "host",
-      "what": ["www.w3.org"],
+      "what": [
+        "www.w3.org"
+      ],
       "why": "The SVG namespace URI the script makes its icons with, not a site."
     },
     {
       "file": "agentBar.js",
+      "kind": "markup test",
+      "what": [
+        "IFRAME"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "agentBar.js",
       "kind": "selector",
-      "what": [".label"],
+      "what": [
+        ".label"
+      ],
       "why": "The extension's own elements, which this script makes and styles itself."
     },
     {
       "file": "agentContentScript.js",
+      "kind": "address test",
+      "what": [
+        "/^(about|javascript):/i",
+        "/^https?:/",
+        "/^https?:/i"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "address test",
+      "what": [
+        "/^data:/"
+      ],
+      "why": "Image addresses that are inline data, never a site's."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "address test",
+      "what": [
+        "A"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "address test",
+      "what": [
+        "null"
+      ],
+      "why": "The origin a sandboxed frame reports, which names no site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "address test",
+      "what": [
+        "/\\botp\\b|one.?time|verification.?code|\\b2fa\\b|passcode/",
+        "/\\bssn\\b|social.?security|passport|national.?id/",
+        "/card.?(number|num|no)\\b|\\bcc.?num|\\bcvv\\b|\\bcvc\\b|security.?code|card.?code|\\biban\\b|\\bexpir(y|es|ation)\\b|\\bexp\\.? ?(date|month|year)\\b|\\bmm ?\\/ ?yy/"
+      ],
+      "why": "Words that mark a field or a value as a secret, a card or an identity number, so the agent never fills or keeps one."
+    },
+    {
+      "file": "agentContentScript.js",
       "kind": "host",
-      "what": ["arkoselabs.com", "captcha-delivery.com", "challenges.cloudflare.com", "hcaptcha.com"],
+      "what": [
+        "arkoselabs.com",
+        "captcha-delivery.com",
+        "challenges.cloudflare.com",
+        "hcaptcha.com"
+      ],
       "why": "Human-check vendors: where their widgets are served from, so the agent never touches one."
     },
     {
       "file": "agentContentScript.js",
       "kind": "host",
-      "what": ["www.w3.org"],
+      "what": [
+        "www.w3.org"
+      ],
       "why": "The SVG namespace URI the script makes its icons with, not a site."
     },
     {
       "file": "agentContentScript.js",
       "kind": "markup test",
-      "what": ["/\\botp\\b|one.?time|verification.?code|\\b2fa\\b|passcode/", "/\\bssn\\b|social.?security|passport|national.?id/", "/card.?(number|num|no)\\b|\\bcc.?num|\\bcvv\\b|\\bcvc\\b|security.?code|card.?code|\\biban\\b|\\bexpir(y|es|ation)\\b|\\bexp\\.? ?(date|month|year)\\b|\\bmm ?\\/ ?yy/"],
+      "what": [
+        "/^data:/"
+      ],
+      "why": "Image addresses that are inline data, never a site's."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "what": [
+        "/^(chrome-extension|data):/"
+      ],
+      "why": "Resource names that are the extension's own or inline data, never a site's."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "what": [
+        "/^(A|BUTTON|INPUT|SELECT|TEXTAREA|OPTION|LABEL|SUMMARY|IMG|VIDEO|CANVAS|SVG|IFRAME|PICTURE)$/i",
+        "/^(BUTTON|A|INPUT|SELECT|TEXTAREA|SUMMARY|OPTION|LABEL)$/",
+        "/^(IMG|INPUT|HR|SVG|VIDEO|CANVAS|IFRAME)$/i",
+        "/^(INPUT|TEXTAREA)$/",
+        "/^(INPUT|TEXTAREA|SELECT)$/",
+        "/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/",
+        "/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|BR|HR|HTML|BODY|HEAD)$/i",
+        "/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|SVG|IFRAME|OBJECT|CANVAS|HEAD)$/",
+        "/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|TEXTAREA)$/",
+        "/^(SCRIPT|STYLE|TEMPLATE|NOSCRIPT)$/",
+        "/^(STYLE|SCRIPT|TEMPLATE|SLOT)$/",
+        "/^(TEXTAREA|SELECT|CANVAS|VIDEO|AUDIO|IFRAME|OBJECT|EMBED)$/",
+        "/^(TR|LI|FORM|FIELDSET|BODY|TABLE|UL|OL)$/",
+        "/^(UL|OL)$/",
+        "/^(canvas|svg|img)$/",
+        "A",
+        "ASIDE",
+        "B",
+        "BLOCKQUOTE",
+        "BR",
+        "BUTTON",
+        "CANVAS",
+        "CODE",
+        "DD",
+        "DEL",
+        "DIALOG",
+        "DT",
+        "EM",
+        "FIGCAPTION",
+        "FOOTER",
+        "FORM",
+        "I",
+        "IFRAME",
+        "IMG",
+        "INPUT",
+        "INS",
+        "KBD",
+        "LABEL",
+        "LI",
+        "MARK",
+        "MENU",
+        "NAV",
+        "NOSCRIPT",
+        "OL",
+        "OPTION",
+        "P",
+        "PRE",
+        "PROGRESS",
+        "S",
+        "SCRIPT",
+        "SELECT",
+        "STRIKE",
+        "STRONG",
+        "STYLE",
+        "SUB",
+        "SUP",
+        "SVG",
+        "TABLE",
+        "TEMPLATE",
+        "TEXTAREA",
+        "U",
+        "UL",
+        "VIDEO",
+        "a",
+        "article",
+        "aside",
+        "button",
+        "canvas",
+        "dialog",
+        "fieldset",
+        "footer",
+        "form",
+        "image",
+        "input",
+        "li",
+        "link",
+        "nav",
+        "option",
+        "search",
+        "select",
+        "svg",
+        "textarea",
+        "tr"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "what": [
+        "one-time-code"
+      ],
+      "why": "Standard HTML autocomplete tokens, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "what": [
+        "/password/",
+        "submit"
+      ],
+      "why": "Standard HTML input types, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "what": [
+        "/^(listbox|menu|true)$/",
+        "/^(listbox|true|tree|grid|menu)$/",
+        "both",
+        "false",
+        "mixed",
+        "true"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "what": [
+        "/^(?:on|off)?$/",
+        "get"
+      ],
+      "why": "Standard autocomplete and form method values, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "what": [
+        "/^(IMG|VIDEO|CANVAS|TABLE|PRE|UL|OL|LI|P|BLOCKQUOTE|FIGCAPTION|DT|DD|H[1-6])$/",
+        "/^H[1-6]$/"
+      ],
+      "why": "Standard heading and block tag names, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "what": [
+        "/^select-to-ai-/",
+        "select-to-ai",
+        "select-to-ai-agent-bar",
+        "select-to-ai-overlay-container"
+      ],
+      "why": "The extension's own badge layer, bar and marks, which this script draws on the page."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "what": [
+        "/^(button|link|menuitem|tab|checkbox|radio|switch|option|textbox|combobox|slider)$/",
+        "/^(checkbox|radio|switch)$/",
+        "/^(combobox|listbox|searchbox)$/",
+        "/^(gridcell|option)$/",
+        "/^(textbox|combobox|checkbox|radio|switch|spinbutton|slider)$/",
+        "/radio/",
+        "alertdialog",
+        "banner",
+        "checkbox",
+        "combobox",
+        "complementary",
+        "contentinfo",
+        "gridcell",
+        "group",
+        "heading",
+        "list",
+        "listbox",
+        "listitem",
+        "menuitem",
+        "menuitemcheckbox",
+        "menuitemradio",
+        "navigation",
+        "none",
+        "presentation",
+        "radio",
+        "radiogroup",
+        "row",
+        "searchbox",
+        "slider",
+        "spinbutton",
+        "switch",
+        "tab",
+        "textbox",
+        "treeitem"
+      ],
+      "why": "WAI-ARIA role names, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "markup test",
+      "what": [
+        "/\\botp\\b|one.?time|verification.?code|\\b2fa\\b|passcode/",
+        "/\\bssn\\b|social.?security|passport|national.?id/",
+        "/card.?(number|num|no)\\b|\\bcc.?num|\\bcvv\\b|\\bcvc\\b|security.?code|card.?code|\\biban\\b|\\bexpir(y|es|ation)\\b|\\bexp\\.? ?(date|month|year)\\b|\\bmm ?\\/ ?yy/"
+      ],
       "why": "Words that mark a field for a card, an identity number or a one-time code in any site's field names, so the agent never fills one."
     },
     {
       "file": "agentContentScript.js",
+      "kind": "markup test",
+      "what": [
+        "/\\bcc-/"
+      ],
+      "why": "Words that mark a field or a value as a secret, a card or an identity number, so the agent never fills or keeps one."
+    },
+    {
+      "file": "agentContentScript.js",
       "kind": "selector",
-      "what": ["#px-captcha", ".cf-turnstile", ".grecaptcha-badge", ".h-captcha"],
+      "what": [
+        "#px-captcha",
+        ".cf-turnstile",
+        ".grecaptcha-badge",
+        ".h-captcha",
+        "iframe[src*=arkoselabs.com]",
+        "iframe[src*=captcha-delivery.com]",
+        "iframe[src*=challenges.cloudflare.com]",
+        "iframe[src*=funcaptcha]",
+        "iframe[src*=hcaptcha.com]",
+        "iframe[src*=recaptcha/api2/anchor]",
+        "iframe[src*=recaptcha/api2/bframe]",
+        "iframe[src*=recaptcha/enterprise/anchor]"
+      ],
       "why": "Human-check vendor widgets, so the agent never touches one."
     },
     {
       "file": "agentContentScript.js",
       "kind": "selector",
-      "what": [".active-target"],
+      "what": [
+        "[action]",
+        "[aria-activedescendant]",
+        "[aria-autocomplete]",
+        "[aria-busy=true]",
+        "[aria-checked]",
+        "[aria-controls]",
+        "[aria-current]",
+        "[aria-disabled]",
+        "[aria-expanded]",
+        "[aria-haspopup]",
+        "[aria-hidden=true]",
+        "[aria-hidden]",
+        "[aria-label]",
+        "[aria-labelledby]",
+        "[aria-modal=true]",
+        "[aria-modal]",
+        "[aria-owns]",
+        "[aria-pressed]",
+        "[aria-readonly]",
+        "[aria-required]",
+        "[aria-selected]",
+        "[aria-valuemax]",
+        "[aria-valuemin]",
+        "[aria-valuenow]",
+        "[aria-valuetext]",
+        "[autocomplete]",
+        "[class]",
+        "[contenteditable=false]",
+        "[contenteditable=true]",
+        "[contenteditable]",
+        "[draggable]",
+        "[href]",
+        "[list]",
+        "[method]",
+        "[name]",
+        "[onclick]",
+        "[placeholder]",
+        "[popovertarget]",
+        "[role=alertdialog]",
+        "[role=banner]",
+        "[role=button]",
+        "[role=checkbox]",
+        "[role=combobox]",
+        "[role=complementary]",
+        "[role=contentinfo]",
+        "[role=dialog]",
+        "[role=grid]",
+        "[role=gridcell]",
+        "[role=heading]",
+        "[role=link]",
+        "[role=listbox]",
+        "[role=main]",
+        "[role=menu]",
+        "[role=menubar]",
+        "[role=menuitem]",
+        "[role=menuitemradio]",
+        "[role=navigation]",
+        "[role=none]",
+        "[role=option]",
+        "[role=presentation]",
+        "[role=progressbar]",
+        "[role=radio]",
+        "[role=search]",
+        "[role=searchbox]",
+        "[role=slider]",
+        "[role=spinbutton]",
+        "[role=switch]",
+        "[role=tab]",
+        "[role=tablist]",
+        "[role=textbox]",
+        "[role=tooltip]",
+        "[role=tree]",
+        "[role=treeitem]",
+        "[role]",
+        "[src]",
+        "[tabindex]",
+        "[title]",
+        "[type=hidden]",
+        "[type]",
+        "[value]",
+        "[xlink:href]",
+        "a[href]",
+        "dialog[open]",
+        "input[autocomplete~=cc-csc]",
+        "input[autocomplete~=cc-exp]",
+        "input[autocomplete~=cc-number]",
+        "input[autocomplete~=current-password]",
+        "input[autocomplete~=one-time-code]",
+        "input[type=button]",
+        "input[type=checkbox]",
+        "input[type=email]",
+        "input[type=file]",
+        "input[type=number]",
+        "input[type=password]",
+        "input[type=radio]",
+        "input[type=range]",
+        "input[type=reset]",
+        "input[type=search]",
+        "input[type=submit]",
+        "input[type=tel]",
+        "input[type=text]",
+        "input[type=url]"
+      ],
+      "why": "Standard HTML and WAI-ARIA attributes and their standard values, read the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "selector",
+      "what": [
+        "#aria-controls",
+        "#aria-owns",
+        "[contenteditable=]",
+        "[xmlns]",
+        "aria-controls",
+        "aria-owns",
+        "circle",
+        "ellipse",
+        "embed[type=application/pdf]",
+        "frame",
+        "path",
+        "polygon",
+        "polyline",
+        "rect",
+        "role",
+        "search",
+        "use"
+      ],
+      "why": "Standard HTML, SVG and WAI-ARIA tags and attributes, read the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "selector",
+      "what": [
+        "[data-icon]"
+      ],
+      "why": "The data-icon attribute icon sets put on an icon, read with its title as words for what it shows."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "selector",
+      "what": [
+        "#select-to-ai-active-ring",
+        "#select-to-ai-agent-styles",
+        "#select-to-ai-badge-",
+        "#select-to-ai-overlay-container",
+        ".select-to-ai-badge",
+        "[data-select-to-ai-press]",
+        "[data-select-to-ai-q]",
+        "data-select-to-ai-press"
+      ],
+      "why": "The extension's own badge layer, styles, rings and marks, which this script draws on the page."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "selector",
+      "what": [
+        ".active-target"
+      ],
       "why": "The extension's own elements, which this script makes and styles itself."
     },
     {
       "file": "agentContentScript.js",
       "kind": "selector",
-      "what": ["#rrggbb"],
+      "what": [
+        "#rrggbb"
+      ],
       "why": "The format a colour field takes, not a selector."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "selector",
+      "what": [
+        "yyyy-mm-ddthh"
+      ],
+      "why": "The formats a date, time or colour field takes, not a selector."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "text test",
+      "what": [
+        "/^https?:$/",
+        "/^https?:\\/\\//i"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "text test",
+      "what": [
+        "/^_(self|parent|top)$/i",
+        "confirm",
+        "left",
+        "prompt",
+        "right"
+      ],
+      "why": "Directions, link targets and dialog kinds the browser itself defines."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "text test",
+      "what": [
+        "/Mac|iPhone|iPad/i",
+        "/^(enter|return|numpadenter| |space|spacebar)$/i"
+      ],
+      "why": "Key names and the platform, read the same way on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "text test",
+      "what": [
+        "/^(move|linkMove)$/",
+        "/^inline/",
+        "/auto|scroll/",
+        "/auto|scroll|overlay/",
+        "/dark/",
+        "/hidden|clip/",
+        "/line-through/",
+        "/rgba?\\(\\s*([\\d.]+)[ ,]+([\\d.]+)[ ,]+([\\d.]+)(?:\\s*[,/]\\s*([\\d.]+%?))?/",
+        "/underline/",
+        ":hover",
+        "contents",
+        "fixed",
+        "inline"
+      ],
+      "why": "Standard CSS values a style reports, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "text test",
+      "what": [
+        "/^(drop|dragend)$/",
+        "/^insert(Paragraph|LineBreak)$/"
+      ],
+      "why": "Standard DOM event and input types, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "text test",
+      "what": [
+        "search"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "text test",
+      "what": [
+        "/^(button|submit|reset)$/",
+        "/^(button|submit|reset|image|checkbox|radio|file)$/",
+        "/^(button|submit|reset|image|file|hidden)$/",
+        "/^(button|submit|reset|image|file|hidden|checkbox|radio|range|color)$/",
+        "/^(button|submit|reset|image|hidden|file)$/",
+        "/^(checkbox|radio|button|submit|reset|image|file)$/",
+        "/^(checkbox|radio|range)$/",
+        "/^(date|time|datetime-local|month|week|color|range)$/",
+        "/^(file|checkbox)$/",
+        "/^(file|color|date|datetime-local|month|week|time)$/i",
+        "/^(hidden|submit|button|reset|image)$/",
+        "/^(hidden|submit|button|reset|image|checkbox|radio|file|range|color)$/",
+        "/^(submit|image)$/",
+        "/^(text|search|email|url|tel|number|password)$/"
+      ],
+      "why": "Standard HTML input types, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "text test",
+      "what": [
+        "/^(text|search|number|textarea|date|month|week|time|datetime-local)$/"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "text test",
+      "what": [
+        "/^(click|press|double_click|right_click|hold|hover|drag)$/"
+      ],
+      "why": "The agent's own action names and fields, as the model's tool call names them."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "text test",
+      "what": [
+        "/^data-select-to-ai/",
+        "data-select-to-ai"
+      ],
+      "why": "The extension's own marks on the page, which this script sets itself."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "text test",
+      "what": [
+        "request",
+        "value"
+      ],
+      "why": "The extension's own outcome words for an action it took."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "text test",
+      "what": [
+        "/secur|taint/i"
+      ],
+      "why": "The wording of the browser's own error when a picture is refused."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "text test",
+      "what": [
+        "/^(false|no|off|0|unchecked)$/i",
+        "/^(off|false|no|0|unchecked|uncheck)$/i",
+        "/^x$/i"
+      ],
+      "why": "The words a model uses for an unchecked box or a blank value."
+    },
+    {
+      "file": "agentContentScript.js",
+      "kind": "text test",
+      "what": [
+        "/^(checkbox|radio)$/",
+        "/^(slider|spinbutton|progressbar|meter|scrollbar)$/",
+        "alert"
+      ],
+      "why": "WAI-ARIA role names, the same on every site."
     },
     {
       "file": "agentTools.js",
       "kind": "address test",
-      "what": ["/\\.(?:local|localhost|localdomain|internal|intranet|lan|home\\.arpa|corp|private)$/"],
+      "what": [
+        "/^(#|javascript:)/i",
+        "/^https?:/",
+        "/^https?:\\/\\/(www\\.)?/",
+        "/^www\\./"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "agentTools.js",
+      "kind": "address test",
+      "what": [
+        "/\\.(?:local|localhost|localdomain|internal|intranet|lan|home\\.arpa|corp|private)$/"
+      ],
       "why": "Private network names (RFC 6762, RFC 8375) that are never a public site."
     },
     {
       "file": "agentTools.js",
       "kind": "address test",
-      "what": ["/^(?:(?:co|com)\\.)?[a-z]{2}$/"],
+      "what": [
+        "/^(?:(?:co|com)\\.)?[a-z]{2}$/"
+      ],
       "why": "SEARCH_HOSTS: the country domains a listed search engine is also served on."
     },
     {
       "file": "agentTools.js",
       "kind": "address test",
-      "what": ["cc", "do", "form", "gl", "hl", "html", "ia", "iax", "ie", "kl", "lang", "lr", "p", "q", "query", "search", "setlang", "source", "sp", "t", "tbm", "text", "wd", "web"],
+      "what": [
+        "baidu.com",
+        "bing.com",
+        "duckduckgo.com",
+        "ecosia.org",
+        "google",
+        "google.com",
+        "kagi.com",
+        "mojeek.com",
+        "qwant.com",
+        "search.brave.com",
+        "search.yahoo.com",
+        "startpage.com",
+        "yandex.com",
+        "yandex.ru"
+      ],
+      "why": "SEARCH_HOSTS: the search engines whose result pages the agent may read without asking."
+    },
+    {
+      "file": "agentTools.js",
+      "kind": "address test",
+      "what": [
+        "cc",
+        "do",
+        "form",
+        "gl",
+        "hl",
+        "html",
+        "ia",
+        "iax",
+        "ie",
+        "kl",
+        "lang",
+        "lr",
+        "p",
+        "q",
+        "query",
+        "search",
+        "setlang",
+        "source",
+        "sp",
+        "t",
+        "tbm",
+        "text",
+        "wd",
+        "web"
+      ],
       "why": "SEARCH_QUERY_PARAMS, SEARCH_EXTRA_PARAMS and SEARCH_PATH_PARTS: the parts of a search results address that hold the words searched for."
     },
     {
       "file": "agentTools.js",
       "kind": "address test",
-      "what": ["/^(?:chrome|edge|brave|opera|vivaldi):\\/\\/(?:newtab|new-tab-page|startpageshared)\\b/i", "/^about:(?:newtab|home)\\b/i", "/^about:blank\\b/i", "/^chrome-search:\\/\\/local-ntp\\b/i"],
-      "why": "The browser's own start pages, where no extension may run (startPageKind)."
+      "what": [
+        "s"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
     },
     {
       "file": "agentTools.js",
       "kind": "address test",
-      "what": ["/^\\/webstore\\b/i", "chrome.google.com", "chromewebstore.google.com", "microsoftedge.microsoft.com"],
+      "what": [
+        "/^\\/webstore\\b/i",
+        "chrome.google.com",
+        "chromewebstore.google.com",
+        "microsoftedge.microsoft.com"
+      ],
       "why": "The browsers' own add-on stores, where no extension may run (startPageKind)."
     },
     {
       "file": "agentTools.js",
       "kind": "host",
-      "what": ["bar.github.io", "foo.github.io"],
+      "what": [
+        "bar.github.io",
+        "foo.github.io"
+      ],
       "why": "A comment's example of the Public Suffix List's private section (siteOf)."
     },
     {
       "file": "agentTools.js",
       "kind": "host",
-      "what": ["baidu.com", "bing.com", "duckduckgo.com", "ecosia.org", "google.com", "kagi.com", "mojeek.com", "qwant.com", "search.brave.com", "search.yahoo.com", "startpage.com", "yandex.com", "yandex.ru"],
+      "what": [
+        "baidu.com",
+        "bing.com",
+        "duckduckgo.com",
+        "ecosia.org",
+        "google.com",
+        "kagi.com",
+        "mojeek.com",
+        "qwant.com",
+        "search.brave.com",
+        "search.yahoo.com",
+        "startpage.com",
+        "yandex.com",
+        "yandex.ru"
+      ],
       "why": "SEARCH_HOSTS: the search engines whose results for the request's own words open without asking."
     },
     {
       "file": "agentTools.js",
       "kind": "host",
-      "what": ["chromewebstore.google.com", "microsoftedge.microsoft.com"],
+      "what": [
+        "chromewebstore.google.com",
+        "microsoftedge.microsoft.com"
+      ],
       "why": "The browsers' own add-on stores, where no extension may run (startPageKind)."
     },
     {
       "file": "agentTools.js",
+      "kind": "markup test",
+      "what": [
+        "/^(input|textarea|select)$/",
+        "a",
+        "button",
+        "input",
+        "option",
+        "select",
+        "summary",
+        "textarea"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "agentTools.js",
+      "kind": "markup test",
+      "what": [
+        "/^(P|LI|TD|TH|TR|DD|DT|BLOCKQUOTE|PRE|FIGCAPTION|CAPTION|H[1-6]|ARTICLE|SECTION|DIV|TABLE)$/"
+      ],
+      "why": "Standard block tag names, the same on every site."
+    },
+    {
+      "file": "agentTools.js",
+      "kind": "selector",
+      "what": [
+        "input.dispatchDragEvent",
+        "input.dispatchMouseEvent",
+        "input.setInterceptDrags"
+      ],
+      "why": "Chrome DevTools Protocol method names, not selectors."
+    },
+    {
+      "file": "agentTools.js",
+      "kind": "selector",
+      "what": [
+        "[role=heading]"
+      ],
+      "why": "Standard HTML and WAI-ARIA attributes and their standard values, read the same on every site."
+    },
+    {
+      "file": "agentTools.js",
       "kind": "site name",
-      "what": ["chatgpt"],
+      "what": [
+        "chatgpt"
+      ],
       "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
     },
     {
       "file": "agentTools.js",
       "kind": "site name",
-      "what": ["anthropic", "google", "openai"],
+      "what": [
+        "anthropic",
+        "google",
+        "openai"
+      ],
       "why": "Providers the user can pick for the agent: their ids, endpoints, key pages and model names."
+    },
+    {
+      "file": "agentTools.js",
+      "kind": "text test",
+      "what": [
+        "/Left|Up/",
+        "/Up|Down/",
+        "/^Arrow(Left|Right|Up|Down)$/",
+        "/^a$/i"
+      ],
+      "why": "Key names and the platform, read the same way on every site."
+    },
+    {
+      "file": "agentTools.js",
+      "kind": "text test",
+      "what": [
+        "button",
+        "image",
+        "link"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "agentTools.js",
+      "kind": "text test",
+      "what": [
+        "/^(hidden|submit|button|reset|image|checkbox|radio|file|range|color)$/",
+        "/^(submit|button|reset|image)$/",
+        "color",
+        "file",
+        "hidden",
+        "range",
+        "reset",
+        "submit"
+      ],
+      "why": "Standard HTML input types, the same on every site."
+    },
+    {
+      "file": "agentTools.js",
+      "kind": "text test",
+      "what": [
+        "/^enter$/i",
+        "checkbox_toggle",
+        "click",
+        "double_click",
+        "fill_form",
+        "keypress",
+        "type"
+      ],
+      "why": "The agent's own action names and fields, as the model's tool call names them."
+    },
+    {
+      "file": "agentTools.js",
+      "kind": "text test",
+      "what": [
+        "/^(?:chrome|edge|brave|opera|vivaldi):\\/\\/(?:newtab|new-tab-page|startpageshared)\\b/i",
+        "/^about:(?:newtab|home)\\b/i",
+        "/^about:blank\\b/i",
+        "/^chrome-search:\\/\\/local-ntp\\b/i",
+        "/^https?:/i"
+      ],
+      "why": "The browser's own start pages, where no extension may run (startPageKind)."
+    },
+    {
+      "file": "agentTools.js",
+      "kind": "text test",
+      "what": [
+        "/checkbox|radio|switch/",
+        "checkbox",
+        "combobox",
+        "radio",
+        "searchbox",
+        "spinbutton",
+        "textbox"
+      ],
+      "why": "WAI-ARIA role names, the same on every site."
     },
     {
       "file": "agentTools.js",
       "kind": "title test",
-      "what": ["/\\b(i'?m not a robot|not a robot|captcha|recaptcha|hcaptcha|verify (?:that )?you(?:'re| are) (?:a )?human|verifying (?:that )?you(?:'re| are) (?:a )?human|human verification|are you a robot|press and hold|slide to verify|checking your browser|unusual traffic from your computer|verification successful\\. waiting for|checking if the site connection is secure)\\b/i", "/^(just a moment\\.*|attention required!?.*|one more step|are you a robot\\??|security check)$/i"],
+      "what": [
+        "/\\b(i'?m not a robot|not a robot|captcha|recaptcha|hcaptcha|verify (?:that )?you(?:'re| are) (?:a )?human|verifying (?:that )?you(?:'re| are) (?:a )?human|human verification|are you a robot|press and hold|slide to verify|checking your browser|unusual traffic from your computer|verification successful\\. waiting for|checking if the site connection is secure)\\b/i",
+        "/^(just a moment\\.*|attention required!?.*|one more step|are you a robot\\??|security check)$/i"
+      ],
       "why": "Words a human-check page shows in its title, so the agent stops for the user (guardHumanCheck)."
+    },
+    {
+      "file": "answerFormat.js",
+      "kind": "address test",
+      "what": [
+        "/^https?:\\/\\//i",
+        "/^www\\./"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "answerFormat.js",
+      "kind": "address test",
+      "what": [
+        "/%%STAI-CODE-(\\d+)%%/g",
+        "/\\[([^\\]]+)\\]\\((https?:\\/\\/[^\\s)]+)\\)/g"
+      ],
+      "why": "The Markdown link form and the extension's own code placeholder in an answer it renders."
+    },
+    {
+      "file": "answerFormat.js",
+      "kind": "text test",
+      "what": [
+        "/^https?:\\/\\//i"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "answerFormat.js",
+      "kind": "text test",
+      "what": [
+        "ol",
+        "ul"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "answerFormat.js",
+      "kind": "text test",
+      "what": [
+        "></li>"
+      ],
+      "why": "The HTML the extension's own renderer writes."
     },
     {
       "file": "background.js",
       "kind": "host",
-      "what": ["chatgpt.com", "claude.ai", "gemini.google.com", "perplexity.ai"],
+      "what": [
+        "chatgpt.com",
+        "claude.ai",
+        "gemini.google.com",
+        "perplexity.ai"
+      ],
       "why": "Assistants the right-click menu sends a selection to."
     },
     {
       "file": "background.js",
+      "kind": "markup test",
+      "what": [
+        "openAgent",
+        "openChatGPT",
+        "openClaude",
+        "openGemini",
+        "openPerplexity"
+      ],
+      "why": "The extension's own command names, which its manifest declares."
+    },
+    {
+      "file": "background.js",
       "kind": "site name",
-      "what": ["chatgpt", "perplexity"],
+      "what": [
+        "chatgpt",
+        "perplexity"
+      ],
       "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
     },
     {
       "file": "background.js",
       "kind": "site name",
-      "what": ["openai", "openrouter"],
+      "what": [
+        "openai",
+        "openrouter"
+      ],
       "why": "Providers the user can pick for the agent: their ids, endpoints, key pages and model names."
+    },
+    {
+      "file": "background.js",
+      "kind": "text test",
+      "what": [
+        "/-free$/"
+      ],
+      "why": "Model and provider id patterns, read from the model the user picked, never from a page."
+    },
+    {
+      "file": "background.js",
+      "kind": "text test",
+      "what": [
+        "sessionUrl_"
+      ],
+      "why": "The prefix of the extension's own storage keys."
+    },
+    {
+      "file": "background.js",
+      "kind": "text test",
+      "what": [
+        "/<instructions>|browser_action|Select to AI/i"
+      ],
+      "why": "Words of the extension's own old injected prompt, to tell its own text apart."
+    },
+    {
+      "file": "background.js",
+      "kind": "unseen data",
+      "what": [
+        "baseUrl.includes(CONFIG.HOSTS.AGENT)",
+        "baseUrl.includes(CONFIG.HOSTS.CHATGPT)",
+        "baseUrl.includes(CONFIG.HOSTS.CLAUDE)",
+        "baseUrl.includes(CONFIG.HOSTS.GEMINI)",
+        "baseUrl.includes(CONFIG.HOSTS.PERPLEXITY)"
+      ],
+      "why": "Names the extension's own config.js defines; the comparison runs on them, not on a page."
     },
     {
       "file": "commandPalette.js",
       "kind": "selector",
-      "what": [".context", ".ctx-drop", ".ctx-text", ".mark", ".root", ".scrim"],
+      "what": [
+        "#select-to-ai-command-palette",
+        ".context",
+        ".ctx-drop",
+        ".ctx-text",
+        ".hint",
+        ".mark",
+        ".root",
+        ".scrim",
+        "[data-ready]"
+      ],
       "why": "The extension's own elements, which this script makes and styles itself."
     },
     {
       "file": "config.js",
       "kind": "host",
-      "what": ["chatgpt.com", "claude.ai", "gemini.google.com", "perplexity.ai", "www.perplexity.ai"],
+      "what": [
+        "chatgpt.com",
+        "claude.ai",
+        "gemini.google.com",
+        "perplexity.ai",
+        "www.perplexity.ai"
+      ],
       "why": "Assistants the right-click menu sends a selection to."
     },
     {
       "file": "config.js",
       "kind": "selector",
-      "what": ["#ask-input", "#composer-submit-button", "#mobile-composer-prompt", "#prompt-textarea", ".ql-editor", ".textarea", "[data-message-author-role=user]", "[data-message-role=user]", "[data-testid=user-message]", "button.send-button", "button[data-testid=send-button]", "button[data-testid=submit-button]", "div.ProseMirror", "div[id=prompt-textarea]", "rich-textarea"],
+      "what": [
+        "[contenteditable=true]",
+        "[role=textbox]",
+        "button[type=submit]",
+        "div[contenteditable=true]",
+        "div[role=textbox]",
+        "textarea[placeholder]"
+      ],
+      "why": "Standard HTML and WAI-ARIA attributes and their standard values, read the same on every site."
+    },
+    {
+      "file": "config.js",
+      "kind": "selector",
+      "what": [
+        "#ask-input",
+        "#composer-submit-button",
+        "#mobile-composer-prompt",
+        "#prompt-textarea",
+        ".ql-editor",
+        ".textarea",
+        "[data-message-author-role=user]",
+        "[data-message-role=user]",
+        "[data-testid=user-message]",
+        "button.send-button",
+        "button[aria-label=Send Message]",
+        "button[aria-label=Send message]",
+        "button[aria-label=Send prompt]",
+        "button[aria-label=Send]",
+        "button[aria-label=Submit]",
+        "button[data-testid=send-button]",
+        "button[data-testid=submit-button]",
+        "div.ProseMirror",
+        "div[id=prompt-textarea]",
+        "rich-textarea",
+        "textarea[aria-label=Chat with ChatGPT]",
+        "textarea[placeholder*=ChatGPT]",
+        "textarea[placeholder*=ask]",
+        "textarea[placeholder*=search]"
+      ],
       "why": "The boxes and buttons of the assistant sites the right-click menu types a selection into; the agent never reads them."
     },
     {
       "file": "config.js",
       "kind": "site name",
-      "what": ["chatgpt", "perplexity"],
+      "what": [
+        "chatgpt",
+        "perplexity"
+      ],
       "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
     },
     {
       "file": "contentScript.js",
       "kind": "address test",
-      "what": ["/app/", "/c/", "chatgpt", "claude", "gemini", "perplexity"],
+      "what": [
+        "/app/",
+        "/c/",
+        "chatgpt",
+        "claude",
+        "gemini",
+        "perplexity"
+      ],
       "why": "The right-click menu: which assistant's chat page it is on, and that page's chat address."
     },
     {
       "file": "contentScript.js",
+      "kind": "markup test",
+      "what": [
+        "input",
+        "textarea"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "contentScript.js",
+      "kind": "markup test",
+      "what": [
+        "true"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "contentScript.js",
+      "kind": "selector",
+      "what": [
+        "pointer-events"
+      ],
+      "why": "A CSS property name in the extension's own toast style, not a selector."
+    },
+    {
+      "file": "contentScript.js",
+      "kind": "selector",
+      "what": [
+        "[contenteditable]"
+      ],
+      "why": "Standard HTML and WAI-ARIA attributes and their standard values, read the same on every site."
+    },
+    {
+      "file": "contentScript.js",
+      "kind": "selector",
+      "what": [
+        "#select-to-ai-toast"
+      ],
+      "why": "The extension's own elements, which this script makes and styles itself."
+    },
+    {
+      "file": "contentScript.js",
       "kind": "site name",
-      "what": ["chatgpt", "perplexity"],
+      "what": [
+        "chatgpt",
+        "perplexity"
+      ],
       "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
+    },
+    {
+      "file": "contentScript.js",
+      "kind": "text test",
+      "what": [
+        "/Mac|iPhone|iPad/i"
+      ],
+      "why": "Key names and the platform, read the same way on every site."
+    },
+    {
+      "file": "core/context.js",
+      "kind": "address test",
+      "what": [
+        "/^www\\./"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "core/context.js",
+      "kind": "address test",
+      "what": [
+        "/PAGE-[0-9a-f]{4,16}/gi"
+      ],
+      "why": "The extension's own page marker, which it writes into the prompt itself."
     },
     {
       "file": "core/context.js",
       "kind": "host",
-      "what": ["profile.email"],
+      "what": [
+        "profile.email"
+      ],
       "why": "The names of user details in memory, not hosts."
+    },
+    {
+      "file": "core/context.js",
+      "kind": "markup test",
+      "what": [
+        "/PAGE-[0-9a-f]{4,16}/gi"
+      ],
+      "why": "The extension's own page marker, which it writes into the prompt itself."
+    },
+    {
+      "file": "core/context.js",
+      "kind": "text test",
+      "what": [
+        "/^PAGE-[0-9a-f]{4,16}$/"
+      ],
+      "why": "The extension's own page marker, which it writes into the prompt itself."
+    },
+    {
+      "file": "core/context.js",
+      "kind": "text test",
+      "what": [
+        "/^pass/i"
+      ],
+      "why": "The verdict word the extension's own answer check returns."
+    },
+    {
+      "file": "core/context.js",
+      "kind": "text test",
+      "what": [
+        "/all_urls|activeTab/i"
+      ],
+      "why": "The wording of the browser's own error when a picture is refused."
+    },
+    {
+      "file": "core/context.js",
+      "kind": "title test",
+      "what": [
+        "/PAGE-[0-9a-f]{4,16}/gi"
+      ],
+      "why": "The extension's own page marker, which it writes into the prompt itself."
     },
     {
       "file": "core/grants.js",
       "kind": "host",
-      "what": ["claude.ai", "perplexity.ai"],
+      "what": [
+        "claude.ai",
+        "perplexity.ai"
+      ],
       "why": "Assistants the right-click menu sends a selection to."
     },
     {
       "file": "core/grants.js",
       "kind": "host",
-      "what": ["api.openai.com"],
+      "what": [
+        "api.openai.com"
+      ],
       "why": "Provider endpoints and key pages for the models the user picks from."
     },
     {
       "file": "core/grants.js",
       "kind": "host",
-      "what": ["www.w3.org"],
+      "what": [
+        "www.w3.org"
+      ],
       "why": "The SVG namespace URI the script makes its icons with, not a site."
     },
     {
       "file": "core/grants.js",
+      "kind": "markup test",
+      "what": [
+        "select-to-ai-assistants"
+      ],
+      "why": "The id the extension registers its own content script under."
+    },
+    {
+      "file": "core/grants.js",
       "kind": "site name",
-      "what": ["perplexity"],
+      "what": [
+        "perplexity"
+      ],
       "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
+    },
+    {
+      "file": "core/grants.js",
+      "kind": "text test",
+      "what": [
+        "notifications"
+      ],
+      "why": "A permission name the browser defines."
+    },
+    {
+      "file": "core/grants.js",
+      "kind": "text test",
+      "what": [
+        "/^(https?:|data:image\\/)/i"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
     },
     {
       "file": "core/learn.js",
       "kind": "address test",
-      "what": ["/^(?:token|access_token|id_token|refresh_token|api_?key|key|secret|auth|session|session_?id|sid|code|password|passwd|sig|signature|state|csrf|nonce)$/i"],
+      "what": [
+        "/^https?:/i",
+        "/^www\\./"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "core/learn.js",
+      "kind": "address test",
+      "what": [
+        "/^(?:token|access_token|id_token|refresh_token|api_?key|key|secret|auth|session|session_?id|sid|code|password|passwd|sig|signature|state|csrf|nonce)$/i"
+      ],
       "why": "Query parameter names that carry a secret or a tracking mark, and schemes never replayed, dropped from a saved address."
+    },
+    {
+      "file": "core/learn.js",
+      "kind": "text test",
+      "what": [
+        "add",
+        "context",
+        "retired",
+        "supersede",
+        "update"
+      ],
+      "why": "The kinds, sources and scopes of the extension's own memory entries, which it writes itself."
+    },
+    {
+      "file": "core/learn.js",
+      "kind": "text test",
+      "what": [
+        "/The user declined this step/",
+        "/^press \"([^\"]+)\"$/",
+        "/^put \"(.*)\" in \"([^\"]+)\"$/",
+        "declined: ",
+        "open "
+      ],
+      "why": "The words of the extension's own saved routine steps and corrections, which it writes itself."
+    },
+    {
+      "file": "core/llm.js",
+      "kind": "selector",
+      "what": [
+        "[DONE]"
+      ],
+      "why": "The end marker of a provider's stream, not a selector."
     },
     {
       "file": "core/llm.js",
       "kind": "site name",
-      "what": ["chatgpt"],
+      "what": [
+        "chatgpt"
+      ],
       "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
     },
     {
       "file": "core/llm.js",
       "kind": "site name",
-      "what": ["anthropic", "deepseek", "google", "groq", "mistral", "openai", "openrouter"],
+      "what": [
+        "anthropic",
+        "deepseek",
+        "google",
+        "groq",
+        "mistral",
+        "openai",
+        "openrouter"
+      ],
       "why": "Providers the user can pick for the agent: their ids, endpoints, key pages and model names."
+    },
+    {
+      "file": "core/llm.js",
+      "kind": "text test",
+      "what": [
+        "/^(sk-or-v1-\\.\\.\\.|sk-proj-\\.\\.\\.|sk-ant-\\.\\.\\.|AIzaSy\\.\\.\\.|gsk_\\.\\.\\.|api key)$/i"
+      ],
+      "why": "Key names and the key formats each provider issues, to check a key the user typed."
+    },
+    {
+      "file": "core/llm.js",
+      "kind": "text test",
+      "what": [
+        "/^(gpt-oss|qwen|llama|zai|glm)/",
+        "/^(gpt-|o\\d|chatgpt-)/",
+        "/^(llama|mixtral|gemma|qwen|deepseek|moonshot|gpt-oss)/",
+        "/anthropic\\/|claude/i",
+        "/anthropic\\/|claude|qwen/i",
+        "/mistral|ministral|codestral|magistral|devstral/",
+        "chatgpt",
+        "claude-",
+        "custom",
+        "deepseek-",
+        "gemini-",
+        "grok-",
+        "opencode",
+        "openrouter"
+      ],
+      "why": "Model and provider id patterns, read from the model the user picked, never from a page."
+    },
+    {
+      "file": "core/llm.js",
+      "kind": "text test",
+      "what": [
+        "/^data:([^;]+);base64,(.+)$/",
+        "/chat/completions",
+        "/messages",
+        "data:"
+      ],
+      "why": "Provider API paths and the data URL form of a picture."
+    },
+    {
+      "file": "core/llm.js",
+      "kind": "text test",
+      "what": [
+        "/^-?\\d+(?:\\.\\d+)?(?:e[+-]?\\d+)?/i",
+        "/^chatpass_v2_/",
+        "/effort|reasoning|thinking|output_config/i",
+        "/free/",
+        "/image/i",
+        "/image|vision/i",
+        "/max_tokens|max_completion_tokens/i",
+        "/namespace/i",
+        "/not a valid model|invalid model|unknown model|no endpoints|no allowed providers|model[^.]{0,80}(not found|does not exist|not exist|not available|unavailable|deprecated|retired|no longer)/i",
+        "/response_format|json_object|json_mode|stream_options|tool_choice/i",
+        "/response_format|json_object|json_mode|stream_options|unsupported|unrecognized|unknown (?:field|parameter|argument)/i",
+        "/retry(?:Delay|[- ]after)\"?\\s*[:=]\\s*\"?(\\d+(?:\\.\\d+)?)\\s*s|(?:try again|retry(?: again)?) in\\s+(\\d+(?:\\.\\d+)?)\\s*s/i",
+        "/temperature|top_p|sampling/i",
+        "/tool_choice|forced|required/i",
+        "/tool|function/i",
+        "/unsupported|unrecognized|not supported|extra inputs|unknown (?:field|parameter|argument)/i"
+      ],
+      "why": "Words in a model provider's own error replies, read to retry or explain the call."
+    },
+    {
+      "file": "core/memory.js",
+      "kind": "markup test",
+      "what": [
+        "/^www\\./"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "core/memory.js",
+      "kind": "markup test",
+      "what": [
+        "select",
+        "textarea"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "core/memory.js",
+      "kind": "markup test",
+      "what": [
+        "context",
+        "global",
+        "preference",
+        "routine",
+        "site_note",
+        "you_confirmed",
+        "you_filled",
+        "you_mentioned",
+        "you_said"
+      ],
+      "why": "The kinds, sources and scopes of the extension's own memory entries, which it writes itself."
+    },
+    {
+      "file": "core/memory.js",
+      "kind": "markup test",
+      "what": [
+        "/\\b(address[\\s_-]*(line)?[\\s_-]*2|apartment|apt|suite|unit|floor)\\b/i",
+        "/\\b(city|town|suburb)\\b/i",
+        "/\\b(company|organi[sz]ation|employer|school|university)\\b/i",
+        "/\\b(date of birth|birth ?date|birthday|dob)\\b/i",
+        "/\\b(first|given)[\\s_-]*name\\b|\\bforename\\b|\\bfname\\b/i",
+        "/\\b(full[\\s_-]*name|your name|name)\\b/i",
+        "/\\b(job[\\s_-]*title|position|role)\\b/i",
+        "/\\b(last|family)[\\s_-]*name\\b|\\bsurname\\b|\\blname\\b/i",
+        "/\\b(phone|mobile|telephone|tel|contact number|cell)\\b/i",
+        "/\\b(state|province|region|county)\\b/i",
+        "/\\b(street|address)\\b/i",
+        "/\\b(website|homepage|url)\\b/i",
+        "/\\b(zip|postal|post)[\\s_-]*(code)?\\b|\\bpostcode\\b/i",
+        "/\\bcountry\\b/i",
+        "/\\be-?mail\\b/i",
+        "Apartment or unit",
+        "City",
+        "Company or school",
+        "Country",
+        "Date of birth",
+        "Email",
+        "First name",
+        "Full name",
+        "Job title",
+        "Last name",
+        "Phone",
+        "Postal code",
+        "State or region",
+        "Street address",
+        "Website",
+        "address-level1",
+        "address-level2",
+        "address-line2",
+        "bday",
+        "country",
+        "email",
+        "family-name",
+        "given-name",
+        "job-title",
+        "organization",
+        "postal-code",
+        "street-address",
+        "tel",
+        "url"
+      ],
+      "why": "The profile fields the extension keeps for the user, by their standard autocomplete names and labels."
+    },
+    {
+      "file": "core/memory.js",
+      "kind": "markup test",
+      "what": [
+        "/\\b(api[_ -]?key|access token|secret key|private key)\\b/i",
+        "/\\b(password|passcode|passwd|pin code|cvv|cvc|security code|one[- ]time|otp|2fa code|verification code|passport (?:no|number)|social security|national id|nric)\\b/i",
+        "/\\b(sk-[a-z0-9-]{8,}|AIza[0-9A-Za-z_-]{10,}|gsk_[0-9A-Za-z]{10,}|xai-[0-9A-Za-z]{10,}|oc_sk_[0-9A-Za-z]{6,}|csk-[0-9a-z]{10,}|mstrl_[0-9A-Za-z_]{10,}|nvapi-[0-9A-Za-z_-]{10,})|\\bAQ\\.[0-9A-Za-z_-]{20,}/",
+        "/\\b(skip|bypass|disable|ignore|don'?t ask|without asking|no need to (?:ask|confirm))\\b[^.]{0,40}\\b(confirm|confirmation|approval|permission|captcha|verification|safety|rules?)\\b/i"
+      ],
+      "why": "Words that mark a field or a value as a secret, a card or an identity number, so the agent never fills or keeps one."
+    },
+    {
+      "file": "core/memory.js",
+      "kind": "text test",
+      "what": [
+        "/^(the|user|they|their|them|that|this|with|from|have|has|and|for|are|was|prefers?|likes?|wants?|always|usually)$/"
+      ],
+      "why": "Common English words left out when a memory is matched to a request."
+    },
+    {
+      "file": "core/memory.js",
+      "kind": "text test",
+      "what": [
+        "/^(checkbox|radio|file|submit|button|reset|image|hidden|range|color|search|password)$/"
+      ],
+      "why": "Standard HTML input types, the same on every site."
+    },
+    {
+      "file": "core/memory.js",
+      "kind": "text test",
+      "what": [
+        "/^(cc-|current-password|new-password|one-time-code|transaction-)/",
+        "/^(shipping|billing|home|work|mobile|fax|pager)$/",
+        "/^section-/"
+      ],
+      "why": "Standard autocomplete tokens, the same on every site."
+    },
+    {
+      "file": "core/memory.js",
+      "kind": "text test",
+      "what": [
+        "/^custom:/",
+        "/^open https?:/i",
+        "context",
+        "correction",
+        "lesson",
+        "preference",
+        "routine",
+        "run",
+        "said",
+        "site",
+        "site_note",
+        "you_confirmed",
+        "you_filled",
+        "you_mentioned",
+        "you_said"
+      ],
+      "why": "The kinds, sources and scopes of the extension's own memory entries, which it writes itself."
+    },
+    {
+      "file": "core/observe.js",
+      "kind": "markup test",
+      "what": [
+        "a"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "core/policy.js",
+      "kind": "address test",
+      "what": [
+        "/^https?:/i"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "core/policy.js",
+      "kind": "markup test",
+      "what": [
+        "a",
+        "button",
+        "div",
+        "input",
+        "select",
+        "summary",
+        "textarea"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "core/policy.js",
+      "kind": "text test",
+      "what": [
+        "/(^|\\+)\\s*(enter|return|numpadenter)$/i",
+        "/(^|\\+)\\s*(space|spacebar| )$/i",
+        "/^(enter|return|numpadenter)$/i",
+        "/^insert$/i"
+      ],
+      "why": "Key names and the platform, read the same way on every site."
+    },
+    {
+      "file": "core/policy.js",
+      "kind": "text test",
+      "what": [
+        "/^(submit|button|image|reset|checkbox|radio)$/"
+      ],
+      "why": "Standard HTML input types, the same on every site."
+    },
+    {
+      "file": "core/policy.js",
+      "kind": "text test",
+      "what": [
+        "click",
+        "double_click",
+        "hold",
+        "right_click"
+      ],
+      "why": "The agent's own action names and fields, as the model's tool call names them."
+    },
+    {
+      "file": "core/policy.js",
+      "kind": "text test",
+      "what": [
+        "decide",
+        "delete",
+        "pay",
+        "send"
+      ],
+      "why": "The kinds of commitment the page-blind check returns: pay, send, delete, decide."
+    },
+    {
+      "file": "core/policy.js",
+      "kind": "text test",
+      "what": [
+        "/^(button|link|menuitem|menuitemcheckbox|menuitemradio|option|tab|checkbox|radio|switch)$/"
+      ],
+      "why": "WAI-ARIA role names, the same on every site."
     },
     {
       "file": "core/run.js",
       "kind": "address test",
-      "what": ["global"],
+      "what": [
+        "/^https?:/",
+        "/^https?:/i",
+        "/^www\\./"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "core/run.js",
+      "kind": "address test",
+      "what": [
+        "global"
+      ],
       "why": "The memory scope word for a detail kept for every site."
     },
     {
       "file": "core/run.js",
+      "kind": "address test",
+      "what": [
+        "null"
+      ],
+      "why": "The origin a sandboxed frame reports, which names no site."
+    },
+    {
+      "file": "core/run.js",
       "kind": "host",
-      "what": ["agent-v4-status.md"],
+      "what": [
+        "agent-v4-status.md"
+      ],
       "why": "A file name in a comment, not a host."
     },
     {
       "file": "core/run.js",
       "kind": "site name",
-      "what": ["nvidia", "openrouter"],
+      "what": [
+        "nvidia",
+        "openrouter"
+      ],
       "why": "Providers the user can pick for the agent: their ids, endpoints, key pages and model names."
+    },
+    {
+      "file": "core/run.js",
+      "kind": "text test",
+      "what": [
+        "/^https?:/",
+        "/^https?:/i"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "core/run.js",
+      "kind": "text test",
+      "what": [
+        "/^enter$/i",
+        "click",
+        "drag",
+        "fill",
+        "look",
+        "press",
+        "select_text",
+        "type"
+      ],
+      "why": "The agent's own action names and fields, as the model's tool call names them."
+    },
+    {
+      "file": "core/run.js",
+      "kind": "text test",
+      "what": [
+        "/The user declined this step/",
+        "/^a redirect/"
+      ],
+      "why": "The extension's own outcome words for an action it took."
+    },
+    {
+      "file": "core/run.js",
+      "kind": "text test",
+      "what": [
+        "approval",
+        "check_in",
+        "declined",
+        "pause",
+        "stuck"
+      ],
+      "why": "The kinds of wait, outcome and correction the run itself records."
     },
     {
       "file": "core/runlog.js",
       "kind": "title test",
-      "what": ["/^Step (\\d+)$/", "Action", "Action Failed", "Result"],
+      "what": [
+        "/^Step (\\d+)$/",
+        "Action",
+        "Action Failed",
+        "Result"
+      ],
       "why": "The titles of the extension's own saved log entries, which it writes itself."
     },
     {
       "file": "core/step.js",
       "kind": "host",
-      "what": ["profile.email", "profile.name"],
+      "what": [
+        "profile.email",
+        "profile.name"
+      ],
       "why": "The names of user details in memory, not hosts."
+    },
+    {
+      "file": "core/step.js",
+      "kind": "markup test",
+      "what": [
+        "answer",
+        "ask",
+        "ask_user",
+        "back",
+        "check",
+        "checkbox_toggle",
+        "click",
+        "click_at",
+        "click_point",
+        "click_xy",
+        "complete",
+        "context_menu",
+        "contextmenu",
+        "dblclick",
+        "delegate",
+        "done",
+        "double_click",
+        "double_tap",
+        "doubleclick",
+        "drag",
+        "drag_and_drop",
+        "drag_to",
+        "fill",
+        "fill_details",
+        "find",
+        "finish",
+        "go_back",
+        "go_to",
+        "goto",
+        "hold",
+        "hover",
+        "hover_over",
+        "input",
+        "insert_text",
+        "key",
+        "keypress",
+        "long_press",
+        "longpress",
+        "look",
+        "mouseover",
+        "navigate",
+        "open",
+        "press",
+        "press_and_hold",
+        "press_hold",
+        "read",
+        "recall",
+        "remember",
+        "right_click",
+        "rightclick",
+        "scroll",
+        "scroll_to",
+        "search",
+        "search_page",
+        "select",
+        "select_option",
+        "select_text",
+        "select_words",
+        "set",
+        "tabs",
+        "type",
+        "type_text",
+        "wait"
+      ],
+      "why": "The agent's own action names and fields, as the model's tool call names them."
+    },
+    {
+      "file": "core/step.js",
+      "kind": "text test",
+      "what": [
+        "http:",
+        "https:"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "core/step.js",
+      "kind": "text test",
+      "what": [
+        "/<parameter=\\s*[\"']?([A-Za-z_]+)[\"']?\\s*>/g",
+        "<parameter=",
+        "after",
+        "answer",
+        "before",
+        "bottom",
+        "click",
+        "click_at",
+        "close",
+        "code",
+        "commits",
+        "delegate",
+        "direction",
+        "distance",
+        "do",
+        "down",
+        "evidence",
+        "fill",
+        "find",
+        "from",
+        "fx",
+        "fy",
+        "goal",
+        "human_check",
+        "into",
+        "key",
+        "kind",
+        "leave_to_user",
+        "left",
+        "memory",
+        "note",
+        "on",
+        "onto",
+        "op",
+        "open",
+        "part",
+        "payment",
+        "place",
+        "press",
+        "query",
+        "question",
+        "read",
+        "ref",
+        "rewrite_notes",
+        "right",
+        "scope",
+        "scroll",
+        "seconds",
+        "select_text",
+        "sign_in",
+        "success",
+        "switch",
+        "tab",
+        "tasks",
+        "then",
+        "times",
+        "to_fx",
+        "to_fy",
+        "to_ref",
+        "to_text",
+        "top",
+        "type",
+        "up",
+        "url",
+        "value",
+        "x",
+        "y"
+      ],
+      "why": "The agent's own action names and fields, as the model's tool call names them."
     },
     {
       "file": "defaults.js",
       "kind": "host",
-      "what": ["api.anthropic.com", "api.cerebras.ai", "api.deepseek.com", "api.groq.com", "api.mistral.ai", "api.openai.com", "api.together.xyz", "api.x.ai", "generativelanguage.googleapis.com", "opencode.ai", "openrouter.ai", "platform.claude.com"],
+      "what": [
+        "api.anthropic.com",
+        "api.cerebras.ai",
+        "api.deepseek.com",
+        "api.groq.com",
+        "api.mistral.ai",
+        "api.openai.com",
+        "api.together.xyz",
+        "api.x.ai",
+        "generativelanguage.googleapis.com",
+        "opencode.ai",
+        "openrouter.ai",
+        "platform.claude.com"
+      ],
       "why": "Provider endpoints and key pages for the models the user picks from."
     },
     {
       "file": "defaults.js",
       "kind": "host",
-      "what": ["github.com"],
+      "what": [
+        "github.com"
+      ],
       "why": "The project's own repository: its attribution header and links to its policy and source."
     },
     {
       "file": "defaults.js",
       "kind": "site name",
-      "what": ["chatgpt"],
+      "what": [
+        "chatgpt"
+      ],
       "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
     },
     {
       "file": "defaults.js",
       "kind": "site name",
-      "what": ["anthropic", "deepseek", "google", "groq", "mistral", "nvidia", "openai", "openrouter"],
+      "what": [
+        "anthropic",
+        "deepseek",
+        "google",
+        "groq",
+        "mistral",
+        "nvidia",
+        "openai",
+        "openrouter"
+      ],
       "why": "Providers the user can pick for the agent: their ids, endpoints, key pages and model names."
+    },
+    {
+      "file": "defaults.js",
+      "kind": "text test",
+      "what": [
+        "-free",
+        "/(?:^|[^a-z0-9.])(\\d+(?:\\.\\d+)?)b(?![a-z0-9])/gi",
+        "/(?:^|[^a-z])(mini|nano|lite|small|haiku|ministral|tiny)(?![a-z])|openrouter\\/free|(?:^|[^a-z0-9])e\\d+b(?![a-z0-9])/i",
+        "/^(gpt-(5|6)|o\\d)/i",
+        "/claude-(?:fable|mythos|haiku-[5-9]|sonnet-(?:[5-9]|4-6)|opus-(?:[5-9]|4-[6-9]))/i",
+        "/claude-(?:fable|mythos|haiku-[5-9]|sonnet-[5-9]|opus-(?:[5-9]|4-[7-9]))/i",
+        "/claude-(fable|opus|sonnet)|gpt-(5|6)(?![\\w.-]*(mini|nano))|gemini-[\\w.-]*pro|grok-4/i",
+        "/gemini-3/i",
+        "/gpt-oss|nemotron|qwen|gemini|deepseek-r|magistral|claude-(fable|mythos|opus|sonnet|haiku-[5-9])|gpt-(5|6)|grok-4|:free|openrouter\\/free/i",
+        "/qwen/i",
+        ":free",
+        "chatgpt",
+        "claude",
+        "dots-3",
+        "gemini",
+        "gemma-4",
+        "gpt-4.1",
+        "gpt-4o",
+        "gpt-5",
+        "grok-3",
+        "grok-4",
+        "llama-4",
+        "llama4",
+        "mistral-large",
+        "mistral-medium",
+        "nemotron-nano-12b",
+        "omni",
+        "pixtral",
+        "qwen-vl",
+        "qwen2-vl",
+        "qwen3-vl",
+        "vision"
+      ],
+      "why": "Model and provider id patterns, read from the model the user picked, never from a page."
+    },
+    {
+      "file": "engine.js",
+      "kind": "address test",
+      "what": [
+        "/^https?:/",
+        "/^https?:/i"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "engine.js",
+      "kind": "address test",
+      "what": [
+        "null"
+      ],
+      "why": "The origin a sandboxed frame reports, which names no site."
+    },
+    {
+      "file": "engine.js",
+      "kind": "markup test",
+      "what": [
+        "agentHeartbeat",
+        "agentHoldOver:",
+        "agentRemind:",
+        "agentResume:",
+        "agentView"
+      ],
+      "why": "The extension's own alarm names, which it sets itself."
+    },
+    {
+      "file": "engine.js",
+      "kind": "selector",
+      "what": [
+        "input.dispatchKeyEvent",
+        "input.dragIntercepted"
+      ],
+      "why": "Chrome DevTools Protocol method names, not selectors."
     },
     {
       "file": "engine.js",
       "kind": "site name",
-      "what": ["chatgpt"],
+      "what": [
+        "chatgpt"
+      ],
       "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
+    },
+    {
+      "file": "engine.js",
+      "kind": "text test",
+      "what": [
+        "/^https?:$/"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "engine.js",
+      "kind": "text test",
+      "what": [
+        "/^\\[related\\]/",
+        "/^part /",
+        "error",
+        "idle",
+        "limit",
+        "success",
+        "unconfirmed",
+        "value"
+      ],
+      "why": "The extension's own outcome words and reading labels."
+    },
+    {
+      "file": "engine.js",
+      "kind": "text test",
+      "what": [
+        "/^agent(?:ActiveProvider|BackupProvider|Model|HelperModel|CustomUrl|[A-Za-z]+Key)$/",
+        "/^agentBar/",
+        "agent-wait:",
+        "agentSession:"
+      ],
+      "why": "The extension's own storage keys, notice ids, setting names and message names."
+    },
+    {
+      "file": "engine.js",
+      "kind": "text test",
+      "what": [
+        "/:root\\s*\\{([\\s\\S]*?)\\n\\}/"
+      ],
+      "why": "The root block of the extension's own style sheet."
+    },
+    {
+      "file": "engine.js",
+      "kind": "text test",
+      "what": [
+        "/already attached/i",
+        "/error page/i",
+        "/failed to load/i"
+      ],
+      "why": "The wording of the browser's own errors, for a page that failed or a debugger already attached."
+    },
+    {
+      "file": "keyGuard.js",
+      "kind": "markup test",
+      "what": [
+        "INPUT",
+        "TEXTAREA"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "keyGuard.js",
+      "kind": "markup test",
+      "what": [
+        "combobox",
+        "searchbox",
+        "textbox"
+      ],
+      "why": "WAI-ARIA role names, the same on every site."
+    },
+    {
+      "file": "keyGuard.js",
+      "kind": "selector",
+      "what": [
+        "[role]"
+      ],
+      "why": "Standard HTML and WAI-ARIA attributes and their standard values, read the same on every site."
     },
     {
       "file": "omnibox.js",
       "kind": "host",
-      "what": ["crbug.com"],
+      "what": [
+        "crbug.com"
+      ],
       "why": "A Chrome bug report cited in a comment."
     },
     {
       "file": "options.js",
       "kind": "address test",
-      "what": ["#backup"],
+      "what": [
+        "#backup"
+      ],
       "why": "The extension's own pages: their sections in the address fragment and the query parts they are opened with."
     },
     {
       "file": "options.js",
       "kind": "host",
-      "what": ["claude.ai", "perplexity.ai", "www.perplexity.ai"],
+      "what": [
+        "claude.ai",
+        "perplexity.ai",
+        "www.perplexity.ai"
+      ],
       "why": "Assistants the right-click menu sends a selection to."
     },
     {
       "file": "options.js",
       "kind": "host",
-      "what": ["aistudio.google.com", "api.anthropic.com", "api.together.ai", "cloud.cerebras.ai", "console.groq.com", "console.mistral.ai", "console.x.ai", "generativelanguage.googleapis.com", "opencode.ai", "openrouter.ai", "platform.claude.com", "platform.deepseek.com", "platform.openai.com"],
+      "what": [
+        "aistudio.google.com",
+        "api.anthropic.com",
+        "api.together.ai",
+        "cloud.cerebras.ai",
+        "console.groq.com",
+        "console.mistral.ai",
+        "console.x.ai",
+        "generativelanguage.googleapis.com",
+        "opencode.ai",
+        "openrouter.ai",
+        "platform.claude.com",
+        "platform.deepseek.com",
+        "platform.openai.com"
+      ],
       "why": "Provider endpoints and key pages for the models the user picks from."
     },
     {
       "file": "options.js",
+      "kind": "markup test",
+      "what": [
+        "open-palette"
+      ],
+      "why": "The extension's own command names, which its manifest declares."
+    },
+    {
+      "file": "options.js",
+      "kind": "markup test",
+      "what": [
+        "/^models\\//"
+      ],
+      "why": "The prefix a provider's model list puts on its ids."
+    },
+    {
+      "file": "options.js",
+      "kind": "selector",
+      "what": [
+        "input[name=openingMode]",
+        "input[name=theme]",
+        "option[value=chatgpt]",
+        "value"
+      ],
+      "why": "The extension's own elements, which this script makes and styles itself."
+    },
+    {
+      "file": "options.js",
+      "kind": "selector",
+      "what": [
+        "select-to-ai-settings",
+        "select-to-ai-settings.json"
+      ],
+      "why": "The file name the extension's own settings are saved under."
+    },
+    {
+      "file": "options.js",
       "kind": "site name",
-      "what": ["chatgpt", "perplexity"],
+      "what": [
+        "chatgpt",
+        "perplexity"
+      ],
       "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
     },
     {
       "file": "options.js",
       "kind": "site name",
-      "what": ["anthropic", "deepseek", "google", "groq", "mistral", "openai", "openrouter"],
+      "what": [
+        "anthropic",
+        "deepseek",
+        "google",
+        "groq",
+        "mistral",
+        "openai",
+        "openrouter"
+      ],
       "why": "Providers the user can pick for the agent: their ids, endpoints, key pages and model names."
+    },
+    {
+      "file": "options.js",
+      "kind": "text test",
+      "what": [
+        "/\\/chat\\/completions$/"
+      ],
+      "why": "The OpenAI-compatible API path a custom provider address is completed with."
+    },
+    {
+      "file": "options.js",
+      "kind": "text test",
+      "what": [
+        "/^(showAgent|agentActiveProvider|agentModel|agentCustomUrl)$/",
+        "sessionUrl_"
+      ],
+      "why": "The extension's own storage key prefix and setting names."
+    },
+    {
+      "file": "pdfText.js",
+      "kind": "text test",
+      "what": [
+        "/^application\\/pdf\\b/i",
+        "/^https?:\\/\\//i"
+      ],
+      "why": "The PDF media type and an address's scheme."
+    },
+    {
+      "file": "pdfText.js",
+      "kind": "text test",
+      "what": [
+        "/^\\[No text content found\\]$/i"
+      ],
+      "why": "The extension's own note for a PDF with no text."
+    },
+    {
+      "file": "pdfText.js",
+      "kind": "text test",
+      "what": [
+        "/%PDF-/",
+        "/(\\d+)[\\0\\t\\n\\f\\r ]+(\\d+)[\\0\\t\\n\\f\\r ]+obj\\b/g",
+        "/UCS2|UTF16/",
+        "/[\\0\\t\\n\\f\\r ]EI(?=[\\0\\t\\n\\f\\r ]|$)/g",
+        "/\\/Encoding\\s+StandardEncoding\\s+def/",
+        "/^([A-Za-z])(acute|grave|circumflex|dieresis|tilde|ring|cedilla|caron|macron|breve|ogonek|dotaccent|hungarumlaut)$/",
+        "/^\\s*endstream/",
+        "/^u([0-9A-Fa-f]{4,6})$/",
+        "/^uni((?:[0-9A-Fa-f]{4})+)$/",
+        "/dup\\s+(\\d+)\\s*\\/([^\\s/\\[\\]{}()<>]+)\\s+put/g",
+        "/trailer[\\0\\t\\n\\f\\r ]*<</g",
+        "ID",
+        "eexec",
+        "end",
+        "endstream"
+      ],
+      "why": "Tokens of the PDF file format, read from the file itself."
     },
     {
       "file": "popup.js",
       "kind": "host",
-      "what": ["claude.ai"],
+      "what": [
+        "claude.ai"
+      ],
       "why": "Assistants the right-click menu sends a selection to."
     },
     {
       "file": "popup.js",
+      "kind": "markup test",
+      "what": [
+        "open-palette",
+        "open-sidebar"
+      ],
+      "why": "The extension's own command names, which its manifest declares."
+    },
+    {
+      "file": "popup.js",
       "kind": "site name",
-      "what": ["chatgpt", "perplexity"],
+      "what": [
+        "chatgpt",
+        "perplexity"
+      ],
+      "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
+    },
+    {
+      "file": "popup.js",
+      "kind": "text test",
+      "what": [
+        "/Mac/i"
+      ],
+      "why": "Key names and the platform, read the same way on every site."
+    },
+    {
+      "file": "recipes/driver.js",
+      "kind": "markup test",
+      "what": [
+        "input"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "recipes/driver.js",
+      "kind": "markup test",
+      "what": [
+        "true"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "recipes/driver.js",
+      "kind": "selector",
+      "what": [
+        "[aria-checked]",
+        "[aria-label]",
+        "[role]"
+      ],
+      "why": "Standard HTML and WAI-ARIA attributes and their standard values, read the same on every site."
+    },
+    {
+      "file": "recipes/driver.js",
+      "kind": "text test",
+      "what": [
+        "click",
+        "fill",
+        "hover",
+        "press"
+      ],
+      "why": "The agent's own action names and fields, as the model's tool call names them."
+    },
+    {
+      "file": "recipes/driver.js",
+      "kind": "text test",
+      "what": [
+        "/^f0e(\\d+)$/"
+      ],
+      "why": "The form of the extension's own frame references."
+    },
+    {
+      "file": "recipes/driver.js",
+      "kind": "text test",
+      "what": [
+        "Document",
+        "Fetch",
+        "XHR",
+        "document",
+        "fetch",
+        "xhr"
+      ],
+      "why": "The request types the browser's network log reports."
+    },
+    {
+      "file": "recipes/driver.js",
+      "kind": "text test",
+      "what": [
+        "/^(off|false|unchecked|no)$/i",
+        "/^(on|true|checked|yes)$/i"
+      ],
+      "why": "The words a recipe uses for a box being on or off."
+    },
+    {
+      "file": "recipes/service.js",
+      "kind": "address test",
+      "what": [
+        "/^https?:/",
+        "/^https?:/i"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "recipes/service.js",
+      "kind": "markup test",
+      "what": [
+        "recipesView"
+      ],
+      "why": "The name of the extension's own port."
+    },
+    {
+      "file": "recipes/service.js",
+      "kind": "site name",
+      "what": [
+        "chatgpt"
+      ],
       "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
     },
     {
       "file": "recipes/service.js",
       "kind": "site name",
-      "what": ["chatgpt"],
-      "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
-    },
-    {
-      "file": "recipes/service.js",
-      "kind": "site name",
-      "what": ["openrouter"],
+      "what": [
+        "openrouter"
+      ],
       "why": "Providers the user can pick for the agent: their ids, endpoints, key pages and model names."
+    },
+    {
+      "file": "recipes/service.js",
+      "kind": "text test",
+      "what": [
+        "/^( |space|spacebar)$/i",
+        "/^enter$/i"
+      ],
+      "why": "Key names and the platform, read the same way on every site."
+    },
+    {
+      "file": "recipes/service.js",
+      "kind": "text test",
+      "what": [
+        "/:free$/"
+      ],
+      "why": "Model and provider id patterns, read from the model the user picked, never from a page."
+    },
+    {
+      "file": "recipes/service.js",
+      "kind": "text test",
+      "what": [
+        "/^(button|submit|reset|image)$/"
+      ],
+      "why": "Standard HTML input types, the same on every site."
+    },
+    {
+      "file": "recipes/service.js",
+      "kind": "text test",
+      "what": [
+        "/^(xhr|fetch|document)$/i"
+      ],
+      "why": "The request types the browser's network log reports."
+    },
+    {
+      "file": "recipes/service.js",
+      "kind": "title test",
+      "what": [
+        "/^record: /"
+      ],
+      "why": "The prefix of the extension's own recording errors."
+    },
+    {
+      "file": "recipes/vendor/page.js",
+      "kind": "markup test",
+      "what": [
+        "A",
+        "ABBR",
+        "ARTICLE",
+        "ASIDE",
+        "B",
+        "BR",
+        "BUTTON",
+        "CAPTION",
+        "CODE",
+        "DD",
+        "DIALOG",
+        "DT",
+        "EM",
+        "FIELDSET",
+        "FOOTER",
+        "FORM",
+        "H1",
+        "H2",
+        "H3",
+        "H4",
+        "H5",
+        "H6",
+        "HEAD",
+        "HEADER",
+        "I",
+        "INPUT",
+        "KBD",
+        "LABEL",
+        "LEGEND",
+        "LI",
+        "LINK",
+        "MAIN",
+        "MARK",
+        "META",
+        "NAV",
+        "NOSCRIPT",
+        "OL",
+        "OPTION",
+        "Q",
+        "S",
+        "SCRIPT",
+        "SECTION",
+        "SELECT",
+        "SMALL",
+        "SPAN",
+        "STRONG",
+        "STYLE",
+        "SUB",
+        "SUMMARY",
+        "SUP",
+        "TABLE",
+        "TD",
+        "TEMPLATE",
+        "TEXTAREA",
+        "TH",
+        "TIME",
+        "TR",
+        "U",
+        "UL",
+        "a",
+        "button",
+        "dialog",
+        "input",
+        "link",
+        "menu",
+        "option",
+        "path",
+        "search",
+        "select",
+        "svg",
+        "textarea"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "recipes/vendor/page.js",
+      "kind": "markup test",
+      "what": [
+        "/cc-number|cc-csc|cc-exp/",
+        "/current-password|new-password/",
+        "/one-time-code/"
+      ],
+      "why": "Standard HTML autocomplete tokens, the same on every site."
+    },
+    {
+      "file": "recipes/vendor/page.js",
+      "kind": "markup test",
+      "what": [
+        "submit"
+      ],
+      "why": "Standard HTML input types, the same on every site."
+    },
+    {
+      "file": "recipes/vendor/page.js",
+      "kind": "markup test",
+      "what": [
+        "true"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "recipes/vendor/page.js",
+      "kind": "markup test",
+      "what": [
+        "/^H[1-3]$/",
+        "/^H[1-6]$/"
+      ],
+      "why": "Standard heading tag names, the same on every site."
+    },
+    {
+      "file": "recipes/vendor/page.js",
+      "kind": "markup test",
+      "what": [
+        "alertdialog",
+        "checkbox",
+        "combobox",
+        "complementary",
+        "contentinfo",
+        "gridcell",
+        "group",
+        "heading",
+        "listbox",
+        "listitem",
+        "menuitem",
+        "menuitemcheckbox",
+        "menuitemradio",
+        "navigation",
+        "radio",
+        "radiogroup",
+        "row",
+        "searchbox",
+        "slider",
+        "spinbutton",
+        "switch",
+        "tab",
+        "tablist",
+        "textbox",
+        "tooltip",
+        "treeitem"
+      ],
+      "why": "WAI-ARIA role names, the same on every site."
+    },
+    {
+      "file": "recipes/vendor/page.js",
+      "kind": "selector",
+      "what": [
+        "[action]",
+        "[alt]",
+        "[aria-checked]",
+        "[aria-describedby]",
+        "[aria-description]",
+        "[aria-disabled]",
+        "[aria-label]",
+        "[aria-labelledby]",
+        "[aria-live=off]",
+        "[aria-live]",
+        "[aria-modal]",
+        "[autocomplete]",
+        "[contenteditable=true]",
+        "[href]",
+        "[name]",
+        "[onclick]",
+        "[placeholder]",
+        "[popover]",
+        "[rel]",
+        "[role=alert]",
+        "[role=button]",
+        "[role=cell]",
+        "[role=columnheader]",
+        "[role=grid]",
+        "[role=gridcell]",
+        "[role=heading]",
+        "[role=link]",
+        "[role=status]",
+        "[role=table]",
+        "[role]",
+        "[tabindex]",
+        "[title]",
+        "[type]",
+        "a[href]",
+        "img[alt]",
+        "svg[aria-label]"
+      ],
+      "why": "Standard HTML and WAI-ARIA attributes and their standard values, read the same on every site."
+    },
+    {
+      "file": "recipes/vendor/page.js",
+      "kind": "selector",
+      "what": [
+        "[data-cy]",
+        "[data-qa]",
+        "[data-test]",
+        "[data-testid]"
+      ],
+      "why": "Test-id attributes that testing tools put on controls of any site, read as a stable name for a control."
+    },
+    {
+      "file": "recipes/vendor/page.js",
+      "kind": "text test",
+      "what": [
+        "button",
+        "image"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "recipes/vendor/page.js",
+      "kind": "text test",
+      "what": [
+        "reset",
+        "submit"
+      ],
+      "why": "Standard HTML input types, the same on every site."
     },
     {
       "file": "recipes/vendor/recipes-core.js",
       "kind": "address test",
-      "what": ["/(token|secret|password|passwd|session|sid|auth|key|code|signature|sig|nonce|state)$/i", "/^(utm_.*|gclid|fbclid|ref|spm|_ga|mc_.*)$/i", "/^\\s*(javascript|data|file|vbscript):/i"],
+      "what": [
+        "/^https?:/",
+        "/^www\\./"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "address test",
+      "what": [
+        "/(token|secret|password|passwd|session|sid|auth|key|code|signature|sig|nonce|state)$/i",
+        "/^(about|chrome|data):/",
+        "/^(utm_.*|gclid|fbclid|ref|spm|_ga|mc_.*)$/i",
+        "/^\\s*(javascript|data|file|vbscript):/i"
+      ],
       "why": "Query parameter names that carry a secret or a tracking mark, and schemes never replayed, dropped from a saved address."
     },
     {
       "file": "recipes/vendor/recipes-core.js",
+      "kind": "address test",
+      "what": [
+        "secret"
+      ],
+      "why": "The variable type a recipe marks as secret, whose names are never sent."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "address test",
+      "what": [
+        "/^(?:next|next page|more|load more|show more|see more|view more|older|older entries|[›»→>]|>>|next\\s*[›»→>]+|[›»→>]+\\s*next)$/i",
+        "/^(on|off|true|false)$/i",
+        "/^(on|true|checked|yes)$/i"
+      ],
+      "why": "Words for a relative time, an on or off value and a next-page link, which a recipe treats as changing or as paging."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
       "kind": "host",
-      "what": ["recipes-calibration.md"],
+      "what": [
+        "recipes-calibration.md"
+      ],
       "why": "A file name in a comment, not a host."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "markup test",
+      "what": [
+        "abcdefghijklmnopqrstuvwxyz"
+      ],
+      "why": "A recipe step's own fields and ids."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "markup test",
+      "what": [
+        "/^(on|off|true|false)$/i"
+      ],
+      "why": "Standard HTML tag names, input types, WAI-ARIA roles and WAI-ARIA state values, the same on every site."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "markup test",
+      "what": [
+        "secret"
+      ],
+      "why": "The variable type a recipe marks as secret, whose names are never sent."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "markup test",
+      "what": [
+        "/\\b(ago|just now)\\b/i",
+        "/^(?:next|next page|more|load more|show more|see more|view more|older|older entries|[›»→>]|>>|next\\s*[›»→>]+|[›»→>]+\\s*next)$/i",
+        "/^(on|true|checked|yes)$/i"
+      ],
+      "why": "Words for a relative time, an on or off value and a next-page link, which a recipe treats as changing or as paging."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "text test",
+      "what": [
+        "/^today([+-]\\d+)?$/",
+        "action",
+        "active",
+        "any",
+        "back",
+        "boolean",
+        "click",
+        "download",
+        "draft",
+        "extract",
+        "fill",
+        "navigate",
+        "number",
+        "press",
+        "read",
+        "recipes/0.1",
+        "record",
+        "select-to-ai.recipe/1",
+        "string",
+        "value",
+        "you"
+      ],
+      "why": "A recipe's own step kinds, fields, types and schema names."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "text test",
+      "what": [
+        "/^https?:$/"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "text test",
+      "what": [
+        "/^(Escape|Tab|ArrowDown|ArrowUp|Enter|Space)$/"
+      ],
+      "why": "Key names and the platform, read the same way on every site."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "text test",
+      "what": [
+        "button",
+        "link"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "text test",
+      "what": [
+        "/^(GET|HEAD|OPTIONS)$/i"
+      ],
+      "why": "The HTTP methods that read and do not write."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "text test",
+      "what": [
+        "/^:r[0-9a-z]+:$/i"
+      ],
+      "why": "The form of an id a page generates at run time, which a recipe never keys on."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "text test",
+      "what": [
+        "/(^|\\s)next(\\s|$)/i"
+      ],
+      "why": "The standard rel value of a next-page link."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "text test",
+      "what": [
+        "checkbox",
+        "radio",
+        "switch"
+      ],
+      "why": "WAI-ARIA role names, the same on every site."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "title test",
+      "what": [
+        "secret"
+      ],
+      "why": "The variable type a recipe marks as secret, whose names are never sent."
+    },
+    {
+      "file": "recipes/vendor/recipes-core.js",
+      "kind": "title test",
+      "what": [
+        "/\\b(ago|just now)\\b/i",
+        "/^(?:next|next page|more|load more|show more|see more|view more|older|older entries|[›»→>]|>>|next\\s*[›»→>]+|[›»→>]+\\s*next)$/i",
+        "/^(on|off|true|false)$/i",
+        "/^(on|true|checked|yes)$/i"
+      ],
+      "why": "Words for a relative time, an on or off value and a next-page link, which a recipe treats as changing or as paging."
+    },
+    {
+      "file": "runWords.js",
+      "kind": "address test",
+      "what": [
+        "/^www\\./"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "runWords.js",
+      "kind": "text test",
+      "what": [
+        "/^https?:$/"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "runWords.js",
+      "kind": "text test",
+      "what": [
+        "/element/"
+      ],
+      "why": "The extension's own wording of an action's result."
     },
     {
       "file": "security.js",
       "kind": "address test",
-      "what": ["https://api.anthropic.com", "https://api.cerebras.ai", "https://api.deepseek.com", "https://api.groq.com", "https://api.mistral.ai", "https://api.openai.com", "https://api.together.xyz", "https://api.x.ai", "https://auth.openai.com", "https://generativelanguage.googleapis.com", "https://opencode.ai", "https://openrouter.ai", "localhost"],
+      "what": [
+        "https://api.anthropic.com",
+        "https://api.cerebras.ai",
+        "https://api.deepseek.com",
+        "https://api.groq.com",
+        "https://api.mistral.ai",
+        "https://api.openai.com",
+        "https://api.together.xyz",
+        "https://api.x.ai",
+        "https://auth.openai.com",
+        "https://generativelanguage.googleapis.com",
+        "https://opencode.ai",
+        "https://openrouter.ai",
+        "localhost"
+      ],
       "why": "Provider endpoints the extension may send a key to, and a local model server the user may point it at."
     },
     {
       "file": "security.js",
+      "kind": "address test",
+      "what": [
+        "chrome-extension://"
+      ],
+      "why": "The address scheme of the extension's own pages."
+    },
+    {
+      "file": "security.js",
       "kind": "host",
-      "what": ["api.anthropic.com", "api.cerebras.ai", "api.deepseek.com", "api.groq.com", "api.mistral.ai", "api.openai.com", "api.together.xyz", "api.x.ai", "auth.openai.com", "generativelanguage.googleapis.com", "opencode.ai", "openrouter.ai"],
+      "what": [
+        "api.anthropic.com",
+        "api.cerebras.ai",
+        "api.deepseek.com",
+        "api.groq.com",
+        "api.mistral.ai",
+        "api.openai.com",
+        "api.together.xyz",
+        "api.x.ai",
+        "auth.openai.com",
+        "generativelanguage.googleapis.com",
+        "opencode.ai",
+        "openrouter.ai"
+      ],
       "why": "Provider endpoints and key pages for the models the user picks from."
     },
     {
       "file": "security.js",
       "kind": "site name",
-      "what": ["chatgpt"],
+      "what": [
+        "chatgpt"
+      ],
       "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
     },
     {
-      "file": "setup.js",
-      "kind": "address test",
-      "what": ["/\\/chat\\/completions$/"],
-      "why": "The OpenAI-compatible API path a custom provider address is completed with."
+      "file": "security.js",
+      "kind": "text test",
+      "what": [
+        "http:",
+        "https:"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "security.js",
+      "kind": "text test",
+      "what": [
+        "GET",
+        "POST"
+      ],
+      "why": "The HTTP methods the provider proxy allows."
+    },
+    {
+      "file": "security.js",
+      "kind": "text test",
+      "what": [
+        "chrome-extension://"
+      ],
+      "why": "The address scheme of the extension's own pages."
     },
     {
       "file": "setup.js",
       "kind": "host",
-      "what": ["github.com"],
+      "what": [
+        "github.com"
+      ],
       "why": "The project's own repository: its attribution header and links to its policy and source."
     },
     {
       "file": "setup.js",
+      "kind": "markup test",
+      "what": [
+        "TimeoutError"
+      ],
+      "why": "The name of the error the browser raises when a request times out."
+    },
+    {
+      "file": "setup.js",
+      "kind": "selector",
+      "what": [
+        "#select-to-ai-consent-style"
+      ],
+      "why": "The extension's own elements, which this script makes and styles itself."
+    },
+    {
+      "file": "setup.js",
       "kind": "site name",
-      "what": ["chatgpt"],
+      "what": [
+        "chatgpt"
+      ],
       "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
     },
     {
       "file": "setup.js",
       "kind": "site name",
-      "what": ["anthropic", "deepseek", "google", "groq", "mistral", "openai", "openrouter"],
+      "what": [
+        "anthropic",
+        "deepseek",
+        "google",
+        "groq",
+        "mistral",
+        "openai",
+        "openrouter"
+      ],
       "why": "Providers the user can pick for the agent: their ids, endpoints, key pages and model names."
+    },
+    {
+      "file": "setup.js",
+      "kind": "text test",
+      "what": [
+        "/^https?:$/"
+      ],
+      "why": "An address's scheme and the www prefix, the same for every site."
+    },
+    {
+      "file": "setup.js",
+      "kind": "text test",
+      "what": [
+        "/\\/chat\\/completions$/"
+      ],
+      "why": "The OpenAI-compatible API path a custom provider address is completed with."
+    },
+    {
+      "file": "setup.js",
+      "kind": "text test",
+      "what": [
+        "privacy policy"
+      ],
+      "why": "Words of the extension's own consent text."
     },
     {
       "file": "sidepanel.js",
       "kind": "address test",
-      "what": ["about:blank"],
+      "what": [
+        "about:blank"
+      ],
       "why": "A blank tab, which the side panel treats as no page."
     },
     {
       "file": "sidepanel.js",
       "kind": "host",
-      "what": ["claude.ai"],
+      "what": [
+        "claude.ai"
+      ],
       "why": "Assistants the right-click menu sends a selection to."
     },
     {
       "file": "sidepanel.js",
+      "kind": "selector",
+      "what": [
+        "[src]"
+      ],
+      "why": "Standard HTML and WAI-ARIA attributes and their standard values, read the same on every site."
+    },
+    {
+      "file": "sidepanel.js",
       "kind": "site name",
-      "what": ["chatgpt", "perplexity"],
+      "what": [
+        "chatgpt",
+        "perplexity"
+      ],
       "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
     },
     {
       "file": "usageLimits.js",
       "kind": "host",
-      "what": ["openrouter.ai"],
+      "what": [
+        "openrouter.ai"
+      ],
       "why": "Provider endpoints and key pages for the models the user picks from."
     },
     {
       "file": "usageLimits.js",
       "kind": "site name",
-      "what": ["anthropic", "deepseek", "google", "groq", "mistral", "openai", "openrouter"],
+      "what": [
+        "anthropic",
+        "deepseek",
+        "google",
+        "groq",
+        "mistral",
+        "openai",
+        "openrouter"
+      ],
       "why": "Providers the user can pick for the agent: their ids, endpoints, key pages and model names."
+    },
+    {
+      "file": "usageLimits.js",
+      "kind": "text test",
+      "what": [
+        "/(\\d+(?:\\.\\d+)?)(ms|h|m|s)/g",
+        "/free/i",
+        "/insufficient[_ ](quota|credit|balance)|out of credits?|billing|credit balance|payment required/i",
+        "/per[- ]?day|PerDay/i",
+        "/per[- ]?day|daily|quota|free[- ]tier/i",
+        "/per[- ]?minute|PerMinute/",
+        "/retry(?:Delay|[- ]after)\"?\\s*[:=]\\s*\"?(\\d+(?:\\.\\d+)?)\\s*s|(?:try again|retry(?: again)?) in\\s+(\\d+(?:\\.\\d+)?)\\s*s/i"
+      ],
+      "why": "Words in a model provider's own error replies, read to retry or explain the call."
+    },
+    {
+      "file": "welcome.js",
+      "kind": "address test",
+      "what": [
+        "code"
+      ],
+      "why": "Standard HTML and SVG tag names, the same on every site."
+    },
+    {
+      "file": "welcome.js",
+      "kind": "address test",
+      "what": [
+        "connect",
+        "step"
+      ],
+      "why": "The query parts of the extension's own setup page and of the sign-in reply it asked for."
     },
     {
       "file": "welcome.js",
       "kind": "host",
-      "what": ["news.ycombinator.com", "wikipedia.org"],
+      "what": [
+        "news.ycombinator.com",
+        "wikipedia.org"
+      ],
       "why": "First tasks the welcome page suggests to a new user; the agent is told nothing about either site."
     },
     {
       "file": "welcome.js",
       "kind": "host",
-      "what": ["github.com"],
+      "what": [
+        "github.com"
+      ],
       "why": "The project's own repository: its attribution header and links to its policy and source."
     },
     {
       "file": "welcome.js",
       "kind": "host",
-      "what": ["openrouter.ai"],
+      "what": [
+        "openrouter.ai"
+      ],
       "why": "The provider the welcome page connects a new user to."
     },
     {
       "file": "welcome.js",
+      "kind": "markup test",
+      "what": [
+        "open-palette"
+      ],
+      "why": "The extension's own command names, which its manifest declares."
+    },
+    {
+      "file": "welcome.js",
+      "kind": "markup test",
+      "what": [
+        "TimeoutError"
+      ],
+      "why": "The name of the error the browser raises when a request times out."
+    },
+    {
+      "file": "welcome.js",
       "kind": "site name",
-      "what": ["chatgpt"],
+      "what": [
+        "chatgpt"
+      ],
       "why": "Assistants the right-click menu sends a selection to, and the Sign in with ChatGPT provider."
     },
     {
       "file": "welcome.js",
       "kind": "site name",
-      "what": ["github", "hackernews", "wikipedia"],
+      "what": [
+        "github",
+        "hackernews",
+        "wikipedia"
+      ],
       "why": "First tasks the welcome page suggests to a new user; the agent is told nothing about the sites."
     },
     {
       "file": "welcome.js",
       "kind": "site name",
-      "what": ["openrouter"],
+      "what": [
+        "openrouter"
+      ],
       "why": "Providers the user can pick for the agent: their ids, endpoints, key pages and model names."
+    },
+    {
+      "file": "welcome.js",
+      "kind": "text test",
+      "what": [
+        "/Mac/i"
+      ],
+      "why": "Key names and the platform, read the same way on every site."
+    },
+    {
+      "file": "welcome.js",
+      "kind": "text test",
+      "what": [
+        "/did not approve|cancel|closed/i"
+      ],
+      "why": "The wording of the browser's own error when a sign-in window is closed."
     }
   ]
 }
