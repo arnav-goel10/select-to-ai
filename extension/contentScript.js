@@ -90,7 +90,7 @@
             toast.textContent = message;
             toast.style.cssText = [
                 'position:fixed', 'bottom:24px', 'left:50%',
-                'transform:translateX(-50%)', 'background:#26262c',
+                'transform:translateX(-50%)', 'background:#1d1e21',
                 'color:#ffffff', 'padding:10px 18px', 'border-radius:8px',
                 'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',
                 'font-size:13px', 'font-weight:500', 'z-index:2147483647',

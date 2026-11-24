@@ -54,6 +54,7 @@ document.addEventListener('DOMContentLoaded', () => {
             agentEnabled = items.showAgent === true && ready;
             taskForm.hidden = !agentEnabled;
             $('ideas').hidden = !agentEnabled;
+            $('taskHelper').hidden = !agentEnabled;
             openAgentBtn.hidden = !agentEnabled;
             // The quick box starts the agent, so it shows only when the agent is on.
             $('openPaletteBtn').hidden = !agentEnabled;

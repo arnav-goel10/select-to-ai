@@ -133,7 +133,7 @@ body {
 }
 .outcome-dot[data-outcome="success"] { background: var(--done); }
 .outcome-dot[data-outcome="unconfirmed"],
-.outcome-dot[data-outcome="limit"] { background: var(--needs); }
+.outcome-dot[data-outcome="limit"] { background: var(--needs-mark); }
 .outcome-dot[data-outcome="error"] { background: var(--failed); }
 
 .sidebar-chat-item .session-title {
@@ -273,6 +273,8 @@ body {
   height: 8px;
   border-radius: 50%;
   background: var(--working);
+  /* A still ring, so the header reads as working in a screenshot too. */
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--working) 30%, transparent);
   flex-shrink: 0;
 }
 .live-dot::after {
@@ -283,7 +285,7 @@ body {
   background: inherit;
   animation: ui-ring var(--dur-pulse) var(--ease-out) infinite;
 }
-.live-header[data-state="needs"] .live-dot { background: var(--needs); }
+.live-header[data-state="needs"] .live-dot { background: var(--needs-mark); box-shadow: 0 0 0 3px var(--needs-soft); }
 .live-header[data-state="needs"] .live-dot::after { animation: none; }
 
 .live-goal {
@@ -375,7 +377,7 @@ body {
   width: 52px;
   height: 52px;
   border-radius: 13px;
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 0 0 1px var(--logo-edge), var(--shadow-md);
   margin-bottom: 20px;
 }
 
@@ -579,8 +581,9 @@ body {
 .tl-step.is-current .tl-icon,
 .tl-pending .tl-icon {
   color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-  background: var(--accent-soft);
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 .tl-step.is-failed .tl-icon {
   color: var(--failed);
@@ -646,9 +649,6 @@ body {
   background-clip: text;
   color: transparent;
   animation: ui-shimmer var(--dur-shimmer) linear infinite;
-}
-.tl-pending .tl-pending-text {
-  background-image: linear-gradient(90deg, var(--text-muted) 0%, var(--text-muted) 38%, var(--text-subtle) 50%, var(--text-muted) 62%, var(--text-muted) 100%);
 }
 .tl-pending .tl-body { font-size: var(--text-base); padding-top: 2px; }
 .tl-pending .tl-icon .dot { width: 7px; height: 7px; background: var(--accent); animation: ui-pulse var(--dur-pulse) ease-in-out infinite; }
@@ -791,7 +791,7 @@ body {
   list-style: none;
 }
 .tl-sub-head::-webkit-details-marker { display: none; }
-.tl-sub-head:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 1px; }
+.tl-sub-head:focus-visible { outline: var(--focus-ring); outline-offset: 1px; }
 .tl-sub-mark {
   width: 16px;
   height: 16px;
@@ -862,7 +862,7 @@ body {
 .tl-sub-watch[hidden] { display: none; }
 .tl-sub-watch svg { width: 12px; height: 12px; }
 .tl-sub-watch:hover { color: var(--text); border-color: var(--border-strong); }
-.tl-sub-watch:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 1px; }
+.tl-sub-watch:focus-visible { outline: var(--focus-ring); outline-offset: 1px; }
 .tl-sub-answer {
   grid-column: 1 / -1;
   margin: -2px 8px 6px 32px;
@@ -1141,15 +1141,20 @@ body {
   flex-shrink: 0;
 }
 .memory-note button {
+  font: inherit;
   border: 0;
   background: none;
   padding: 0 2px;
-  font-size: var(--text-sm);
-  color: var(--accent);
+  color: var(--text);
+  font-weight: var(--weight-medium);
   cursor: pointer;
   border-radius: 4px;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
 }
-.memory-note button:hover { text-decoration: underline; text-underline-offset: 3px; }
+.memory-note button:hover { text-decoration-color: currentColor; }
 
 /* ------------------------------------------- moments that need the user */
 
@@ -1164,17 +1169,23 @@ body {
   overflow: hidden;
 }
 
-/* The edge: amber where the user has to act, accent where they choose. */
-.confirmation-bubble .bubble-content::before {
+/* A card that needs the user stands apart: an amber edge all round, a warm
+   wash behind its heading and a stripe down the left. A neutral card (what to
+   keep after a run) has none of these, only a stronger hairline. */
+.confirmation-bubble .bubble-content { border-color: var(--border-strong); }
+.confirmation-bubble[data-tone="needs"] .bubble-content {
+  border-color: var(--needs-edge);
+  background: linear-gradient(to bottom, var(--needs-wash), var(--needs-wash) 56px, var(--surface) 56px);
+}
+.confirmation-bubble[data-tone="needs"] .bubble-content::before {
   content: "";
   position: absolute;
   left: 0;
   top: 0;
   bottom: 0;
   width: 3px;
-  background: var(--accent);
+  background: var(--needs-mark);
 }
-.confirmation-bubble[data-tone="needs"] .bubble-content::before { background: var(--needs); }
 
 .card-head {
   display: flex;
@@ -1193,7 +1204,7 @@ body {
   background: var(--accent-soft);
 }
 .card-icon svg { width: 15px; height: 15px; }
-.confirmation-bubble[data-tone="needs"] .card-icon { color: var(--needs); background: var(--needs-soft); }
+.confirmation-bubble[data-tone="needs"] .card-icon { color: var(--needs-mark); background: var(--surface); box-shadow: 0 0 0 1px var(--needs-edge); }
 
 .confirm-title {
   margin: 0;
@@ -1308,12 +1319,15 @@ body {
   flex-direction: column;
   gap: 6px;
   padding: 12px 10px 10px 14px;
-  border: 1px solid var(--control-edge);
+  /* A hairline and a shadow at rest, the pencil edge on hover; focus turns
+     that edge into the 2 px accent ring instead of adding a second line. */
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-xl);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
-  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+  transition: border-color var(--dur-fast) var(--ease-out);
 }
+.chat-input-box:hover { border-color: var(--control-edge); }
 .chat-input-box:focus-within {
   border-color: var(--accent);
   box-shadow: var(--shadow-sm), var(--shadow-focus);
@@ -1382,7 +1396,8 @@ body {
 }
 .action-circle-btn:hover { background: var(--accent-fill-hover); }
 .action-circle-btn:active { transform: scale(0.94); }
-.action-circle-btn:disabled {
+.action-circle-btn:disabled,
+.action-circle-btn[aria-disabled="true"] {
   background: var(--surface-3);
   color: var(--text-subtle);
   box-shadow: none;
@@ -1417,7 +1432,7 @@ body {
   color: var(--text);
   animation: ui-enter var(--dur-base) var(--ease-out) both;
 }
-.warning-icon { display: grid; place-items: center; color: var(--needs); flex-shrink: 0; }
+.warning-icon { display: grid; place-items: center; color: var(--needs-mark); flex-shrink: 0; }
 .warning-icon svg { width: 16px; height: 16px; }
 .warning-text { flex: 1; min-width: 0; }
 .warning-text strong { font-weight: var(--weight-semibold); }
@@ -1496,6 +1511,7 @@ body {
   outline: none;
 }
 .known-fields input:focus { border-color: var(--accent); box-shadow: var(--shadow-focus); }
+.known-fields input:hover:not(:focus) { border-color: color-mix(in srgb, var(--control-edge) 60%, var(--text-subtle)); }
 
 /* --------------------------------------------------------- narrow */
 
@@ -1576,7 +1592,7 @@ body {
   flex-shrink: 0;
 }
 .selection-remove:hover { background: var(--hover-overlay); color: var(--text); }
-.selection-remove:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+.selection-remove:focus-visible { outline: var(--focus-ring); outline-offset: 1px; }
 .selection-remove svg { width: 13px; height: 13px; }
 .selection-text {
   margin: 0;
