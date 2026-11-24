@@ -2540,15 +2540,12 @@
     workedIn(session, tab && tab.id);
     const id = `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const marker = `PAGE-${Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, "0")).join("")}`;
-    // Sites the user named by a well-known name are part of the request.
-    const named = [];
-    for (const word of String(text).toLowerCase().split(/[^a-z0-9]+/)) { const url = word && TOOLS.knownSiteUrl(word); if (url) named.push(TOOLS.siteOf(url)); }
     session.token += 1;
     session.page = null;
     session.sent = 0;
     session.spawned = {};
     session.run = RUN.newRun({
-      id, task: text, tabId: tab ? tab.id : null, startUrl: tab && !place.fromNothing ? tab.url : "", marker, earlierTurns: session.turns.slice(-6), now: Date.now(), trustedSites: named,
+      id, task: text, tabId: tab ? tab.id : null, startUrl: tab && !place.fromNothing ? tab.url : "", marker, earlierTurns: session.turns.slice(-6), now: Date.now(),
       openedTab: place.openedTab, fromNothing: place.fromNothing,
       settings: {
         checkInMs: checkInMs(items), maxActions: session.profile.maxActions, elementLimit: session.profile.lines, pageBudget: session.profile.pageBudget,

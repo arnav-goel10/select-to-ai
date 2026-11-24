@@ -193,9 +193,26 @@ test("with nothing alike open, pointing words read no other tab", () => {
 });
 
 
-test("a site named by a bare word is known by its address", () => {
-  assert.equal(T.knownSiteUrl("GitHub"), "https://github.com");
-  assert.equal(T.siteOf(T.knownSiteUrl("amazon")), "amazon.com");
-  assert.equal(T.knownSiteUrl("lasagna"), null);
-  assert.equal(T.knownSiteUrl(""), null);
+test("a bare word in the request trusts no site: going there is asked about once", () => {
+  const RUN = require("../../extension/core/run.js");
+  const POLICY = require("../../extension/core/policy.js");
+  const KNOWN = require("../../extension/core/memory.js");
+  // Words that are also the names of sites, common ones among them.
+  const run = RUN.newRun({ id: "k1", task: "check maps and docs for apple's x post, then the github issue", tabId: 7, startUrl: "https://shop.example/", marker: "PAGE-abcd1234", now: 1 });
+  assert.deepEqual(run.trust.sites, ["shop.example"], "only the site the run began on");
+  // Typing on one of those sites is typing on a site the user did not send the agent to.
+  for (const url of ["https://x.com/", "https://www.apple.com/", "https://github.com/", "https://docs.google.com/"]) {
+    const page = { url, title: "A site", elements: [{ id: 1, tagName: "TEXTAREA", accName: "Note" }] };
+    const v = POLICY.decide({ do: "fill", ref: 1, value: "the shop's order total" }, page, run, { riskConfirmation: true }, KNOWN.empty());
+    assert.equal(v.verdict, "confirm", url);
+    assert.equal(v.kind, "site", url);
+  }
+  // A domain the user wrote is named outright, and is part of the request.
+  const named = RUN.newRun({ id: "k2", task: "open github.com and find the repo", tabId: 7, startUrl: "https://shop.example/", marker: "PAGE-abcd1234", now: 1 });
+  assert.ok(named.trust.sites.includes("github.com"));
+  // No table of site nicknames is left for any part of the agent to read.
+  assert.equal(T.knownSiteUrl, undefined);
+  const fs = require("node:fs");
+  const path = require("node:path");
+  assert.doesNotMatch(fs.readFileSync(path.join(__dirname, "../../extension/engine.js"), "utf8"), /knownSite|KNOWN_SITES/);
 });
