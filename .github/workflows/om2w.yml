@@ -14,9 +14,17 @@ name: Online-Mind2Web trial
 # HOLDOUT_KEY, and print counts only.
 #
 # Only the dev part's runs are kept (transcripts, screenshots, judge
-# reasons). A gate or vault run writes counts only: no file of any run, a log
-# of numbers only, and a check that neither the log nor the counts name a
-# task. The reserve is never run. The census makes no model call.
+# reasons), and only encrypted with the OM2W_DEV_KEY secret: the repository
+# and its artifacts are public. A gate or vault run writes counts only: no
+# file of any run, a log that shows no numbers of a shard, and a check that
+# neither the log nor the counts name a task. Its shards hand their counts to
+# the summary encrypted, and the summary reports the part whole, for 10 tasks
+# or more. The reserve is never run. The census makes no model call.
+#
+# The split is pinned: every job that splits checks a keyed digest of the
+# site-to-part map against split.digest in om2w-config.json and stops if it
+# differs. Until a digest is committed only a census with bootstrap_split
+# ticked runs, and it prints the value to commit.
 #
 # Keys: the agent's is ANTHROPIC_API_KEY, sent to api.anthropic.com, and so
 # is the judge's. HF_TOKEN goes to huggingface.co only, in the fetch steps.
@@ -69,6 +77,10 @@ on:
         description: Dry mode (fixture pages, scripted model, a local judge stub, no keys, no fetch)
         type: boolean
         default: false
+      bootstrap_split:
+        description: "Once only, before split.digest is committed: a census that prints the split's digest to commit. Refused once a digest is committed"
+        type: boolean
+        default: false
   push:
     branches: [main, om2w-trial]
     paths: [".github/workflows/om2w.yml", "tests/bench/**", "tests/e2e/server.js"]
@@ -102,8 +114,10 @@ jobs:
       shards: ${{ steps.plan.outputs.shards }}
       shard_count: ${{ steps.plan.outputs.shard_count }}
       cap_per_shard: ${{ steps.plan.outputs.cap_per_shard }}
-      sealed: ${{ steps.plan.outputs.sealed }}
       timeout_s: ${{ steps.plan.outputs.timeout_s }}
+      run_room: ${{ steps.plan.outputs.run_room }}
+      sealed_min: ${{ steps.plan.outputs.sealed_min }}
+      bootstrap: ${{ steps.plan.outputs.bootstrap }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - id: plan
@@ -121,15 +135,23 @@ jobs:
           IN_SHARDS: ${{ inputs.shards }}
           IN_LIMIT: ${{ inputs.limit }}
           IN_MAX_USD: ${{ inputs.max_usd }}
+          IN_BOOTSTRAP: ${{ inputs.bootstrap_split }}
           # Only asked whether each is set; no value is used in this job.
           HAS_ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
           HAS_HF_TOKEN: ${{ secrets.HF_TOKEN != '' }}
+          HAS_DEV_KEY: ${{ secrets.OM2W_DEV_KEY != '' }}
         run: |
           fail() { echo "::error::$1"; echo "$1" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          # Every value below goes to GITHUB_OUTPUT as one line: an input with a line break could add an output of its own.
+          for v in "$IN_DRY" "$IN_PART" "$IN_MODE" "$IN_ARM" "$IN_MODEL" "$IN_JUDGE_MODEL" "$IN_RUNS" "$IN_SHARDS" "$IN_LIMIT" "$IN_MAX_USD" "$IN_BOOTSTRAP"; do
+            case "$v" in *$'\n'*|*$'\r'*) fail "an input holds a line break: refused, nothing was run" ;; esac
+          done
           dry=false
           why=""
           if [ "$EVENT" != "workflow_dispatch" ]; then dry=true; why="a push runs dry mode only"; fi
           if [ "$IN_DRY" = "true" ]; then dry=true; why="the dry box was ticked"; fi
+          bootstrap=false
+          if [ "$IN_BOOTSTRAP" = "true" ]; then bootstrap=true; fi
           cfg() { node -p "require('./tests/bench/om2w-config.json').$1"; }
           part="${IN_PART:-dev}"
           mode="${IN_MODE:-census}"
@@ -141,33 +163,49 @@ jobs:
           limit="${IN_LIMIT:-all}"
           cap="${IN_MAX_USD:-10}"
           timeout_s=$(cfg baseline.timeoutS)
+          run_room=$(cfg baseline.runRoomUSD)
+          sealed_min=$(cfg split.sealedShardMinTasks)
+          report_min=$(cfg split.sealedReportMinTasks)
+          digest=$(cfg split.digest)
+          # Each value is matched whole ([[ =~ ]] anchors the whole string, not one line of it).
           case "$part" in dev) sealed=false ;; gate|vault) sealed=true ;; *) fail "part must be dev, gate or vault: the reserve is never run" ;; esac
           case "$mode" in run|census) ;; *) fail "mode must be run or census" ;; esac
           case "$arm" in shipped|debugger-on) ;; *) fail "arm must be shipped or debugger-on" ;; esac
           # The agent and the judge are both Claude models on Anthropic, with ANTHROPIC_API_KEY.
-          echo "$model" | grep -Eq '^claude-[A-Za-z0-9._-]+$' || fail "model must be a Claude model: the agent's key here is ANTHROPIC_API_KEY"
-          echo "$judge_model" | grep -Eq '^claude-[A-Za-z0-9._-]+$' || fail "judge_model must be a Claude model: the judge runs on Anthropic's batch API"
+          [[ "$model" =~ ^claude-[A-Za-z0-9._-]+$ ]] || fail "model must be a Claude model: the agent's key here is ANTHROPIC_API_KEY"
+          [[ "$judge_model" =~ ^claude-[A-Za-z0-9._-]+$ ]] || fail "judge_model must be a Claude model: the judge runs on Anthropic's batch API"
           if [ "$judge_model" = "$model" ]; then fail "the judge must be a different model from the agent's"; fi
-          echo "$shards" | grep -Eq '^[0-9]+$' || fail "shards must be a whole number"
+          [[ "$shards" =~ ^[0-9]{1,2}$ ]] || fail "shards must be a whole number"
           if [ "$shards" -lt 1 ] || [ "$shards" -gt 20 ]; then fail "shards must be 1 to 20"; fi
-          echo "$runs" | grep -Eq '^[1-5]$' || fail "runs must be 1 to 5"
-          echo "$cap" | grep -Eq '^[0-9]+(\.[0-9]+)?$' || fail "max_usd must be a number of US dollars"
+          [[ "$runs" =~ ^[1-5]$ ]] || fail "runs must be 1 to 5"
+          [[ "$cap" =~ ^[0-9]{1,4}(\.[0-9]{1,4})?$ ]] || fail "max_usd must be a number of US dollars"
           awk "BEGIN { exit !($cap > 0) }" || fail "max_usd must be more than 0: a real run always has a cap"
           sample=0
           if [ "$limit" != "all" ]; then
-            echo "$limit" | grep -Eq '^[1-9][0-9]*$' || fail "limit must be all or a whole number"
+            [[ "$limit" =~ ^[1-9][0-9]{0,3}$ ]] || fail "limit must be all or a whole number"
             sample="$limit"
           fi
-          if [ "$sealed" = "true" ] && [ "$sample" -gt 0 ] && [ "$sample" -lt 3 ]; then fail "a sealed part needs a limit of 3 or more: a smaller one would show one or two tasks' own results"; fi
+          # A sealed part is reported as one group of $report_min tasks or more, and each shard runs $sealed_min or more.
+          if [ "$sealed" = "true" ] && [ "$sample" -gt 0 ] && [ "$sample" -lt "$report_min" ]; then fail "a sealed part needs a limit of $report_min or more: a smaller one would show a few tasks' own results"; fi
+          if [ "$sealed" = "true" ] && [ "$sample" -gt 0 ] && [ "$shards" -gt $((sample / sealed_min)) ]; then shards=$((sample / sealed_min)); fi
+          # The split must be the committed one. Until a digest is committed, the one-time bootstrap census only.
+          if [ "$bootstrap" = "true" ]; then
+            if [ -n "$digest" ]; then fail "bootstrap_split is refused: the split digest is already committed (tests/bench/om2w-config.json split.digest)"; fi
+            if [ "$dry" = "true" ] || [ "$mode" != "census" ]; then fail "bootstrap_split runs with mode census only, not dry: it pins the split before any result is seen"; fi
+          elif [ "$dry" = "false" ] && [ -z "$digest" ]; then
+            fail "the split digest is not committed yet (tests/bench/om2w-config.json split.digest). Nothing was run. Run the census once with bootstrap_split ticked and commit the digest it prints."
+          fi
           # A real run never turns into a dry one: a missing secret fails it.
           if [ "$dry" = "false" ]; then
             if [ "$HAS_HF_TOKEN" != "true" ]; then fail "the repository has no HF_TOKEN secret, which fetches the Online-Mind2Web task file. Nothing was run. Tick dry for a dry run."; fi
             if [ "$mode" = "run" ] && [ "$HAS_ANTHROPIC_KEY" != "true" ]; then fail "the repository has no ANTHROPIC_API_KEY secret, which the agent and the judge need. Nothing was run. Tick dry for a dry run."; fi
+            if [ "$mode" = "run" ] && [ "$part" = "dev" ] && [ "$HAS_DEV_KEY" != "true" ]; then fail "the repository has no OM2W_DEV_KEY secret, which encrypts the dev runs before upload. Nothing was run."; fi
           fi
           if [ "$sample" -gt 0 ] && [ "$shards" -gt "$sample" ]; then shards="$sample"; fi
           if [ "$dry" = "true" ]; then shards=1; fi
           list=$(node -e "console.log(JSON.stringify(Array.from({ length: Number(process.argv[1]) }, (_, i) => i + 1)))" "$shards")
           per=$(awk "BEGIN { printf \"%.4f\", $cap / $shards }")
+          awk "BEGIN { exit !($per > 0) }" || fail "max_usd over $shards shard(s) rounds to \$$per a shard: a cap that rounds to nothing is refused, never read as no cap"
           {
             echo "dry=$dry"
             echo "part=$part"
@@ -181,8 +219,10 @@ jobs:
             echo "shards=$list"
             echo "shard_count=$shards"
             echo "cap_per_shard=$per"
-            echo "sealed=$sealed"
             echo "timeout_s=$timeout_s"
+            echo "run_room=$run_room"
+            echo "sealed_min=$sealed_min"
+            echo "bootstrap=$bootstrap"
           } >> "$GITHUB_OUTPUT"
           {
             echo "### Plan"
@@ -191,9 +231,10 @@ jobs:
               echo "Dry mode ($why): the batch judge, the sealed counts path and the census on the fixture pages. No key is read, nothing is fetched and nothing is spent."
             elif [ "$mode" = "census" ]; then
               echo "Block census of all parts: each start page once, no model call, nothing spent. $shards shard(s). Dev sites by name, sealed parts as counts."
+              if [ "$bootstrap" = "true" ]; then echo "" ; echo "**BOOTSTRAP of the split digest.** This census prints the digest to commit as split.digest. No run can start until it is committed, and once it is, bootstrap is refused."; fi
             else
               echo "Real run of part \`$part\`: agent \`anthropic\` / \`$model\`, judge \`$judge_model\` through the batch API, both with \`ANTHROPIC_API_KEY\`. $runs run(s) each, $timeout_s s per task, arm \`$arm\`, $shards shard(s), spend cap \$$cap (\$$per per shard). A canary of three fixture tasks runs first."
-              if [ "$sealed" = "true" ]; then echo "Sealed part: each shard writes counts only, no file of any run, and its log names no task."; fi
+              if [ "$sealed" = "true" ]; then echo "Sealed part: each shard writes counts only, encrypted for the summary, no file of any run, and its log shows no numbers of the shard. The summary reports the part whole."; else echo "Dev: the runs are uploaded encrypted with OM2W_DEV_KEY. Open them with scripts/om2w-dev-results.sh <run id>."; fi
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -269,10 +310,13 @@ jobs:
 
   # Online-Mind2Web: one part, sharded. The task file is fetched into the
   # runner's temporary folder and split there by site; nothing of it is in
-  # any uploaded path. Dev keeps its runs (transcripts, screenshots, judge
-  # reasons). Gate and vault write counts only: no file of any run, a log
-  # that prints numbers only, and a check that neither the log nor the
-  # counts name a task.
+  # any uploaded path. A part is sealed unless it is exactly dev: that is
+  # worked out here from the part, never taken from another output. Dev
+  # keeps its runs (transcripts, screenshots, judge reasons), uploaded only
+  # encrypted with OM2W_DEV_KEY beside a clear counts file. Gate and vault
+  # write counts only, no file of any run, and hand the counts to the summary
+  # encrypted with this run's sealed key. Every shard's log shows run counts
+  # only, and a step checks that neither the log nor the counts name a task.
   run:
     name: om2w ${{ needs.plan.outputs.part }} (shard ${{ matrix.shard }} of ${{ needs.plan.outputs.shard_count }})
     needs: [plan, build, canary]
@@ -283,6 +327,10 @@ jobs:
       fail-fast: false
       matrix:
         shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    env:
+      PART: ${{ needs.plan.outputs.part }}
+      SEALED: ${{ needs.plan.outputs.part != 'dev' && 'true' || 'false' }}
+      SHARD: ${{ matrix.shard }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -299,36 +347,40 @@ jobs:
         with:
           name: ${{ needs.build.outputs.artifact }}
       - run: mkdir -p build && unzip -q "${{ needs.build.outputs.artifact }}" -d build
-      # The split's rule 2 needs the holdout's sites. HOLDOUT_KEY decrypts them to the git-ignored plain path.
+      # The split's rule 2 needs the holdout's sites. HOLDOUT_KEY decrypts them to the git-ignored plain path,
+      # and keys the split digest and this run's sealed files (written to the runner's temporary folder, never printed).
       - name: Decrypt the holdout tasks
         env:
           HOLDOUT_KEY: ${{ secrets.HOLDOUT_KEY }}
         run: |
           if [ -z "$HOLDOUT_KEY" ]; then echo "::error::The repository has no HOLDOUT_KEY secret, so the holdout tasks cannot be decrypted (tests/bench/README.md)."; exit 1; fi
           openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 -in tests/bench/holdout-tasks.json.enc -out tests/bench/holdout-tasks.json -pass env:HOLDOUT_KEY
+          node tests/bench/om2w.js keys --out "$RUNNER_TEMP/om2w/keys"
       # HF_TOKEN reaches this step only, and only Hugging Face. The file lands in the runner's temporary folder.
       - name: Fetch Online-Mind2Web at the pinned revision
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: node tests/bench/om2w.js fetch --out "$RUNNER_TEMP/om2w/dataset.json"
-      - name: Split it by site
-        env:
-          PART: ${{ needs.plan.outputs.part }}
-        run: node tests/bench/om2w.js split --dataset "$RUNNER_TEMP/om2w/dataset.json" --part "$PART" --out "$RUNNER_TEMP/om2w/tasks.json"
+      - name: Split it by site, against the committed digest
+        run: |
+          case "$PART" in dev|gate|vault) ;; *) echo "::error::part must be dev, gate or vault"; exit 1 ;; esac
+          node tests/bench/om2w.js split --dataset "$RUNNER_TEMP/om2w/dataset.json" --part "$PART" --out "$RUNNER_TEMP/om2w/tasks.json" --digest-key-file "$RUNNER_TEMP/om2w/keys/split-digest"
       - name: Run the tasks
         env:
           BENCH_EXTENSION: build
           BENCH_TASKS: ${{ runner.temp }}/om2w/tasks.json
           BENCH_SAMPLE: ${{ needs.plan.outputs.sample }}
           BENCH_SHARD: ${{ matrix.shard }}/${{ needs.plan.outputs.shard_count }}
-          # A sealed part writes no file of any run: its folder is in the runner's temporary space and stays empty.
-          BENCH_OUT: ${{ needs.plan.outputs.sealed == 'true' && format('{0}/om2w/out', runner.temp) || 'tests/bench/out/trial' }}
-          BENCH_NO_FILES: ${{ needs.plan.outputs.sealed == 'true' && '1' || '' }}
-          BENCH_COUNTS_OUT: ${{ needs.plan.outputs.sealed == 'true' && 'tests/bench/out/om2w-counts' || 'tests/bench/out/trial' }}
-          # Sealed: numbers only. Dev: each run's ending, never the judge's reasons, which stay in the artifact.
-          BENCH_QUIET: ${{ needs.plan.outputs.sealed == 'true' && 'sealed' || '1' }}
+          # Every file of a run stays in the runner's temporary space. A sealed part writes none at all.
+          BENCH_OUT: ${{ needs.plan.outputs.part != 'dev' && format('{0}/om2w/out', runner.temp) || format('{0}/om2w/dev', runner.temp) }}
+          BENCH_NO_FILES: ${{ needs.plan.outputs.part != 'dev' && '1' || '' }}
+          BENCH_COUNTS_OUT: ${{ runner.temp }}/om2w/counts
+          # Run counts only in the log, for every part: a run's ending can carry a task's text.
+          BENCH_QUIET: sealed
+          BENCH_SEALED_MIN_TASKS: ${{ needs.plan.outputs.sealed_min }}
           BENCH_DEBUGGER: ${{ needs.plan.outputs.arm == 'debugger-on' && 'on' || '' }}
           BENCH_MAX_USD: ${{ needs.plan.outputs.cap_per_shard }}
+          BENCH_RUN_ROOM_USD: ${{ needs.plan.outputs.run_room }}
           BENCH_TIMEOUT_S: ${{ needs.plan.outputs.timeout_s }}
           BENCH_RUNS: ${{ needs.plan.outputs.runs }}
           BENCH_JUDGE_BATCH: "1"
@@ -344,22 +396,43 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/om2w"
           xvfb-run -a -s "-screen 0 1920x1080x24" node tests/bench/run.js 2>&1 | tee "$RUNNER_TEMP/om2w/run.log"
-      - name: A sealed shard named no task and kept no file of a run
-        if: ${{ always() && needs.plan.outputs.sealed == 'true' }}
+      - name: The shard's log and counts named no task
+        if: always()
         run: |
           node tests/bench/trial.js leaks "$RUNNER_TEMP/om2w/run.log" --tasks "$RUNNER_TEMP/om2w/tasks.json"
-          for f in tests/bench/out/om2w-counts/*.json; do node tests/bench/trial.js leaks "$f" --tasks "$RUNNER_TEMP/om2w/tasks.json"; done
-          if [ -n "$(find tests/bench/out/om2w-counts -type f ! -name 'om2w-counts-*.json')" ]; then echo "::error::A file other than the counts is in the sealed upload folder."; exit 1; fi
-          if [ -d "$RUNNER_TEMP/om2w/out" ] && [ -n "$(find "$RUNNER_TEMP/om2w/out" -type f)" ]; then echo "::error::A sealed run wrote a file of a run."; exit 1; fi
+          for f in "$RUNNER_TEMP"/om2w/counts/*.json; do [ -e "$f" ] || continue; node tests/bench/trial.js leaks "$f" --tasks "$RUNNER_TEMP/om2w/tasks.json"; done
+          if [ -n "$(find "$RUNNER_TEMP/om2w/counts" -type f ! -name 'om2w-counts-*.json' 2>/dev/null)" ]; then echo "::error::A file other than the counts is in the counts folder."; exit 1; fi
+          if [ "$SEALED" = "true" ] && [ -d "$RUNNER_TEMP/om2w/out" ] && [ -n "$(find "$RUNNER_TEMP/om2w/out" -type f)" ]; then echo "::error::A sealed run wrote a file of a run."; exit 1; fi
+      # What is uploaded: sealed, the counts encrypted with this run's sealed key and nothing else;
+      # dev, the runs encrypted with OM2W_DEV_KEY and the clear counts beside them.
+      - name: Encrypt what the shard hands on
+        if: always()
+        env:
+          OM2W_DEV_KEY: ${{ needs.plan.outputs.part == 'dev' && secrets.OM2W_DEV_KEY || '' }}
+        run: |
+          up=tests/bench/out/upload
+          rm -rf "$up" && mkdir -p "$up" "$RUNNER_TEMP/om2w/counts"
+          if [ "$SEALED" = "true" ]; then
+            OM2W_PASS="$(cat "$RUNNER_TEMP/om2w/keys/sealed")" bash tests/bench/om2w-crypt.sh seal "$RUNNER_TEMP/om2w/counts" "$up/om2w-sealed-shard-$SHARD.tar.gz.enc"
+          else
+            if [ -z "$OM2W_DEV_KEY" ]; then echo "::error::The repository has no OM2W_DEV_KEY secret: the dev runs are not uploaded."; exit 1; fi
+            mkdir -p "$RUNNER_TEMP/om2w/dev"
+            cp "$RUNNER_TEMP/om2w/run.log" "$RUNNER_TEMP/om2w/dev/" 2>/dev/null || true
+            OM2W_PASS="$(printf '%s' "$OM2W_DEV_KEY" | tr -d '[:space:]')" bash tests/bench/om2w-crypt.sh seal "$RUNNER_TEMP/om2w/dev" "$up/om2w-dev-shard-$SHARD.tar.gz.enc"
+            cp "$RUNNER_TEMP"/om2w/counts/om2w-counts-*.json "$up/" 2>/dev/null || true
+          fi
+          ls -l "$up"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: ${{ needs.plan.outputs.sealed == 'true' && format('om2w-counts-shard-{0}', matrix.shard) || format('trial-shard-{0}', matrix.shard) }}
-          path: ${{ needs.plan.outputs.sealed == 'true' && 'tests/bench/out/om2w-counts' || 'tests/bench/out/trial' }}
+          name: ${{ needs.plan.outputs.part != 'dev' && format('om2w-sealed-shard-{0}', matrix.shard) || format('om2w-dev-shard-{0}', matrix.shard) }}
+          path: tests/bench/out/upload
           if-no-files-found: warn
-          retention-days: ${{ needs.plan.outputs.sealed == 'true' && 7 || 14 }}
+          retention-days: ${{ needs.plan.outputs.part != 'dev' && 7 || 14 }}
 
-  # The block census: every start page of all four parts once, no model call. Dev sites by name, the rest as counts.
+  # The block census: every start page of all four parts once, no model call.
+  # Dev sites by name in the log; each shard's counts go to the summary
+  # encrypted with this run's sealed key, and the summary reports each part whole.
   census:
     name: om2w census (shard ${{ matrix.shard }} of ${{ needs.plan.outputs.shard_count }})
     needs: [plan, build]
@@ -370,6 +443,9 @@ jobs:
       fail-fast: false
       matrix:
         shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    env:
+      SHARD: ${{ matrix.shard }}
+      BOOTSTRAP: ${{ needs.plan.outputs.bootstrap == 'true' && '--bootstrap' || '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -392,16 +468,17 @@ jobs:
         run: |
           if [ -z "$HOLDOUT_KEY" ]; then echo "::error::The repository has no HOLDOUT_KEY secret, so the holdout tasks cannot be decrypted (tests/bench/README.md)."; exit 1; fi
           openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 -in tests/bench/holdout-tasks.json.enc -out tests/bench/holdout-tasks.json -pass env:HOLDOUT_KEY
+          node tests/bench/om2w.js keys --out "$RUNNER_TEMP/om2w/keys"
       - name: Fetch Online-Mind2Web at the pinned revision
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: node tests/bench/om2w.js fetch --out "$RUNNER_TEMP/om2w/dataset.json"
-      - name: Split it by site, all parts
-        run: node tests/bench/om2w.js split --dataset "$RUNNER_TEMP/om2w/dataset.json" --part all --out "$RUNNER_TEMP/om2w/all.json"
+      - name: Split it by site, all parts, against the committed digest
+        run: node tests/bench/om2w.js split --dataset "$RUNNER_TEMP/om2w/dataset.json" --part all --out "$RUNNER_TEMP/om2w/all.json" --digest-key-file "$RUNNER_TEMP/om2w/keys/split-digest" $BOOTSTRAP
       - name: Load each start page once
         env:
           CENSUS_TASKS: ${{ runner.temp }}/om2w/all.json
-          CENSUS_OUT: tests/bench/out/census
+          CENSUS_OUT: ${{ runner.temp }}/om2w/census
           BENCH_EXTENSION: build
           BENCH_SHARD: ${{ matrix.shard }}/${{ needs.plan.outputs.shard_count }}
         run: xvfb-run -a -s "-screen 0 1920x1080x24" node tests/bench/census.js 2>&1 | tee "$RUNNER_TEMP/om2w/census.log"
@@ -409,21 +486,34 @@ jobs:
         if: always()
         run: |
           node tests/bench/trial.js leaks "$RUNNER_TEMP/om2w/census.log" --tasks "$RUNNER_TEMP/om2w/all.json"
-          for f in tests/bench/out/census/*.json; do node tests/bench/trial.js leaks "$f" --tasks "$RUNNER_TEMP/om2w/all.json"; done
+          for f in "$RUNNER_TEMP"/om2w/census/*.json; do [ -e "$f" ] || continue; node tests/bench/trial.js leaks "$f" --tasks "$RUNNER_TEMP/om2w/all.json"; done
+      - name: Encrypt the shard's counts for the summary
+        if: always()
+        run: |
+          up=tests/bench/out/upload
+          rm -rf "$up" && mkdir -p "$up" "$RUNNER_TEMP/om2w/census"
+          OM2W_PASS="$(cat "$RUNNER_TEMP/om2w/keys/sealed")" bash tests/bench/om2w-crypt.sh seal "$RUNNER_TEMP/om2w/census" "$up/om2w-sealed-census-shard-$SHARD.tar.gz.enc"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: om2w-census-shard-${{ matrix.shard }}
-          path: tests/bench/out/census
+          name: om2w-sealed-census-shard-${{ matrix.shard }}
+          path: tests/bench/out/upload
           if-no-files-found: warn
           retention-days: 30
 
+  # The summary opens what the shards handed on, reports a part whole and
+  # uploads in the clear only counts, rates, timings and spend. The dev
+  # family table and per-run lines go up encrypted with OM2W_DEV_KEY.
   summary:
     name: om2w summary
     needs: [plan, run, census]
     if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.dry != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      MODE: ${{ needs.plan.outputs.mode }}
+      SEALED: ${{ needs.plan.outputs.part != 'dev' && 'true' || 'false' }}
+      BOOTSTRAP: ${{ needs.plan.outputs.bootstrap == 'true' && '--bootstrap' || '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -431,8 +521,8 @@ jobs:
           node-version: 22
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: ${{ needs.plan.outputs.mode == 'census' && 'om2w-census-shard-*' || needs.plan.outputs.sealed == 'true' && 'om2w-counts-shard-*' || 'trial-shard-*' }}
-          path: tests/bench/out/om2w
+          pattern: ${{ needs.plan.outputs.mode == 'census' && 'om2w-sealed-census-shard-*' || needs.plan.outputs.part != 'dev' && 'om2w-sealed-shard-*' || 'om2w-dev-shard-*' }}
+          path: tests/bench/out/dl
           merge-multiple: true
       - name: Decrypt the holdout tasks
         env:
@@ -440,6 +530,7 @@ jobs:
         run: |
           if [ -z "$HOLDOUT_KEY" ]; then echo "::error::The repository has no HOLDOUT_KEY secret, so the holdout tasks cannot be decrypted (tests/bench/README.md)."; exit 1; fi
           openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 -in tests/bench/holdout-tasks.json.enc -out tests/bench/holdout-tasks.json -pass env:HOLDOUT_KEY
+          node tests/bench/om2w.js keys --out "$RUNNER_TEMP/om2w/keys"
       - name: Fetch Online-Mind2Web at the pinned revision
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -447,43 +538,66 @@ jobs:
       - name: Table
         env:
           PART: ${{ needs.plan.outputs.mode == 'census' && 'all' || needs.plan.outputs.part }}
-          MODE: ${{ needs.plan.outputs.mode }}
-          SEALED: ${{ needs.plan.outputs.sealed }}
           SAMPLE: ${{ needs.plan.outputs.sample }}
           RUNS: ${{ needs.plan.outputs.runs }}
           ARM: ${{ needs.plan.outputs.arm }}
           SHARDS: ${{ needs.plan.outputs.shard_count }}
+          OM2W_DEV_KEY: ${{ needs.plan.outputs.mode == 'run' && needs.plan.outputs.part == 'dev' && secrets.OM2W_DEV_KEY || '' }}
         run: |
-          mkdir -p tests/bench/out/om2w
-          node tests/bench/om2w.js split --dataset "$RUNNER_TEMP/om2w/dataset.json" --part "$PART" --out "$RUNNER_TEMP/om2w/tasks.json"
+          case "$PART" in all|dev|gate|vault) ;; *) echo "::error::part must be dev, gate or vault"; exit 1 ;; esac
+          out=tests/bench/out/om2w
+          shards="$RUNNER_TEMP/om2w/shards"
+          mkdir -p "$out" "$shards"
+          node tests/bench/om2w.js split --dataset "$RUNNER_TEMP/om2w/dataset.json" --part "$PART" --out "$RUNNER_TEMP/om2w/tasks.json" --excluded-out "$RUNNER_TEMP/om2w/excluded.json" --digest-key-file "$RUNNER_TEMP/om2w/keys/split-digest" $BOOTSTRAP
+          # Open each shard's hand-over into the runner's temporary folder, never into an uploaded path.
+          if [ "$MODE" = "census" ] || [ "$SEALED" = "true" ]; then pass="$(cat "$RUNNER_TEMP/om2w/keys/sealed")"; else
+            if [ -z "$OM2W_DEV_KEY" ]; then echo "::error::The repository has no OM2W_DEV_KEY secret: the dev runs cannot be opened."; exit 1; fi
+            pass="$(printf '%s' "$OM2W_DEV_KEY" | tr -d '[:space:]')"
+          fi
+          for f in tests/bench/out/dl/*.tar.gz.enc; do [ -e "$f" ] || continue; OM2W_PASS="$pass" bash tests/bench/om2w-crypt.sh open "$f" "$shards/$(basename "$f" .tar.gz.enc)"; done
           if [ "$MODE" = "census" ]; then
-            node tests/bench/om2w.js summary tests/bench/out/om2w --census --shards "$SHARDS" | tee -a "$GITHUB_STEP_SUMMARY"
-            node tests/bench/trial.js leaks tests/bench/out/om2w/om2w-census-summary.json --tasks "$RUNNER_TEMP/om2w/tasks.json"
+            node tests/bench/om2w.js summary "$shards" --census --shards "$SHARDS" | tee -a "$GITHUB_STEP_SUMMARY"
+            node tests/bench/trial.js leaks "$shards/om2w-census-summary.json" --tasks "$RUNNER_TEMP/om2w/tasks.json"
+            cp "$shards/om2w-census-summary.json" "$out/"
             exit 0
           fi
           # The runs that were meant to happen: the part, or run.js's sample of it, times the runs per task.
-          planned=$(node -e "const J = require('./tests/bench/judge.js'); const t = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); console.log(J.sampleTasks(t, Number(process.argv[2]) || 0, 1).length * Number(process.argv[3]))" "$RUNNER_TEMP/om2w/tasks.json" "$SAMPLE" "$RUNS")
-          node tests/bench/om2w.js summary tests/bench/out/om2w --part "$PART" --planned "$planned" --arm "$ARM" --shards "$SHARDS" --commit "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+          ptasks=$(node -e "const J = require('./tests/bench/judge.js'); const t = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); console.log(J.sampleTasks(t, Number(process.argv[2]) || 0, 1).length)" "$RUNNER_TEMP/om2w/tasks.json" "$SAMPLE")
+          planned=$((ptasks * RUNS))
           if [ "$SEALED" = "true" ]; then
-            node tests/bench/trial.js leaks tests/bench/out/om2w/om2w-summary.json --tasks "$RUNNER_TEMP/om2w/tasks.json"
-          else
-            # Dev only: the family table and the per-run lines in trial-summary.json, read freely.
-            node tests/bench/trial.js summary tests/bench/out/om2w --tasks "$RUNNER_TEMP/om2w/tasks.json" --sample "$SAMPLE" --suite "om2w dev" --arm "$ARM" --runs "$RUNS" --shards "$SHARDS" --commit "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+            excluded=$(node -p "require(process.argv[1]).all" "$RUNNER_TEMP/om2w/excluded.json")
+            node tests/bench/om2w.js summary "$shards" --part "$PART" --planned "$planned" --planned-tasks "$ptasks" --excluded "$excluded" --arm "$ARM" --shards "$SHARDS" --commit "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+            node tests/bench/trial.js leaks "$shards/om2w-summary.json" --tasks "$RUNNER_TEMP/om2w/tasks.json"
+            cp "$shards/om2w-summary.json" "$out/"
+            exit 0
           fi
+          # Dev: the clear counts make the public table. The family table and the per-run lines are read
+          # from the opened runs and go up encrypted, as the runs did.
+          excluded=$(node -p "require(process.argv[1]).dev" "$RUNNER_TEMP/om2w/excluded.json")
+          mkdir -p "$RUNNER_TEMP/om2w/counts"
+          cp tests/bench/out/dl/om2w-counts-*.json "$RUNNER_TEMP/om2w/counts/" 2>/dev/null || true
+          node tests/bench/om2w.js summary "$RUNNER_TEMP/om2w/counts" --part dev --planned "$planned" --planned-tasks "$ptasks" --excluded "$excluded" --arm "$ARM" --shards "$SHARDS" --commit "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY" || rc=$?
+          node tests/bench/trial.js leaks "$RUNNER_TEMP/om2w/counts/om2w-summary.json" --tasks "$RUNNER_TEMP/om2w/tasks.json"
+          cp "$RUNNER_TEMP/om2w/counts/om2w-summary.json" "$out/"
+          mkdir -p "$RUNNER_TEMP/om2w/devsum"
+          node tests/bench/trial.js summary "$shards" --tasks "$RUNNER_TEMP/om2w/tasks.json" --sample "$SAMPLE" --suite "om2w dev" --arm "$ARM" --runs "$RUNS" --shards "$SHARDS" --commit "$GITHUB_SHA" > "$RUNNER_TEMP/om2w/devsum/trial-summary.md" || rc=$?
+          cp "$shards/trial-summary.json" "$RUNNER_TEMP/om2w/devsum/" 2>/dev/null || true
+          OM2W_PASS="$pass" bash tests/bench/om2w-crypt.sh seal "$RUNNER_TEMP/om2w/devsum" "$out/om2w-dev-summary.tar.gz.enc"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "The dev family table and per-run lines are in om2w-dev-summary.tar.gz.enc. Open them with scripts/om2w-dev-results.sh $GITHUB_RUN_ID." >> "$GITHUB_STEP_SUMMARY"
+          exit "${rc:-0}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: om2w-summary
-          path: |
-            tests/bench/out/om2w/om2w-summary.json
-            tests/bench/out/om2w/om2w-census-summary.json
-            tests/bench/out/om2w/trial-summary.json
+          path: tests/bench/out/om2w
           if-no-files-found: warn
           retention-days: 30
 
   # Dry mode only: the Online-Mind2Web paths on the fixture pages. "batch": a
-  # dev-style run judged through the batch path. "sealed-counts": the sealed
-  # path, which must leave counts only and a log that names no task.
+  # dev-style run judged through the batch path, its files encrypted and
+  # opened again. "sealed-counts": the sealed path, which must leave counts
+  # only, encrypted, and a log that names no task and shows no shard numbers.
   # "census": the census, headful under xvfb, which must class the fixture
   # human check as blocked. "batch-cap": a cap that leaves room for about one
   # run and its verdict, which must stop the run with the spend counted.
@@ -528,7 +642,7 @@ jobs:
           mkdir -p tests/bench/out "$RUNNER_TEMP/leg"
           case "$LEG" in
             batch) BENCH_OUT=tests/bench/out/leg BENCH_COUNTS_OUT=tests/bench/out/leg xvfb-run -a -s "-screen 0 1920x1080x24" node tests/bench/run.js | tee tests/bench/out/leg-run.log ;;
-            sealed-counts) BENCH_QUIET=sealed BENCH_NO_FILES=1 BENCH_OUT="$RUNNER_TEMP/leg/out" BENCH_COUNTS_OUT=tests/bench/out/leg xvfb-run -a -s "-screen 0 1920x1080x24" node tests/bench/run.js | tee tests/bench/out/leg-run.log ;;
+            sealed-counts) BENCH_QUIET=sealed BENCH_NO_FILES=1 BENCH_OUT="$RUNNER_TEMP/leg/out" BENCH_COUNTS_OUT="$RUNNER_TEMP/leg/counts" xvfb-run -a -s "-screen 0 1920x1080x24" node tests/bench/run.js | tee tests/bench/out/leg-run.log ;;
             batch-cap) BENCH_MAX_USD=0.03 BENCH_OUT=tests/bench/out/leg BENCH_COUNTS_OUT=tests/bench/out/leg xvfb-run -a -s "-screen 0 1920x1080x24" node tests/bench/run.js | tee tests/bench/out/leg-run.log ;;
             census) CENSUS_TASKS=tests/bench/fixture-tasks.json CENSUS_OUT=tests/bench/out/leg CENSUS_WAIT_S=2 xvfb-run -a -s "-screen 0 1920x1080x24" node tests/bench/census.js | tee tests/bench/out/leg-run.log ;;
           esac
@@ -539,18 +653,34 @@ jobs:
         run: |
           case "$LEG" in
             batch)
+              # The dev hand-over: the runs encrypted with a throwaway key, opened again whole, nothing readable in the sealed file.
+              export OM2W_PASS="$(openssl rand -base64 48 | tr -d '[:space:]')"
+              bash tests/bench/om2w-crypt.sh seal tests/bench/out/leg "$RUNNER_TEMP/leg/om2w-dev-shard-1.tar.gz.enc"
+              bash tests/bench/om2w-crypt.sh open "$RUNNER_TEMP/leg/om2w-dev-shard-1.tar.gz.enc" "$RUNNER_TEMP/leg/opened"
+              diff -r tests/bench/out/leg "$RUNNER_TEMP/leg/opened"
+              node tests/bench/trial.js leaks "$RUNNER_TEMP/leg/om2w-dev-shard-1.tar.gz.enc" --tasks tests/bench/fixture-tasks.json
+              unset OM2W_PASS
               node tests/bench/trial.js summary tests/bench/out/leg --tasks tests/bench/fixture-tasks.json --suite "fixture, dry om2w leg batch" --arm shipped --shards 1 --commit "$GITHUB_SHA" --check-dry | tee -a "$GITHUB_STEP_SUMMARY"
               node tests/bench/om2w.js summary tests/bench/out/leg --part fixture --planned 7 --arm shipped --shards 1 | tee -a "$GITHUB_STEP_SUMMARY"
               # The judge's fixed instructions were read from the cache after the first request.
               node -e "const c = JSON.parse(require('fs').readFileSync('tests/bench/out/leg/om2w-counts-1of1.json', 'utf8')).counts; if (!(c.judgeTokens.cacheRead > 0 && c.judgeTokens.cacheWrite > 0)) { console.error('the batch judge did not use the cache'); process.exit(1); } console.log('batch judge: ' + c.judgeCalls + ' call(s), cache written and read');"
               ;;
             sealed-counts)
-              node tests/bench/om2w.js summary tests/bench/out/leg --part gate --planned 7 --arm shipped --shards 1 | tee -a "$GITHUB_STEP_SUMMARY"
+              # The shard's log shows no numbers of its own: no numbers table, no counts.
+              if grep -q '^| scored tasks' tests/bench/out/leg-run.log; then echo "::error::A sealed shard printed its own numbers table."; exit 1; fi
               node tests/bench/trial.js leaks tests/bench/out/leg-run.log --tasks tests/bench/fixture-tasks.json
-              node tests/bench/trial.js leaks tests/bench/out/leg/om2w-counts-1of1.json --tasks tests/bench/fixture-tasks.json
-              if [ -n "$(find tests/bench/out/leg -type f ! -name 'om2w-counts-*.json' ! -name 'om2w-summary.json')" ]; then echo "::error::The sealed path left a file other than its counts."; exit 1; fi
+              node tests/bench/trial.js leaks "$RUNNER_TEMP/leg/counts/om2w-counts-1of1.json" --tasks tests/bench/fixture-tasks.json
+              if [ -n "$(find "$RUNNER_TEMP/leg/counts" -type f ! -name 'om2w-counts-*.json')" ]; then echo "::error::The sealed path left a file other than its counts."; exit 1; fi
               if [ -d "$RUNNER_TEMP/leg/out" ] && [ -n "$(find "$RUNNER_TEMP/leg/out" -type f)" ]; then echo "::error::The sealed path wrote a file of a run."; exit 1; fi
-              node -e "const c = JSON.parse(require('fs').readFileSync('tests/bench/out/leg/om2w-counts-1of1.json', 'utf8')).counts; if (c.runs !== 7 || c.outcomes.passed < 1) { console.error('the sealed path did not count every run'); process.exit(1); } console.log('sealed path: ' + c.runs + ' runs counted, no file of a run');"
+              # The hand-over as a real sealed shard makes it: the counts encrypted, the upload folder holding that file only.
+              export OM2W_PASS="$(openssl rand -base64 48 | tr -d '[:space:]')"
+              bash tests/bench/om2w-crypt.sh seal "$RUNNER_TEMP/leg/counts" tests/bench/out/leg/om2w-sealed-shard-1.tar.gz.enc
+              if [ -n "$(find tests/bench/out/leg -type f ! -name 'om2w-sealed-shard-*.tar.gz.enc')" ]; then echo "::error::The sealed upload holds a file other than the encrypted counts."; exit 1; fi
+              if grep -q '"outcomes"' tests/bench/out/leg/om2w-sealed-shard-1.tar.gz.enc; then echo "::error::The sealed counts can be read without the key."; exit 1; fi
+              bash tests/bench/om2w-crypt.sh open tests/bench/out/leg/om2w-sealed-shard-1.tar.gz.enc "$RUNNER_TEMP/leg/opened"
+              unset OM2W_PASS
+              node tests/bench/om2w.js summary "$RUNNER_TEMP/leg/opened" --part gate --planned 7 --planned-tasks 7 --excluded 0 --arm shipped --shards 1 | tee -a "$GITHUB_STEP_SUMMARY"
+              node -e "const c = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).counts; if (c.runs !== 7 || c.outcomes.passed < 1) { console.error('the sealed path did not count every run'); process.exit(1); } console.log('sealed path: ' + c.runs + ' runs counted, no file of a run, counts encrypted for the summary');" "$RUNNER_TEMP/leg/opened/om2w-counts-1of1.json"
               ;;
             batch-cap)
               node tests/bench/trial.js summary tests/bench/out/leg --tasks tests/bench/fixture-tasks.json --suite "fixture, dry om2w leg batch-cap" --arm shipped --commit "$GITHUB_SHA" --check cap | tee -a "$GITHUB_STEP_SUMMARY"
