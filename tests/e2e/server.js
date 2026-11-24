@@ -1044,6 +1044,26 @@ const FIXTURES = {
      <p><a href="/item-b" target="_blank" rel="noopener">Gizmo Item B</a></p>`,
   ),
 
+  // A page that puts another in its place: it shows a check of its own,
+  // loads, goes quiet, and a moment later replaces itself with the page
+  // asked for, as a site's check of the browser that passes by itself does.
+  "/self-check-start": pageShell(
+    "Projects",
+    `<h1>Projects</h1>
+     <p><a href="/self-check">See all projects</a></p>
+     <p><a href="/self-check?tab=1" target="_blank" rel="noopener">See all projects in a new tab</a></p>`,
+  ),
+  "/self-check": pageShell(
+    "One moment",
+    `<p>One moment while this page checks your connection.</p>
+     <script>addEventListener('load', () => setTimeout(() => location.replace('/self-checked' + location.search), 700));</script>`,
+  ),
+  "/self-checked": pageShell(
+    "All projects",
+    `<h1>All projects</h1>
+     <ul><li>Harbour bridge repair, due March 2027</li><li>North line signals, due June 2027</li></ul>`,
+  ),
+
   "/item-b": pageShell(
     "Item B",
     `<h1>Gizmo Item B</h1>
@@ -1366,6 +1386,12 @@ function buildStepPolicies(baseUrl) {
     newTab(ctx) {
       if (ctx.url.includes("/item-b")) return done("Item B costs **$18**.", ["Price: $18"]);
       return step("Open the entry", [{ do: "click", ref: named(ctx, /gizmo item b/i).id }]);
+    },
+    // A page that replaces itself after it has loaded: the first reading is of the page that took its place.
+    selfCheck(ctx) {
+      if (/Harbour bridge repair/.test(ctx.userText)) return done("The first project is **Harbour bridge repair**, due March 2027.", ["Harbour bridge repair, due March 2027"]);
+      if (ctx.url.includes("/self-check-start")) return step("See all projects", [{ do: "click", ref: named(ctx, /tab=1/.test(ctx.url) ? /in a new tab/i : /^see all projects$/i).id }]);
+      return done("policy error: the page was read before it replaced itself", [], false);
     },
     // Pages that never finish loading: the run reads what is there and goes on.
     stillLoading(ctx) {
@@ -1857,6 +1883,7 @@ function createE2EServer(port = 8907) {
   scenarios.humanPushy = { task: "How much is Item B?" };
   scenarios.humanAuto = { task: "How much is Item B?" };
   scenarios.newTab = { task: "How much is Item B?" };
+  scenarios.selfCheck = { task: "Which project is listed first?" };
   scenarios.contextAsk = { task: "Check my assignments." };
   scenarios.contextKnown = { task: "When is my next coursework deadline?" };
   // What the context call returns: a fact in the user's words, and one
