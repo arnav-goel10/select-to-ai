@@ -187,7 +187,7 @@
    * shows that page in short instead.
    */
   function anthropicTurns(turns, last, image, mark) {
-    const messages = turns.map((t) => (t.role === "assistant"
+    const messages = turns.map((t) => (t.call
       ? { role: "assistant", content: [{ type: "tool_use", id: t.call.id, name: t.call.name, input: t.call.input }] }
       : { role: "user", content: t.parts.map((p) => (p.result !== undefined ? { type: "tool_result", tool_use_id: p.id, content: p.result } : { type: "text", text: p.text })) }));
     const end = messages[messages.length - 1].content;
@@ -207,16 +207,17 @@
   function chatTurns(turns, last, image, mark) {
     const messages = [];
     turns.forEach((t, i) => {
-      if (t.role === "assistant") {
+      if (t.call) {
         messages.push({ role: "assistant", content: "", tool_calls: [{ id: t.call.id, type: "function", function: { name: t.call.name, arguments: JSON.stringify(t.call.input) } }] });
         return;
       }
       const final = i === turns.length - 1;
-      for (const p of t.parts) if (p.result !== undefined) messages.push({ role: "tool", tool_call_id: p.id, content: p.result });
+      const results = t.parts.filter((p) => p.result !== undefined).map((p) => ({ role: "tool", tool_call_id: p.id, content: p.result }));
+      messages.push(...results);
       const texts = t.parts.filter((p) => p.result === undefined).map((p) => p.text);
       if (final) {
         // The current text joins the turn's own text, or comes after its results.
-        const marked = mark && !texts.length && messages.length && messages[messages.length - 1].role === "tool";
+        const marked = mark && !texts.length && results.length > 0;
         if (marked) { const m = messages[messages.length - 1]; m.content = [{ type: "text", text: m.content, cache_control: { type: "ephemeral" } }]; }
         const parts = texts.map((text, j) => ({ type: "text", text, ...(mark && j === texts.length - 1 ? { cache_control: { type: "ephemeral" } } : {}) }));
         parts.push({ type: "text", text: last });
@@ -232,7 +233,7 @@
     const items = [];
     const said = (text) => ({ type: "message", role: "user", content: [{ type: "input_text", text }] });
     turns.forEach((t, i) => {
-      if (t.role === "assistant") { items.push({ type: "function_call", call_id: t.call.id, name: t.call.name, arguments: JSON.stringify(t.call.input) }); return; }
+      if (t.call) { items.push({ type: "function_call", call_id: t.call.id, name: t.call.name, arguments: JSON.stringify(t.call.input) }); return; }
       for (const p of t.parts) if (p.result !== undefined) items.push({ type: "function_call_output", call_id: p.id, output: p.result });
       const texts = t.parts.filter((p) => p.result === undefined).map((p) => p.text);
       if (i === turns.length - 1) {
@@ -245,7 +246,7 @@
   }
 
   /** The turns' text, for a token count when the provider gives none. */
-  const turnsText = (turns) => (turns || []).map((t) => (t.role === "assistant" ? JSON.stringify(t.call.input) : t.parts.map((p) => (p.result !== undefined ? p.result : p.text)).join("\n"))).join("\n");
+  const turnsText = (turns) => (turns || []).map((t) => (t.call ? JSON.stringify(t.call.input) : t.parts.map((p) => (p.result !== undefined ? p.result : p.text)).join("\n"))).join("\n");
 
   /**
    * A Responses API request for a user signed in with ChatGPT, within what

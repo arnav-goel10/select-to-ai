@@ -219,6 +219,12 @@ In this browser your pointer and your keys are made by script: the page is sent 
    */
   const ADDRESS_FACT = "An address opens without asking the user when it is on the site the run began on or on a site the request names or the user has allowed, when it is a link shown on a page read in this run or the results of a search form on such a page for the request's own words, or when it is a site's front page: the site's own name, or www. and that name, with no path, query or anything else after it. Other addresses the agent writes itself can wait for the user to allow them.";
 
+  /** That the history's first steps are shown in short, when they are (historyLines), or "". */
+  function shortenedFact(run) {
+    const older = (run.history || []).length - HISTORY_FULL;
+    return older > 0 ? `The first ${older} step${older === 1 ? " is" : "s are"} shown in short in what you have done: the goal and whether it went through, not what each action did.` : "";
+  }
+
   function runFacts(run, page, now) {
     const facts = [`This is step ${run.step}.`];
     if (startSiteFact(run)) facts.push(startSiteFact(run));
@@ -240,8 +246,7 @@ In this browser your pointer and your keys are made by script: the page is sent 
     else if (used > room && run.notesFull === "ask") facts.push(`Your notes are ${used} characters, past their room of ${room}. rewrite_notes replaces them with a shorter version.`);
     else if (used > room) facts.push(`Your notes are ${used} characters, past their room of ${room}.`);
     else if (used && !run.notesCut) facts.push(`Your notes use ${used} of the ${room} characters they have room for.`);
-    const older = (run.history || []).length - HISTORY_FULL;
-    if (older > 0) facts.push(`The first ${older} step${older === 1 ? " is" : "s are"} shown in short in what you have done: the goal and whether it went through, not what each action did.`);
+    if (shortenedFact(run)) facts.push(shortenedFact(run));
     const f = run.facts || {};
     if (f.repeats >= 2) facts.push(`The same action has now been tried ${f.repeats} times in a row and the page did not change.`);
     else if (f.same >= 3) facts.push(`You have now done the same action on this page ${f.same} times in a row.`);
@@ -453,7 +458,8 @@ In this browser your pointer and your keys are made by script: the page is sent 
     // turns, so the facts do not say it is shortened; and each earlier page
     // is excerpted in the turn of the step taken on it, not again here.
     const standing = standingFacts(run, ctx).filter((f) => facts.includes(f));
-    const turnFacts = facts.filter((f) => !SHORTENED.test(f) && !standing.includes(f));
+    const shortened = shortenedFact(run);
+    const turnFacts = facts.filter((f) => f !== shortened && !standing.includes(f));
     const opening = [...head, ...(standing.length ? [`Facts from the browser that hold for the whole run:\n${standing.map((f) => `- ${f}`).join("\n")}`] : [])].join("\n\n");
     const last = tail([known, notes, factsText(turnFacts), notice], pageBlock(run, page, { ...ctx, earlierInTurns: true }, {}));
     // Whether the page's text was cut to fit: only then has `read` more to give.
@@ -470,8 +476,6 @@ In this browser your pointer and your keys are made by script: the page is sent 
     return [todayLine(ctx.now), startSiteFact(run), ADDRESS_FACT, languageFact(ctx.uiLanguage === undefined ? browserLanguage() : ctx.uiLanguage)].filter(Boolean);
   }
 
-  // The fact that says older steps are shown in short (runFacts).
-  const SHORTENED = /^The first \d+ steps? (is|are) shown in short/;
 
   // How much of one action's result a turn keeps. The turns are written
   // once and kept, so each result is kept as the last step's is in the
@@ -518,7 +522,7 @@ In this browser your pointer and your keys are made by script: the page is sent 
     const out = [{ role: "user", parts: [{ text: headText }] }];
     const userTurn = () => {
       const t = out[out.length - 1];
-      if (t.role === "user") return t;
+      if (!t.call) return t;
       const fresh = { role: "user", parts: [] };
       out.push(fresh);
       return fresh;
