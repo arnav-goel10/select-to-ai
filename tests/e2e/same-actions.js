@@ -18,12 +18,19 @@ if (!a || !b) { console.error("Give the two E2E_ACTIONS_OUT files: one message, 
 if (a.promptCaching !== false || b.promptCaching !== true) { console.error("The first file must be the one-message run (E2E_PROMPT_CACHING=off) and the second the conversation."); process.exit(1); }
 
 const differ = [];
+const reordered = [];
 const n = Math.max(a.played.length, b.played.length);
 for (let i = 0; i < n; i++) {
   const x = a.played[i];
   const y = b.played[i];
   if (!x || !y || x.scenario !== y.scenario) { differ.push(`run ${i + 1}: ${x ? x.scenario : "nothing"} against ${y ? y.scenario : "nothing"}`); continue; }
-  if (JSON.stringify(x.actions) !== JSON.stringify(y.actions)) differ.push(`${x.scenario} (run ${i + 1}):\n  one message:  ${JSON.stringify(x.actions)}\n  conversation: ${JSON.stringify(y.actions)}`);
+  if (JSON.stringify(x.actions) === JSON.stringify(y.actions)) continue;
+  // Sub-tasks run side by side and the gateway logs every run's actions in
+  // one list, so theirs may interleave in any order: there the same
+  // actions are asked for, in any order.
+  const sorted = (list) => JSON.stringify(list.map((v) => JSON.stringify(v)).sort());
+  if (x.actions.some((v) => v.do === "delegate") && sorted(x.actions) === sorted(y.actions)) { reordered.push(x.scenario); continue; }
+  differ.push(`${x.scenario} (run ${i + 1}):\n  one message:  ${JSON.stringify(x.actions)}\n  conversation: ${JSON.stringify(y.actions)}`);
 }
 const passed = (r) => new Map(r.results.map((t) => [t.title, t.pass]));
 const pa = passed(a);
@@ -31,5 +38,6 @@ for (const [title, pass] of passed(b)) if (pa.get(title) !== pass) differ.push(`
 
 const actions = a.played.reduce((t, p) => t + p.actions.length, 0);
 console.log(`${a.played.length} scenario runs, ${actions} actions as one message, ${b.played.reduce((t, p) => t + p.actions.length, 0)} as a conversation`);
+if (reordered.length) console.log(`same actions in another order, from sub-tasks running side by side: ${reordered.join(", ")}`);
 if (differ.length) { console.log(`\n${differ.length} differ:\n${differ.join("\n")}`); process.exit(1); }
 console.log("Every scenario took the same actions both ways.");

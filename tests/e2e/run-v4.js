@@ -446,7 +446,6 @@ async function main() {
         const quoted = await agent.evaluate(() => !!document.querySelector(".message-bubble.user .selection-chip"));
         const chipAfter = await agent.evaluate(() => !document.querySelector(".selection-slot").hidden);
         const logged = await control("/control/log", { method: "GET" });
-      played.push({ scenario: name, actions: logged.actions });
         await agent.close().catch(() => {});
         return { ...(state || {}), chip, liveSelection, quoted, chipAfter, prompts: logged.prompts || [] };
       } }],
