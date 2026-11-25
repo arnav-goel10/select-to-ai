@@ -43,6 +43,10 @@ on:
         description: Hard spend cap for the press check eval, in US dollars
         type: string
         default: "1"
+      cache_replay:
+        description: Run the cached-conversation replay on a live model (uses the Anthropic secret)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -233,6 +237,75 @@ jobs:
           E2E_DEBUGGER: "off"
           E2E_EXT: build
           E2E_NOT_APPLICABLE: tests/e2e/not-applicable-4.0.json
+
+  # The cached conversation decides as the one message did: the same v4
+  # scenarios on the shipped build, each step asked as one message and then
+  # as the run's conversation, with the scripted model, so nothing is paid.
+  same-actions:
+    name: same-actions (one message against conversation)
+    needs: package-integrity
+    if: ${{ !cancelled() && needs.package-integrity.outputs.artifact != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - run: npx puppeteer browsers install chrome
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.package-integrity.outputs.artifact }}
+      - run: mkdir -p build && unzip -q "${{ needs.package-integrity.outputs.artifact }}" -d build
+      # Each arm's own pass or fail is compared below, so a failing scenario does not stop the other arm.
+      - name: Scenarios, each step as one message
+        run: npm run test:v4 || true
+        env:
+          E2E_DEBUGGER: "off"
+          E2E_EXT: build
+          E2E_NOT_APPLICABLE: tests/e2e/not-applicable-4.0.json
+          E2E_PROMPT_CACHING: "off"
+          E2E_ACTIONS_OUT: one-message.json
+      - name: Scenarios, each step as the run's conversation
+        run: npm run test:v4 || true
+        env:
+          E2E_DEBUGGER: "off"
+          E2E_EXT: build
+          E2E_NOT_APPLICABLE: tests/e2e/not-applicable-4.0.json
+          E2E_ACTIONS_OUT: conversation.json
+      - run: node tests/e2e/same-actions.js one-message.json conversation.json
+
+  # The cached conversation on a live model: a recorded 20-step run asked
+  # both ways, with its cached and uncached tokens and what it cost. On pull
+  # requests from this repository (the secret is not given to forks) and by
+  # hand; the spend stops at the cap.
+  cache-replay:
+    name: cache-replay (live, capped at $1)
+    if: (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.cache_replay)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Replay on a live model
+        run: node tests/bench/cache-replay.js
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CACHE_REPLAY_CAP_USD: "1"
+          CACHE_REPLAY_REPORT: cache-replay.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cache-replay
+          path: cache-replay.json
+          if-no-files-found: ignore
 
   browser:
     name: Browser tests (Chromium, other suites)

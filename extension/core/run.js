@@ -497,7 +497,7 @@
       const first = run.firstMove;
       run.firstMove = null;
       run.previous = { url: page.url || "", visibleText: page.visibleText || "" };
-      run.current = { step: run.step, goal: "Open the address it was given", actions: [], url: page.url || "" };
+      run.current = { step: run.step, goal: "Open the address it was given", actions: [], url: page.url || "", ...viewOf(page) };
       run.queue = [first];
       log(run, "executor", `Step ${run.step}`, run.current.goal);
       // What the page's controls do is asked before the first move is decided.
@@ -1091,7 +1091,10 @@
     // A picture the model asked for goes with this step only.
     const image = run.image || null;
     run.image = null;
-    fx.push({ type: "model", system: messages.system, user: image ? `${messages.user}\nA picture of the page as it is on screen is attached.` : messages.user, tool, tier: taker.by === "helper" ? "helper" : "pro", purpose: "step", effort, ...(image ? { image } : {}), ...(run.askedOut ? { reasks: 0 } : {}) });
+    const pictured = (text) => (image ? `${text}\nA picture of the page as it is on screen is attached.` : text);
+    // The step both ways: as one message, and as the run's conversation
+    // with the page last, which llm.js sends when the connection takes it.
+    fx.push({ type: "model", system: messages.system, user: pictured(messages.user), turns: messages.turns, last: pictured(messages.last), tool, tier: taker.by === "helper" ? "helper" : "pro", purpose: "step", effort, ...(image ? { image } : {}), ...(run.askedOut ? { reasks: 0 } : {}) });
     return fx;
   }
 
@@ -1168,7 +1171,8 @@
     // that holds until the user says something new (policy.js leftToUser).
     if (step.leaveToUser) run.leaveToUser = { said: (run.said || []).length };
     const noted = keepNotes(run, step);
-    run.current = { step: run.step, goal: step.goal, actions: [], url: page.url || "" };
+    // The model's call as it made it: the step's turn in the conversation (context.js stepTurns).
+    run.current = { step: run.step, goal: step.goal, actions: [], url: page.url || "", call: event.reply, ...viewOf(page) };
     // The note this step added, for the trace.
     if (noted) run.current.note = clip(noted, 600);
     if (run.helper) run.current.by = run.by === "helper" ? run.helper.model : "main";
@@ -1177,6 +1181,9 @@
     if (step.goal) log(run, "executor", `Step ${run.step}`, step.goal);
     return next(run, page, env, fx);
   }
+
+  /** The page a step was taken on, in short, for that step's turn once the page is no longer shown (context.js stepTurns). */
+  const viewOf = (page) => ({ title: clip(page.title || "", 120), seen: TOOLS.digestPage(page.innerText, 600) });
 
   /**
    * The step's note added to the model's notes, or its rewrite in their

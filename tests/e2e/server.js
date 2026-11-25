@@ -2060,9 +2060,11 @@ function createE2EServer(port = 8907) {
         }
         const scenario = scenarios[state.scenarioName];
         // The instructions are the first message; the step's context, with
-        // the element list and page text, is the one after it.
+        // the element list and page text, is what follows it: one message,
+        // or the run's conversation (its results and the page last), read
+        // as one text the way a model reads it.
         const systemText = (body.messages || []).map((m) => contentToText(m.content ?? "")).join("\n\n");
-        const userText = contentToText(body.messages?.[1]?.content ?? "");
+        const userText = (body.messages || []).slice(1).map((m) => contentToText(m.content ?? "")).join("\n\n");
         const toolName = body.tools?.[0]?.function?.name || null;
         // Everything the model was sent, so a test can prove what it never saw.
         (state.prompts = state.prompts || []).push(systemText);
