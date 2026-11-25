@@ -45,3 +45,4 @@ packages/recipes/receipts/
 
 # The holdout tasks in plain text: the repository holds only holdout-tasks.json.enc (tests/bench/README.md).
 tests/bench/holdout-tasks.json
+tests/bench/om2w-dev-keypoints.json
