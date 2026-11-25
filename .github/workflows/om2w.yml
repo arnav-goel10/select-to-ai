@@ -31,6 +31,16 @@ name: Online-Mind2Web trial
 # A real run first runs a canary of three fixture tasks and stops if it
 # fails. Dry mode (a push, or the dry box) runs the fixture legs only, with
 # no key and no fetch.
+#
+# Measurement modes. noise-floor is a run of every task several times
+# (runs, or the baseline's runs for the part when runs is 1), reported with
+# each task's passes out of its runs and the flip rate. rejudge runs no
+# agent: it downloads the stored dev runs of earlier workflow runs
+# (source_runs), judges each again several times on the frozen key points,
+# writes those key points once if none are committed, and checks the block
+# detector against the hand labels. Dev only. The blocked column is always
+# the block detector's (tests/bench/blocks.js), and every summary gives holds
+# per run as an interruption count.
 on:
   workflow_dispatch:
     inputs:
@@ -40,9 +50,9 @@ on:
         options: [dev, gate, vault]
         default: dev
       mode:
-        description: "census: each start page loaded once, no model call, nothing spent. run: the agent and the judge"
+        description: "census: each start page loaded once, no model call, nothing spent. run: the agent and the judge. noise-floor: run, every task several times, with pass counts and the flip rate. rejudge: no agent, the stored dev runs of source_runs judged again on frozen key points"
         type: choice
-        options: [census, run]
+        options: [census, run, noise-floor, rejudge]
         default: census
       arm:
         description: "shipped: the packed build as it is (no debugger). debugger-on: the same build with the debugger permission added"
@@ -81,6 +91,11 @@ on:
         description: "Once only, before split.digest is committed: a census that prints the split's digest to commit. Refused once a digest is committed"
         type: boolean
         default: false
+      source_runs:
+        description: "rejudge only: the workflow runs whose stored dev runs are judged again, run ids separated by spaces"
+        type: string
+        default: "45333609111 45499514429"
+
   push:
     branches: [main, om2w-trial]
     paths: [".github/workflows/om2w.yml", "tests/bench/**", "tests/e2e/server.js"]
@@ -136,6 +151,7 @@ jobs:
           IN_LIMIT: ${{ inputs.limit }}
           IN_MAX_USD: ${{ inputs.max_usd }}
           IN_BOOTSTRAP: ${{ inputs.bootstrap_split }}
+          IN_SOURCES: ${{ inputs.source_runs }}
           # Only asked whether each is set; no value is used in this job.
           HAS_ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
           HAS_HF_TOKEN: ${{ secrets.HF_TOKEN != '' }}
@@ -143,7 +159,7 @@ jobs:
         run: |
           fail() { echo "::error::$1"; echo "$1" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
           # Every value below goes to GITHUB_OUTPUT as one line: an input with a line break could add an output of its own.
-          for v in "$IN_DRY" "$IN_PART" "$IN_MODE" "$IN_ARM" "$IN_MODEL" "$IN_JUDGE_MODEL" "$IN_RUNS" "$IN_SHARDS" "$IN_LIMIT" "$IN_MAX_USD" "$IN_BOOTSTRAP"; do
+          for v in "$IN_DRY" "$IN_PART" "$IN_MODE" "$IN_ARM" "$IN_MODEL" "$IN_JUDGE_MODEL" "$IN_RUNS" "$IN_SHARDS" "$IN_LIMIT" "$IN_MAX_USD" "$IN_BOOTSTRAP" "$IN_SOURCES"; do
             case "$v" in *$'\n'*|*$'\r'*) fail "an input holds a line break: refused, nothing was run" ;; esac
           done
           dry=false
@@ -169,12 +185,25 @@ jobs:
           digest=$(cfg split.digest)
           # Each value is matched whole ([[ =~ ]] anchors the whole string, not one line of it).
           case "$part" in dev) sealed=false ;; gate|vault) sealed=true ;; *) fail "part must be dev, gate or vault: the reserve is never run" ;; esac
-          case "$mode" in run|census) ;; *) fail "mode must be run or census" ;; esac
+          case "$mode" in run|census|noise-floor|rejudge) ;; *) fail "mode must be run, census, noise-floor or rejudge" ;; esac
+          # noise-floor is a run of every task several times: the baseline's runs for the part unless runs asks for more than one.
+          if [ "$mode" = "noise-floor" ]; then
+            if [ "$runs" = "1" ]; then runs=$(cfg "baseline.runs.$part"); fi
+            [[ "$runs" =~ ^[2-5]$ ]] || fail "noise-floor needs 2 to 5 runs a task"
+            mode=run
+            noise=true
+          fi
+          # rejudge runs no agent: stored dev runs only, judged again on the frozen key points.
+          if [ "$mode" = "rejudge" ]; then
+            [ "$part" = "dev" ] || fail "rejudge reads stored dev runs only: no sealed part is ever judged again"
+            [[ "$IN_SOURCES" =~ ^[0-9]{6,15}( [0-9]{6,15}){0,3}$ ]] || fail "source_runs must be one to four workflow run ids separated by spaces"
+          fi
           case "$arm" in shipped|debugger-on) ;; *) fail "arm must be shipped or debugger-on" ;; esac
           # The agent and the judge are both Claude models on Anthropic, with ANTHROPIC_API_KEY.
           [[ "$model" =~ ^claude-[A-Za-z0-9._-]+$ ]] || fail "model must be a Claude model: the agent's key here is ANTHROPIC_API_KEY"
           [[ "$judge_model" =~ ^claude-[A-Za-z0-9._-]+$ ]] || fail "judge_model must be a Claude model: the judge runs on Anthropic's batch API"
-          if [ "$judge_model" = "$model" ]; then fail "the judge must be a different model from the agent's"; fi
+          # A rejudge runs no agent, so its judge may be the model that drove the stored runs; its summary says so.
+          if [ "$judge_model" = "$model" ] && [ "$mode" != "rejudge" ]; then fail "the judge must be a different model from the agent's"; fi
           [[ "$shards" =~ ^[0-9]{1,2}$ ]] || fail "shards must be a whole number"
           if [ "$shards" -lt 1 ] || [ "$shards" -gt 20 ]; then fail "shards must be 1 to 20"; fi
           [[ "$runs" =~ ^[1-5]$ ]] || fail "runs must be 1 to 5"
@@ -198,8 +227,10 @@ jobs:
           # A real run never turns into a dry one: a missing secret fails it.
           if [ "$dry" = "false" ]; then
             if [ "$HAS_HF_TOKEN" != "true" ]; then fail "the repository has no HF_TOKEN secret, which fetches the Online-Mind2Web task file. Nothing was run. Tick dry for a dry run."; fi
-            if [ "$mode" = "run" ] && [ "$HAS_ANTHROPIC_KEY" != "true" ]; then fail "the repository has no ANTHROPIC_API_KEY secret, which the agent and the judge need. Nothing was run. Tick dry for a dry run."; fi
-            if [ "$mode" = "run" ] && [ "$part" = "dev" ] && [ "$HAS_DEV_KEY" != "true" ]; then fail "the repository has no OM2W_DEV_KEY secret, which encrypts the dev runs before upload. Nothing was run."; fi
+            if [ "$mode" = "run" ] || [ "$mode" = "rejudge" ]; then
+              if [ "$HAS_ANTHROPIC_KEY" != "true" ]; then fail "the repository has no ANTHROPIC_API_KEY secret, which the agent and the judge need. Nothing was run. Tick dry for a dry run."; fi
+              if [ "$part" = "dev" ] && [ "$HAS_DEV_KEY" != "true" ]; then fail "the repository has no OM2W_DEV_KEY secret, which encrypts and opens the dev runs. Nothing was run."; fi
+            fi
           fi
           if [ "$sample" -gt 0 ] && [ "$shards" -gt "$sample" ]; then shards="$sample"; fi
           if [ "$dry" = "true" ]; then shards=1; fi
@@ -229,10 +260,13 @@ jobs:
             echo ""
             if [ "$dry" = "true" ]; then
               echo "Dry mode ($why): the batch judge, the sealed counts path and the census on the fixture pages. No key is read, nothing is fetched and nothing is spent."
+            elif [ "$mode" = "rejudge" ]; then
+              echo "Rejudge of the stored dev runs of workflow run(s) $IN_SOURCES: no agent, judge \`$judge_model\`, each run judged 3 times on the frozen key points with up to 3 votes on a fail, spend cap \$$cap. Key points written once by \`$(cfg baseline.judgeModel)\` if none are committed. The block detector is checked against the hand labels."
             elif [ "$mode" = "census" ]; then
               echo "Block census of all parts: each start page once, no model call, nothing spent. $shards shard(s). Dev sites by name, sealed parts as counts."
               if [ "$bootstrap" = "true" ]; then echo "" ; echo "**BOOTSTRAP of the split digest.** This census prints the digest to commit as split.digest. No run can start until it is committed, and once it is, bootstrap is refused."; fi
             else
+              if [ "${noise:-false}" = "true" ]; then echo "Noise floor: every task $runs times, reported with each task's passes out of $runs and the flip rate."; fi
               echo "Real run of part \`$part\`: agent \`anthropic\` / \`$model\`, judge \`$judge_model\` through the batch API, both with \`ANTHROPIC_API_KEY\`. $runs run(s) each, $timeout_s s per task, arm \`$arm\`, $shards shard(s), spend cap \$$cap (\$$per per shard). A canary of three fixture tasks runs first."
               if [ "$sealed" = "true" ]; then echo "Sealed part: each shard writes counts only, encrypted for the summary, no file of any run, and its log shows no numbers of the shard. The summary reports the part only whole, when every planned run was counted, and a shard that did not finish writes no counts."; else echo "Dev: the runs are uploaded encrypted with OM2W_DEV_KEY. Open them with scripts/om2w-dev-results.sh <run id>."; fi
             fi
@@ -365,6 +399,17 @@ jobs:
         run: |
           case "$PART" in dev|gate|vault) ;; *) echo "::error::part must be dev, gate or vault"; exit 1 ;; esac
           node tests/bench/om2w.js split --dataset "$RUNNER_TEMP/om2w/dataset.json" --part "$PART" --out "$RUNNER_TEMP/om2w/tasks.json" --digest-key-file "$RUNNER_TEMP/om2w/keys/split-digest"
+      # Dev only: the frozen key points, opened into the runner's temporary folder and checked against the committed lock.
+      # A sealed part has none: its key points are never written.
+      - name: Open the frozen key points
+        if: ${{ needs.plan.outputs.part == 'dev' && hashFiles('tests/bench/om2w-dev-keypoints.tar.gz.enc') != '' }}
+        env:
+          OM2W_DEV_KEY: ${{ needs.plan.outputs.part == 'dev' && secrets.OM2W_DEV_KEY || '' }}
+        run: |
+          if [ -z "$OM2W_DEV_KEY" ]; then echo "::error::The repository has no OM2W_DEV_KEY secret: the frozen key points cannot be opened."; exit 1; fi
+          OM2W_PASS="$(printf '%s' "$OM2W_DEV_KEY" | tr -d '[:space:]')" bash tests/bench/om2w-crypt.sh open tests/bench/om2w-dev-keypoints.tar.gz.enc "$RUNNER_TEMP/om2w/keypoints"
+          node tests/bench/keypoints.js verify "$RUNNER_TEMP/om2w/keypoints/keypoints.json" --lock tests/bench/om2w-dev-keypoints.lock.json
+          echo "BENCH_KEY_POINTS=$RUNNER_TEMP/om2w/keypoints/keypoints.json" >> "$GITHUB_ENV"
       - name: Run the tasks
         env:
           BENCH_EXTENSION: build
@@ -393,6 +438,9 @@ jobs:
           BENCH_JUDGE_MODEL: ${{ needs.plan.outputs.judge_model }}
           BENCH_JUDGE_URL: https://api.anthropic.com/v1/messages
           BENCH_JUDGE_KEY: ${{ needs.plan.outputs.dry != 'true' && secrets.ANTHROPIC_API_KEY || '' }}
+          # The judge votes up to three times on a fail; a first pass stands alone.
+          BENCH_JUDGE_VOTES: "3"
+          BENCH_KEY_POINTS_LOCK: tests/bench/om2w-dev-keypoints.lock.json
         run: |
           mkdir -p "$RUNNER_TEMP/om2w"
           xvfb-run -a -s "-screen 0 1920x1080x24" node tests/bench/run.js 2>&1 | tee "$RUNNER_TEMP/om2w/run.log"
@@ -507,7 +555,7 @@ jobs:
   summary:
     name: om2w summary
     needs: [plan, run, census]
-    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.dry != 'true' }}
+    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.dry != 'true' && needs.plan.outputs.mode != 'rejudge' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -591,6 +639,120 @@ jobs:
         with:
           name: om2w-summary
           path: tests/bench/out/om2w
+          if-no-files-found: warn
+          retention-days: 30
+
+  # Rejudge, dev only, no agent: the stored dev runs of earlier workflow runs
+  # (source_runs), downloaded and opened with OM2W_DEV_KEY into the runner's
+  # temporary folder. The frozen key points are opened and checked against
+  # the committed lock, or, when none are committed, written once by the
+  # baseline's judge model from each task alone and handed on encrypted with
+  # their lock, to be committed. Each run is then judged three times by the
+  # voting judge (tests/bench/stability.js) under the spend cap, and the block
+  # detector is checked against the hand labels. Counts in the clear; every
+  # judging of every run encrypted.
+  rejudge:
+    name: om2w rejudge (dev)
+    needs: [plan]
+    if: ${{ needs.plan.outputs.dry != 'true' && needs.plan.outputs.mode == 'rejudge' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Download the stored dev runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCES: ${{ inputs.source_runs }}
+        run: |
+          [[ "$SOURCES" =~ ^[0-9]{6,15}( [0-9]{6,15}){0,3}$ ]] || { echo "::error::source_runs must be workflow run ids"; exit 1; }
+          for id in $SOURCES; do gh run download "$id" --repo "$GITHUB_REPOSITORY" --pattern 'om2w-dev-shard-*' --dir "$RUNNER_TEMP/om2w/dl/$id"; done
+      - name: Open them, and the key points
+        env:
+          OM2W_DEV_KEY: ${{ needs.plan.outputs.mode == 'rejudge' && secrets.OM2W_DEV_KEY || '' }}
+          SOURCES: ${{ inputs.source_runs }}
+        run: |
+          if [ -z "$OM2W_DEV_KEY" ]; then echo "::error::The repository has no OM2W_DEV_KEY secret: the dev runs cannot be opened."; exit 1; fi
+          export OM2W_PASS="$(printf '%s' "$OM2W_DEV_KEY" | tr -d '[:space:]')"
+          for id in $SOURCES; do
+            n=0
+            for f in "$RUNNER_TEMP/om2w/dl/$id"/*/*.tar.gz.enc; do [ -e "$f" ] || continue; bash tests/bench/om2w-crypt.sh open "$f" "$RUNNER_TEMP/om2w/src/$id/$(basename "$f" .tar.gz.enc)"; n=$((n + 1)); done
+            echo "Workflow run $id: $n dev shard(s) opened."
+            if [ "$n" = "0" ]; then echo "::error::Workflow run $id left no dev shard to open (artifacts are kept 14 days)."; exit 1; fi
+          done
+      # The key points committed: opened and checked against the committed lock.
+      - name: Open and check the committed key points
+        if: ${{ hashFiles('tests/bench/om2w-dev-keypoints.tar.gz.enc') != '' }}
+        env:
+          OM2W_DEV_KEY: ${{ needs.plan.outputs.mode == 'rejudge' && secrets.OM2W_DEV_KEY || '' }}
+        run: |
+          OM2W_PASS="$(printf '%s' "$OM2W_DEV_KEY" | tr -d '[:space:]')" bash tests/bench/om2w-crypt.sh open tests/bench/om2w-dev-keypoints.tar.gz.enc "$RUNNER_TEMP/om2w/keypoints"
+          node tests/bench/keypoints.js verify "$RUNNER_TEMP/om2w/keypoints/keypoints.json" --lock tests/bench/om2w-dev-keypoints.lock.json
+          cp tests/bench/om2w-dev-keypoints.lock.json "$RUNNER_TEMP/om2w/keypoints.lock.json"
+          echo '{"usd":0}' > "$RUNNER_TEMP/om2w/keypoints-usd.json"
+      # None committed: written once, from each task alone, by the baseline's judge model, a third of the cap at most,
+      # and handed on encrypted with their lock, to be committed before any agent change.
+      - name: Write the key points once
+        if: ${{ hashFiles('tests/bench/om2w-dev-keypoints.tar.gz.enc') == '' }}
+        env:
+          OM2W_DEV_KEY: ${{ needs.plan.outputs.mode == 'rejudge' && secrets.OM2W_DEV_KEY || '' }}
+          BENCH_JUDGE_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BENCH_JUDGE_URL: https://api.anthropic.com/v1/messages
+          SOURCES: ${{ inputs.source_runs }}
+          CAP: ${{ inputs.max_usd }}
+        run: |
+          runs=(); for id in $SOURCES; do runs+=("$RUNNER_TEMP/om2w/src/$id=$id"); done
+          up=tests/bench/out/upload
+          mkdir -p "$up"
+          kcap=$(awk "BEGIN { printf \"%.4f\", $CAP / 3 }")
+          BENCH_JUDGE_MODEL="$(node -p "require('./tests/bench/om2w-config.json').baseline.judgeModel")" node tests/bench/keypoints.js write --runs "${runs[@]}" --out "$RUNNER_TEMP/om2w/keypoints/keypoints.json" --max-usd "$kcap" --usd-out "$RUNNER_TEMP/om2w/keypoints-usd.json" | tee -a "$GITHUB_STEP_SUMMARY"
+          node tests/bench/keypoints.js lock "$RUNNER_TEMP/om2w/keypoints/keypoints.json" --out "$RUNNER_TEMP/om2w/keypoints.lock.json"
+          OM2W_PASS="$(printf '%s' "$OM2W_DEV_KEY" | tr -d '[:space:]')" bash tests/bench/om2w-crypt.sh seal "$RUNNER_TEMP/om2w/keypoints" "$up/om2w-dev-keypoints.tar.gz.enc"
+          cp "$RUNNER_TEMP/om2w/keypoints.lock.json" "$up/om2w-dev-keypoints.lock.json"
+          echo "Key points written: commit om2w-dev-keypoints.tar.gz.enc and om2w-dev-keypoints.lock.json from the om2w-rejudge artifact into tests/bench/." >> "$GITHUB_STEP_SUMMARY"
+      - name: Judge the stored runs again, three times each
+        env:
+          BENCH_JUDGE_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BENCH_JUDGE_URL: https://api.anthropic.com/v1/messages
+          BENCH_JUDGE_MODEL: ${{ needs.plan.outputs.judge_model }}
+          SOURCES: ${{ inputs.source_runs }}
+          CAP: ${{ inputs.max_usd }}
+        run: |
+          runs=(); for id in $SOURCES; do runs+=("$RUNNER_TEMP/om2w/src/$id=$id"); done
+          left=$(node -e "const u = require(process.argv[1]).usd || 0; console.log(Math.max(0, Number(process.argv[2]) - u).toFixed(4))" "$RUNNER_TEMP/om2w/keypoints-usd.json" "$CAP")
+          node tests/bench/stability.js --runs "${runs[@]}" --key-points "$RUNNER_TEMP/om2w/keypoints/keypoints.json" --lock "$RUNNER_TEMP/om2w/keypoints.lock.json" --times 3 --votes 3 --max-usd "$left" --out "$RUNNER_TEMP/om2w/rejudge" | tee -a "$GITHUB_STEP_SUMMARY"
+          node -e "const a = require(process.argv[1]).usd || 0; const b = require(process.argv[2]).meta.usd || 0; console.log('Judge spend in all, key points and re-judging: $' + (a + b).toFixed(4) + ' of a $' + Number(process.argv[3]).toFixed(2) + ' cap.')" "$RUNNER_TEMP/om2w/keypoints-usd.json" "$RUNNER_TEMP/om2w/rejudge/stability-summary.json" "$CAP" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Check the block detector against the hand labels
+        env:
+          SOURCES: ${{ inputs.source_runs }}
+        run: |
+          runs=(); for id in $SOURCES; do runs+=("$RUNNER_TEMP/om2w/src/$id=$id"); done
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          node tests/bench/blocks.js check "${runs[@]}" --labels tests/bench/om2w-dev-block-labels.json | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Nothing in the clear names a task; the rest is encrypted
+        if: always()
+        env:
+          OM2W_DEV_KEY: ${{ needs.plan.outputs.mode == 'rejudge' && secrets.OM2W_DEV_KEY || '' }}
+          SOURCES: ${{ inputs.source_runs }}
+        run: |
+          up=tests/bench/out/upload
+          mkdir -p "$up" "$RUNNER_TEMP/om2w/rejudge"
+          runs=(); for id in $SOURCES; do runs+=("$RUNNER_TEMP/om2w/src/$id"); done
+          node -e "const K = require('./tests/bench/keypoints.js'); require('fs').writeFileSync(process.argv[1], JSON.stringify(K.tasksOfRuns(process.argv.slice(2))))" "$RUNNER_TEMP/om2w/tasks.json" "${runs[@]}"
+          for f in "$RUNNER_TEMP"/om2w/rejudge/stability-summary.*; do [ -e "$f" ] || continue; node tests/bench/trial.js leaks "$f" --tasks "$RUNNER_TEMP/om2w/tasks.json"; cp "$f" "$up/"; done
+          for f in "$up"/om2w-dev-keypoints.lock.json; do [ -e "$f" ] || continue; node tests/bench/trial.js leaks "$f" --tasks "$RUNNER_TEMP/om2w/tasks.json"; done
+          if [ -n "$OM2W_DEV_KEY" ]; then OM2W_PASS="$(printf '%s' "$OM2W_DEV_KEY" | tr -d '[:space:]')" bash tests/bench/om2w-crypt.sh seal "$RUNNER_TEMP/om2w/rejudge" "$up/om2w-dev-rejudge.tar.gz.enc"; fi
+          ls -l "$up"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: om2w-rejudge
+          path: tests/bench/out/upload
           if-no-files-found: warn
           retention-days: 30
 

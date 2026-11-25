@@ -535,9 +535,15 @@ test("the om2w workflow: its secrets, where each goes, and nothing of the task f
   // HF_TOKEN only reaches the fetch steps.
   for (const m of y.matchAll(/HF_TOKEN: \$\{\{ secrets\.HF_TOKEN \}\}\n\s+run: (.*)/g)) assert.match(m[1], /^node tests\/bench\/om2w\.js fetch --out "\$RUNNER_TEMP\/om2w\/dataset\.json"$/);
   assert.equal(y.split("secrets.HF_TOKEN }}").length - 1, y.split("om2w.js fetch --out").length - 1);
-  // OM2W_DEV_KEY only where dev files are encrypted or opened, and only for dev.
+  // OM2W_DEV_KEY only where dev files are encrypted or opened, and only for dev: the run job's frozen key points and
+  // hand-over, the summary, and the rejudge job, which the plan allows for dev only.
   const dev = [...y.matchAll(/OM2W_DEV_KEY: \$\{\{ (.+) \}\}/g)].map((m) => m[1]);
-  assert.deepEqual(dev, ["needs.plan.outputs.part == 'dev' && secrets.OM2W_DEV_KEY || ''", "needs.plan.outputs.mode == 'run' && needs.plan.outputs.part == 'dev' && secrets.OM2W_DEV_KEY || ''"]);
+  const forDev = "needs.plan.outputs.part == 'dev' && secrets.OM2W_DEV_KEY || ''";
+  const forRejudge = "needs.plan.outputs.mode == 'rejudge' && secrets.OM2W_DEV_KEY || ''";
+  assert.deepEqual(dev, [forDev, forDev, "needs.plan.outputs.mode == 'run' && needs.plan.outputs.part == 'dev' && secrets.OM2W_DEV_KEY || ''", forRejudge, forRejudge, forRejudge, forRejudge]);
+  // The rejudge job runs only for that mode, which the plan refuses for any part but dev.
+  assert.match(y, /if: \$\{\{ needs\.plan\.outputs\.dry != 'true' && needs\.plan\.outputs\.mode == 'rejudge' \}\}/);
+  assert.match(y, /\[ "\$part" = "dev" \] \|\| fail "rejudge reads stored dev runs only/);
   // The task file and the split stay in the runner's temporary folder.
   for (const m of y.matchAll(/--out "([^"]+)"/g)) assert.match(m[1], /^\$RUNNER_TEMP\//);
   for (const m of y.matchAll(/^\s+path: (.+)$/gm)) assert.ok(!/RUNNER_TEMP|runner\.temp|dataset/.test(m[1]), m[1]);
