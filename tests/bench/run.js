@@ -117,6 +117,16 @@
  *                      BENCH_MAX_USD, so the cap is never passed. A run is
  *                      not refused for holds alone: the shard waits for the
  *                      verdicts first and decides on what they really cost.
+ *   BENCH_JUDGE_VOTES  the most votes on one run (judge-call.js; default 1).
+ *                      With 3, a first vote that fails is followed by more
+ *                      until one side has two; a first pass stands alone.
+ *                      The cap holds a reserve for every vote.
+ *   BENCH_KEY_POINTS   a file of frozen key points (keypoints.js), checked
+ *                      against BENCH_KEY_POINTS_LOCK (default
+ *                      om2w-dev-keypoints.lock.json) before anything runs. A
+ *                      task in it is judged on those points, never on points
+ *                      the judge writes for the run. (The blocked column is
+ *                      the block detector's, blocks.js, at every setting.)
  *   BENCH_NO_FILES     1 for a sealed part (needs BENCH_QUIET=sealed): no file
  *                      of any run is written, screenshots are kept in memory
  *                      for the judge only, and no results file is written.
@@ -154,6 +164,8 @@ const OM2W = require("./om2w.js");
 const BENCH_PROFILE_LIB = require("./profile.js");
 const { engineTrace, watchViews } = require("../helpers/engine-trace.js");
 const TRIAL = require("./trial.js");
+const BLOCKS = require("./blocks.js");
+const KEYPOINTS = require("./keypoints.js");
 // A sealed run (the holdout suite): before anything can print, the log is
 // limited to run counts and the numbers table. Any other line, an error's
 // text included, is withheld (TRIAL.sealedLogText says which lines pass).
@@ -179,6 +191,8 @@ const JUDGE = DRY ? { model: "dry-judge-stub", url: `http://127.0.0.1:${JUDGE_ST
 const APPROVER = APPROVAL.approverConfig(JUDGE, process.env, { dry: DRY });
 const CUSTOM_URL = DRY ? `${DRY_BASE}/v1` : process.env.BENCH_CUSTOM_URL || "";
 const DEBUGGER = process.env.BENCH_DEBUGGER || "";
+// BENCH_KEY_POINTS: the frozen key points of the tasks (keypoints.js), checked against BENCH_KEY_POINTS_LOCK. A task in it is judged on them.
+const FROZEN = process.env.BENCH_KEY_POINTS ? KEYPOINTS.loadFrozen(process.env.BENCH_KEY_POINTS, process.env.BENCH_KEY_POINTS_LOCK || KEYPOINTS.LOCK_FILE) : null;
 // A fixed sentence on stderr, past the sealed filter: it names nothing but the setting.
 const refuse = (why) => { process.stderr.write(`${why}\n`); process.exit(1); };
 // Set, the cap must be an amount: "0.0000" (a cap split over too many shards) is an error, never "no cap".
@@ -386,6 +400,8 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
     if (NO_FILES) { try { screenshots.push({ name, data: await page.screenshot({ type: "jpeg", quality: 60 }) }); } catch (_e) { /* a closing tab */ } }
     else { const file = path.join(dir, name); try { await page.screenshot({ path: file, type: "jpeg", quality: 60 }); screenshots.push(file); } catch (_e) { /* a closing tab */ } }
     const seen = await page.evaluate(() => ({ url: location.href, title: document.title, text: (document.body ? document.body.innerText : "").slice(0, 60000) })).catch(() => null);
+    // The page's structure and its document's status, for the block detector (blocks.js).
+    if (seen && seen.url) seen.facts = await page.evaluate(BLOCKS.pageFactsInPage).catch(() => null);
     if (seen && seen.url) TRIAL.keepPageState(pageStates, seen);
   };
 
@@ -455,6 +471,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
   const final = finalPage
     ? await finalPage.evaluate(() => ({ url: location.href, title: document.title, text: (document.body ? document.body.innerText : "").slice(0, 60000) })).catch(() => ({}))
     : {};
+  const finalFacts = finalPage ? await finalPage.evaluate(BLOCKS.pageFactsInPage).catch(() => null) : null;
   // What every form control of the final page holds, read from the page itself,
   // frames included: a fill the agent's action reported as done is only done if it is here.
   const formState = { controls: [], total: 0, read: false };
@@ -483,6 +500,8 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
     startUrl: task.url,
     ...(task.expect ? { expect: task.expect } : {}),
     ...(task.sites ? { sites: task.sites } : {}),
+    // The task's key points, written once before any run (BENCH_KEY_POINTS): the judge judges these.
+    ...(FROZEN && FROZEN.has(task.id) ? { frozenKeyPoints: FROZEN.get(task.id) } : {}),
     ending,
     // What the run was waiting on the user for when it ended (a human check, a sign-in, a question), or "".
     waitKind: trace && trace.waitingForUser ? trace.waitKind || "" : "",
@@ -515,6 +534,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
     finalUrl: final.url,
     finalTitle: final.title,
     finalText: final.text,
+    finalFacts,
     formState,
     // Every state of the pages it was on, in the order first seen, within TRIAL.PAGE_STATES.
     pages: pageStates,
@@ -729,7 +749,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
   const batch = JUDGE_BATCH ? new JudgeBatch(JUDGE, { ratesFor: findModelRates, pollMs: DRY ? 300 : 30000 }) : null;
   // Kept back from each run's own budget for its batch judge call, so the run leaves room for it.
   // Priced on the largest message the judge can be sent (judge.js judgeMessageMostChars), so the room covers any run's verdict.
-  const judgeRoom = batch ? batch.estimateUSD({ max_tokens: 8000, messages: [{ content: [{ type: "text", text: "x".repeat(J.judgeMessageMostChars(TRIAL.READING.total)) }, ...Array.from({ length: JUDGE.shots }, () => ({ type: "image" }))] }] }) : 0;
+  const judgeRoom = (JUDGE.votes || 1) * (batch ? batch.estimateUSD({ max_tokens: 8000, messages: [{ content: [{ type: "text", text: "x".repeat(J.judgeMessageMostChars(TRIAL.READING.total)) }, ...Array.from({ length: JUDGE.shots }, () => ({ type: "image" }))] }] }) : 0);
   // The approver's prices; the local stub in dry mode costs nothing.
   const approverRates = DRY ? () => [0, 0] : findModelRates;
   // Kept back from each run's own budget: the most its approver calls can cost, so the cap holds with them.
@@ -814,7 +834,11 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
   /** A run with its verdict, and what the report needs beside it, before any spend is counted. */
   function rowOf(task, run, verdict, carriedUSD = 0) {
     const lost = isInfra(run);
-    const row = { ...run, success: verdict.success, blocked: !!verdict.blocked, reason: verdict.reason, keyPoints: verdict.keyPoints, met: verdict.met, judgeFailed: !!verdict.judgeFailed, judgeReply: verdict.judgeReply, judgeUsage: verdict.judgeUsage };
+    // The blocked column is the block detector's (blocks.js): the task's own site refused the
+    // browser, by the page's structure and status. The judge's own word on it is kept beside.
+    // A run that left no page (lost before it began) keeps the judge's word, and a run the judge passed is never blocked.
+    const siteBlock = lost ? { decided: false, blocked: false, signals: [] } : BLOCKS.siteBlockOf(run);
+    const row = { ...run, success: verdict.success, blocked: siteBlock.decided ? siteBlock.blocked && !verdict.success : !!verdict.blocked, judgeBlocked: !!verdict.blocked, siteBlock, reason: verdict.reason, keyPoints: verdict.keyPoints, met: verdict.met, judgeFailed: !!verdict.judgeFailed, judgeReply: verdict.judgeReply, judgeUsage: verdict.judgeUsage, ...(verdict.votes ? { votes: verdict.votes } : {}), ...(verdict.frozen ? { frozenKeyPoints: true } : {}) };
     if (carriedUSD) row.lostAttemptsUSD = (row.lostAttemptsUSD || 0) + carriedUSD;
     // The task's own answer pattern beside the judge, what the judge cost, and what the run did by script or had held.
     row.patternMatch = TRIAL.patternMatch(task, run.answer);
@@ -958,7 +982,7 @@ async function runTask(browser, extensionId, task, runIndex, dir, live = {}, hoo
     spent += (run.costUSD || 0) + (run.approverUSD || 0) + (run.lostAttemptsUSD || 0) + carried + TRIAL.longPromptSurchargeUSD(run.modelCalls, findModelRates);
     const id = `r${++requestSeq}`;
     if (DRY) judgeStub.verdicts.set(id, TRIAL.patternVerdict(task, run));
-    const hold = batch.estimateUSD({ max_tokens: 8000, messages: [{ content: [{ type: "text", text: J.judgeMessage(run) }, ...Array.from({ length: Math.min(JUDGE.shots, (run.screenshots || []).length) }, () => ({ type: "image" }))] }] });
+    const hold = (JUDGE.votes || 1) * batch.estimateUSD({ max_tokens: 8000, messages: [{ content: [{ type: "text", text: J.judgeMessage(run) }, ...Array.from({ length: Math.min(JUDGE.shots, (run.screenshots || []).length) }, () => ({ type: "image" }))] }] });
     // No room left under the cap for this verdict once the others are in: the run is not judged, and nothing more starts.
     if (MAX_USD && committed() + hold > MAX_USD && batch.waiting) for (const x of await batch.drain(JUDGE_WAIT_MS)) recordJudged(x.id, x.verdict);
     if (MAX_USD && committed() + hold > MAX_USD) {

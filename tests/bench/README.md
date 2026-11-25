@@ -54,3 +54,18 @@ gh workflow run real-tasks.yml -R arnav-goel10/select-to-ai --ref rel40-real-tas
 ```
 
 A summary to compare against another needs the same arm, provider, model and judge. Run it more than once before reading a difference of a few points as real.
+
+## Measuring before changing the agent
+
+Four parts make a score worth comparing. None of them changes the agent.
+
+- **Blocks in their own column.** `blocks.js` decides whether the task's own site refused the browser, from the page alone: a thin page with a refusing status (202, 401, 403, 405, 407, 429, 451, 503), with an opaque request id or the visitor's address, with nothing of its own to press beside a frame from another origin, or a thin front page of the task's site that offers no link in, where the agent never got to act. No site name, vendor name or word takes part, and a test swaps every word of a page for made-up letters to keep it so. The decision is made on the last page the run saw on the task's site, so a refusal on a site the agent chose to go to stays the agent's outcome. `run.js` records each page's structure and status for it, and the judge's own word is kept beside as `judgeBlocked`. `om2w-dev-block-labels.json` holds hand labels of 30 stored end pages; `node tests/bench/blocks.js check <folder>=<source run>... --labels tests/bench/om2w-dev-block-labels.json` compares.
+- **Frozen key points.** `keypoints.js` writes each dev task's key points once, from the task alone, before any agent change. The judge then judges those points (`judge.js` `JUDGE_SYSTEM_FROZEN`) and still sees the final answer. The dev tasks are gated, so the repository holds the points only encrypted with `OM2W_DEV_KEY` (`om2w-dev-keypoints.tar.gz.enc`), beside a clear lock of their digest (`om2w-dev-keypoints.lock.json`). A file whose digest differs from the lock is refused. Sealed parts get no key points.
+- **Votes on a fail.** With `BENCH_JUDGE_VOTES=3` a run whose first vote fails is judged again until one side has two votes. A first pass stands alone.
+- **Noise floor and interruptions.** The om2w workflow's `noise-floor` mode runs every task several times and the summary gives each task's passes out of its runs and the flip rate, with no task named. Every summary gives holds per run as an interruption count, and, with the simulated approver on (`BENCH_APPROVER=on`, approver.js), both scores side by side.
+
+The om2w workflow's `rejudge` mode runs no agent. It downloads the stored dev runs of earlier workflow runs (`source_runs`), writes the key points once if none are committed, judges each run three times with the voting judge under the spend cap (`stability.js`), and checks the block detector against the hand labels. The clear summary is counts only; every judging is uploaded encrypted.
+
+```
+gh workflow run om2w.yml -R arnav-goel10/select-to-ai --ref <branch> -f mode=rejudge -f part=dev -f judge_model=claude-haiku-5-5 -f max_usd=3
+```

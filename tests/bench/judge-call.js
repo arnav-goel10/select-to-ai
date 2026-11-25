@@ -19,6 +19,11 @@
  *                       default judge, 0 for any other model)
  *   BENCH_JUDGE_SHOTS   how many screenshots to send (default 3): the final
  *                       page and the last view of the pages the run left
+ *   BENCH_JUDGE_VOTES   the most votes on one run (default 1). With 3, a run
+ *                       whose first vote fails is judged again until one
+ *                       side has two votes (judge.js needsVote); a first pass
+ *                       stands alone. The judge sees the same message, the
+ *                       final answer in it, on every vote.
  */
 "use strict";
 
@@ -26,7 +31,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
-const { JUDGE_SYSTEM, judgeMessage, parseVerdict, pickScreenshots } = require("./judge.js");
+const { JUDGE_SYSTEM, JUDGE_SYSTEM_FROZEN, judgeMessage, parseVerdict, pickScreenshots, frozenPoints, combineVotes, needsVote } = require("./judge.js");
 
 // Kimi K3 answers HTTP 410 (Gone) on the NVIDIA endpoint since early
 // November 2026; set BENCH_JUDGE_MODEL and BENCH_JUDGE_KEY to another judge.
@@ -82,6 +87,7 @@ function judgeConfig(env = process.env) {
     isAnthropic,
     problem,
     shots: Math.max(0, parseInt(env.BENCH_JUDGE_SHOTS || "3", 10)),
+    votes: Math.min(5, Math.max(1, parseInt(env.BENCH_JUDGE_VOTES || "1", 10) || 1)),
   };
 }
 
@@ -128,9 +134,12 @@ const JUDGE_MAX_TOKENS = 8000;
  * call, so every call after the first reads them from the cache. `ttl` "1h"
  * for a batch, whose requests can run far apart.
  */
-function cachedSystem(ttl = "") {
-  return [{ type: "text", text: JUDGE_SYSTEM, cache_control: ttl ? { type: "ephemeral", ttl } : { type: "ephemeral" } }];
+function cachedSystem(ttl = "", text = JUDGE_SYSTEM) {
+  return [{ type: "text", text, cache_control: ttl ? { type: "ephemeral", ttl } : { type: "ephemeral" } }];
 }
+
+/** The judge's instructions for a run: the frozen-key-point ones when its key points were written before any run. */
+const systemFor = (run) => (frozenPoints(run).length ? JUDGE_SYSTEM_FROZEN : JUDGE_SYSTEM);
 
 /** A provider's usage block added to a judge's running count: uncached input, cache writes and reads, output, calls. */
 function addUsage(into, u = {}) {
@@ -142,13 +151,16 @@ function addUsage(into, u = {}) {
   return into;
 }
 
-function anthropicContent(run, shots) {
+function anthropicContent(run, shots, { cache = false } = {}) {
   const text = judgeMessage({ ...run, screenshots: shots });
-  if (!shots.length) return text;
-  return [
+  if (!shots.length && !cache) return text;
+  const parts = [
     { type: "text", text },
     ...shots.map((f) => ({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageUrl(f).replace(/^data:image\/jpeg;base64,/, "") } })),
   ];
+  // Several calls on the same run (votes, re-judgings) read the run's message from the cache after the first.
+  if (cache) parts[parts.length - 1] = { ...parts[parts.length - 1], cache_control: { type: "ephemeral" } };
+  return parts;
 }
 
 function openAiContent(run, shots) {
@@ -160,15 +172,41 @@ function openAiContent(run, shots) {
 /**
  * The verdict on one run. `run.screenshots` are file paths, oldest first.
  * Returns {success, blocked, keyPoints, met, reason} or, when no verdict
- * could be had, {success: false, judgeFailed: true, reason}.
+ * could be had, {success: false, judgeFailed: true, reason}. With
+ * cfg.votes above 1, a first vote that fails is followed by more until one
+ * side has a majority (judge.js needsVote, combineVotes); the verdict lists
+ * the votes and its usage counts every call.
  */
 async function judgeRun(run, cfg = judgeConfig()) {
+  const most = Math.max(1, cfg.votes || 1);
+  const votes = [];
+  const usage = { model: cfg.model, input: 0, output: 0, cacheWrite: 0, cacheRead: 0, calls: 0 };
+  let last = null;
+  for (let i = 0; i < most; i++) {
+    // Under a spend cap, a further vote is asked for only while there is room for it.
+    if (i && cfg.stopRetry && cfg.stopRetry(usage)) break;
+    const before = { ...usage };
+    const room = cfg.stopRetry ? { stopRetry: (u) => cfg.stopRetry({ ...u, input: before.input + (u.input || 0), output: before.output + (u.output || 0), cacheWrite: before.cacheWrite + (u.cacheWrite || 0), cacheRead: before.cacheRead + (u.cacheRead || 0), calls: before.calls + (u.calls || 0) }) } : {};
+    last = await judgeOnce(run, { ...cfg, ...room });
+    for (const k of ["input", "output", "cacheWrite", "cacheRead", "calls"]) usage[k] += (last.judgeUsage && last.judgeUsage[k]) || 0;
+    votes.push(last);
+    if (!needsVote(votes, most)) break;
+  }
+  if (most === 1) return last;
+  const combined = combineVotes(votes);
+  return combined ? { ...combined, judgeUsage: usage } : { ...last, judgeUsage: usage };
+}
+
+/** One call's verdict on a run (judgeRun's vote). */
+async function judgeOnce(run, cfg) {
   let files = cfg.vision ? pickScreenshots((run.screenshots || []).filter(shotThere), run.history, cfg.shots) : [];
   const isAnthropic = cfg.isAnthropic !== undefined ? !!cfg.isAnthropic : /(^|\.)anthropic\.com$/.test(hostOf(cfg.url));
   // Every answered call is paid for, whether or not its verdict could be read.
   const judgeUsage = { model: cfg.model, input: 0, output: 0, cacheWrite: 0, cacheRead: 0, calls: 0 };
   const paid = (body) => addUsage(judgeUsage, body && body.usage);
-  const contentFor = (shots) => (isAnthropic ? anthropicContent(run, shots) : openAiContent(run, shots));
+  const contentFor = (shots) => (isAnthropic ? anthropicContent(run, shots, { cache: !!cfg.cacheRun }) : openAiContent(run, shots));
+  const system = systemFor(run);
+  const keyPoints = frozenPoints(run).length ? frozenPoints(run) : null;
   let content = contentFor(files);
   let lastReply = "";
   let degenerated = false;
@@ -183,8 +221,8 @@ async function judgeRun(run, cfg = judgeConfig()) {
       : { "content-type": "application/json", authorization: `Bearer ${cfg.key}` };
     const reqBody = isAnthropic
       // Current Claude models take no temperature but their own; they think adaptively, so the room covers thinking too.
-      ? { model: cfg.model, max_tokens: JUDGE_MAX_TOKENS, system: cachedSystem(), messages: [{ role: "user", content }] }
-      : { model: cfg.model, temperature: degenerated ? 0.2 : 0, max_tokens: degenerated ? 4000 : 8000, messages: [{ role: "system", content: JUDGE_SYSTEM }, { role: "user", content }] };
+      ? { model: cfg.model, max_tokens: JUDGE_MAX_TOKENS, system: cachedSystem("", system), messages: [{ role: "user", content }] }
+      : { model: cfg.model, temperature: degenerated ? 0.2 : 0, max_tokens: degenerated ? 4000 : 8000, messages: [{ role: "system", content: system }, { role: "user", content }] };
     const res = await fetch(endpoint, {
       method: "POST",
       headers,
@@ -196,13 +234,13 @@ async function judgeRun(run, cfg = judgeConfig()) {
       paid(body);
       if (isAnthropic) {
         const text = (Array.isArray(body.content) ? body.content : []).filter((b) => b && b.type === "text").map((b) => b.text).join("\n");
-        const verdict = parseVerdict(text);
+        const verdict = parseVerdict(text, { keyPoints });
         // What the judge cost, kept apart from the agent's own spend.
         if (verdict) return { ...verdict, screenshotsSeen: files.length, judgeUsage };
         lastReply = scrub(String(text || JSON.stringify(body)).slice(0, 600));
       } else {
         const message = (body.choices && body.choices[0] && body.choices[0].message) || {};
-        const verdict = parseVerdict(message.content) || parseVerdict(message.reasoning_content || message.reasoning);
+        const verdict = parseVerdict(message.content, { keyPoints }) || parseVerdict(message.reasoning_content || message.reasoning, { keyPoints });
         if (verdict) return { ...verdict, screenshotsSeen: files.length, judgeUsage };
         lastReply = scrub(String(message.content || message.reasoning_content || JSON.stringify(body)).slice(0, 600));
       }
@@ -231,7 +269,7 @@ async function judgeRun(run, cfg = judgeConfig()) {
 // judge's fixed instructions, for a reserve that is never less than a call's
 // real price (Anthropic counts about one token per 750 pixels).
 const IMAGE_TOKENS_AT_MOST = 1600;
-const SYSTEM_TOKENS_AT_MOST = Math.ceil(JUDGE_SYSTEM.length / 2);
+const SYSTEM_TOKENS_AT_MOST = Math.ceil(Math.max(JUDGE_SYSTEM.length, JUDGE_SYSTEM_FROZEN.length) / 2);
 
 /**
  * The judge through Anthropic's Message Batches API, for runs whose verdict
@@ -246,6 +284,10 @@ const SYSTEM_TOKENS_AT_MOST = Math.ceil(JUDGE_SYSTEM.length / 2);
  * most it can cost (the fixed instructions written to the cache, the run's
  * own text and screenshots at the input price, every output token used), so
  * a spend cap that counts the reserve is never passed.
+ *
+ * With cfg.votes above 1, a run whose first vote fails goes round again,
+ * one vote a batch, until one side has a majority (judge.js needsVote). Its
+ * reserve stays held, one call's worth, until the last vote is in.
  */
 class JudgeBatch {
   constructor(cfg, { flushEvery = 4, pollMs = 30000, ratesFor = null, fetchImpl = (...a) => fetch(...a), now = () => Date.now(), tries = 2 } = {}) {
@@ -282,9 +324,11 @@ class JudgeBatch {
   /** Queues one run's judging under `id` (letters, digits, _ and -). Returns the reserve it holds. */
   add(id, run) {
     const files = this.cfg.vision ? pickScreenshots((run.screenshots || []).filter(shotThere), run.history, this.cfg.shots) : [];
-    const params = { model: this.cfg.model, max_tokens: JUDGE_MAX_TOKENS, system: cachedSystem("1h"), messages: [{ role: "user", content: anthropicContent(run, files) }] };
-    const estimateUSD = this.estimateUSD(params);
-    this.items.set(id, { params, estimateUSD, tries: 0, shots: files.length, usage: { model: this.cfg.model, input: 0, output: 0, cacheWrite: 0, cacheRead: 0, calls: 0, batch: true, cacheTtl: "1h" }, lastReply: "" });
+    const params = { model: this.cfg.model, max_tokens: JUDGE_MAX_TOKENS, system: cachedSystem("1h", systemFor(run)), messages: [{ role: "user", content: anthropicContent(run, files) }] };
+    // Held at the most every vote the run may need can cost.
+    const estimateUSD = this.estimateUSD(params) * Math.max(1, this.cfg.votes || 1);
+    const keyPoints = frozenPoints(run).length ? frozenPoints(run) : null;
+    this.items.set(id, { params, estimateUSD, tries: 0, shots: files.length, keyPoints, votes: [], usage: { model: this.cfg.model, input: 0, output: 0, cacheWrite: 0, cacheRead: 0, calls: 0, batch: true, cacheTtl: "1h" }, lastReply: "" });
     this.pending.push(id);
     return estimateUSD;
   }
@@ -315,11 +359,20 @@ class JudgeBatch {
     if (result && result.type === "succeeded" && result.message) {
       addUsage(it.usage, result.message.usage);
       const text = (Array.isArray(result.message.content) ? result.message.content : []).filter((b) => b && b.type === "text").map((b) => b.text).join("\n");
-      const verdict = parseVerdict(text);
-      if (verdict) return { ...verdict, screenshotsSeen: it.shots, judgeUsage: it.usage };
+      const verdict = parseVerdict(text, { keyPoints: it.keyPoints });
+      if (verdict) {
+        it.votes.push(verdict);
+        const most = Math.max(1, this.cfg.votes || 1);
+        // Another vote: the same request again, with its own tries.
+        if (needsVote(it.votes, most)) { it.tries = 0; this.pending.push(id); return null; }
+        const combined = most > 1 ? combineVotes(it.votes) : verdict;
+        return { ...combined, screenshotsSeen: it.shots, judgeUsage: it.usage };
+      }
       it.lastReply = scrub(String(text).slice(0, 600));
     } else it.lastReply = scrub(JSON.stringify(result || {}).slice(0, 300));
     if (it.tries < this.tries) { this.pending.push(id); return null; }
+    // A later vote that could not be read: the votes already in decide.
+    if (it.votes.length) { const combined = combineVotes(it.votes); return { ...combined, screenshotsSeen: it.shots, judgeUsage: it.usage }; }
     return { success: false, reason: "the judge gave no readable verdict", judgeFailed: true, judgeReply: it.lastReply, judgeUsage: it.usage };
   }
 
@@ -360,7 +413,11 @@ class JudgeBatch {
       done.push(...(await this.tick({ force: true })));
       if (this.items.size) await sleep(sleepMs);
     }
-    for (const [id, it] of this.items) done.push({ id, verdict: { success: false, reason: `the batch judge gave no verdict in time${this.lastError ? ` (${this.lastError})` : ""}`, judgeFailed: true, judgeReply: it.lastReply, judgeUsage: it.usage } });
+    for (const [id, it] of this.items) {
+      // Votes already in decide a run whose further vote did not come back in time.
+      if (it.votes && it.votes.length) { done.push({ id, verdict: { ...combineVotes(it.votes), screenshotsSeen: it.shots, judgeUsage: it.usage } }); continue; }
+      done.push({ id, verdict: { success: false, reason: `the batch judge gave no verdict in time${this.lastError ? ` (${this.lastError})` : ""}`, judgeFailed: true, judgeReply: it.lastReply, judgeUsage: it.usage } });
+    }
     this.items.clear();
     this.pending = [];
     return done;
@@ -380,4 +437,4 @@ function waitForHolds({ capUSD = 0, committedUSD = 0, needUSD = 0, runRoomUSD = 
   return !(room > 0 && room > runRoomUSD);
 }
 
-module.exports = { waitForHolds, DEFAULT_JUDGE, ANTHROPIC_URL, agentEndpoint, judgeConfig, judgeRun, imageUrl, scrub, cachedSystem, addUsage, JudgeBatch, JUDGE_MAX_TOKENS };
+module.exports = { systemFor, judgeOnce, waitForHolds, DEFAULT_JUDGE, ANTHROPIC_URL, agentEndpoint, judgeConfig, judgeRun, imageUrl, scrub, cachedSystem, addUsage, JudgeBatch, JUDGE_MAX_TOKENS };

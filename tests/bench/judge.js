@@ -33,6 +33,18 @@ Rules:
 
 Reply with ONLY a JSON object: {"key_points": ["..."], "met": [true, false, ...], "success": true | false, "blocked": true | false, "reason": "one or two sentences"}.`;
 
+const FROZEN_STEP = "1. Key points: they are given in the message. They were written once from the task alone, before any run, and are fixed. Use them as they are: do not add, drop, merge or reword one.";
+const FROZEN_REPLY = 'Reply with ONLY a JSON object: {"met": [true, false, ...], "success": true | false, "blocked": true | false, "reason": "one or two sentences"}, with one entry in "met" for each given key point, in their order.';
+
+/**
+ * The judge's instructions when the task's key points are frozen (written
+ * once, before any run, by tests/bench/keypoints.js): the same rules, with
+ * step 1 taking the given points instead of writing new ones.
+ */
+const JUDGE_SYSTEM_FROZEN = JUDGE_SYSTEM
+  .replace(/^1\. Key points:.*$/m, FROZEN_STEP)
+  .replace(/^Reply with ONLY a JSON object:.*$/m, FROZEN_REPLY);
+
 // Words that say how to ask, not what is asked for.
 const ASKING_WORDS = new Set("about after also and any are been before but can could does each find for from get give has have how into its just list look more most much need only other our out over please provide search shall should show some such tell than that the their them then there these they this those using use want what when where which while who whom whose will with within would your".split(" "));
 
@@ -228,6 +240,7 @@ function judgeMessage(run) {
     `Task: ${run.task}`,
     `Started at: ${run.startUrl}${named.length > 1 ? ` (the sites the task names: ${named.join(", ")})` : named.length ? ` (the site the task names: ${named[0]})` : ""}`,
     run.expect ? `What the task's author says a right result holds (a guide to the key points, not evidence: the run must still show it): ${run.expect}` : "",
+    frozenPoints(run).length ? `\nKey points, written from the task alone before any run and fixed (judge each one; write no others):\n${frozenPoints(run).map((k, i) => `${i + 1}. ${k}`).join("\n")}` : "",
     "",
     `Actions taken (${(run.history || []).length}):`,
     actions || "(none)",
@@ -274,19 +287,65 @@ function pickScreenshots(files, history, n = 3) {
   return list.filter((f) => chosen.includes(f));
 }
 
-/** The verdict from the judge's reply, or null when it cannot be read. */
-function parseVerdict(text) {
+/** A run's frozen key points (tests/bench/keypoints.js), or none. */
+function frozenPoints(run) {
+  return Array.isArray(run && run.frozenKeyPoints) ? run.frozenKeyPoints.map(String).filter((k) => k.trim()) : [];
+}
+
+/**
+ * The verdict from the judge's reply, or null when it cannot be read. With
+ * frozen key points (`keyPoints`), the reply must mark each of them, one
+ * "met" entry apiece and every entry true or false, and the verdict carries
+ * the frozen list as its key points whatever the reply wrote.
+ */
+function parseVerdict(text, { keyPoints = null } = {}) {
   const m = String(text || "").match(/\{[\s\S]*\}/);
   if (!m) return null;
   let obj;
   try { obj = JSON.parse(m[0]); } catch (_e) { return null; }
   if (typeof obj.success !== "boolean") return null;
   const met = Array.isArray(obj.met) ? obj.met : [];
+  const frozen = Array.isArray(keyPoints) && keyPoints.length ? keyPoints : null;
+  if (frozen && (met.length !== frozen.length || met.some((x) => typeof x !== "boolean"))) return null;
   // A verdict of success with a key point marked unmet is a failure.
   const blocked = obj.blocked === true;
   const success = obj.success && !blocked && !met.some((x) => x === false);
-  return { success, blocked, keyPoints: Array.isArray(obj.key_points) ? obj.key_points : [], met, reason: String(obj.reason || "") };
+  return { success, blocked, keyPoints: frozen ? [...frozen] : Array.isArray(obj.key_points) ? obj.key_points : [], met, reason: String(obj.reason || ""), ...(frozen ? { frozen: true } : {}) };
 }
+
+/**
+ * Several votes on one run as one verdict: the first vote alone when it
+ * passes, otherwise the majority of the readable votes, a tie a failure. The
+ * verdict given is the first vote on the majority's side, with every vote
+ * listed beside it ({success, blocked, met}).
+ */
+function combineVotes(votes) {
+  const read = (votes || []).filter((v) => v && !v.judgeFailed);
+  if (!read.length) return null;
+  const passes = read.filter((v) => v.success).length;
+  const success = read[0].success || passes * 2 > read.length;
+  const chosen = read.find((v) => v.success === success) || read[0];
+  return { ...chosen, success, votes: read.map((v) => ({ success: v.success, blocked: !!v.blocked, met: v.met })) };
+}
+
+/** Whether a run needs another vote: its votes so far, out of `most`. A first pass needs none; otherwise until one side has a majority of `most`. */
+function needsVote(votes, most) {
+  const read = (votes || []).filter((v) => v && !v.judgeFailed);
+  if (!read.length || most <= 1 || read.length >= most) return false;
+  if (read[0].success && read.length === 1) return false;
+  const passes = read.filter((v) => v.success).length;
+  const fails = read.length - passes;
+  const half = Math.floor(most / 2) + 1;
+  return passes < half && fails < half;
+}
+
+/**
+ * Whether a run goes to the blocked column. With the block detector's
+ * decision on it (blocks.js siteBlockOf, kept as row.siteBlock), that alone:
+ * row.blocked was set from it. A row from before the detector keeps the old
+ * rule, the judge's word or a run left waiting at a human check.
+ */
+const blockedRow = (r) => (r && r.siteBlock && r.siteBlock.decided ? !!r.blocked : !!(r && (r.blocked || r.waitKind === "human_check")));
 
 /** A run that says nothing about the agent: the browser, the provider or the judge failed. */
 const isInfra = (r) => !!r.judgeFailed || /^(harness error|provider unavailable|provider limit|spend cap reached)/.test(String(r.ending || ""));
@@ -451,4 +510,4 @@ function finalAnswer(trace, shown) {
   return String(shown || "").trim();
 }
 
-module.exports = { taskList, finalAnswer, JUDGE_SYSTEM, judgeMessage, earlierStates, EARLIER_STATES_SHOWN, PAGE_STATES, EXCERPT_EARLIER, EXCERPT_FINAL, excerptMostChars, judgeMessageMostChars, formStateText, engineReadingText, pickScreenshots, taskTerms, quotesOf, siteOf, parseVerdict, summarise, normaliseTasks, sampleTasks, excerptFor, isInfra, hashUnit, splitTasks, samplePerGroup };
+module.exports = { blockedRow, taskList, finalAnswer, JUDGE_SYSTEM, JUDGE_SYSTEM_FROZEN, frozenPoints, combineVotes, needsVote, judgeMessage, earlierStates, EARLIER_STATES_SHOWN, PAGE_STATES, EXCERPT_EARLIER, EXCERPT_FINAL, excerptMostChars, judgeMessageMostChars, formStateText, engineReadingText, pickScreenshots, taskTerms, quotesOf, siteOf, parseVerdict, summarise, normaliseTasks, sampleTasks, excerptFor, isInfra, hashUnit, splitTasks, samplePerGroup };

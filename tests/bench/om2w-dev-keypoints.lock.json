@@ -1,0 +1,7 @@
+{
+  "rule": "The digest of the frozen dev key points (tests/bench/keypoints.js). Written once, before any agent change. A run or re-judging refuses a key point file whose digest differs. Never rewritten after a result has been seen.",
+  "sha256": "2c000dc1b4ab99aa5842d982790f75b345a9d0e34409e6f3d10f0d41df7a47fd",
+  "tasks": 82,
+  "model": "claude-sonnet-5-5",
+  "written": "2026-11-25"
+}

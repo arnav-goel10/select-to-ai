@@ -30,7 +30,7 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
-const { normaliseTasks, isInfra } = require("./judge.js");
+const { normaliseTasks, isInfra, blockedRow } = require("./judge.js");
 const { approvedHold, allDeclinedRow, approvalCounts } = require("./approver.js");
 
 const CONFIG = require("./om2w-config.json");
@@ -230,7 +230,7 @@ const SECONDS_BIN = 10;
 function outcomeOf(row) {
   if (row.success) return "passed";
   if (isInfra(row)) return "lost";
-  if (row.blocked || row.waitKind === "human_check") return "blocked";
+  if (blockedRow(row)) return "blocked";
   if ((row.held || []).some((h) => h && h.allowed === false) || /^stopped at a confirmation/.test(String(row.ending || ""))) return "declined";
   if (row.waitKind || /^asked the user/.test(String(row.ending || ""))) return "held";
   if (/^timed out/.test(String(row.ending || ""))) return "timed out";
@@ -282,9 +282,47 @@ function countsOf(rows) {
     c.judgeUSD += r.judgeCostUSD || 0;
     c.approverUSD += r.approverUSD || 0;
     c.realInputs += (r.counters && r.counters.realInputs) || 0;
+    // Interruptions: every hold card the run showed, each a time the person would have been asked.
+    add(c.holdsPerRun, String((raw.held || []).length));
+    if (raw.judgeBlocked) c.judgeBlocked++;
+    if (raw.frozenKeyPoints) c.frozenJudged++;
   }
   c.holds = approvalCounts(rows);
+  c.passCounts = passCountsOf(rows);
   return c;
+}
+
+/**
+ * The noise floor of some runs: for each task with more than one run, how
+ * many of its runs passed (every hold declined), as a histogram keyed
+ * "runs:passed" with no task named. A task whose runs did not all end the
+ * same way flipped. Lost and blocked runs are left out of a task's runs.
+ */
+function passCountsOf(rows) {
+  const byTask = new Map();
+  for (const r of rows || []) {
+    const o = outcomeAllDeclined(r);
+    if (o === "lost" || o === "blocked") continue;
+    const t = byTask.get(r.id) || { runs: 0, passed: 0 };
+    t.runs++;
+    if (o === "passed") t.passed++;
+    byTask.set(r.id, t);
+  }
+  const hist = {};
+  for (const t of byTask.values()) if (t.runs > 1) add(hist, `${t.runs}:${t.passed}`);
+  return hist;
+}
+
+/** The flip rate from a pass-count histogram: tasks whose runs did not all agree, over tasks with more than one run. */
+function flipRate(hist) {
+  let tasks = 0;
+  let flipped = 0;
+  for (const [k, n] of Object.entries(hist || {})) {
+    const [runs, passed] = k.split(":").map(Number);
+    tasks += n;
+    if (passed > 0 && passed < runs) flipped += n;
+  }
+  return { tasks, flipped, rate: tasks ? flipped / tasks : null };
 }
 
 function emptyCounts() {
@@ -305,6 +343,10 @@ function emptyCounts() {
     judgeUSD: 0,
     approverUSD: 0,
     realInputs: 0,
+    holdsPerRun: {},
+    passCounts: {},
+    judgeBlocked: 0,
+    frozenJudged: 0,
   };
 }
 
@@ -321,7 +363,9 @@ function mergeCounts(list) {
     for (const k of ["solvedSeconds", "solvedCalls"]) for (const [b, n] of Object.entries(x[k] || {})) c[k][b] = (c[k][b] || 0) + n;
     for (const k of Object.keys(c.agentTokens)) c.agentTokens[k] += (x.agentTokens && x.agentTokens[k]) || 0;
     for (const k of Object.keys(c.judgeTokens)) c.judgeTokens[k] += (x.judgeTokens && x.judgeTokens[k]) || 0;
-    for (const k of ["agentCalls", "judgeCalls", "agentUSD", "judgeUSD", "approverUSD", "realInputs"]) c[k] += x[k] || 0;
+    for (const k of ["agentCalls", "judgeCalls", "agentUSD", "judgeUSD", "approverUSD", "realInputs", "judgeBlocked", "frozenJudged"]) c[k] += x[k] || 0;
+    // A task's runs are all in one shard (run.js shards by task), so the histograms add.
+    for (const k of ["holdsPerRun", "passCounts"]) for (const [b, n] of Object.entries(x[k] || {})) c[k][b] = (c[k][b] || 0) + n;
   }
   return c;
 }
@@ -364,6 +408,22 @@ function histMedian(hist) {
   return null;
 }
 
+/** Holds per run as an interruption count: the total, the mean, the most in one run, and the runs with any. */
+function interruptionsOf(hist) {
+  let runs = 0;
+  let total = 0;
+  let most = 0;
+  let any = 0;
+  for (const [k, n] of Object.entries(hist || {})) {
+    const h = Number(k);
+    runs += n;
+    total += h * n;
+    if (h > most && n) most = h;
+    if (h > 0) any += n;
+  }
+  return { runs, total, mean: runs ? total / runs : null, most, runsWithAny: any };
+}
+
 /** The report of a part from its merged counts. `planned` is the number of runs meant to happen. */
 function report(counts, { planned = 0 } = {}) {
   const o = counts.outcomes;
@@ -386,6 +446,10 @@ function report(counts, { planned = 0 } = {}) {
       holds: { ...NO_HOLDS, ...(counts.holds || {}) },
       approverUSD: counts.approverUSD || 0,
     } : {}),
+    interruptions: interruptionsOf(counts.holdsPerRun),
+    noise: Object.keys(counts.passCounts || {}).length ? { passCounts: counts.passCounts, ...flipRate(counts.passCounts) } : null,
+    judgeBlocked: counts.judgeBlocked || 0,
+    frozenJudged: counts.frozenJudged || 0,
     medianSecondsSolved: histMedian(counts.solvedSeconds),
     medianCallsSolved: histMedian(counts.solvedCalls),
     agentTokens: { ...counts.agentTokens, uncached: counts.agentTokens.prompt - counts.agentTokens.cached },
@@ -417,6 +481,16 @@ function reportMarkdown(r, meta = {}) {
     out.push(`| with the simulated approver | ${w.passed} | ${w.declined} | ${pct(w.strictRate)} | ${pct(w.scoredRate)} |`, "");
     out.push(`Simulated approver on in ${w.runs} of ${r.ran} run(s): ${h.asked} hold(s) put to it, ${h.approved} approved in ${h.runsApproved} run(s), ${h.declined} declined on its no, ${h.refused} declined by kind with no call. A run with an approved hold counts as declined in the headline.`);
   }
+  const it = r.interruptions;
+  if (it && it.runs) out.push(`Interruptions: ${it.total} hold card(s) over ${it.runs} run(s), ${it.mean.toFixed(2)} a run on average, at most ${it.most} in one run, ${it.runsWithAny} run(s) with any. Each is a time the person would have been asked.`);
+  if (r.noise) {
+    const n = r.noise;
+    const cells = Object.entries(n.passCounts).map(([k, v]) => { const [runs, passed] = k.split(":"); return [Number(runs), Number(passed), v]; }).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    out.push("", "Noise floor (every hold declined; blocked and lost runs left out of a task's runs):", "", "| runs of the task | passed | tasks |", "| --- | --- | --- |");
+    for (const [runs, passed, v] of cells) out.push(`| ${runs} | ${passed} of ${runs} | ${v} |`);
+    out.push("", `Flip rate: ${n.flipped} of ${n.tasks} task(s) with more than one run did not end the same way every time (${n.rate === null ? "-" : `${(100 * n.rate).toFixed(1)}%`}).`, "");
+  }
+  out.push(`Blocked column: the block detector's (tests/bench/blocks.js), from page structure and HTTP status. The judge alone called ${r.judgeBlocked || 0} run(s) blocked.${r.frozenJudged ? ` ${r.frozenJudged} run(s) were judged on frozen key points.` : ""}`);
   out.push(`Per solved run: median ${r.medianSecondsSolved === null ? "-" : `${r.medianSecondsSolved} to ${r.medianSecondsSolved + SECONDS_BIN} s`}, median ${r.medianCallsSolved === null ? "-" : r.medianCallsSolved} model call(s).`);
   out.push(`Agent tokens: ${r.agentTokens.uncached} prompt uncached, ${r.agentTokens.cached} prompt cached, ${r.agentTokens.completion} output. Judge tokens: ${r.judgeTokens.input} input uncached, ${r.judgeTokens.cacheWrite} written to the cache, ${r.judgeTokens.cacheRead} read from it, ${r.judgeTokens.output} output.`);
   out.push(`Real spend: ${usd(r.spendUSD)} (agent ${usd(r.agentUSD)}, judge ${usd(r.judgeUSD)}${r.withApprover ? `, approver ${usd(r.approverUSD)}` : ""})${meta.capUSD ? `, cap $${Number(meta.capUSD).toFixed(2)}` : ""}.`);
@@ -597,7 +671,7 @@ async function main(argv) {
   throw new Error("Usage: om2w.js fetch --out <file> | split --dataset <file> --part <part> --out <file> | summary <dir> --part <part> --planned N [--census]");
 }
 
-module.exports = { CONFIG, PARTS, OUTCOMES, CENSUS_CLASSES, SECONDS_BIN, siteOfUrl, gitBlobSha1, checkDataset, om2wTasks, unitOf, partByCut, sealedCuts, partOfSite, neverSend, splitBySite, splitDigest, checkSplitDigest, deriveKeys, clashSites, engineWidgetSelectors, censusClass, outcomeOf, outcomeAllDeclined, approvalCounts, countsOf, emptyCounts, mergeCounts, sealedShardComplete, sealedWithheld, histMedian, report, reportMarkdown, censusReport, censusMarkdown, fetchDataset };
+module.exports = { passCountsOf, flipRate, interruptionsOf, CONFIG, PARTS, OUTCOMES, CENSUS_CLASSES, SECONDS_BIN, siteOfUrl, gitBlobSha1, checkDataset, om2wTasks, unitOf, partByCut, sealedCuts, partOfSite, neverSend, splitBySite, splitDigest, checkSplitDigest, deriveKeys, clashSites, engineWidgetSelectors, censusClass, outcomeOf, outcomeAllDeclined, approvalCounts, countsOf, emptyCounts, mergeCounts, sealedShardComplete, sealedWithheld, histMedian, report, reportMarkdown, censusReport, censusMarkdown, fetchDataset };
 
 if (require.main === module) {
   // Every error here is ours and names no task, but a stack can hold a path: print the message only.

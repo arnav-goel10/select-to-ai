@@ -1,0 +1,155 @@
+{
+  "rule": "Hand labels of 30 stored end pages from the two dev runs of 24 Nov 2026 (workflow runs 45333609111 and 45499514429), keyed by blocks.js labelKey(source run, task id, run) so the file names no task. The sample: 20 end pages drawn by a fixed hash from the 41 whose visible text is 1000 characters or less, and 10 from the 123 others. Each label says whether the page itself turns the visitor away, whatever site it is on, read from the page's text, the engine's listing and the final screenshot. Labelled once, and not changed to fit the detector.",
+  "labels": [
+    {
+      "key": "d76fabe86366467193c0",
+      "label": "blocked",
+      "why": "an additional-verification page with a request id, under the site's own header links"
+    },
+    {
+      "key": "d7bf4c2300a0f1c80b77",
+      "label": "not blocked",
+      "why": "a canvas simulation whose accessible text is short"
+    },
+    {
+      "key": "50873a50021c01099787",
+      "label": "blocked",
+      "why": "an unusual-traffic page that shows the visitor's address in place of search results"
+    },
+    {
+      "key": "4becd6a837c94e3a8d67",
+      "label": "blocked",
+      "why": "a human-verification step in place of the site's front page"
+    },
+    {
+      "key": "ce03b280888d3b241573",
+      "label": "blocked",
+      "why": "a security-verification interstitial with a request id"
+    },
+    {
+      "key": "f4d31191a4fa098c7e0c",
+      "label": "blocked",
+      "why": "a browser-verification failure page with an opaque request code"
+    },
+    {
+      "key": "b66d1e1bbb9dc85d9dfb",
+      "label": "not blocked",
+      "why": "a PDF in the browser's viewer: no page text, the document is the content"
+    },
+    {
+      "key": "91e5bae1a87d73f2fd8c",
+      "label": "not blocked",
+      "why": "a PDF in the browser's viewer: no page text, the document is the content"
+    },
+    {
+      "key": "cf0c93fda52cc2b8ca70",
+      "label": "blocked",
+      "why": "an access-denied page with a reference id"
+    },
+    {
+      "key": "1a0aacb4611c9585e60e",
+      "label": "blocked",
+      "why": "a press-and-hold human check with a reference id in place of search results"
+    },
+    {
+      "key": "5a45254c048aa63eaf4c",
+      "label": "blocked",
+      "why": "an unusual-traffic page that shows the visitor's address in place of search results"
+    },
+    {
+      "key": "39034b7ef56eeb44efa8",
+      "label": "blocked",
+      "why": "an access-denied page with a reference id"
+    },
+    {
+      "key": "978c41fc2b05ac95740e",
+      "label": "blocked",
+      "why": "an unusual-traffic page that shows the visitor's address in place of search results"
+    },
+    {
+      "key": "4494fb18f3af10f0d1d4",
+      "label": "blocked",
+      "why": "an access-denied page with a reference id"
+    },
+    {
+      "key": "9075b8d2e9b922009815",
+      "label": "not blocked",
+      "why": "a canvas simulation whose accessible text is short"
+    },
+    {
+      "key": "b4cc5617a222fc09443a",
+      "label": "blocked",
+      "why": "an access-denied page with a reference id"
+    },
+    {
+      "key": "50f8112119c94f254350",
+      "label": "blocked",
+      "why": "an access-denied page with a reference id"
+    },
+    {
+      "key": "4b20aca79e92f6541c27",
+      "label": "blocked",
+      "why": "a human check drawn in a frame, with no text or control of the page's own"
+    },
+    {
+      "key": "9bcdf238047325fdfb8a",
+      "label": "blocked",
+      "why": "an unusual-traffic page that shows the visitor's address in place of search results"
+    },
+    {
+      "key": "f51d775a582fc5a1a365",
+      "label": "not blocked",
+      "why": "an onboarding chooser with two buttons: the site's own first step"
+    },
+    {
+      "key": "b40985a11311894aa962",
+      "label": "not blocked",
+      "why": "an ordinary page of the site with its content"
+    },
+    {
+      "key": "a8992189e0fc3e7d4cf4",
+      "label": "not blocked",
+      "why": "an ordinary page of the site with its content"
+    },
+    {
+      "key": "b5848b0aac5bbd25b62d",
+      "label": "not blocked",
+      "why": "an ordinary page of the site with its content"
+    },
+    {
+      "key": "94965dba391ca61e2b6c",
+      "label": "not blocked",
+      "why": "an ordinary page of the site with its content"
+    },
+    {
+      "key": "d652cd6257dbfdc4442a",
+      "label": "not blocked",
+      "why": "an ordinary page of the site with its content"
+    },
+    {
+      "key": "8d71236b4d403f9af3cd",
+      "label": "not blocked",
+      "why": "an ordinary page of the site with its content"
+    },
+    {
+      "key": "aadd0307856b726cdda7",
+      "label": "not blocked",
+      "why": "an ordinary page of the site with its content"
+    },
+    {
+      "key": "b46579002accc01e79b5",
+      "label": "not blocked",
+      "why": "an ordinary page of the site with its content"
+    },
+    {
+      "key": "ba98fae4579a182fe663",
+      "label": "not blocked",
+      "why": "an ordinary page of the site with its content"
+    },
+    {
+      "key": "de1bdc71755537ad9dee",
+      "label": "not blocked",
+      "why": "an ordinary page of the site with its content"
+    }
+  ]
+}

@@ -55,7 +55,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { isInfra, normaliseTasks, sampleTasks, taskList, PAGE_STATES } = require("./judge.js");
+const { isInfra, blockedRow, normaliseTasks, sampleTasks, taskList, PAGE_STATES } = require("./judge.js");
 const { siteOf } = require("../../extension/agentTools.js");
 const { allDeclinedRow, approvalCounts, NOT_PUT_TO_APPROVER } = require("./approver.js");
 
@@ -329,10 +329,11 @@ const foldState = (p) => `${p.url}\n${p.title || ""}\n${String(p.text || "").rep
 function keepPageState(states, seen, bounds = PAGE_STATES) {
   if (!seen || !seen.url) return states;
   const at = states.reduce((n, p) => Math.max(n, p.lastSeen || 0), 0) + 1;
-  const state = { url: seen.url, title: seen.title || "", text: String(seen.text || "").slice(0, bounds.chars) };
+  const state = { url: seen.url, title: seen.title || "", text: String(seen.text || "").slice(0, bounds.chars), ...(seen.facts ? { facts: seen.facts } : {}) };
   const key = foldState(state);
   const same = states.find((p) => foldState(p) === key);
-  if (same) { same.lastSeen = at; return states; }
+  // The same state seen again keeps the latest reading of its structure (blocks.js pageFactsInPage).
+  if (same) { same.lastSeen = at; if (seen.facts) same.facts = seen.facts; return states; }
   states.push({ ...state, lastSeen: at });
   while (states.length > bounds.most) {
     const count = new Map();
@@ -518,7 +519,7 @@ function judgeCostUSD(usage, ratesFor) {
 function bucketOf(row) {
   if (row.success) return "passed";
   if (isInfra(row)) return "lost";
-  if (row.blocked || row.waitKind === "human_check") return "blocked";
+  if (blockedRow(row)) return "blocked";
   if (/^timed out/.test(String(row.ending || ""))) return "timed out";
   return "failed";
 }
