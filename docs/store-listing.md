@@ -68,7 +68,7 @@ Required permissions. All of them were in 2.0 or give Chrome no install warning,
 - declarativeNetRequest: lets the chat sites load inside the side panel. The rule covers only those sites and only the side panel's frames, and Claude only after the user allowed claude.ai.
 - activeTab: reads the current page when the user starts the agent from the toolbar button, a shortcut or the menu.
 - scripting: runs the agent's page reader on sites the user allowed, so it can see and act on the page.
-- identity: opens OpenRouter's sign-in window for "Continue with OpenRouter" (OAuth with PKCE).
+- identity: opens OpenRouter's sign-in window for "Sign in with OpenRouter" (OAuth with PKCE).
 - alarms: one reminder two minutes after a task paused for the user.
 - idle: checks whether the user is at the computer, so a waiting task reminds them only when they are away.
 - Host permissions, chatgpt.com, gemini.google.com and www.perplexity.ai (the same three as 2.0): puts the user's selected text into that site's chat box when they send it from the right-click menu or side panel.
@@ -99,7 +99,7 @@ No account or key is needed for steps 1 to 3. Do not put a real API key in this 
 1. Install the extension. Open any article, for example https://en.wikipedia.org/wiki/Web_browser.
 2. Select a sentence, right-click, and choose Select to AI > Send to ChatGPT (or Gemini). The side panel opens that site with the text in its chat box. No account with Select to AI is needed.
 3. In Settings, set "Open in" to New tab and send again. The site opens in a new tab instead.
-4. To try the agent, click the toolbar button, then Connect for free, then Continue with OpenRouter (free). A card titled "What the agent sends" appears below the key box. Press Agree and continue. When Chrome asks to allow openrouter.ai, allow it. Then create a free OpenRouter account in the window that opens (no card needed) and approve.
+4. To try the agent, click the toolbar button, then Connect for free, then the OpenRouter card, then Sign in with OpenRouter. A card titled "What the agent sends" appears below the key box. Press Agree and continue. When Chrome asks to allow openrouter.ai, allow it. Then create a free OpenRouter account in the window that opens (no card needed) and approve. Leave Free models picked and press Save and continue.
 5. In the toolbar popup, type a task such as "What is the top story on Hacker News?" and press Enter. When asked, allow the agent to use news.ycombinator.com. The agent opens the site, reads it and answers with the page it used.
 ```
 

@@ -27,6 +27,10 @@ async function connectedWelcome(extra = {}) {
   await settle(6);
   page.$("connectOR").click();
   // Signing in hashes a value off the main thread, which takes its own time: waited for, within two seconds.
+  // Then the free or paid choice, and Save and continue.
+  for (const until = Date.now() + 2000; page.visible("modelStep") === false && Date.now() < until;) await settle(10);
+  assert.equal(page.visible("modelStep"), true, "the free or paid choice is shown once signed in");
+  page.$("saveSetup").click();
   for (const until = Date.now() + 2000; !page.visible("done") && Date.now() < until;) await settle(10);
   await settle(40);
   assert.deepEqual(page.errors, []);

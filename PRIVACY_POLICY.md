@@ -27,7 +27,7 @@ If you set a **backup provider** (Settings > Browser agent > Backup when limits 
 
 **To ChatGPT, Claude, Gemini or Perplexity**, when you right-click selected text and send it there: the selected text, and the page address only if you turned on "Include the page link" in Settings. That switch is off unless you turn it on. Each send opens a new chat. For ChatGPT and Perplexity a short selection is put in the address that opens their page (`?q=`), so it can appear in that site's history. Claude is listed only after you allow claude.ai.
 
-**To OpenRouter**, when you click "Continue with OpenRouter" on the welcome page: OpenRouter's own sign-in runs in a Chrome window (OAuth with PKCE) and returns an API key. The extension never sees your OpenRouter password.
+**To OpenRouter**, when you click "Sign in with OpenRouter" on the welcome page: OpenRouter's own sign-in runs in a Chrome window (OAuth with PKCE) and returns an API key. The extension never sees your OpenRouter password. Once a key works, the welcome page asks OpenRouter, with that key, whether the account has bought credit, so it can preselect free or paid models. Nothing else is sent in that request.
 
 **To the websites the agent opens for you**: whatever the task needs, for example search words typed into a search box. This is the agent using the site the way you would.
 

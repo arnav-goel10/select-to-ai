@@ -3517,18 +3517,31 @@
         "written"
       ],
       "what": [
+        "aistudio.google.com",
         "api.anthropic.com",
         "api.cerebras.ai",
         "api.deepseek.com",
         "api.groq.com",
         "api.mistral.ai",
         "api.openai.com",
+        "api.together.ai",
         "api.together.xyz",
         "api.x.ai",
+        "cloud.cerebras.ai",
+        "console.groq.com",
+        "console.mistral.ai",
+        "console.x.ai",
+        "developers.openai.com",
+        "docs.mistral.ai",
+        "docs.together.ai",
+        "docs.x.ai",
         "generativelanguage.googleapis.com",
+        "inference-docs.cerebras.ai",
         "opencode.ai",
         "openrouter.ai",
-        "platform.claude.com"
+        "platform.claude.com",
+        "platform.deepseek.com",
+        "platform.openai.com"
       ],
       "why": "Provider endpoints and key pages for the models the user picks from."
     },
@@ -3565,6 +3578,7 @@
         "deepseek",
         "groq",
         "mistral",
+        "nvidia",
         "openai",
         "openrouter"
       ],
@@ -3637,7 +3651,9 @@
         "qwen-vl",
         "qwen2-vl",
         "qwen3-vl",
-        "vision"
+        "vision",
+        "gpt-6",
+        "nemotron-3.5-super-vl"
       ],
       "why": "Model and provider id patterns, read from the model the user picked, never from a page."
     },
@@ -3858,19 +3874,8 @@
         "written"
       ],
       "what": [
-        "aistudio.google.com",
         "api.anthropic.com",
-        "api.together.ai",
-        "cloud.cerebras.ai",
-        "console.groq.com",
-        "console.mistral.ai",
-        "console.x.ai",
-        "generativelanguage.googleapis.com",
-        "opencode.ai",
-        "openrouter.ai",
-        "platform.claude.com",
-        "platform.deepseek.com",
-        "platform.openai.com"
+        "generativelanguage.googleapis.com"
       ],
       "why": "Provider endpoints and key pages for the models the user picks from."
     },
@@ -3949,22 +3954,6 @@
       "file": "options.js",
       "kind": "site name",
       "against": [
-        "code"
-      ],
-      "what": [
-        "anthropic",
-        "deepseek",
-        "groq",
-        "mistral",
-        "openai",
-        "openrouter"
-      ],
-      "why": "Providers the user can pick for the agent: their ids, endpoints, key pages and model names."
-    },
-    {
-      "file": "options.js",
-      "kind": "site name",
-      "against": [
         "written"
       ],
       "what": [
@@ -3980,10 +3969,6 @@
       ],
       "what": [
         "anthropic",
-        "deepseek",
-        "google",
-        "groq",
-        "mistral",
         "openai",
         "openrouter"
       ],
@@ -5359,6 +5344,7 @@
       ],
       "what": [
         "connect",
+        "provider",
         "step"
       ],
       "why": "The query parts of the extension's own setup page and of the sign-in reply it asked for."
@@ -5461,6 +5447,7 @@
         "written"
       ],
       "what": [
+        "openai",
         "openrouter"
       ],
       "why": "Providers the user can pick for the agent: their ids, endpoints, key pages and model names."

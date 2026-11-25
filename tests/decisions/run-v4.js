@@ -39,6 +39,12 @@
  *   DECISION_INSTRUCTIONS_FILE  a text file to use in place of the instructions
  *   DECISION_EFFORT             "low" or "default" on every asking, in place
  *                               of the effort the engine would choose
+ *   DECISION_CAP_USD    hard spend cap (default none). A call is not made
+ *                       when its worst case would pass the cap, and the
+ *                       report says the run was cut short
+ *   DECISION_PRICE      "in,out" US dollars per million tokens, in place of
+ *                       the extension's price table (for a host such as
+ *                       NVIDIA's, whose free credits the table does not know)
  */
 "use strict";
 
@@ -69,6 +75,25 @@ const WAIT_MS = Math.max(500, parseInt(process.env.DECISION_WAIT_MS || "2000", 1
 const EFFORT = ["low", "default"].includes(process.env.DECISION_EFFORT) ? process.env.DECISION_EFFORT : "";
 const INSTRUCTIONS = process.env.DECISION_INSTRUCTIONS_FILE ? fs.readFileSync(process.env.DECISION_INSTRUCTIONS_FILE, "utf8") : null;
 const profile = D.modelProfile(MODEL);
+// What a token costs on this run, and what has been spent so far.
+const RATES = process.env.DECISION_PRICE
+  ? process.env.DECISION_PRICE.split(",").map((x) => Math.max(0, parseFloat(x) || 0) / 1e6)
+  : D.findModelRates(MODEL).map((x) => x / 1000);
+const CAP = process.env.DECISION_CAP_USD ? Math.max(0, parseFloat(process.env.DECISION_CAP_USD) || 0) : Infinity;
+const spend = { usd: 0, capped: false, calls: 0, inTokens: 0, outTokens: 0 };
+/** Adds a reply's tokens to the spend: cache writes at 1.25 times, cache reads at a tenth (Anthropic's rule), the rest at the list rate. */
+function charge(input, output, cacheWrite, cacheRead) {
+  spend.calls += 1;
+  spend.inTokens += input + cacheWrite + cacheRead;
+  spend.outTokens += output;
+  spend.usd += (input + cacheWrite * 1.25 + cacheRead * 0.1) * RATES[0] + output * RATES[1];
+}
+/** Whether one more call could pass the cap: every prompt character a token, and the whole reply room. */
+function overCap(system, user) {
+  if (spend.usd + (system.length + user.length) * RATES[0] + profile.maxTokens * RATES[1] <= CAP) return false;
+  spend.capped = true;
+  return true;
+}
 
 const OUTCOMES = ["pass", "slow", "fail", "saved", "unusable", "lost"];
 // What the engine tells the model when a reply names no step (run.js, model_failed).
@@ -146,11 +171,12 @@ function buildCase(c, again) {
 
 // The provider, for the request fields that ask a model to think less (llm.js effortFields).
 const IS_ANTHROPIC = /^sk-ant-/i.test(KEY) || /anthropic\.com/i.test(BASE) || /^anthropic$/i.test(process.env.DECISION_PROVIDER || "");
-const CONNECTION = { provider: IS_ANTHROPIC ? "anthropic" : /openrouter\.ai/.test(BASE) ? "openrouter" : "custom" };
+const CONNECTION = { provider: IS_ANTHROPIC ? "anthropic" : /openrouter\.ai/.test(BASE) ? "openrouter" : /api\.openai\.com/.test(BASE) ? "openai" : "custom" };
 
 /** `effort` is what the engine would ask for on this step (run.js effortOf). */
 async function ask(system, user, def, effort) {
   const t0 = Date.now();
+  if (overCap(system, user)) return { error: "spend cap reached", ms: 0 };
   if (IS_ANTHROPIC) {
     const endpoint = /\/v1\/messages$/.test(BASE) ? BASE : `${BASE.replace(/\/v1$/, "") === "https://openrouter.ai/api" ? "https://api.anthropic.com" : BASE.replace(/\/v1$/, "")}/v1/messages`;
     const tool = TOOLS.buildAnthropicTool(def.name, def.description, def.parameters);
@@ -180,13 +206,17 @@ async function ask(system, user, def, effort) {
       const toolUse = blocks.find((b) => b && b.type === "tool_use");
       const textBlock = blocks.filter((b) => b && b.type === "text").map((b) => b.text).join("\n");
       const args = (toolUse && toolUse.input) || TOOLS.parseTextAction(textBlock);
+      const u = out.usage || {};
+      charge(u.input_tokens || 0, u.output_tokens || 0, u.cache_creation_input_tokens || 0, u.cache_read_input_tokens || 0);
       return { args, ms: Date.now() - t0, model: out.model, tokens: (out.usage && out.usage.output_tokens) || 0 };
     }
     return { error: "rate limited or unavailable after retries", ms: Date.now() - t0 };
   }
   const tool = TOOLS.buildOpenAITool(def.name, def.description, def.parameters);
   for (let attempt = 0; attempt < RETRIES; attempt++) {
-    const body = { model: MODEL, max_tokens: profile.maxTokens, tools: [tool], tool_choice: { type: "function", function: { name: def.name } }, messages: [{ role: "system", content: system }, { role: "user", content: user }] };
+    // OpenAI's current models take only max_completion_tokens (llm.js sends the same).
+    const limitName = CONNECTION.provider === "openai" ? "max_completion_tokens" : "max_tokens";
+    const body = { model: MODEL, [limitName]: profile.maxTokens, tools: [tool], tool_choice: { type: "function", function: { name: def.name } }, messages: [{ role: "system", content: system }, { role: "user", content: user }] };
     // Fields a provider takes beyond the usual ones, such as turning thinking off (DECISION_EXTRA_BODY, as JSON).
     if (process.env.DECISION_EXTRA_BODY) Object.assign(body, JSON.parse(process.env.DECISION_EXTRA_BODY));
     if (profile.temperature !== null) body.temperature = profile.temperature;
@@ -200,6 +230,7 @@ async function ask(system, user, def, effort) {
     const call = msg && msg.tool_calls && msg.tool_calls[0];
     let args = null;
     try { args = call ? JSON.parse(call.function.arguments || "{}") : TOOLS.parseTextAction(msg && msg.content); } catch (_) { /* unparseable */ }
+    charge((out.usage && out.usage.prompt_tokens) || 0, (out.usage && out.usage.completion_tokens) || 0, 0, 0);
     return { args, ms: Date.now() - t0, model: out.model, tokens: (out.usage && out.usage.completion_tokens) || 0 };
   }
   return { error: "rate limited or unavailable after retries", ms: Date.now() - t0 };
@@ -494,7 +525,8 @@ async function main() {
     }
   }
   const summary = report(rows);
-  if (process.env.DECISION_REPORT) fs.writeFileSync(process.env.DECISION_REPORT, JSON.stringify({ model: MODEL, repeat: REPEAT, ...summary, rows }, null, 2));
+  console.log(`Spend: $${spend.usd.toFixed(4)} over ${spend.calls} calls (${spend.inTokens} prompt, ${spend.outTokens} reply tokens)${CAP < Infinity ? `, cap $${CAP.toFixed(2)}${spend.capped ? ", reached: the run was cut short" : ""}` : ""}`);
+  if (process.env.DECISION_REPORT) fs.writeFileSync(process.env.DECISION_REPORT, JSON.stringify({ model: MODEL, repeat: REPEAT, ...summary, spend, rows }, null, 2));
 }
 
 if (require.main === module) main().catch((e) => { console.error(e); process.exit(1); });

@@ -22,7 +22,7 @@
       .way .tag { display: inline-flex; align-items: center; height: 20px; margin-left: 8px; padding: 0 7px; border-radius: var(--radius-full); background: var(--done-soft); font-size: 11px; color: var(--done); font-weight: var(--weight-medium); vertical-align: 1px; }
       .connect { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 20px; box-shadow: var(--shadow-sm); }
       .connect h2 { font-size: var(--text-md); margin: 0 0 4px; font-weight: var(--weight-semibold); }
-      .connect > p { margin: 0 0 16px; color: var(--text-muted); font-size: var(--text-sm); }
+      .connect > p, .step > p { margin: 0 0 16px; color: var(--text-muted); font-size: var(--text-sm); }
       .fine { color: var(--text-subtle); font-size: var(--text-xs); margin: 12px 0 0; text-align: left; line-height: var(--leading-snug); }
       .or { display: flex; align-items: center; gap: 12px; color: var(--text-subtle); font-size: var(--text-xs); margin: 18px 0 12px; }
       .or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--border); }
@@ -45,6 +45,46 @@
       .try em { color: var(--text-subtle); font-style: normal; font-size: var(--text-sm); flex-shrink: 0; }
       .actions { display: flex; gap: 8px; }
       .panel { animation: ui-enter var(--dur-base) var(--ease-out) both; }
+      /* The provider picker: step 1 lists providers, step 2 connects the one picked. */
+      .step:not([hidden]) { animation: ui-enter var(--dur-2) var(--ease-out) both; }
+      .paste-label { display: block; font-size: var(--text-sm); font-weight: var(--weight-medium); margin: 0 0 6px; }
+      .providers { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+      .providers > [role="listitem"] { display: grid; min-width: 0; }
+      .prov { text-align: left; font: inherit; padding: 12px 14px; border-radius: var(--radius-lg); border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; display: grid; gap: 4px; align-content: start; box-shadow: var(--shadow-xs); transition: border-color var(--dur-1) var(--ease-out), background-color var(--dur-1) var(--ease-out), transform var(--dur-2) var(--ease-spring); }
+      .prov:hover { border-color: var(--border-strong); background: var(--surface-2); transform: translateY(var(--lift)); }
+      .prov:active { transform: scale(0.98); transition-duration: var(--dur-1), var(--dur-1), 60ms; }
+      .prov b { font-weight: var(--weight-medium); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+      .prov .line { color: var(--text-muted); font-size: var(--text-sm); line-height: var(--leading-snug); }
+      .prov .tag, .plan .tag { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: var(--radius-full); background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: var(--weight-medium); }
+      .prov .tag.free { background: var(--done-soft); color: var(--done); }
+      .more-providers { margin-top: 8px; }
+      .more-providers > summary { cursor: pointer; display: flex; align-items: center; gap: 6px; padding: 10px 2px; color: var(--text-muted); font-size: var(--text-sm); font-weight: var(--weight-medium); transition: color var(--dur-1) var(--ease-out); }
+      .more-providers > summary:hover { color: var(--text); }
+      .more-providers[open] > .providers { animation: ui-enter var(--dur-2) var(--ease-out) both; }
+      .back { margin: -4px 0 10px -8px; }
+      .key-title { outline: none; }
+      .field { display: grid; gap: 6px; margin-top: 14px; }
+      .field > label { font-size: var(--text-sm); font-weight: var(--weight-medium); display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+      .field .hint { font-size: var(--text-xs); color: var(--text-subtle); font-weight: var(--weight-normal); line-height: var(--leading-snug); }
+      .check { display: flex; gap: 10px; align-items: flex-start; margin-top: 14px; cursor: pointer; }
+      .check input { margin-top: 2px; }
+      .check b { display: block; font-weight: var(--weight-medium); font-size: var(--text-sm); }
+      .check .d, .plan .d { display: block; color: var(--text-muted); font-size: var(--text-sm); line-height: var(--leading-snug); }
+      .plans { border: 0; padding: 0; margin: 14px 0 0; display: grid; gap: 8px; }
+      .plans legend { font-size: var(--text-sm); font-weight: var(--weight-medium); padding: 0; margin-bottom: 6px; }
+      .plan { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: var(--radius-lg); border: 1px solid var(--border); background: var(--surface); cursor: pointer; transition: border-color var(--dur-1) var(--ease-out), background-color var(--dur-1) var(--ease-out); }
+      .plan:hover { border-color: var(--border-strong); }
+      .plan:has(input:checked) { border-color: var(--control-edge); background: var(--accent-selected); }
+      .plan input { accent-color: var(--accent-fill); margin: 3px 0 0; flex-shrink: 0; }
+      .plan b { font-weight: var(--weight-medium); }
+      .save { margin-top: 16px; }
+      @media (max-width: 480px) {
+        .shell { padding: 40px 16px 40px; }
+        .paste { flex-wrap: wrap; }
+        .paste .input { flex-basis: 100%; }
+        .paste .btn { flex: 1; }
+        .providers { grid-template-columns: 1fr; }
+      }
     </style>
   </head>
   <body>
@@ -55,20 +95,65 @@
         <h1>Ask AI about any page, or let it do the work.</h1>
         <p class="lede">It is ready to use. Here is what you can do.</p>
         <div class="ways">
-          <div class="way"><span class="n">1</span><div><b>Highlight text and right-click<span class="tag">Works now</span></b><span>Send it to ChatGPT or Gemini without copying and pasting. Settings also lists Perplexity and Claude.</span></div></div>
-          <div class="way"><span class="n">2</span><div><b>Hand a task to the agent</b><span>"Find the cheapest flight on this page." It clicks, types and reads for you, and asks before anything that costs money.</span></div></div>
-          <div class="way"><span class="n">3</span><div><b>Ask it from anywhere</b><span>Press <kbd id="kbdPalette">Alt K</kbd> on any website to open the quick box.</span></div></div>
+          <div class="way"><span class="n">1</span><div><b>Highlight text and right-click<span class="tag">Works now</span></b><span>Send it to ChatGPT or Gemini without copying and pasting.</span></div></div>
+          <div class="way"><span class="n">2</span><div><b>Hand a task to the agent</b><span>It clicks, types and reads for you, and asks before anything that costs money.</span></div></div>
+          <div class="way"><span class="n">3</span><div><b>Ask it from anywhere</b><span>Press <kbd id="kbdPalette">Alt K</kbd> on any website.</span></div></div>
         </div>
 
         <div class="connect" id="connect">
-          <h2>Turn on the agent</h2>
-          <p>It needs an AI model to think with. OpenRouter has free ones, or use a key from OpenAI, Anthropic, Gemini, Groq or xAI.</p>
-          <button class="btn btn-primary btn-lg btn-block" id="connectOR" type="button">Continue with OpenRouter (free)</button>
-          <p class="fine">Sign in or sign up in the window that opens. No card needed. <span id="freeCapNote"></span></p>
-          <div class="or">or paste a key you already have</div>
-          <div class="paste">
-            <input class="input mono" id="keyInput" type="password" autocomplete="off" spellcheck="false" placeholder="Paste an API key" aria-label="API key" />
-            <button class="btn" id="useKey" type="button">Connect</button>
+          <div class="step" id="pickStep" role="group" aria-labelledby="pickTitle">
+            <h2 id="pickTitle">Turn on the agent</h2>
+            <p>It needs an AI model to think with. Pick where that model comes from.</p>
+            <label class="paste-label" for="keyInput">Already have a key? Paste it here.</label>
+            <div class="paste">
+              <input class="input mono" id="keyInput" type="password" autocomplete="off" spellcheck="false" placeholder="Paste an API key" />
+              <button class="btn" id="useKey" type="button">Connect</button>
+            </div>
+            <div class="or">or pick a provider</div>
+            <div class="providers" id="providerGrid" role="list" aria-label="Providers"></div>
+            <details class="more-providers" id="moreProviders">
+              <summary>More providers <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary>
+              <div class="providers" id="moreGrid" role="list" aria-label="More providers"></div>
+            </details>
+            <p class="fine" id="freeOptions">Other free options are a Gemini, Groq or Cerebras key.</p>
+          </div>
+
+          <div class="step" id="keyStep" role="group" aria-labelledby="keyTitle" hidden>
+            <button class="btn btn-ghost btn-sm back" id="backToPick" type="button">All providers</button>
+            <h2 class="key-title" id="keyTitle" tabindex="-1">Connect</h2>
+            <p id="keyLede"></p>
+            <div id="orSignIn" hidden>
+              <button class="btn btn-primary btn-lg btn-block" id="connectOR" type="button">Sign in with OpenRouter</button>
+              <div class="or">or paste an OpenRouter key</div>
+            </div>
+            <div class="field" id="urlField" hidden>
+              <label for="serverUrl">Server address</label>
+              <input class="input mono" id="serverUrl" placeholder="http://localhost:11434/v1" spellcheck="false" aria-describedby="serverHint" />
+              <span class="hint" id="serverHint">HTTPS, or a server on this computer (localhost).</span>
+            </div>
+            <div class="field" id="keyField">
+              <label for="providerKey"><span id="keyLabel">API key</span><a class="hint" id="getKey" href="#" target="_blank" rel="noopener">Get a key</a></label>
+              <div class="paste">
+                <input class="input mono" id="providerKey" type="password" autocomplete="off" spellcheck="false" />
+                <button class="btn btn-primary" id="connectKey" type="button">Connect</button>
+              </div>
+            </div>
+
+            <div id="modelStep" hidden>
+              <div class="field" id="modelField">
+                <label for="modelPick">Main model</label>
+                <select class="input" id="modelPick" aria-describedby="modelHint"></select>
+                <span class="hint" id="modelHint">It runs every step of a task. You can change this any time in Settings.</span>
+              </div>
+              <label class="check" id="strongerRow"><input type="checkbox" id="useStronger" /><span><b>Use a stronger model for hard steps</b><span class="d" id="strongerDetail"></span></span></label>
+              <fieldset class="plans" id="planField" hidden>
+                <legend>Which models should it use?</legend>
+                <label class="plan"><input type="radio" name="plan" id="planFree" value="free" /><span><b>Free models</b><span class="d">Slower, and they can be busy. <span id="freeCapNote"></span></span></span></label>
+                <label class="plan"><input type="radio" name="plan" id="planPaid" value="paid" /><span><b>Paid</b><span class="d" id="planPaidLine"></span></span></label>
+                <p class="fine" id="planWhy"></p>
+              </fieldset>
+              <button class="btn btn-primary btn-block save" id="saveSetup" type="button">Save and continue</button>
+            </div>
           </div>
           <div id="consentSlot"></div>
           <div class="status" id="status" role="status" aria-live="polite"></div>
@@ -90,6 +175,7 @@
     <script src="usageLimits.js"></script>
     <script src="core/grants.js"></script>
     <script src="setup.js"></script>
+    <script src="security.js"></script>
     <script src="welcome.js"></script>
   </body>
 </html>

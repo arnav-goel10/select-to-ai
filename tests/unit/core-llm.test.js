@@ -101,7 +101,7 @@ test("a provider that refuses a forced tool is offered it instead; one that refu
 
 test("a busy model is swapped for its sibling; a key out of requests ends the call with the reason", async () => {
   const seen = [];
-  const out = await client([reply(503, "overloaded"), reply(200, toolCall("step", { goal: "go" }))], seen).call({ system: "s", user: "u", tool, tier: "pro" }, cfg({ model: "mistral-medium-latest" }));
+  const out = await client([reply(503, "overloaded"), reply(200, toolCall("step", { goal: "go" }))], seen).call({ system: "s", user: "u", tool, tier: "pro" }, cfg({ model: "mistral-large-latest" }));
   assert.deepEqual(out.reply, { goal: "go" });
   assert.equal(seen.filter((x) => x.body)[1].body.model, "mistral-small-latest");
   await assert.rejects(client([reply(401, JSON.stringify({ error: { message: "bad key" } }))], []).call({ system: "s", user: "u", tool, tier: "pro" }, cfg()), (e) => e.kind === "auth");

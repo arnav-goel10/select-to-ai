@@ -6,6 +6,9 @@ A new engine, built and measured over 1 to 3 October 2026 (the measurements are 
 
 ### Release changes (Nov 2026)
 
+- Setup offers every provider. The welcome page lists OpenRouter, Anthropic, OpenAI and Google Gemini, with DeepSeek, Mistral, Groq, xAI, Together AI, Cerebras, OpenCode Zen and your own server under More providers, from one table in `defaults.js` that Settings shares. Picking one shows its key page and key shape, names a key from another provider before anything is sent, and after the check offers that provider's models with their prices, plus an option to use its stronger model for hard steps. OpenRouter asks whether you want its free models or, on an account with credit, Claude Haiku 5.5. Your own server lists its models to pick from. Settings shows the provider fields without a click, and Connect and Change open the same picker.
+- Default models brought up to date from each provider's own pages (25 Nov 2026): OpenAI gpt-6-luna and gpt-6.2-sol, Gemini gemini-3.8-flash and gemini-4-hydrogen (pinned, not the -latest aliases), Mistral Large in place of the deprecated Medium, Groq and Cerebras gpt-oss-120b, xAI grok-4.7, OpenCode claude-sonnet-5-5, and on OpenRouter Claude Haiku 5.5 and Sonnet 5.5 for paid use. The free chain now starts with Nemotron 3.5 Super VL and Lightning.
+
 - Recipes ship in this release: save a run that worked from the agent page and replay it from the Recipes panel. A replay calls no model while the pages are as recorded, repairs a step that only moved or was restyled, and stops before a press whose meaning changed.
 - Recipe replays and the agent now wait on a page in one way (`core/inject.js`), so a page that never finishes loading no longer stalls a replay.
 - Shortcuts. The side panel keeps the 2.0 key, Ctrl+Shift+S (Command+Shift+S on macOS). The agent is Alt+A and the quick box Alt+K, which are Control+Shift+G and Control+Shift+Q on macOS, because Option+A and Option+K type accented letters there.

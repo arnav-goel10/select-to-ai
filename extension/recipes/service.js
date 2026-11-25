@@ -418,14 +418,16 @@
 
   /**
    * The tier a repair or meaning check asks. Most providers have a cheap
-   * model of their own. On OpenRouter that cheap model is the free router,
-   * and on a custom gateway it is whatever the gateway serves, so a user
-   * who chose a paid model there gets the run's own model instead.
+   * model of their own, and so does OpenRouter: the free router for a
+   * free run, Haiku for a paid one (core/llm.js settingsFrom). On a custom
+   * gateway it is whatever the gateway serves, so the run's own model is
+   * used. A setting saved before OpenRouter had a paid cheap model (a paid
+   * main model, a free cheap one) also keeps the run's own model.
    */
   function tierFor(cfg) {
     if (cfg.provider === "custom") return "pro";
     const free = (m) => !m || m === "openrouter/free" || /:free$/.test(m);
-    return cfg.provider === "openrouter" && !free(cfg.model) ? "pro" : "lite";
+    return cfg.provider === "openrouter" && !free(cfg.model) && free(cfg.liteModel) ? "pro" : "lite";
   }
 
   /** The user's configured provider, on the model tierFor picks, as a recipes model client. */
