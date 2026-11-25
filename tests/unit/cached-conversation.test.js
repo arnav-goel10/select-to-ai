@@ -241,3 +241,12 @@ test("cached tokens of a conversation step are counted as before: inside the pro
   assert.equal(seen[0].body.messages[0].role, "user");
   assert.equal(seen[0].body.messages[1].content[0].type, "tool_use");
 });
+
+test("a page the next step was still on is given by its address alone: an excerpt of it as it was would be out of date", () => {
+  const h = (n, url) => ({ step: n, goal: "g", url, title: "Inbox", seen: `Row: closed (step ${n})`, call: { goal: "g", do: "click", ref: 1 }, actions: [{ text: "click [1]", ok: true, result: "Done. The row opened." }] });
+  const run = { task: "t", marker: "PAGE-abcd1234", history: [h(1, "https://mail.example/"), h(2, "https://mail.example/#open"), h(3, "https://mail.example/other")] };
+  const text = CONTEXT.stepTurns(run, "head", "PAGE-abcd1234", "https://mail.example/other").flatMap((t) => (t.parts || []).map((p) => p.text || "")).join("\n");
+  assert.doesNotMatch(text, /step 1\)/, "step 2 was on the same page, which had changed");
+  assert.match(text, /An excerpt of that page: Inbox: Row: closed \(step 2\)/, "step 3 was on another page");
+  assert.doesNotMatch(text, /step 3\)/, "the current page is shown in full, not excerpted");
+});

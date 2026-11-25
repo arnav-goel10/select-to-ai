@@ -463,7 +463,7 @@ In this browser your pointer and your keys are made by script: the page is sent 
     const opening = [...head, ...(standing.length ? [`Facts from the browser that hold for the whole run:\n${standing.map((f) => `- ${f}`).join("\n")}`] : [])].join("\n\n");
     const last = tail([known, notes, factsText(turnFacts), notice], pageBlock(run, page, { ...ctx, earlierInTurns: true }, {}));
     // Whether the page's text was cut to fit: only then has `read` more to give.
-    return { system: systemMessage(ctx.settings, !!run.sub, !!ctx.scripted), user, turns: stepTurns(run, opening, marker), last, textCut: shown.truncated, listCut: shown.listCut, textShown: shown.shown || 0 };
+    return { system: systemMessage(ctx.settings, !!run.sub, !!ctx.scripted), user, turns: stepTurns(run, opening, marker, page.url), last, textCut: shown.truncated, listCut: shown.listCut, textShown: shown.shown || 0 };
   }
 
   /**
@@ -482,6 +482,9 @@ In this browser your pointer and your keys are made by script: the page is sent 
   // one-message history.
   const TURN_RESULT = 700;
 
+  /** Two addresses of the same page, whatever their fragments. */
+  const samePlace = (a, b) => !!a && !!b && String(a).split("#")[0] === String(b).split("#")[0];
+
   /** The ids of the step calls in the turns: nine letters and digits, which every provider takes. */
   const callId = (n) => `step${String(n).padStart(5, "0")}`;
 
@@ -494,9 +497,11 @@ In this browser your pointer and your keys are made by script: the page is sent 
    * markers. A step with no excerpt kept (a page that could not be read)
    * gives the address alone.
    */
-  function viewRecord(h, marker) {
+  function viewRecord(h, marker, next) {
     const where = `[Before this step you were shown ${clip(h.url, 200) || "a page with no address"}. That view is no longer shown in full.]`;
-    if (!h.seen) return where;
+    // A page the next step was still on has changed since, or is still in
+    // view: an excerpt of it as it was would be out of date.
+    if (!h.seen || samePlace(h.url, next)) return where;
     const words = `${clip(h.title, 120) || "(untitled)"}: ${h.seen}`.replace(/PAGE-[0-9a-f]{4,16}/gi, "PAGE-marker");
     return `${where}\n----- ${marker} begins -----\nAn excerpt of that page: ${words}\n----- ${marker} ends -----`;
   }
@@ -517,8 +522,11 @@ In this browser your pointer and your keys are made by script: the page is sent 
    * {role: "assistant", call: {id, name, input}}. The current page, the
    * notes and the facts are not here: they are `last` of stepMessages.
    */
-  function stepTurns(run, headText, marker) {
+  function stepTurns(run, headText, marker, url) {
     const mark = marker || "PAGE-000000";
+    const steps = run.history || [];
+    // Where the step after each one was taken: the next step's page, or the current one.
+    const nextOf = (i) => (i + 1 < steps.length ? steps[i + 1].url : url);
     const out = [{ role: "user", parts: [{ text: headText }] }];
     const userTurn = () => {
       const t = out[out.length - 1];
@@ -528,16 +536,16 @@ In this browser your pointer and your keys are made by script: the page is sent 
       return fresh;
     };
     let n = 0;
-    for (const h of run.history || []) {
+    steps.forEach((h, i) => {
       if (h.call && typeof h.call === "object") {
-        userTurn().parts.push({ text: viewRecord(h, mark) });
+        userTurn().parts.push({ text: viewRecord(h, mark, nextOf(i)) });
         n += 1;
         out.push({ role: "assistant", call: { id: callId(n), name: "step", input: h.call } });
         out.push({ role: "user", parts: [{ result: resultOf(h), id: callId(n) }] });
       } else {
-        userTurn().parts.push({ text: `${viewRecord(h, mark)}\nThe browser took this step itself, not you: ${clip(h.goal, 120) || "(no goal given)"}\n${resultOf(h)}` });
+        userTurn().parts.push({ text: `${viewRecord(h, mark, nextOf(i))}\nThe browser took this step itself, not you: ${clip(h.goal, 120) || "(no goal given)"}\n${resultOf(h)}` });
       }
-    }
+    });
     return out;
   }
 
