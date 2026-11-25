@@ -1001,7 +1001,7 @@
     let last = 0;
     try {
       const out = await clientFor().call({
-        system: fx.system, user: fx.user, tool: fx.tool, tier: fx.tier, effort: fx.effort, image: fx.image, reasks: fx.reasks, signal: ctl.signal,
+        system: fx.system, user: fx.user, turns: fx.turns, last: fx.last, tool: fx.tool, tier: fx.tier, effort: fx.effort, image: fx.image, reasks: fx.reasks, signal: ctl.signal,
         // A sub-task's reply as it is written is not shown: its steps are.
         // Sent as the text added since the last part, so a long reply is never cut.
         onText: (text) => {

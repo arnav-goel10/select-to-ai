@@ -171,6 +171,82 @@
     return { reasoning_effort: "low" };
   }
 
+  // ------------------------------------------------------- conversation
+
+  /**
+   * A step's conversation (context.js stepTurns) in each provider's own
+   * shape, with the step's current text (`last`) and picture after the
+   * last results. Earlier turns are sent the same way every step, so a
+   * provider that caches a prompt's beginning by itself (OpenAI, DeepSeek,
+   * Gemini, Groq, xAI and the rest) finds the whole run so far already
+   * cached, and Anthropic is told where with cache_control: one mark on the
+   * system text, which holds the tool too, and one on the turns' last
+   * block. The next step's mark is a few blocks further on, and Anthropic
+   * looks back up to 20 blocks from a mark for what was cached before, so
+   * it reads this step's. The current text is never marked: the next step
+   * shows that page in short instead.
+   */
+  function anthropicTurns(turns, last, image, mark) {
+    const messages = turns.map((t) => (t.role === "assistant"
+      ? { role: "assistant", content: [{ type: "tool_use", id: t.call.id, name: t.call.name, input: t.call.input }] }
+      : { role: "user", content: t.parts.map((p) => (p.result !== undefined ? { type: "tool_result", tool_use_id: p.id, content: p.result } : { type: "text", text: p.text })) }));
+    const end = messages[messages.length - 1].content;
+    if (mark) end[end.length - 1] = { ...end[end.length - 1], cache_control: { type: "ephemeral" } };
+    end.push({ type: "text", text: last });
+    const img = image && String(image).match(/^data:([^;]+);base64,(.+)$/);
+    if (img) end.push({ type: "image", source: { type: "base64", media_type: img[1], data: img[2] } });
+    return messages;
+  }
+
+  /**
+   * The same in the chat completions shape: a call is an assistant message
+   * with tool_calls, its results are tool messages, and a turn's other
+   * text is one user message after them. With `mark` (OpenRouter's Claude
+   * and Qwen, which take cache_control) the turns' last text is marked.
+   */
+  function chatTurns(turns, last, image, mark) {
+    const messages = [];
+    turns.forEach((t, i) => {
+      if (t.role === "assistant") {
+        messages.push({ role: "assistant", content: "", tool_calls: [{ id: t.call.id, type: "function", function: { name: t.call.name, arguments: JSON.stringify(t.call.input) } }] });
+        return;
+      }
+      const final = i === turns.length - 1;
+      for (const p of t.parts) if (p.result !== undefined) messages.push({ role: "tool", tool_call_id: p.id, content: p.result });
+      const texts = t.parts.filter((p) => p.result === undefined).map((p) => p.text);
+      if (final) {
+        // The current text joins the turn's own text, or comes after its results.
+        const marked = mark && !texts.length && messages.length && messages[messages.length - 1].role === "tool";
+        if (marked) { const m = messages[messages.length - 1]; m.content = [{ type: "text", text: m.content, cache_control: { type: "ephemeral" } }]; }
+        const parts = texts.map((text, j) => ({ type: "text", text, ...(mark && j === texts.length - 1 ? { cache_control: { type: "ephemeral" } } : {}) }));
+        parts.push({ type: "text", text: last });
+        if (image) parts.push({ type: "image_url", image_url: { url: image } });
+        messages.push({ role: "user", content: mark || image ? parts : parts.map((p) => p.text).join("\n\n") });
+      } else if (texts.length) messages.push({ role: "user", content: texts.join("\n\n") });
+    });
+    return messages;
+  }
+
+  /** The same as Responses API items: function_call and function_call_output, and user messages. */
+  function responsesTurns(turns, last, image) {
+    const items = [];
+    const said = (text) => ({ type: "message", role: "user", content: [{ type: "input_text", text }] });
+    turns.forEach((t, i) => {
+      if (t.role === "assistant") { items.push({ type: "function_call", call_id: t.call.id, name: t.call.name, arguments: JSON.stringify(t.call.input) }); return; }
+      for (const p of t.parts) if (p.result !== undefined) items.push({ type: "function_call_output", call_id: p.id, output: p.result });
+      const texts = t.parts.filter((p) => p.result === undefined).map((p) => p.text);
+      if (i === turns.length - 1) {
+        const m = said([...texts, last].join("\n\n"));
+        if (image) m.content.push({ type: "input_image", image_url: image });
+        items.push(m);
+      } else if (texts.length) items.push(said(texts.join("\n\n")));
+    });
+    return items;
+  }
+
+  /** The turns' text, for a token count when the provider gives none. */
+  const turnsText = (turns) => (turns || []).map((t) => (t.role === "assistant" ? JSON.stringify(t.call.input) : t.parts.map((p) => (p.result !== undefined ? p.result : p.text)).join("\n"))).join("\n");
+
   /**
    * A Responses API request for a user signed in with ChatGPT, within what
    * plan usage accepts (siwc/token-sharing-open-source/preview-limitations):
@@ -189,7 +265,7 @@
     const body = {
       model,
       instructions: system,
-      input: [{ type: "message", role: "user", content }],
+      input: tool && req.turns ? responsesTurns(req.turns, user, req.image) : [{ type: "message", role: "user", content }],
       store: false,
       stream: true,
     };
@@ -234,7 +310,7 @@
         // The tool comes before the system text in what is cached, so one
         // mark on the system text caches both: they are the same every step.
         system: explicitCaching(cfg, model) ? [{ type: "text", text: system, cache_control: { type: "ephemeral" } }] : system,
-        messages: [{ role: "user", content }],
+        messages: tool && req.turns ? anthropicTurns(req.turns, user, req.image, explicitCaching(cfg, model)) : [{ role: "user", content }],
         stream: true,
       };
       // Current Claude models think adaptively and take no thinking budget.
@@ -253,7 +329,7 @@
       const sys = explicitCaching(cfg, model) ? [{ type: "text", text: system, cache_control: { type: "ephemeral" } }] : system;
       body = {
         model,
-        messages: [{ role: "system", content: sys }, { role: "user", content: req.image ? [{ type: "text", text: user }, { type: "image_url", image_url: { url: req.image } }] : user }],
+        messages: [{ role: "system", content: sys }, ...(tool && req.turns ? chatTurns(req.turns, user, req.image, explicitCaching(cfg, model)) : [{ role: "user", content: req.image ? [{ type: "text", text: user }, { type: "image_url", image_url: { url: req.image } }] : user }])],
         [tokenLimitName(cfg, mode)]: mode.maxTokens,
         stream: true,
       };
@@ -687,7 +763,7 @@
       let prompt = u.prompt_tokens ?? u.input_tokens;
       let completion = u.completion_tokens ?? u.output_tokens;
       const estimated = prompt === undefined || completion === undefined;
-      if (prompt === undefined) prompt = Math.ceil((String(req.system).length + String(req.user).length) / 4);
+      if (prompt === undefined) prompt = Math.ceil((String(req.system).length + String(req.user).length + turnsText(req.turns).length) / 4);
       if (completion === undefined) completion = Math.ceil((res.text.length + res.reasoning.length + (res.argChars || 0)) / 4);
       // On ChatGPT the user's plan pays: nothing is charged per token.
       const rates = provider === "chatgpt" ? [0, 0] : DEFAULTS.findModelRates(model);
@@ -726,7 +802,8 @@
       const reaskBudget = Number.isInteger(req.reasks) ? Math.max(0, req.reasks) : 2;
       let asText = false;
       let maxTokens = Math.max(req.maxTokens || DEFAULTS.modelProfile(model).maxTokens, (req.tool && roomNeeded.get(model)) || 0);
-      let user = req.user;
+      // What a re-ask adds to the step's text.
+      let extra = "";
       // Signed in with ChatGPT: the access token in use, renewed once after a 401.
       let renewToken = false;
       let renewed = false;
@@ -750,11 +827,16 @@
         // breaks and all.
         let sendCfg = cfg;
         if (cfg.provider === "chatgpt") { sendCfg = { ...cfg, apiKey: await tokenFor(renewToken) }; renewToken = false; }
-        const res = await once({ ...req, user }, sendCfg, model, { ...mode, autoChoice: mode.autoChoice || reasks < 2, noTools: mode.noTools || asText, maxTokens }, req.signal, req.onText);
+        // The step as the run's conversation (context.js stepTurns), unless
+        // prompt caching is turned off, the connection did not take it, or
+        // the tool is not on offer: then as the one message it always was.
+        const conversing = !!(req.tool && req.turns && req.turns.length && req.last !== undefined && cfg.promptCaching !== false && !mode.noTurns && !mode.noTools && !asText);
+        const user = `${conversing ? req.last : req.user}${extra}`;
+        const res = await once({ ...req, user, turns: conversing ? req.turns : null }, sendCfg, model, { ...mode, autoChoice: mode.autoChoice || reasks < 2, noTools: mode.noTools || asText, maxTokens }, req.signal, req.onText);
         const provider = cfg.provider;
 
         if (res.ok) {
-          add(usageOf(res, { ...req, user }, model, cfg.provider));
+          add(usageOf(res, { ...req, user, turns: conversing ? req.turns : null }, model, cfg.provider));
           let reply = (res.calls[0] && res.calls[0].args) || (req.tool ? TOOLS.parseTextAction(res.text) || TOOLS.parseTextAction(res.reasoning) : null);
           let mended = res.calls[0] ? res.mended : "";
           let bad = res.bad;
@@ -788,17 +870,17 @@
             // The model is told what was wrong with what it sent, not that it sent nothing.
             if (bad) {
               log("Call Not Readable", `The model called ${req.tool.name}, but ${bad}. Asking again (${reasks}/${reaskBudget}).`, { quiet: true });
-              user = `${req.user}\n\nYour last reply called the ${req.tool.name} tool, but ${bad}. Call it again with its arguments as one complete JSON object: double quotes, no trailing commas, every required field.`;
+              extra = `\n\nYour last reply called the ${req.tool.name} tool, but ${bad}. Call it again with its arguments as one complete JSON object: double quotes, no trailing commas, every required field.`;
               continue;
             }
             log("Reply Without Action", `The model answered without calling ${req.tool.name}${res.finish ? ` (${res.finish})` : ""}${got ? `: ${got}` : ", with nothing"}. Asking again (${reasks}/${reaskBudget}).`, { quiet: true });
-            user = `${req.user}\n\nYour last reply did not call the ${req.tool.name} tool. Reply only by calling it${mode.noTools || asText ? " (one JSON object with its fields)" : ""}.`;
+            extra = `\n\nYour last reply did not call the ${req.tool.name} tool. Reply only by calling it${mode.noTools || asText ? " (one JSON object with its fields)" : ""}.`;
             continue;
           }
           // Asked twice and still no tool call: this once, take the same fields as written JSON.
           if (reaskBudget > 0 && !mode.noTools && !asText) {
             asText = true;
-            user = req.user;
+            extra = "";
             log("Reply Without Action", `Asking for the fields of ${req.tool.name} as JSON instead.`, { quiet: true });
             continue;
           }
@@ -842,6 +924,14 @@
         if (status === 400 && !mode.noTemperature && /temperature|top_p|sampling/i.test(message)) {
           mode.noTemperature = true;
           log("Compatibility", "The model does not take a temperature. Retrying without it on this connection.", { quiet: true });
+          continue;
+        }
+        // A connection that refused the step as a conversation (a provider
+        // that takes no tool turns, or not in this shape) is sent the one
+        // message instead, on this connection from then on.
+        if ((status === 400 || status === 422) && conversing) {
+          mode.noTurns = true;
+          log("Compatibility", `The provider did not take the run as a conversation (${clip(message, 160)}). Sending each step as one message on this connection.`, { quiet: true });
           continue;
         }
         if (provider === "chatgpt") {
