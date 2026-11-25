@@ -58,6 +58,8 @@ async function main() {
   const browser = await puppeteer.launch({ headless: !process.env.E2E_HEADFUL, args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, "--no-first-run", "--disable-features=DialMediaRouteProvider"] });
   const results = [];
   const skipped = [];
+  // Every scenario's actions in order, for E2E_ACTIONS_OUT (tests/e2e/same-actions.js).
+  const played = [];
   // How long each settle scenario's press waited, for the report.
   const settleTimes = [];
   try {
@@ -73,6 +75,8 @@ async function main() {
       agentRiskConfirmation: true, agentDomainAllowlist: "", openingMode: "tab", agentLearning: false,
       // E2E_DEBUGGER=off runs every scenario as a build without the debugger would.
       ...(process.env.E2E_DEBUGGER === "off" ? { agentDebuggerMode: "off" } : {}),
+      // E2E_PROMPT_CACHING=off asks each step as one message, the build before the cached conversation.
+      ...(process.env.E2E_PROMPT_CACHING === "off" ? { agentPromptCaching: false } : {}),
     });
     // The user already agreed to what the agent sends to this server (setup.js consent).
     await worker.evaluate((origin) => new Promise((r) => chrome.storage.local.set({ onboardingComplete: true, agentDataConsent: { [`custom ${origin}`]: Date.now() } }, r)), new URL(server.baseUrl).origin);
@@ -153,6 +157,7 @@ async function main() {
       }
       if (state && state.trace && state.trace.id) lastFinishedRun = state.trace.id;
       const logged = await control("/control/log", { method: "GET" });
+      played.push({ scenario: name, actions: logged.actions });
       const chips = await agent.evaluate(() => [...document.querySelectorAll(".used-chips button")].map((b) => b.textContent)).catch(() => []);
       const notes = await agent.evaluate(() => [...document.querySelectorAll(".memory-note")].map((b) => b.textContent)).catch(() => []);
       if (aside) await aside.close().catch(() => {});
@@ -441,6 +446,7 @@ async function main() {
         const quoted = await agent.evaluate(() => !!document.querySelector(".message-bubble.user .selection-chip"));
         const chipAfter = await agent.evaluate(() => !document.querySelector(".selection-slot").hidden);
         const logged = await control("/control/log", { method: "GET" });
+      played.push({ scenario: name, actions: logged.actions });
         await agent.close().catch(() => {});
         return { ...(state || {}), chip, liveSelection, quoted, chipAfter, prompts: logged.prompts || [] };
       } }],
@@ -1518,6 +1524,7 @@ async function main() {
     await browser.close().catch(() => {});
     await server.close();
   }
+  if (process.env.E2E_ACTIONS_OUT) require("node:fs").writeFileSync(process.env.E2E_ACTIONS_OUT, JSON.stringify({ promptCaching: process.env.E2E_PROMPT_CACHING !== "off", results: results.map((r) => ({ title: r.title, pass: !r.detail })), played }, null, 1));
   if (settleTimes.length) console.log(`\nwait after the press: ${settleTimes.join("; ")}`);
   const failed = results.filter((r) => r.detail).length;
   console.log(`\n${results.length - failed}/${results.length} v4 scenarios passed`);
